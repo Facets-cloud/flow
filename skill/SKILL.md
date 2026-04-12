@@ -1,8 +1,8 @@
 ---
 name: flow
 description: |
-  Personal task and Claude session manager. CLI lives at ~/.flow/bin/flow
-  and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the
+  Personal task and Claude session manager. CLI binary is `flow` (assumed
+  on PATH) and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the
   user asks about their work, tasks, or projects in any natural phrasing —
   including but not limited to: "what's left", "what's remaining",
   "what's pending", "what do I need to do", "what's on my plate",
@@ -25,7 +25,7 @@ description: |
 
 ## 1. What flow is
 
-`flow` is a small CLI at `~/.flow/bin/flow` that the user uses to track
+`flow` is a small CLI (assumed on `$PATH`) that the user uses to track
 personal work and bootstrap per-task Claude sessions. Metadata (projects,
 tasks, workdirs, session IDs) lives in a single SQLite database at
 `~/.flow/flow.db`. Free-form plan content lives on disk as markdown

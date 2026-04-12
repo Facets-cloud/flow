@@ -50,16 +50,13 @@ func cmdInit(args []string) int {
 
 	// Create the top-level tree. `projects/` and `tasks/` are parents for
 	// per-project and per-task subdirectories created later by `flow add`.
-	// `bin/` is where the user manually drops the built binary — we just
-	// mkdir it so the path exists. `kb/` holds 5 knowledge-base files
-	// (user/org/products/processes/business) that the skill appends to on
-	// the fly and that `flow show task`/`show project` lists for execution
-	// sessions to read.
+	// `kb/` holds 5 knowledge-base files (user/org/products/processes/
+	// business) that the skill appends to on the fly and that `flow show
+	// task`/`show project` lists for execution sessions to read.
 	for _, d := range []string{
 		root,
 		filepath.Join(root, "projects"),
 		filepath.Join(root, "tasks"),
-		filepath.Join(root, "bin"),
 		filepath.Join(root, "kb"),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {

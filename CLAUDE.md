@@ -7,11 +7,16 @@ A Go CLI (`flow`) that manages personal tasks and bootstraps per-task Claude Cod
 ## Build and test
 
 ```bash
-# Build
-go build -o ~/.flow/bin/flow .
+# Build (produces ./flow in the repo dir, which is on PATH)
+make build
+# or: go build -o flow .
+
+# Full install (build + PATH + init + skill + hook)
+make install
 
 # Run all tests (fast — no network, no real iTerm/Claude)
-go test ./...
+make test
+# or: go test ./...
 
 # Run a single test
 go test -run TestE2EFullRoundtrip -v
@@ -47,7 +52,6 @@ Tests use `$FLOW_ROOT` pointed at a temp directory and override `$HOME` so nothi
 ```
 ~/.flow/
   flow.db
-  bin/flow
   kb/{user,org,products,processes,business}.md
   projects/<slug>/brief.md
   projects/<slug>/updates/*.md

@@ -24,14 +24,16 @@ Personal task and Claude session manager. Captures context at intake time and de
 git clone git@github.com:Facets-cloud/flow.git ~/rohit-gtd/flow
 cd ~/rohit-gtd/flow
 
-# Build
-go build -o ~/.flow/bin/flow .
+# Build, add to PATH, initialize data dir, install skill + hook
+make install
 
-# Initialize (creates ~/.flow/, seeds DB and KB, installs Claude skill + hook)
-~/.flow/bin/flow init
+# Then either source your shell or open a new terminal
+source ~/.zshrc
 ```
 
-After `flow init`, the flow skill is available in every Claude Code session. Say "add a task" or "what should I work on" and the skill activates.
+`make install` does three things: builds the `flow` binary in the repo directory, adds that directory to your PATH in `~/.zshrc`, and runs `flow init` (which creates `~/.flow/`, seeds the DB and KB files, and installs the Claude Code skill and SessionStart hook).
+
+After install, the flow skill is available in every Claude Code session. Say "add a task" or "what should I work on" and the skill activates.
 
 ## Quick start
 
@@ -65,13 +67,12 @@ All runtime state lives under `~/.flow/`:
 ```
 ~/.flow/
   flow.db          # SQLite database
-  bin/flow         # the binary
   kb/              # knowledge base (5 markdown files)
   projects/        # per-project briefs and updates
   tasks/           # per-task briefs and updates
 ```
 
-Source code lives wherever you cloned this repo.
+The `flow` binary lives wherever you installed it (e.g. `/usr/local/bin/flow`). Source code lives wherever you cloned this repo.
 
 ## Environment variables
 

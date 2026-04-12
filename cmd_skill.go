@@ -16,7 +16,7 @@ var embeddedSkill []byte
 // hooks.SessionStart so install/uninstall can idempotently find it.
 // Keep it stable — changing this string would orphan existing
 // installations.
-const hookCommand = "~/.flow/bin/flow hook session-start"
+const hookCommand = "flow hook session-start"
 
 // hookMatcher is the SessionStart matcher string — fires on both
 // fresh startup and `claude --resume`.
@@ -154,7 +154,7 @@ func skillUninstall(args []string) int {
 // The merge preserves all existing top-level keys, all existing hooks
 // under other events (PreToolUse, etc.), and all existing SessionStart
 // entries. It only appends a new entry if no existing SessionStart
-// entry references `~/.flow/bin/flow hook session-start`.
+// entry references `flow hook session-start`.
 func installSessionStartHook() (bool, error) {
 	path, err := userSettingsPath()
 	if err != nil {

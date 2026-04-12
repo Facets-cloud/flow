@@ -33,7 +33,7 @@ func TestCmdInitCreatesTree(t *testing.T) {
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
-	for _, sub := range []string{"projects", "tasks", "bin"} {
+	for _, sub := range []string{"projects", "tasks", "kb"} {
 		p := filepath.Join(root, sub)
 		info, err := os.Stat(p)
 		if err != nil {
