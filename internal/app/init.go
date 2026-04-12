@@ -109,6 +109,14 @@ func cmdInit(args []string) int {
 		return 1
 	}
 
+	// Install the SessionStart hook idempotently.
+	if added, err := installSessionStartHook(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
+	} else if added {
+		settings, _ := userSettingsPath()
+		fmt.Printf("installed SessionStart hook in %s\n", settings)
+	}
+
 	fmt.Printf("flow initialized at %s\n", root)
 	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)
 	return 0
