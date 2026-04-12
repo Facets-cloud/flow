@@ -73,17 +73,18 @@ said.
 ## 3. First-run detection (once per session)
 
 The **first time in a session** you're about to run a `flow` command,
-check whether `~/.flow/flow.db` exists:
+run `flow list tasks` or `flow list projects` as a probe:
 
-```
-test -f ~/.flow/flow.db && echo exists || echo missing
-```
-
-- If **missing**: the user has never initialized flow. Run `flow init`
-  for them (it's idempotent and safe). After it succeeds, offer the
+- If the command **succeeds** (even with zero results): flow is
+  initialized. Proceed normally. **Do not check again this session.**
+- If the command **errors** with a message about a missing database or
+  `~/.flow`: the user hasn't run `flow init` yet. Tell them:
+  "flow isn't initialized yet — run `flow init` to set up `~/.flow/`
+  and the database." Then, once `flow init` succeeds, enter the
   **first-run coaching** below.
-- If **exists**: proceed. **Do not check again this session** — the
-  file won't disappear mid-conversation.
+
+Do **not** silently run `flow init` for the user — let them run it so
+they see what it creates.
 
 ### First-run coaching
 
@@ -91,8 +92,7 @@ After `flow init` succeeds for a brand-new user, walk them through the
 basics in this order:
 
 1. **Explain what just happened.** "`flow init` created `~/.flow/` with
-   an empty database, 5 knowledge-base files, and installed the flow
-   skill so I can help you manage tasks from any Claude session."
+   an empty database and 5 knowledge-base files."
 
 2. **Create their first project.** "Let's set up a project — what's the
    main thing you're working on right now?" Then enter the §5.3

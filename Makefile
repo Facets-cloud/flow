@@ -17,10 +17,11 @@ install: build
 	else \
 		echo "$(REPO_DIR) already in ~/.zshrc PATH"; \
 	fi
-	@# Initialize data dir + install skill + hook
-	./$(BINARY) init
+	@# Install skill + SessionStart hook
+	./$(BINARY) skill install --force
 	@echo ""
-	@echo "Done. Run 'source ~/.zshrc' or open a new terminal to use flow."
+	@echo "Done. Run 'source ~/.zshrc' or open a new terminal."
+	@echo "Then run 'flow init' to create ~/.flow/ and the database."
 
 uninstall:
 	./$(BINARY) skill uninstall

@@ -31,9 +31,9 @@ make install
 source ~/.zshrc
 ```
 
-`make install` does three things: builds the `flow` binary in the repo directory, adds that directory to your PATH in `~/.zshrc`, and runs `flow init` (which creates `~/.flow/`, seeds the DB and KB files, and installs the Claude Code skill and SessionStart hook).
+`make install` builds the `flow` binary in the repo directory, adds that directory to your PATH in `~/.zshrc`, and installs the Claude Code skill and SessionStart hook.
 
-After install, the flow skill is available in every Claude Code session. Say "add a task" or "what should I work on" and the skill activates.
+After install, open a new terminal (or `source ~/.zshrc`) and run `flow init` to create `~/.flow/` with the database and knowledge-base files. Or just start a Claude Code session and say "what should I work on" — the skill will detect that flow isn't initialized and walk you through it.
 
 ## Quick start
 
