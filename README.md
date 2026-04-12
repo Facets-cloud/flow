@@ -2,13 +2,21 @@
 
 Personal task and Claude session manager. Captures context at intake time and delivers it to Claude Code sessions automatically — no re-explaining across conversations.
 
+## Get started
+
+```bash
+git clone git@github.com:Facets-cloud/flow.git && cd flow && make install && source ~/.zshrc
+```
+
+Then open Claude Code and say **"let's get to work"**. Flow will guide you from there.
+
 ## What it does
 
-- **Projects and tasks** tracked in a local SQLite database (`~/.flow/flow.db`)
-- **Markdown briefs** written via an interview-driven intake workflow so every task starts with clear What/Why/Where/Done-when
+- **Projects and tasks** tracked in a local SQLite database
+- **Markdown briefs** written via an interview-driven intake — every task starts with clear What/Why/Where/Done-when
 - **Per-task Claude sessions** spawned in iTerm tabs with full context (brief, progress notes, repo conventions) injected automatically
 - **Session resume** via `flow do <task>` — picks up exactly where you left off
-- **Knowledge base** (`~/.flow/kb/`) — durable facts about you, your org, products, processes, and business that carry across all sessions
+- **Knowledge base** — durable facts about you, your org, products, processes, and business that carry across all sessions
 - **Progress notes** — append-only markdown logs under each task so context survives across sessions
 
 ## Prerequisites
@@ -17,40 +25,31 @@ Personal task and Claude session manager. Captures context at intake time and de
 - Go 1.25+ (to build from source)
 - [Claude Code](https://claude.ai/claude-code) CLI installed
 
-## Install
+## What `make install` does
+
+1. Builds the `flow` binary in the repo directory
+2. Adds that directory to your PATH in `~/.zshrc`
+3. Installs the Claude Code skill and SessionStart hook
+
+That's it — no data directory or database yet. The first time you talk to Claude, the skill detects that flow isn't initialized, offers to run `flow init`, and walks you through creating your first project and task.
+
+## Usage
+
+You don't need to memorize commands. Just talk to Claude:
+
+- **"what should I work on"** — shows your task list
+- **"add a task"** — interviews you and saves a structured brief
+- **"resume auth"** — opens a dedicated Claude session for that task
+- **"save a note"** — logs progress under the current task
+- **"mark done"** — closes out the task
+
+For direct CLI use:
 
 ```bash
-# Clone the repo anywhere you like
-git clone git@github.com:Facets-cloud/flow.git
-cd flow
-
-# Build, add to PATH, initialize data dir, install skill + hook
-make install
-
-# Then either source your shell or open a new terminal
-source ~/.zshrc
-```
-
-`make install` builds the `flow` binary in the repo directory, adds that directory to your PATH in `~/.zshrc`, and installs the Claude Code skill and SessionStart hook.
-
-After install, open a new terminal (or `source ~/.zshrc`) and run `flow init` to create `~/.flow/` with the database and knowledge-base files. Or just start a Claude Code session and say "what should I work on" — the skill will detect that flow isn't initialized and walk you through it.
-
-## Quick start
-
-```bash
-# Add a project (the skill will interview you for details)
-flow add project "My App" --work-dir ~/code/my-app
-
-# Add a task under it
-flow add task "Add auth" --project my-app --slug auth
-
-# Open a dedicated Claude session for the task
-flow do auth
-
-# Later: check your work
 flow list tasks --status in-progress
-
-# Mark done
+flow add project "My App" --work-dir ~/code/my-app
+flow add task "Add auth" --project my-app --slug auth
+flow do auth
 flow done auth
 ```
 
@@ -62,7 +61,7 @@ Briefs live at `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate under 
 
 ## Data directory
 
-All runtime state lives under `~/.flow/`:
+All runtime state lives under `~/.flow/` (or `$FLOW_ROOT` if set):
 
 ```
 ~/.flow/
@@ -72,7 +71,7 @@ All runtime state lives under `~/.flow/`:
   tasks/           # per-task briefs and updates
 ```
 
-The `flow` binary lives wherever you installed it (e.g. `/usr/local/bin/flow`). Source code lives wherever you cloned this repo.
+The `flow` binary lives wherever you cloned this repo. Source code and binary are the same directory.
 
 ## Environment variables
 
