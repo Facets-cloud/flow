@@ -45,6 +45,8 @@ func Run(args []string) int {
 		return cmdSkill(rest)
 	case "register-session":
 		return cmdRegisterSession(rest)
+	case "transcript":
+		return cmdTranscript(rest)
 	case "hook":
 		return cmdHook(rest)
 	case "-h", "--help", "help":
@@ -76,8 +78,9 @@ Sessions:
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
 Read:
-  flow show task    [<ref>]
-  flow show project [<ref>]
+  flow show task       [<ref>]
+  flow show project    [<ref>]
+  flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
 

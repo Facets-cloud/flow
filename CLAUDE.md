@@ -46,6 +46,7 @@ flow/
 │   │   ├── register.go              # flow register-session
 │   │   ├── show.go                  # flow show task|project
 │   │   ├── skill.go                 # flow skill install|uninstall|update
+│   │   ├── transcript.go            # flow transcript — session jsonl reader
 │   │   ├── waiting.go               # flow waiting
 │   │   ├── workdir.go               # flow workdir
 │   │   ├── bootstrap.go             # UUID gen, session file scanning

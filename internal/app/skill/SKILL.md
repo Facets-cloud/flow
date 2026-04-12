@@ -141,6 +141,7 @@ Sessions
 Read
   flow show task    [<ref>]     (defaults to $FLOW_TASK)
   flow show project [<ref>]     (defaults to $FLOW_PROJECT)
+  flow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
   flow list tasks    [--status backlog|in-progress|done] [--project <slug>]
                      [--priority high|medium|low] [--since today|monday|7d|YYYY-MM-DD]
                      [--include-archived]
@@ -808,6 +809,26 @@ append them to the matching `kb/*.md` file on the fly — no permission
 needed, no interview required. Just write and quietly note what you
 recorded. And lazy-read any kb file when you hit a question that
 actually needs that context — not before.
+
+### Cross-task context via transcripts
+
+If you need to understand what happened in a sibling task's session
+(e.g. a prior task under the same project made decisions that affect
+yours), use:
+
+```
+flow transcript <sibling-task-slug>
+```
+
+This outputs a readable conversation transcript from that task's Claude
+session — user messages, assistant messages, tool calls, and results.
+Use `--compact` to omit tool results and thinking blocks for a shorter
+overview. Pipe through `grep` or `head` if the full transcript is too
+long to read at once.
+
+**When to use:** When the brief and updates for a sibling task don't
+give you enough context, or when you need to understand specific
+implementation decisions made during that task's session.
 
 ## 10. Environment variables flow sets
 

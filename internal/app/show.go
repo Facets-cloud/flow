@@ -227,6 +227,11 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		}
 	}
 
+	// Transcript CTA — only shown when the task has a session.
+	if t.SessionID.Valid && t.SessionID.String != "" {
+		fmt.Printf("transcript:    run `flow transcript %s` to view conversation history\n", t.Slug)
+	}
+
 	// Knowledge-base files — durable facts about the user and their org.
 	// Execution sessions are instructed (via the skill and SessionStart
 	// hook) to Read each file listed here as part of their context load.

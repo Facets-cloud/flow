@@ -115,6 +115,20 @@ func TestE2EFullRoundtrip(t *testing.T) {
 		t.Errorf("session_id after register: got %+v, want e2e-session-uuid", task.SessionID)
 	}
 
+	// 5c. Write real jsonl content so transcript can parse it.
+	{
+		encoded := EncodeCwdForClaude(task.WorkDir)
+		sessionFile := filepath.Join(tmp, ".claude", "projects", encoded, "e2e-session-uuid.jsonl")
+		content := `{"type":"user","message":{"role":"user","content":"Hello"},"uuid":"u1","timestamp":"2026-04-12T10:00:00Z","sessionId":"e2e-session-uuid"}` + "\n" +
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there!"}]},"uuid":"a1","timestamp":"2026-04-12T10:00:01Z","sessionId":"e2e-session-uuid"}` + "\n"
+		if err := os.WriteFile(sessionFile, []byte(content), 0o644); err != nil {
+			t.Fatalf("write session jsonl: %v", err)
+		}
+	}
+
+	// 5d. transcript — should succeed now that session exists.
+	step("transcript", cmdTranscript([]string{"fix-auth-token-expiry"}))
+
 	// 6. do again — now session_id is populated, should spawn --resume.
 	step("do resume", cmdDo([]string{"fix-auth-token-expiry"}))
 	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
