@@ -35,8 +35,7 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		}
 		exports = "export " + strings.Join(parts, " ") + " && "
 	}
-	setTitle := fmt.Sprintf(`printf '\033]0;%%s\007' %s && `, ShellQuote(title))
-	fullCommand := fmt.Sprintf("cd %s && %s%s%s", ShellQuote(cwd), exports, setTitle, command)
+	fullCommand := fmt.Sprintf("cd %s && %s%s", ShellQuote(cwd), exports, command)
 	safeCommand := escapeAppleScriptString(fullCommand)
 	safeTitle := escapeAppleScriptString(title)
 
