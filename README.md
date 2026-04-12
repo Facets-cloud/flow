@@ -1,6 +1,10 @@
 # flow
 
-Personal task and Claude session manager. Captures context at intake time and delivers it to Claude Code sessions automatically — no re-explaining across conversations.
+Every Claude Code session starts cold. It doesn't know what you were working on, what decisions you made yesterday, or why the task exists. You re-explain context every time, or worse — the session guesses and gets it wrong.
+
+flow fixes this. It's a lightweight CLI that captures structured context when you create a task (what, why, where, done-when) and automatically injects it into every Claude session that works on that task. Briefs, progress notes, repo conventions, even durable facts about you and your org — all loaded before the session writes a single line of code.
+
+The result: you say "resume auth" and Claude picks up exactly where you left off, with full context, in a dedicated iTerm tab.
 
 ## Get started
 
