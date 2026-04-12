@@ -23,12 +23,17 @@ func flowRoot() (string, error) {
 }
 
 // flowDBPath returns the absolute path to flow.db under the flow root.
+// Returns a clear error if the data directory hasn't been initialized.
 func flowDBPath() (string, error) {
 	root, err := flowRoot()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, "flow.db"), nil
+	dbPath := filepath.Join(root, "flow.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("flow is not initialized — run `flow init` to set up %s", root)
+	}
+	return dbPath, nil
 }
 
 // cmdInit creates ~/.flow/ (or $FLOW_ROOT), initializes flow.db, installs
