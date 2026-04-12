@@ -20,9 +20,9 @@ Personal task and Claude session manager. Captures context at intake time and de
 ## Install
 
 ```bash
-# Clone the repo
-git clone git@github.com:Facets-cloud/flow.git ~/rohit-gtd/flow
-cd ~/rohit-gtd/flow
+# Clone the repo anywhere you like
+git clone git@github.com:Facets-cloud/flow.git
+cd flow
 
 # Build, add to PATH, initialize data dir, install skill + hook
 make install
