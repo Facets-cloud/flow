@@ -77,10 +77,11 @@ run `flow list tasks` or `flow list projects` as a probe:
 
 - If the command **succeeds** (even with zero results): flow is
   initialized. Proceed normally. **Do not check again this session.**
-- If the command **errors** with a message about a missing database or
-  `~/.flow`: the user hasn't run `flow init` yet. Tell them:
-  "flow isn't initialized yet — run `flow init` to set up `~/.flow/`
-  and the database." Then, once `flow init` succeeds, enter the
+- If the command **errors** with a message about a missing database:
+  the user hasn't run `flow init` yet. Tell them:
+  "flow isn't initialized yet — run `flow init` to create the data
+  directory and database." (The data directory is `$FLOW_ROOT` if set,
+  otherwise `~/.flow`.) Then, once `flow init` succeeds, enter the
   **first-run coaching** below.
 
 Do **not** silently run `flow init` for the user — let them run it so
