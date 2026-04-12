@@ -166,6 +166,23 @@ no fuzzy or substring matching. Use `--slug` to pick a short, memorable
 slug at creation time (e.g. `--slug caas-exit`). If omitted, a slug is
 auto-generated from the name (truncated to ~6 words).
 
+## 4a. Interactive choices (use `AskUserQuestion` everywhere)
+
+Whenever you present the user with a choice — yes/no confirmations,
+pick-one-of-several, priority, slug suggestions, project attachment —
+use the `AskUserQuestion` tool so the user can click to select instead
+of typing. Common patterns:
+
+| Pattern | Options |
+|---------|---------|
+| Yes / No | Two options with contextual labels (e.g. "Save it" / "Revise", "Open now" / "Not now") |
+| Pick from list | One option per candidate (tasks, projects, slugs) |
+| Priority | "High", "Medium", "Low" |
+
+Keep `header` under 12 chars. Put enough context in `question` so
+the choice is clear without scrolling back. If the user already
+answered in their message, don't re-ask — just use their answer.
+
 ## 5. Core workflows
 
 These are the load-bearing part of the skill. When the user says one of
@@ -188,8 +205,10 @@ working on", "where did I leave off", "give me a status".
    - **Waiting on someone**: pull out tasks with `waiting_on` set so the
      user can see the whole block at once.
    - **Stale** (anything with the ⚠ marker): call these out explicitly.
-5. Ask which one the user wants to pick up, or offer to add a new task
-   if none of the listed ones match their intent.
+5. Use `AskUserQuestion` to let the user pick which task to work on.
+   List each in-progress and high-priority backlog task as an option
+   (label = slug, description = one-line summary). Include an "Add a
+   new task" option if appropriate.
 
 Do not auto-run `flow do` after listing. Wait for the user to pick.
 
@@ -227,19 +246,23 @@ question: ..." in the brief and move on.
 
 **Then, BEFORE calling `flow add task`:**
 
-- **Ask for a short slug.** "What short slug do you want for this task?
-  Something you'll type to resume it — e.g. `caas`, `auth-bug`,
-  `billing`." Pass it as `--slug <s>`. If the user declines, omit the
-  flag and an auto-generated slug will be used (truncated to ~6 words).
-- Ask about project attachment. "Is this part of an existing project? I
-  see `<project-a>`, `<project-b>` in `flow list projects`..." If yes,
-  pass `--project <slug>`. If no, omit (floating task).
-- Ask about priority if not obvious. Default is `medium`.
-- Ask about `--mkdir` if the `work_dir` doesn't exist yet.
+- **Ask for a short slug.** Suggest 2–3 slug candidates derived from
+  the task name (e.g. for "Add OAuth to budgeting app" suggest `oauth`,
+  `auth-budget`, `oauth-budget`). Present them via `AskUserQuestion`
+  so the user can click one (the "Other" option lets them type a custom
+  slug). If the user picks Other and leaves it blank, omit `--slug`.
+- **Project attachment.** Use `AskUserQuestion` with one option per
+  existing project (label = slug, description = project name) plus a
+  "None (floating task)" option. If there are no projects, skip.
+- **Priority.** Use `AskUserQuestion` with "High", "Medium (Recommended)",
+  "Low". Skip if the user already stated priority.
+- **`--mkdir`** if the `work_dir` doesn't exist yet. Use `AskUserQuestion`
+  with "Yes, create it" / "No, I'll fix the path".
 
-**Draft the brief. Show it to the user. Wait for explicit confirmation**
-("save it", "looks good", "yes") before running `flow add task`. If the
-user asks for changes, revise the draft inline and show it again.
+**Draft the brief. Show it to the user.** Then use `AskUserQuestion`
+(header: "Brief", options: "Save it" / "Revise") to confirm. Do not
+run `flow add task` until the user picks "Save it". If they pick
+"Revise", ask what to change, update the draft, and re-confirm.
 
 **After `flow add task` succeeds**, it will print the task slug and the
 absolute path to a stub `brief.md`. Use the `Write` tool to overwrite
@@ -272,9 +295,10 @@ work_dir: <path>
 *Before you start on this task, read CLAUDE.md in the work_dir.*
 ```
 
-Finally, offer: "Want me to open it now with `flow do <slug>`?" If yes,
-run `flow do <slug>`. If no, stop — the task is in backlog and the user
-can pick it up later.
+Finally, use `AskUserQuestion` (header: "Open now?", options:
+"Yes, open it" / "No, keep in backlog") to offer `flow do <slug>`.
+If yes, proceed to the §4.4 recipe (which will ask session mode).
+If no, stop.
 
 ### 4.3 Add a project
 
@@ -325,11 +349,23 @@ its own, it's the start of a two-or-more-step workflow.
 
 **Recipe:**
 
-1. **Ask the user which session mode they want** before running anything:
-   - **Regular** — normal Claude session (default, safer)
-   - **Skip permissions** — passes `--dangerously-skip-permissions`
-     (faster, no tool-approval prompts)
-   Present it concisely, e.g.: "Regular or skip-permissions session?"
+1. **Ask the user which session mode they want** before running anything.
+   Use the `AskUserQuestion` tool so the user can click to choose:
+
+   ```
+   AskUserQuestion({
+     questions: [{
+       question: "Which session mode for <task-slug>?",
+       header: "Session mode",
+       options: [
+         { label: "Regular",          description: "Normal Claude session with tool-approval prompts (safer)" },
+         { label: "Skip permissions", description: "Pass --dangerously-skip-permissions (faster, no prompts)" }
+       ],
+       multiSelect: false
+     }]
+   })
+   ```
+
    If the user already specified a mode in their request (e.g. "do X
    with skip permissions", "do X normally"), use that — don't re-ask.
 2. Run: `flow do <user's ref>`. Pass the slug the user gave as one
@@ -369,8 +405,9 @@ that…", "record that I…", "document that I just…".
    - Paragraph 1: what got done. Specific. No hedging.
    - Paragraph 2: what's next or what the user is thinking about next.
    - Optional blockers: "Blocked on: <X>" if applicable.
-3. **Show the filename and the content to the user. Wait for
-   confirmation** ("save it", "yes"). Do not write silently.
+3. **Show the filename and the content to the user.** Then use
+   `AskUserQuestion` (header: "Save note?", options: "Save it" /
+   "Revise") to confirm. Do not write silently.
 4. Determine the task slug from `$FLOW_TASK` (usually set in the current
    iTerm tab's env) or by asking the user, or — if the user named the
    task in the request — by running `flow show task <that-ref>` to get
@@ -409,8 +446,9 @@ both intact. The session_id stays on the task row so a future reopen can
 still resume it.
 
 Before running `flow done`, if the user hasn't just saved a progress
-note, offer: "want me to save a closing note first?" If yes, run the
-§5.5 recipe first, then `flow done`.
+note, use `AskUserQuestion` (header: "Closing note?", options:
+"Yes, save a note first" / "No, just mark done") to offer. If yes,
+run the §5.5 recipe first, then `flow done`.
 
 ### 4.8 Archive / cleanup
 
