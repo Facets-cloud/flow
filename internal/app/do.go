@@ -253,11 +253,12 @@ func cmdDo(args []string) int {
 func buildBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
 		"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
-			"1. Run: flow register-session  (no args, uses FLOW_TASK env var). This records your session_id so future flow do calls can resume this session.\n"+
-			"2. Run: flow show task. Read the file at the brief: path, AND every file listed under updates:.\n"+
-			"3. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief file AND every file listed under its updates: section. The project brief gives cross-task context the task brief omits.\n"+
-			"4. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
-			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
+			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection. Do this FIRST, and do not skip it if step 2 later fails — the skill is independent.\n"+
+			"2. Run: flow register-session  (no args, uses FLOW_TASK env var). This records your session_id so future flow do calls can resume this session.\n"+
+			"3. Run: flow show task. Read the file at the brief: path, AND every file listed under updates:.\n"+
+			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief file AND every file listed under its updates: section. The project brief gives cross-task context the task brief omits.\n"+
+			"5. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
+			"6. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
 	)
 }

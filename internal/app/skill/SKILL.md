@@ -615,6 +615,85 @@ immediately — that doesn't require the file to have been loaded first.
 Read-Write just means "load, check for duplicates, write" as a single
 sequence at the moment the fact is heard.
 
+### 4.11 Scope-creep detection (suggest-and-offer)
+
+This is a **passive** workflow like §5.10 — you watch the session as it
+unfolds and intervene only when the evidence is strong. Its purpose is
+to keep a task's transcript and update log focused, instead of letting
+unrelated work pile up under whichever task happens to own the current
+iTerm tab.
+
+**When to consider firing:**
+
+Fire when the *work itself* (not a single question) has clearly moved
+off the bootstrapped task. Concretely, any of these is sufficient
+evidence:
+
+- You've made Edit/Write calls to files in a directory tree that isn't
+  under `$FLOW_TASK`'s `work_dir` and isn't covered by its brief.
+- You've spent two or more turns debugging a product, service, or
+  repo that the brief doesn't mention.
+- The user has introduced a new, named line of investigation ("while
+  we're here, can you also look at <unrelated thing>") and begun
+  giving it more than a single turn's attention.
+
+**When NOT to fire (false positives to avoid):**
+
+- A one-off tangential question answered in a single turn ("btw what
+  does X mean?") — not drift, just curiosity.
+- Reading/Read-tool usage outside the work_dir — reading is research,
+  not work-migration. The trigger is write-side evidence.
+- Natural debugging that requires touching nearby infrastructure the
+  brief reasonably implies (e.g. a test helper in a sibling dir).
+- The very first turn after session start — you don't yet know what
+  "normal" looks like for this task.
+
+**Recipe:**
+
+1. When you notice drift per the signals above, pause your current
+   work and use `AskUserQuestion`:
+
+   ```
+   AskUserQuestion({
+     questions: [{
+       question: "This looks unrelated to `<current-slug>` (<one-line drift description>). Want me to create a new flow task for it?",
+       header: "New task?",
+       options: [
+         { label: "Yes, new task",  description: "Pause this work and run the §5.2 intake interview for <derived-name>" },
+         { label: "No, stay here",  description: "Keep the work under <current-slug> — I understand this is still in scope" },
+         { label: "Later",          description: "Note it in an update on <current-slug> and carry on for now" }
+       ],
+       multiSelect: false
+     }]
+   }))
+   ```
+
+2. **On "Yes, new task":** enter the §5.2 task-intake interview.
+   Derive a task name from what you just observed (e.g. "Fix
+   register-session encoding bug I stumbled on while reviewing PRs").
+   Use the same project as `$FLOW_PROJECT` only if the new work
+   genuinely belongs there; otherwise leave it floating or attach to
+   a different project per the user's answer during intake. After
+   the new task is saved, offer `flow do <new-slug>` so the follow-on
+   work gets its own transcript.
+
+3. **On "No, stay here":** accept the user's judgement and continue.
+   Consider this a signal to update your mental model of what the
+   bootstrapped task includes — don't re-ask on the same thread of
+   work in the same session.
+
+4. **On "Later":** offer to write a short progress note on the
+   current task capturing the drift observation ("noticed X while
+   doing Y; may need its own task"), then continue with the
+   original work.
+
+**Why this lives in the skill, not the hook:** the hook's only
+guaranteed side-effect is injecting text at session start. Detection
+requires inspecting what you've done this session (edits, debugging
+topics) — that state only exists inside the running conversation. The
+hook's job is to make sure the skill is loaded; the skill is what
+runs the check.
+
 ## 6. The `work_dir` question — rules
 
 When you're about to ask the user "where does this task live?", run
@@ -724,24 +803,34 @@ Projects use a shorter template: `What / Why / Where / Scope`. No
 - **Do not forget to offer progress notes.** After a long working
   session, the user will forget to log what they did. Proactively offer
   "want me to save a note before we stop?" at natural breakpoints.
+- **Do not silently continue scope-drifted work under the bootstrapped
+  task.** When the work genuinely moves off `$FLOW_TASK` (new repo,
+  new product, new line of investigation sustained over multiple
+  turns — see §5.11 for signals), surface the drift via
+  `AskUserQuestion` and offer to branch into a new task. Letting
+  unrelated work accumulate under the wrong task poisons that task's
+  transcript and buries decisions the user will later want to find.
 
 ## 9. The execution-session bootstrap contract
 
 When `flow do <task>` spawns a fresh Claude session in a new iTerm tab,
 it does NOT pre-allocate a session_id. The DB row's `session_id` stays
-`NULL` until the new session self-reports. Under this contract, the
-execution session's **first action**, before anything else, is:
+`NULL` until the new session self-reports. The execution session is
+expected to (a) load this skill via the `Skill` tool, so the rest of
+§5 applies, and (b) call `flow register-session` to capture its own
+UUID. Those two steps are independent — skill invocation never
+depends on register-session succeeding, and vice versa.
 
-```
-flow register-session
-```
-
-That command:
+`flow register-session`:
 
 1. Reads `$FLOW_TASK` (set by `flow do` when spawning the tab).
 2. Looks up the task's `work_dir`.
 3. Scans `~/.claude/projects/<encoded-cwd>/*.jsonl` for the newest file —
-   the session's own jsonl, currently being written.
+   the session's own jsonl, currently being written. If that lookup
+   misses (e.g. because CC changed its path-encoding rule in a future
+   version), it falls back to scanning every subdir of
+   `~/.claude/projects/` for a jsonl whose recorded `cwd` matches the
+   task's work_dir.
 4. UPDATEs `tasks.session_id` with that file's UUID.
 
 Subsequent `flow do <same-task>` calls will see the now-populated
@@ -752,7 +841,15 @@ Subsequent `flow do <same-task>` calls will see the now-populated
 Do ALL of the following in order, before touching any code or
 proposing any plan:
 
-1. **Self-register your session_id** (first action, always):
+1. **Invoke the flow skill via the `Skill` tool.** The `flow hook
+   session-start` output already names this step, but the hook is
+   belt-and-braces — the Skill tool is the authoritative way to load
+   the operating manual that governs workflows, KB discipline, and
+   scope-creep detection. Do this FIRST. It is not gated on any
+   other step; if register-session later fails, the skill still
+   applies.
+
+2. **Self-register your session_id:**
    ```
    flow register-session
    ```
@@ -764,7 +861,7 @@ proposing any plan:
    If it says "session already registered", another `flow do` won the
    race; your tab is a duplicate, ask the user whether to close it.
 
-2. **Load the task context:**
+3. **Load the task context:**
    ```
    flow show task
    ```
@@ -777,7 +874,7 @@ proposing any plan:
    **Do NOT read the `kb:` files at bootstrap.** They're lazy-loaded
    on demand — see §5.10 for when to actually Read them.
 
-3. **Load the parent project context, if any.** If `flow show task`
+4. **Load the parent project context, if any.** If `flow show task`
    printed a `project:` line that isn't `(floating)`, run:
    ```
    flow show project <project-slug>
@@ -793,13 +890,13 @@ proposing any plan:
 
    Again, skip the project's `kb:` section at bootstrap.
 
-4. **Load repo conventions.** Read `CLAUDE.md` in your `work_dir` (if
+5. **Load repo conventions.** Read `CLAUDE.md` in your `work_dir` (if
    present), plus any nested `CLAUDE.md` files under subdirectories
    you plan to modify. These are authoritative for build commands,
    test commands, style, and gotchas — they override any assumption
    you might make from the brief.
 
-5. **Only then begin work.** If any brief section is blank or
+6. **Only then begin work.** If any brief section is blank or
    unclear, ASK the user before inferring. If the user didn't
    specify a "Done when" in the brief, confirm acceptance criteria
    with them before making changes.

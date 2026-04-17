@@ -88,20 +88,34 @@ func cmdRegisterSession(args []string) int {
 		return 0
 	}
 
-	// Find the newest jsonl in the encoded-cwd dir. That file is the
-	// session currently being written — i.e., ours.
+	// Find the newest jsonl for our work_dir. That file is the session
+	// currently being written — i.e., ours.
+	//
+	// Primary path: compute the encoded dir and look at its newest jsonl.
+	// Fast and covers every version of Claude Code whose encoding rule
+	// matches EncodeCwdForClaude's table.
+	//
+	// Fallback path: if the primary misses (either the encoded dir is
+	// empty or CC has changed its encoding rule in a future version),
+	// scan ~/.claude/projects/* for any jsonl whose first recorded `cwd`
+	// field equals our work_dir. This uses CC's own authoritative record
+	// of cwd, so it survives any future encoding drift.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: no home dir: %v\n", err)
 		return 1
 	}
+	projectsRoot := filepath.Join(home, ".claude", "projects")
 	encoded := EncodeCwdForClaude(task.WorkDir)
-	sessionDir := filepath.Join(home, ".claude", "projects", encoded)
+	sessionDir := filepath.Join(projectsRoot, encoded)
 	sid := FindNewestSessionFile(sessionDir)
 	if sid == "" {
+		sid = FindSessionByWorkDir(projectsRoot, task.WorkDir)
+	}
+	if sid == "" {
 		fmt.Fprintf(os.Stderr,
-			"error: no *.jsonl found in %s — is claude actually running in this work_dir?\n",
-			sessionDir)
+			"error: no *.jsonl found for work_dir %s (checked %s and scanned %s for a matching cwd) — is claude actually running in this work_dir?\n",
+			task.WorkDir, sessionDir, projectsRoot)
 		return 1
 	}
 

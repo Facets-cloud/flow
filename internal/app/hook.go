@@ -62,13 +62,20 @@ func cmdHookSessionStart(args []string) int {
 			"Before doing anything else in this turn, re-load your task context — "+
 			"the brief and update files may have been edited since your previous "+
 			"session. Do these in order: "+
-			"(1) run `flow register-session` to ensure your session_id is captured "+
+			"(1) invoke the `flow` skill via the Skill tool. That skill is your "+
+			"operating manual for this session: it defines the bootstrap contract, "+
+			"the workflows for starting/saving/logging/archiving work, KB scoop "+
+			"discipline, and the scope-creep detection that keeps unrelated work "+
+			"from landing in the wrong task. Do this FIRST, and do it even if a "+
+			"later step in this list fails — the skill does not depend on "+
+			"register-session succeeding. "+
+			"(2) run `flow register-session` to ensure your session_id is captured "+
 			"(idempotent, no-op on resume); "+
-			"(2) run `flow show task` and use your Read tool on the file at the "+
+			"(3) run `flow show task` and use your Read tool on the file at the "+
 			"`brief:` path AND every file listed under `updates:`; "+
-			"(3) if a project is listed on the task, run `flow show project <that-slug>` "+
+			"(4) if a project is listed on the task, run `flow show project <that-slug>` "+
 			"and Read its brief and updates too; "+
-			"(4) Read `CLAUDE.md` in your work_dir and any nested CLAUDE.md under "+
+			"(5) Read `CLAUDE.md` in your work_dir and any nested CLAUDE.md under "+
 			"subdirectories you plan to modify. "+
 			"Only then proceed with the user's request. "+
 			"If any brief section is blank or unclear, ASK — do not infer. "+
