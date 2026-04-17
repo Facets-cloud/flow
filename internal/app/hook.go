@@ -31,15 +31,17 @@ func cmdHook(args []string) int {
 // Wired via ~/.claude/settings.json with a matcher of "startup|resume"
 // so it fires for both fresh spawns and `claude --resume`.
 //
-// If $FLOW_TASK is unset (i.e. the current session was not spawned by
-// `flow do`), we emit an empty response — the hook is a no-op for
-// non-flow sessions.
-//
-// Otherwise we emit additionalContext telling the agent to re-run the
-// task-loading workflow. On a fresh spawn this is redundant with the
-// bootstrap prompt but harmless. On a resume — which is the case the
-// hook exists for — it's the only way to force the agent to re-read
-// potentially-updated briefs and update files.
+// Two modes:
+//   - $FLOW_TASK set (spawned by `flow do`): emit the full task-context
+//     reload instructions. On a fresh spawn this is redundant with the
+//     bootstrap prompt but harmless; on a resume it's the only way to
+//     force the agent to re-read potentially-updated briefs and updates.
+//   - $FLOW_TASK unset (ad-hoc session, e.g. bare `flowde`): emit a
+//     short hint that the flow skill is installed and should be used
+//     when the request touches task / project / session management.
+//     Without this, Claude Code may not auto-invoke the skill on the
+//     user's first message, so the wrapper's "skill is current"
+//     guarantee would have no observable effect for ad-hoc sessions.
 func cmdHookSessionStart(args []string) int {
 	fs := flagSet("hook session-start")
 	if err := fs.Parse(args); err != nil {
@@ -48,13 +50,7 @@ func cmdHookSessionStart(args []string) int {
 
 	slug := os.Getenv("FLOW_TASK")
 	if slug == "" {
-		// Non-flow session: exit silently with no output at all.
-		// Claude Code treats missing stdout the same as `{}` — no
-		// additionalContext, no decision, no visible effect — but
-		// skipping the JSON encode saves a trivial amount of work
-		// and makes it unambiguous to anyone inspecting hook output
-		// that the hook is a deliberate no-op for non-flow sessions.
-		return 0
+		return emitAmbientSkillHint()
 	}
 
 	instructions := fmt.Sprintf(
@@ -90,10 +86,50 @@ func cmdHookSessionStart(args []string) int {
 		slug,
 	)
 
+	return emitSessionStartContext(instructions)
+}
+
+// emitAmbientSkillHint is the FLOW_TASK-unset branch of the SessionStart
+// hook. Used for ad-hoc `flowde` / `claude` sessions where there is no
+// specific task to load. It nudges Claude to invoke the flow skill when
+// the user's request touches flow-managed concerns, and — critically —
+// to offer to create a new flow task or switch to an existing one when
+// the user starts substantive work without a task attached. Otherwise
+// the transcript of this session is homeless: no brief, no updates, no
+// resumability tomorrow.
+func emitAmbientSkillHint() int {
+	hint := "The `flow` skill is installed in this Claude Code environment " +
+		"(see ~/.claude/skills/flow/SKILL.md). It manages the user's personal " +
+		"tasks, per-task Claude sessions, and a knowledge base of durable " +
+		"facts about the user, their org, products, processes, and business. " +
+		"Invoke it via the Skill tool whenever the user's request touches " +
+		"tasks, projects, sessions, progress notes, priorities, or any `flow` " +
+		"CLI usage — including natural-language phrasings like 'what should " +
+		"I work on', 'start my day', 'add a task', 'resume X', 'save a note', " +
+		"or 'mark done'. " +
+		"IMPORTANT: this session is not bound to any flow task (FLOW_TASK is " +
+		"unset). If the user starts substantive work — anything beyond a " +
+		"one-shot question, like building a feature, debugging an issue, or " +
+		"making edits across multiple turns — pause before diving in and " +
+		"invoke the flow skill. Run `flow list tasks --status in-progress` " +
+		"and `flow list tasks --status backlog` to see candidates, then use " +
+		"AskUserQuestion to offer three choices: (a) create a new flow task " +
+		"for this work (runs the §5.2 intake interview), (b) switch to an " +
+		"existing task (list the matches as options, spawn `flow do <slug>` " +
+		"on selection), or (c) proceed ad-hoc without a task (user accepts " +
+		"that this session won't be resumable and won't accumulate context). " +
+		"If the request is unrelated to flow and is clearly a one-off, ignore " +
+		"this hint."
+	return emitSessionStartContext(hint)
+}
+
+// emitSessionStartContext marshals the SessionStart hookSpecificOutput
+// shape to stdout. Shared by both the per-task and ambient paths.
+func emitSessionStartContext(ctx string) int {
 	out := map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName":     "SessionStart",
-			"additionalContext": instructions,
+			"additionalContext": ctx,
 		},
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {

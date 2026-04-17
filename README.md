@@ -81,7 +81,10 @@ conversation — same context, same thread, same momentum.
 git clone git@github.com:Facets-cloud/flow.git && cd flow && make install && source ~/.zshrc
 ```
 
-Then open Claude Code and say **"let's get to work"**. Flow will guide you from there.
+Then run **`flowde`** and say **"let's get to work"**. `flowde` is a thin
+wrapper around `claude` that keeps the flow skill current on every launch
+— use it anywhere you'd normally run `claude`. Flow will guide you from
+there.
 
 ## Usage
 
@@ -105,9 +108,10 @@ flow done auth
 
 ## How it works under the hood
 
-`flow do <task>` spawns a new iTerm tab running `claude` with environment
-variables (`FLOW_TASK`, `FLOW_PROJECT`) set. A SessionStart hook
-re-injects context on every resume. The execution session's first action
+`flow do <task>` spawns a new iTerm tab running `flowde` (a thin wrapper
+around `claude` that refreshes the flow skill on every launch) with
+environment variables (`FLOW_TASK`, `FLOW_PROJECT`) set. A SessionStart
+hook re-injects context on every resume. The execution session's first action
 is `flow register-session`, which writes its session UUID back to the
 database so future `flow do` calls resume the same conversation.
 

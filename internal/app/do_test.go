@@ -187,6 +187,48 @@ func TestCmdDoFuzzyExactWins(t *testing.T) {
 	}
 }
 
+// TestCmdDoSpawnsFlowdeNotClaude pins the wrapper contract: `flow do`
+// shells out to `flowde` (not `claude` directly) for both the fresh
+// bootstrap and the resume paths. The `flowde` wrapper owns the
+// "skill is current" guarantee, so `flow do` must not bypass it.
+func TestCmdDoSpawnsFlowdeNotClaude(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "wrap-fresh")
+
+	_, getScript := stubITerm(t)
+	if rc := cmdDo([]string{"wrap-fresh"}); rc != 0 {
+		t.Fatalf("fresh rc=%d", rc)
+	}
+	script := getScript()
+	if !strings.Contains(script, "&& flowde ") {
+		t.Errorf("fresh spawn must invoke flowde, got:\n%s", script)
+	}
+	// Guard against accidental reintroduction of a direct `claude`
+	// invocation in the spawn command portion. We look for the two
+	// shapes `flow do` used to emit: `claude '<prompt>'` (fresh) and
+	// `claude --resume <uuid>` (resume).
+	if strings.Contains(script, "&& claude ") {
+		t.Errorf("fresh spawn should not invoke claude directly, got:\n%s", script)
+	}
+
+	// Now the resume path.
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET session_id='resume-sid', session_started=? WHERE slug='wrap-fresh'`, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if rc := cmdDo([]string{"wrap-fresh"}); rc != 0 {
+		t.Fatalf("resume rc=%d", rc)
+	}
+	script = getScript()
+	if !strings.Contains(script, "&& flowde --resume resume-sid") {
+		t.Errorf("resume spawn must invoke flowde --resume <uuid>, got:\n%s", script)
+	}
+	if strings.Contains(script, "&& claude ") {
+		t.Errorf("resume spawn should not invoke claude directly, got:\n%s", script)
+	}
+}
+
 // TestCmdDoConcurrentFreshTasks verifies two concurrent cmdDo calls on a
 // fresh task don't corrupt DB state. Both spawn (leave session_id NULL);
 // the register-session contract handles the actual session_id write

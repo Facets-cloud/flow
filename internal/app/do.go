@@ -182,18 +182,25 @@ func cmdDo(args []string) int {
 	}
 
 	// Step 8: spawn the iTerm tab.
+	//
+	// We shell out to `flowde` rather than `claude` directly. `flowde`
+	// is a thin wrapper (cmd/flowde) that runs `flow skill install
+	// --force` before exec'ing claude, so every spawned session is
+	// guaranteed to have the current skill file + SessionStart hook in
+	// place. Both the fresh-bootstrap and resume paths go through
+	// flowde so the guarantee is uniform.
 	var command string
 	if needsBootstrap {
-		// Fresh bootstrap path: spawn claude interactively with the
+		// Fresh bootstrap path: spawn flowde interactively with the
 		// bootstrap prompt as the first user message. Leave session_id
 		// NULL in the DB — the execution session fills it in via
 		// register-session. No UUID allocation here.
 		prompt := buildBootstrapPrompt(task.Slug)
-		command = fmt.Sprintf("claude %s", iterm.ShellQuote(prompt))
+		command = fmt.Sprintf("flowde %s", iterm.ShellQuote(prompt))
 		fmt.Printf("Spawning fresh session for %s (session_id will self-register)\n", task.Slug)
 	} else {
 		// Resume path: we have a known session_id from a prior run.
-		command = "claude --resume " + task.SessionID.String
+		command = "flowde --resume " + task.SessionID.String
 	}
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"
