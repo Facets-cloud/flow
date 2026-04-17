@@ -14,7 +14,7 @@ import (
 // set/clear, priority change, update file drop, done, archive, unarchive,
 // workdir registry.
 //
-// Mocks claudeStreamer and iterm.Runner so nothing actually spawns
+// Mocks claudeRunner and iterm.Runner so nothing actually spawns
 // claude or osascript. Uses a temp FLOW_ROOT so the user's real ~/.flow is
 // untouched.
 func TestE2EFullRoundtrip(t *testing.T) {
@@ -33,6 +33,12 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	oldOsa := iterm.Runner
 	iterm.Runner = func(args []string) error { return nil }
 	t.Cleanup(func() { iterm.Runner = oldOsa })
+
+	// Stub the headless claude runner so cmdDone doesn't try to invoke
+	// the real claude CLI for its post-flip KB sweep.
+	oldClaude := claudeRunner
+	claudeRunner = func(slug, prompt string) error { return nil }
+	t.Cleanup(func() { claudeRunner = oldClaude })
 
 	// Fake "execution session just started writing its jsonl" so
 	// cmdRegisterSession has a file to discover. The newest file in
