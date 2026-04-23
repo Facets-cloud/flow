@@ -2,3 +2,8 @@
 /flowde
 /bin/flow
 *.db
+
+# flow's own data tree accidentally created in the repo root when
+# running the CLI with a relative FLOW_ROOT.
+/projects/
+/tasks/
