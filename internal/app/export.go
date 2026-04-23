@@ -230,9 +230,10 @@ func exportTaskCmd(args []string) int {
 	}
 	defer db.Close()
 
-	task, rc := findTask(db, slug)
-	if rc != 0 {
-		return rc
+	task, err := flowdb.GetTask(db, slug)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: task %q not found\n", slug)
+		return 1
 	}
 	root, err := flowRoot()
 	if err != nil {
@@ -260,13 +261,21 @@ func writeTaskBundle(task *flowdb.Task, root, outDir, home string) (string, erro
 	defer cleanup(&ok)
 
 	mf := bundleManifest{Type: "task", Version: "1", ExportedAt: time.Now().Format(time.RFC3339), Slug: task.Slug}
-	if b, err := marshalJSON(mf); err == nil {
-		addBytesToTar(tw, "manifest.json", b)
+	b, err := marshalJSON(mf)
+	if err != nil {
+		return "", fmt.Errorf("marshal manifest: %w", err)
+	}
+	if err := addBytesToTar(tw, "manifest.json", b); err != nil {
+		return "", fmt.Errorf("write manifest: %w", err)
 	}
 
 	bt := taskFromDB(task, home)
-	if b, err := marshalJSON(bt); err == nil {
-		addBytesToTar(tw, "task.json", b)
+	b, err = marshalJSON(bt)
+	if err != nil {
+		return "", fmt.Errorf("marshal task: %w", err)
+	}
+	if err := addBytesToTar(tw, "task.json", b); err != nil {
+		return "", fmt.Errorf("write task: %w", err)
 	}
 
 	briefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
