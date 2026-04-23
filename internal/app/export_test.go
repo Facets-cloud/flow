@@ -354,3 +354,95 @@ func TestExportProjectIncludesArchivedTasks(t *testing.T) {
 
 // Dummy reference to flowdb to avoid unused import if needed.
 var _ = flowdb.TaskFilter{}
+
+// ---------- export all tests ----------
+
+func TestExportAllCreatesBundle(t *testing.T) {
+	root, db := showListEditDB(t)
+	home := root
+	t.Setenv("HOME", home)
+
+	insertProject(t, db, "proj-a", "Project A", filepath.Join(home, "code"), "high")
+	insertTask(t, db, "task-proj", "Proj Task", "backlog", "high", filepath.Join(home, "code"), "proj-a")
+	insertTask(t, db, "floating", "Floating Task", "in-progress", "medium", filepath.Join(home, "other"), nil)
+
+	kbDir := filepath.Join(root, "kb")
+	os.MkdirAll(kbDir, 0o755)
+	os.WriteFile(filepath.Join(kbDir, "user.md"), []byte("# User"), 0o644)
+	os.WriteFile(filepath.Join(kbDir, "org.md"), []byte("# Org"), 0o644)
+
+	outDir := t.TempDir()
+	out := captureStdout(t, func() {
+		if rc := cmdExport([]string{"all", "--output", outDir}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+
+	tarPath := strings.TrimSpace(out)
+	if _, err := os.Stat(tarPath); err != nil {
+		t.Fatalf("bundle missing: %v", err)
+	}
+
+	mfData := readTarEntry(t, tarPath, "manifest.json")
+	var mf bundleManifest
+	json.Unmarshal(mfData, &mf)
+	if mf.Type != "all" || mf.Slug != "" {
+		t.Errorf("manifest wrong: %+v", mf)
+	}
+
+	if !tarContains(t, tarPath, "projects/proj-a/project.json") {
+		t.Errorf("projects/proj-a/project.json missing")
+	}
+	if !tarContains(t, tarPath, "projects/proj-a/tasks/task-proj/task.json") {
+		t.Errorf("projects/proj-a/tasks/task-proj/task.json missing")
+	}
+	if !tarContains(t, tarPath, "floating-tasks/floating/task.json") {
+		t.Errorf("floating-tasks/floating/task.json missing")
+	}
+	if !tarContains(t, tarPath, "kb/user.md") {
+		t.Errorf("kb/user.md missing")
+	}
+	if !tarContains(t, tarPath, "kb/org.md") {
+		t.Errorf("kb/org.md missing")
+	}
+}
+
+func TestExportAllNoData(t *testing.T) {
+	_, _ = showListEditDB(t)
+	outDir := t.TempDir()
+	out := captureStdout(t, func() {
+		if rc := cmdExport([]string{"all", "--output", outDir}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	tarPath := strings.TrimSpace(out)
+	if _, err := os.Stat(tarPath); err != nil {
+		t.Errorf("bundle missing even with no data: %v", err)
+	}
+	if !tarContains(t, tarPath, "manifest.json") {
+		t.Errorf("manifest.json missing")
+	}
+}
+
+func TestExportAllIncludesArchivedEntities(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "arch-all-proj", "Arch All Project", filepath.Join(root, "x"), "low")
+	insertTask(t, db, "arch-all-task", "Arch All Task", "done", "low", filepath.Join(root, "x"), "arch-all-proj")
+	now := flowdb.NowISO()
+	db.Exec(`UPDATE projects SET archived_at = ? WHERE slug = ?`, now, "arch-all-proj")
+	db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, now, "arch-all-task")
+
+	outDir := t.TempDir()
+	out := captureStdout(t, func() {
+		if rc := cmdExport([]string{"all", "--output", outDir}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	tarPath := strings.TrimSpace(out)
+	if !tarContains(t, tarPath, "projects/arch-all-proj/project.json") {
+		t.Errorf("archived project missing from all bundle")
+	}
+	if !tarContains(t, tarPath, "projects/arch-all-proj/tasks/arch-all-task/task.json") {
+		t.Errorf("archived task missing from all bundle")
+	}
+}

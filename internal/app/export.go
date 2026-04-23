@@ -404,7 +404,149 @@ func writeProjectBundle(project *flowdb.Project, tasks []*flowdb.Task, root, out
 	return outPath, nil
 }
 
-func exportAllCmd(_ []string) int {
-	fmt.Fprintln(os.Stderr, "error: export all not yet implemented")
-	return 1
+func exportAllCmd(args []string) int {
+	fs := flagSet("export all")
+	outDir := fs.String("output", ".", "directory to write bundle")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	projects, err := flowdb.ListProjects(db, flowdb.ProjectFilter{IncludeArchived: true})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: list projects: %v\n", err)
+		return 1
+	}
+	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{IncludeArchived: true})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: list tasks: %v\n", err)
+		return 1
+	}
+
+	root, err := flowRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	home, _ := os.UserHomeDir()
+
+	outPath, err := writeAllBundle(projects, tasks, root, *outDir, home)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Println(outPath)
+	return 0
+}
+
+func writeAllBundle(projects []*flowdb.Project, tasks []*flowdb.Task, root, outDir, home string) (string, error) {
+	filename := fmt.Sprintf("flow-all-%s.tar", time.Now().Format("20060102"))
+	ok := false
+	outPath, tw, cleanup, err := newTarFile(outDir, filename)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup(&ok)
+
+	mf := bundleManifest{Type: "all", Version: "1", ExportedAt: time.Now().Format(time.RFC3339)}
+	b, err := marshalJSON(mf)
+	if err != nil {
+		return "", fmt.Errorf("marshal manifest: %w", err)
+	}
+	if err := addBytesToTar(tw, "manifest.json", b); err != nil {
+		return "", fmt.Errorf("write manifest: %w", err)
+	}
+
+	// Index tasks by project slug for easy lookup.
+	projTasks := map[string][]*flowdb.Task{}
+	var floaters []*flowdb.Task
+	for _, t := range tasks {
+		if t.ProjectSlug.Valid && t.ProjectSlug.String != "" {
+			projTasks[t.ProjectSlug.String] = append(projTasks[t.ProjectSlug.String], t)
+		} else {
+			floaters = append(floaters, t)
+		}
+	}
+
+	// Projects.
+	for _, project := range projects {
+		prefix := path.Join("projects", project.Slug)
+		bp := projectFromDB(project, home)
+		b, err := marshalJSON(bp)
+		if err != nil {
+			return "", fmt.Errorf("marshal project %s: %w", project.Slug, err)
+		}
+		if err := addBytesToTar(tw, path.Join(prefix, "project.json"), b); err != nil {
+			return "", fmt.Errorf("write project %s: %w", project.Slug, err)
+		}
+		projRoot := filepath.Join(root, "projects", project.Slug)
+		briefPath := filepath.Join(projRoot, "brief.md")
+		if err := addFileToTar(tw, briefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("project %s brief.md: %w", project.Slug, err)
+		}
+		if err := addUpdatesTar(tw, filepath.Join(projRoot, "updates"), prefix); err != nil {
+			return "", err
+		}
+
+		for _, task := range projTasks[project.Slug] {
+			taskPrefix := path.Join(prefix, "tasks", task.Slug)
+			bt := taskFromDB(task, home)
+			b, err := marshalJSON(bt)
+			if err != nil {
+				return "", fmt.Errorf("marshal task %s: %w", task.Slug, err)
+			}
+			if err := addBytesToTar(tw, path.Join(taskPrefix, "task.json"), b); err != nil {
+				return "", fmt.Errorf("write task %s: %w", task.Slug, err)
+			}
+			taskBriefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
+			if err := addFileToTar(tw, taskBriefPath, path.Join(taskPrefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+				return "", fmt.Errorf("task %s brief.md: %w", task.Slug, err)
+			}
+			if err := addUpdatesTar(tw, filepath.Join(root, "tasks", task.Slug, "updates"), taskPrefix); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	// Floating tasks (no project).
+	for _, task := range floaters {
+		prefix := path.Join("floating-tasks", task.Slug)
+		bt := taskFromDB(task, home)
+		b, err := marshalJSON(bt)
+		if err != nil {
+			return "", fmt.Errorf("marshal floating task %s: %w", task.Slug, err)
+		}
+		if err := addBytesToTar(tw, path.Join(prefix, "task.json"), b); err != nil {
+			return "", fmt.Errorf("write floating task %s: %w", task.Slug, err)
+		}
+		briefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
+		if err := addFileToTar(tw, briefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("floating task %s brief.md: %w", task.Slug, err)
+		}
+		if err := addUpdatesTar(tw, filepath.Join(root, "tasks", task.Slug, "updates"), prefix); err != nil {
+			return "", err
+		}
+	}
+
+	// KB files.
+	for _, kbFile := range kbFiles(root) {
+		name := filepath.Base(kbFile)
+		if err := addFileToTar(tw, kbFile, path.Join("kb", name)); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("kb/%s: %w", name, err)
+		}
+	}
+
+	ok = true
+	return outPath, nil
 }
