@@ -100,3 +100,19 @@ flow/
 - `hookCommand` in `internal/app/skill.go` is the exact string matched in `~/.claude/settings.json`. Changing it orphans existing installations.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.
+
+## Export / import security
+
+`flow export` masks sensitive values in all markdown files (briefs, updates, KB files) before they enter the bundle. The masking uses deterministic regex patterns defined in `internal/app/sanitize.go`:
+
+- Connection strings: `proto://user:pass@host` → `proto://<sensitive>@host`
+- PEM private key blocks → `<sensitive>`
+- AWS access key IDs (`AKIA…`) → `<sensitive>`
+- GitHub personal access tokens (`ghp_…`, `github_pat_…`) → `<sensitive>`
+- Slack tokens (`xoxb-…`) → `<sensitive>`
+- Stripe API keys (`sk_live_…`) → `<sensitive>`
+- Generic `key = <value>` assignments for field names like `password`, `api_key`, `secret`, `token`, `client_secret` (value must be ≥12 chars) → `key = <sensitive>`
+
+A warning is printed to stderr for each file where masking occurred. JSON metadata files (`task.json`, `project.json`, `manifest.json`) are NOT scanned — their fields are controlled by the export schema which never captures session IDs, session timestamps, or credentials.
+
+To add or update patterns, edit `sensitiveRules` in `internal/app/sanitize.go`.

@@ -730,7 +730,7 @@ runs the check.
 flow update task <slug> --work-dir <correct-path>
 ```
 
-**Security:** Bundles never contain session IDs, session timestamps, credentials, or any secrets.
+**Security:** Bundles never contain session IDs or session timestamps. All markdown files (briefs, updates, KB) are scanned for common secret patterns (passwords, API keys, tokens, private keys, connection strings) and masked with `<sensitive>` before export. A warning is printed when masking occurs. To fix a masked value after import, the recipient should update the relevant brief or update file manually.
 
 ## 6. The `work_dir` question — rules
 

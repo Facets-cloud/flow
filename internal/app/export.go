@@ -116,6 +116,20 @@ func addFileToTar(tw *tar.Writer, srcPath, tarName string) error {
 	return addBytesToTar(tw, tarName, data)
 }
 
+// addSafeFileToTar reads a text file, masks sensitive content, and writes to tw.
+// It prints a warning to stderr if any masking occurred.
+func addSafeFileToTar(tw *tar.Writer, srcPath, tarName string) error {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return err
+	}
+	cleaned, masked := maskSensitiveContent(data)
+	if masked {
+		fmt.Fprintf(os.Stderr, "  ⚠ sensitive content masked in %s\n", tarName)
+	}
+	return addBytesToTar(tw, tarName, cleaned)
+}
+
 // addUpdatesTar writes all *.md files from updatesDir into tw under tarPrefix/updates/.
 func addUpdatesTar(tw *tar.Writer, updatesDir, tarPrefix string) error {
 	entries, _ := os.ReadDir(updatesDir)
@@ -125,7 +139,7 @@ func addUpdatesTar(tw *tar.Writer, updatesDir, tarPrefix string) error {
 		}
 		src := filepath.Join(updatesDir, e.Name())
 		dst := path.Join(tarPrefix, "updates", e.Name())
-		if err := addFileToTar(tw, src, dst); err != nil {
+		if err := addSafeFileToTar(tw, src, dst); err != nil {
 			return fmt.Errorf("add update %s: %w", e.Name(), err)
 		}
 	}
@@ -279,7 +293,7 @@ func writeTaskBundle(task *flowdb.Task, root, outDir, home string) (string, erro
 	}
 
 	briefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
-	if err := addFileToTar(tw, briefPath, "brief.md"); err != nil && !os.IsNotExist(err) {
+	if err := addSafeFileToTar(tw, briefPath, "brief.md"); err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("brief.md: %w", err)
 	}
 
@@ -373,7 +387,7 @@ func writeProjectBundle(project *flowdb.Project, tasks []*flowdb.Task, root, out
 
 	projRoot := filepath.Join(root, "projects", project.Slug)
 	briefPath := filepath.Join(projRoot, "brief.md")
-	if err := addFileToTar(tw, briefPath, "brief.md"); err != nil && !os.IsNotExist(err) {
+	if err := addSafeFileToTar(tw, briefPath, "brief.md"); err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("project brief.md: %w", err)
 	}
 	if err := addUpdatesTar(tw, filepath.Join(projRoot, "updates"), "."); err != nil {
@@ -391,7 +405,7 @@ func writeProjectBundle(project *flowdb.Project, tasks []*flowdb.Task, root, out
 			return "", fmt.Errorf("write task %s: %w", task.Slug, err)
 		}
 		taskBriefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
-		if err := addFileToTar(tw, taskBriefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+		if err := addSafeFileToTar(tw, taskBriefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("task %s brief.md: %w", task.Slug, err)
 		}
 		taskUpdatesDir := filepath.Join(root, "tasks", task.Slug, "updates")
@@ -492,7 +506,7 @@ func writeAllBundle(projects []*flowdb.Project, tasks []*flowdb.Task, root, outD
 		}
 		projRoot := filepath.Join(root, "projects", project.Slug)
 		briefPath := filepath.Join(projRoot, "brief.md")
-		if err := addFileToTar(tw, briefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+		if err := addSafeFileToTar(tw, briefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("project %s brief.md: %w", project.Slug, err)
 		}
 		if err := addUpdatesTar(tw, filepath.Join(projRoot, "updates"), prefix); err != nil {
@@ -510,7 +524,7 @@ func writeAllBundle(projects []*flowdb.Project, tasks []*flowdb.Task, root, outD
 				return "", fmt.Errorf("write task %s: %w", task.Slug, err)
 			}
 			taskBriefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
-			if err := addFileToTar(tw, taskBriefPath, path.Join(taskPrefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+			if err := addSafeFileToTar(tw, taskBriefPath, path.Join(taskPrefix, "brief.md")); err != nil && !os.IsNotExist(err) {
 				return "", fmt.Errorf("task %s brief.md: %w", task.Slug, err)
 			}
 			if err := addUpdatesTar(tw, filepath.Join(root, "tasks", task.Slug, "updates"), taskPrefix); err != nil {
@@ -531,7 +545,7 @@ func writeAllBundle(projects []*flowdb.Project, tasks []*flowdb.Task, root, outD
 			return "", fmt.Errorf("write floating task %s: %w", task.Slug, err)
 		}
 		briefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
-		if err := addFileToTar(tw, briefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+		if err := addSafeFileToTar(tw, briefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("floating task %s brief.md: %w", task.Slug, err)
 		}
 		if err := addUpdatesTar(tw, filepath.Join(root, "tasks", task.Slug, "updates"), prefix); err != nil {
@@ -542,7 +556,7 @@ func writeAllBundle(projects []*flowdb.Project, tasks []*flowdb.Task, root, outD
 	// KB files.
 	for _, kbFile := range kbFiles(root) {
 		name := filepath.Base(kbFile)
-		if err := addFileToTar(tw, kbFile, path.Join("kb", name)); err != nil && !os.IsNotExist(err) {
+		if err := addSafeFileToTar(tw, kbFile, path.Join("kb", name)); err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("kb/%s: %w", name, err)
 		}
 	}

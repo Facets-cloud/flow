@@ -296,5 +296,39 @@ func TestCmdImportFileNotFound(t *testing.T) {
 	}
 }
 
+func TestCmdImportWritesToFlowRoot(t *testing.T) {
+	// Build a task bundle from a source root.
+	bundle := makeTaskBundle(t, "e2e-import-task", "E2E Import Task", "backlog", "high")
+
+	// Set up a fresh FLOW_ROOT as the import target.
+	importRoot, _ := showListEditDB(t)
+
+	// Run cmdImport — it uses flowRoot() internally, which reads $FLOW_ROOT.
+	out := captureStdout(t, func() {
+		if rc := cmdImport([]string{bundle}); rc != 0 {
+			t.Errorf("cmdImport rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "imported task") {
+		t.Errorf("expected confirmation; out=%q", out)
+	}
+
+	// Verify via cmdShow that the task is queryable through the normal CLI path.
+	showOut := captureStdout(t, func() {
+		if rc := cmdShow([]string{"task", "e2e-import-task"}); rc != 0 {
+			t.Errorf("cmdShow rc=%d", rc)
+		}
+	})
+	if !strings.Contains(showOut, "E2E Import Task") {
+		t.Errorf("task not visible via flow show: %s", showOut)
+	}
+
+	// Verify files on disk under the correct FLOW_ROOT.
+	briefPath := filepath.Join(importRoot, "tasks", "e2e-import-task", "brief.md")
+	if _, err := os.Stat(briefPath); err != nil {
+		t.Errorf("brief.md not written to FLOW_ROOT: %v", err)
+	}
+}
+
 // Suppress unused import warning — flowdb used in test helpers above.
 var _ = json.Marshal
