@@ -77,12 +77,31 @@ func TestMaskSensitiveContentSafeContent(t *testing.T) {
 		"## Done when",
 		"- Deploy to staging",
 		"work_dir: /Users/alice/code",
-		"token: [this is a reference to a design token]", // < 12 chars after colon
+		"token: [this is a reference to a design token]", // brackets not in value charset
 	}
 	for _, c := range cases {
 		out, masked := maskSensitiveContent([]byte(c))
 		if masked {
 			t.Errorf("false positive on %q — got %q", c, out)
+		}
+	}
+}
+
+func TestMaskSensitiveContentShortPassword(t *testing.T) {
+	// Any length value after a sensitive field name must be masked — no minimum.
+	cases := []string{
+		"password=secret123",
+		"password=abc",
+		"pwd=x1y2z3",
+		"secret=val",
+	}
+	for _, c := range cases {
+		out, masked := maskSensitiveContent([]byte(c))
+		if !masked {
+			t.Errorf("expected masking for %q", c)
+		}
+		if !strings.Contains(string(out), "<sensitive>") {
+			t.Errorf("expected <sensitive> in output for %q; got %q", c, out)
 		}
 	}
 }

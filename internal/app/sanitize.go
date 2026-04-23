@@ -48,7 +48,7 @@ var sensitiveRules = []sensitiveRule{
 	// Requires value >= 12 chars to avoid flagging short words like "high" or "done".
 	// Preserves the key name in the output.
 	{
-		re:          regexp.MustCompile(`(?i)((?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret|private[_-]?key|signing[_-]?key|encryption[_-]?key|bearer)\s*[:=]\s*)([A-Za-z0-9+/=_\-\.!@#$%^&*]{12,})`),
+		re:          regexp.MustCompile(`(?i)((?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret|private[_-]?key|signing[_-]?key|encryption[_-]?key|bearer)\s*[:=]\s*)([A-Za-z0-9+/=_\-\.!@#$%^&*]+)`),
 		replacement: "${1}<sensitive>",
 	},
 }
