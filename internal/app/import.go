@@ -93,7 +93,7 @@ func importTaskBundle(db *sql.DB, root string, files map[string][]byte, home str
 
 	taskRoot := filepath.Join(root, "tasks", bt.Slug)
 	skip := map[string]bool{"manifest.json": true, "task.json": true}
-	if err := writeFiles(files, "", taskRoot, skip); err != nil {
+	if err := writeFiles(files, taskRoot, skip); err != nil {
 		return err
 	}
 
@@ -149,7 +149,7 @@ func importProjectBundle(db *sql.DB, root string, files map[string][]byte, home 
 			return err
 		}
 		taskRoot := filepath.Join(root, "tasks", bt.Slug)
-		if err := writeFiles(tFiles, "", taskRoot, map[string]bool{"task.json": true}); err != nil {
+		if err := writeFiles(tFiles, taskRoot, map[string]bool{"task.json": true}); err != nil {
 			return err
 		}
 		printWorkDirWarning(bt.WorkDir, home, bt.Slug)
@@ -186,8 +186,12 @@ func importAllBundle(db *sql.DB, root string, files map[string][]byte, home stri
 				continue
 			}
 			dst := filepath.Join(projRoot, filepath.FromSlash(name))
-			os.MkdirAll(filepath.Dir(dst), 0o755)
-			os.WriteFile(dst, data, 0o644)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(dst, data, 0o644); err != nil {
+				return err
+			}
 		}
 		importedProj++
 
@@ -205,7 +209,9 @@ func importAllBundle(db *sql.DB, root string, files map[string][]byte, home stri
 				return err
 			}
 			taskRoot := filepath.Join(root, "tasks", bt.Slug)
-			writeFiles(tFiles, "", taskRoot, map[string]bool{"task.json": true})
+			if err := writeFiles(tFiles, taskRoot, map[string]bool{"task.json": true}); err != nil {
+				return err
+			}
 			importedTask++
 		}
 	}
@@ -223,7 +229,9 @@ func importAllBundle(db *sql.DB, root string, files map[string][]byte, home stri
 			return err
 		}
 		taskRoot := filepath.Join(root, "tasks", bt.Slug)
-		writeFiles(tFiles, "", taskRoot, map[string]bool{"task.json": true})
+		if err := writeFiles(tFiles, taskRoot, map[string]bool{"task.json": true}); err != nil {
+			return err
+		}
 		importedTask++
 	}
 
@@ -233,8 +241,12 @@ func importAllBundle(db *sql.DB, root string, files map[string][]byte, home stri
 			continue
 		}
 		dst := filepath.Join(root, filepath.FromSlash(name))
-		os.MkdirAll(filepath.Dir(dst), 0o755)
-		os.WriteFile(dst, data, 0o644)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("imported %d projects, %d tasks\n", importedProj, importedTask)
@@ -245,7 +257,9 @@ func importAllBundle(db *sql.DB, root string, files map[string][]byte, home stri
 
 func upsertTask(db *sql.DB, bt bundledTask, targetSlug, home string, force bool) error {
 	var exists int
-	db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE slug = ?`, targetSlug).Scan(&exists)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE slug = ?`, targetSlug).Scan(&exists); err != nil {
+		return fmt.Errorf("check task existence: %w", err)
+	}
 	if exists > 0 && !force {
 		return fmt.Errorf("task %q already exists; use --force to overwrite", targetSlug)
 	}
@@ -286,7 +300,9 @@ func upsertTask(db *sql.DB, bt bundledTask, targetSlug, home string, force bool)
 
 func upsertProject(db *sql.DB, bp bundledProject, home string, force bool) error {
 	var exists int
-	db.QueryRow(`SELECT COUNT(*) FROM projects WHERE slug = ?`, bp.Slug).Scan(&exists)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM projects WHERE slug = ?`, bp.Slug).Scan(&exists); err != nil {
+		return fmt.Errorf("check project existence: %w", err)
+	}
 	if exists > 0 && !force {
 		return fmt.Errorf("project %q already exists; use --force to overwrite", bp.Slug)
 	}
@@ -308,7 +324,7 @@ func upsertProject(db *sql.DB, bp bundledProject, home string, force bool) error
 
 // writeFiles writes files map entries (except skip entries) to dstRoot.
 // Tar paths are forward-slash; filepath.FromSlash converts for the OS.
-func writeFiles(files map[string][]byte, _ string, dstRoot string, skip map[string]bool) error {
+func writeFiles(files map[string][]byte, dstRoot string, skip map[string]bool) error {
 	for name, data := range files {
 		if skip[name] {
 			continue
