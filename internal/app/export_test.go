@@ -221,5 +221,111 @@ func TestExpandHome(t *testing.T) {
 	}
 }
 
+// ---------- export project tests ----------
+
+func TestExportProjectCreatesBundle(t *testing.T) {
+	root, db := showListEditDB(t)
+	home := root
+	t.Setenv("HOME", home)
+
+	insertProject(t, db, "my-proj", "My Project", filepath.Join(home, "code", "proj"), "high")
+	insertTask(t, db, "task-a", "Task A", "in-progress", "high", filepath.Join(home, "code", "proj"), "my-proj")
+	insertTask(t, db, "task-b", "Task B", "backlog", "medium", filepath.Join(home, "code", "proj"), "my-proj")
+
+	projDir := filepath.Join(root, "projects", "my-proj")
+	os.MkdirAll(filepath.Join(projDir, "updates"), 0o755)
+	os.WriteFile(filepath.Join(projDir, "brief.md"), []byte("# My Project"), 0o644)
+
+	for _, slug := range []string{"task-a", "task-b"} {
+		td := filepath.Join(root, "tasks", slug)
+		os.MkdirAll(filepath.Join(td, "updates"), 0o755)
+		os.WriteFile(filepath.Join(td, "brief.md"), []byte("# "+slug), 0o644)
+	}
+	os.WriteFile(filepath.Join(root, "tasks", "task-a", "updates", "2026-04-23-note.md"), []byte("note"), 0o644)
+
+	outDir := t.TempDir()
+	out := captureStdout(t, func() {
+		if rc := cmdExport([]string{"project", "my-proj", "--output", outDir}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+
+	tarPath := strings.TrimSpace(out)
+	if _, err := os.Stat(tarPath); err != nil {
+		t.Fatalf("bundle missing: %v", err)
+	}
+
+	mfData := readTarEntry(t, tarPath, "manifest.json")
+	var mf bundleManifest
+	json.Unmarshal(mfData, &mf)
+	if mf.Type != "project" || mf.Slug != "my-proj" {
+		t.Errorf("manifest wrong: %+v", mf)
+	}
+
+	pData := readTarEntry(t, tarPath, "project.json")
+	var bp bundledProject
+	json.Unmarshal(pData, &bp)
+	if bp.Slug != "my-proj" {
+		t.Errorf("project.json slug wrong: %q", bp.Slug)
+	}
+	if !strings.HasPrefix(bp.WorkDir, "<HOME>") {
+		t.Errorf("project work_dir not masked: %q", bp.WorkDir)
+	}
+
+	if !tarContains(t, tarPath, "tasks/task-a/task.json") {
+		t.Errorf("tasks/task-a/task.json missing")
+	}
+	if !tarContains(t, tarPath, "tasks/task-b/task.json") {
+		t.Errorf("tasks/task-b/task.json missing")
+	}
+	if !tarContains(t, tarPath, "tasks/task-a/brief.md") {
+		t.Errorf("tasks/task-a/brief.md missing")
+	}
+	if !tarContains(t, tarPath, "tasks/task-a/updates/2026-04-23-note.md") {
+		t.Errorf("task-a update file missing")
+	}
+	if !tarContains(t, tarPath, "brief.md") {
+		t.Errorf("project brief.md missing")
+	}
+}
+
+func TestExportProjectMissingSlugErrors(t *testing.T) {
+	_, _ = showListEditDB(t)
+	if rc := cmdExport([]string{"project"}); rc != 2 {
+		t.Errorf("rc=%d, want 2", rc)
+	}
+}
+
+func TestExportProjectUnknownSlugErrors(t *testing.T) {
+	_, _ = showListEditDB(t)
+	out := captureStdout(t, func() {
+		if rc := cmdExport([]string{"project", "ghost"}); rc != 1 {
+			t.Errorf("expected rc=1")
+		}
+	})
+	if !strings.Contains(out, "ghost") {
+		t.Errorf("expected slug in error; out=%q", out)
+	}
+}
+
+func TestExportProjectNoTasks(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "empty-proj", "Empty", filepath.Join(root, "x"), "medium")
+
+	outDir := t.TempDir()
+	out := captureStdout(t, func() {
+		if rc := cmdExport([]string{"project", "empty-proj", "--output", outDir}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	tarPath := strings.TrimSpace(out)
+	if _, err := os.Stat(tarPath); err != nil {
+		t.Errorf("bundle missing: %v", err)
+	}
+	if !tarContains(t, tarPath, "project.json") {
+		t.Errorf("project.json missing")
+	}
+}
+
 // Dummy reference to flowdb to avoid unused import if needed.
 var _ = flowdb.TaskFilter{}

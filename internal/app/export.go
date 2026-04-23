@@ -292,10 +292,116 @@ func writeTaskBundle(task *flowdb.Task, root, outDir, home string) (string, erro
 	return outPath, nil
 }
 
-// Stubs for Tasks 2 and 3 — replaced in subsequent tasks.
-func exportProjectCmd(_ []string) int {
-	fmt.Fprintln(os.Stderr, "error: export project not yet implemented")
-	return 1
+func exportProjectCmd(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "error: export project requires a slug")
+		return 2
+	}
+	slug := args[0]
+	fs := flagSet("export project")
+	outDir := fs.String("output", ".", "directory to write bundle")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	project, err := flowdb.GetProject(db, slug)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: project %q not found\n", slug)
+		return 1
+	}
+
+	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{Project: slug, IncludeArchived: true})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: list tasks: %v\n", err)
+		return 1
+	}
+
+	root, err := flowRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	home, _ := os.UserHomeDir()
+
+	outPath, err := writeProjectBundle(project, tasks, root, *outDir, home)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Println(outPath)
+	return 0
+}
+
+func writeProjectBundle(project *flowdb.Project, tasks []*flowdb.Task, root, outDir, home string) (string, error) {
+	filename := fmt.Sprintf("flow-project-%s-%s.tar", project.Slug, time.Now().Format("20060102"))
+	ok := false
+	outPath, tw, cleanup, err := newTarFile(outDir, filename)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup(&ok)
+
+	mf := bundleManifest{Type: "project", Version: "1", ExportedAt: time.Now().Format(time.RFC3339), Slug: project.Slug}
+	b, err := marshalJSON(mf)
+	if err != nil {
+		return "", fmt.Errorf("marshal manifest: %w", err)
+	}
+	if err := addBytesToTar(tw, "manifest.json", b); err != nil {
+		return "", fmt.Errorf("write manifest: %w", err)
+	}
+
+	bp := projectFromDB(project, home)
+	b, err = marshalJSON(bp)
+	if err != nil {
+		return "", fmt.Errorf("marshal project: %w", err)
+	}
+	if err := addBytesToTar(tw, "project.json", b); err != nil {
+		return "", fmt.Errorf("write project.json: %w", err)
+	}
+
+	projRoot := filepath.Join(root, "projects", project.Slug)
+	briefPath := filepath.Join(projRoot, "brief.md")
+	if err := addFileToTar(tw, briefPath, "brief.md"); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("project brief.md: %w", err)
+	}
+	if err := addUpdatesTar(tw, filepath.Join(projRoot, "updates"), "."); err != nil {
+		return "", err
+	}
+
+	for _, task := range tasks {
+		prefix := path.Join("tasks", task.Slug)
+		bt := taskFromDB(task, home)
+		b, err := marshalJSON(bt)
+		if err != nil {
+			return "", fmt.Errorf("marshal task %s: %w", task.Slug, err)
+		}
+		if err := addBytesToTar(tw, path.Join(prefix, "task.json"), b); err != nil {
+			return "", fmt.Errorf("write task %s: %w", task.Slug, err)
+		}
+		taskBriefPath := filepath.Join(root, "tasks", task.Slug, "brief.md")
+		if err := addFileToTar(tw, taskBriefPath, path.Join(prefix, "brief.md")); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("task %s brief.md: %w", task.Slug, err)
+		}
+		taskUpdatesDir := filepath.Join(root, "tasks", task.Slug, "updates")
+		if err := addUpdatesTar(tw, taskUpdatesDir, prefix); err != nil {
+			return "", err
+		}
+	}
+
+	ok = true
+	return outPath, nil
 }
 
 func exportAllCmd(_ []string) int {
