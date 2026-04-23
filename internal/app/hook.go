@@ -74,8 +74,8 @@ func cmdHookSessionStart(args []string) int {
 			"The `kb:` section of `flow show task` lists the knowledge-base files "+
 			"(durable facts about the user, org, products, processes, business). "+
 			"DO NOT read these eagerly on every turn — lazy-load only when the current "+
-			"task requires that context (e.g. a brief that uses Facets terminology you "+
-			"don't know, a question about who someone is, a request for org context). "+
+			"task requires that context (e.g. a brief that uses domain-specific terminology "+
+			"you don't recognize, a question about who someone is, a request for org context). "+
 			"Throughout the session, if the user shares a durable fact about themselves, "+
 			"the org, products, processes, or business, append it to the matching kb "+
 			"file on the fly — no permission needed — per the flow skill's §4.10.",

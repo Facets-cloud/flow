@@ -151,10 +151,10 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	step("list projects", cmdList([]string{"projects"}))
 
 	// 12. waiting
-	step("waiting set", cmdWaiting([]string{"fix-auth-token-expiry", "Anshul review"}))
+	step("waiting set", cmdWaiting([]string{"fix-auth-token-expiry", "Alice review"}))
 	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
-	if !task.WaitingOn.Valid || task.WaitingOn.String != "Anshul review" {
-		t.Errorf("waiting_on = %v, want Anshul review", task.WaitingOn)
+	if !task.WaitingOn.Valid || task.WaitingOn.String != "Alice review" {
+		t.Errorf("waiting_on = %v, want Alice review", task.WaitingOn)
 	}
 
 	step("waiting clear", cmdWaiting([]string{"fix-auth-token-expiry", "--clear"}))

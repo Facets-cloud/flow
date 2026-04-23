@@ -32,10 +32,10 @@ var newUUID = func() (string, error) {
 // not public): the characters `/`, `.`, and `_` are each replaced by `-`.
 // Other characters pass through unchanged. Samples:
 //
-//	/Users/rohit/control-plane               → -Users-rohit-control-plane
-//	/Users/rohit/.flow/tasks/foo/workspace   → -Users-rohit--flow-tasks-foo-workspace
-//	/Users/rohit/.paperclip/.../_default     → -Users-rohit--paperclip-...--default
-//	/Users/rohit/facets-iac/.../1_input_instance → ...-1-input-instance
+//	/Users/alice/code/myapp                      → -Users-alice-code-myapp
+//	/Users/alice/.flow/tasks/foo/workspace       → -Users-alice--flow-tasks-foo-workspace
+//	/Users/alice/.cache/work/_default            → -Users-alice--cache-work--default
+//	/Users/alice/monorepo/.../1_input_instance   → ...-1-input-instance
 //
 // If CC introduces a new substitution in a future version, add the char
 // here and update TestEncodeCwdForClaude with a sample confirming it.

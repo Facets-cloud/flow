@@ -232,7 +232,7 @@ question: ..." in the brief and move on.
    the user's one-sentence framing.
 2. **Why?** Why is this worth doing now? Business reason, user pain,
    self-motivated curiosity — whatever the user actually says. If they
-   say "just because", write "Because Rohit wants to." Don't editorialize.
+   say "just because", write "Because my manager wants to." Don't editorialize.
 3. **Where?** Which codebase or filesystem location. This is where the
    `work_dir` question happens — see §6 for the full recipe.
 4. **Done when?** Concrete acceptance criteria. Bullet form. "Users can
@@ -590,8 +590,8 @@ category of fact. Signals that it's time to Read one:
 - The user asks "how do we usually do X?" or "what's our convention
   for Y?" → read `processes.md`.
 - A brief or CLAUDE.md uses terminology you don't recognize (e.g.
-  "blueprint", "spec field", "output interface") → read the relevant
-  kb file for definitions.
+  an internal codename, a product term, a legacy component name) →
+  read the relevant kb file for definitions.
 - You're generating cross-cutting advice ("how should I approach
   this?") that would benefit from context about the user's role,
   organization, or product suite.

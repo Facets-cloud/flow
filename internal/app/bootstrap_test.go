@@ -43,22 +43,22 @@ func TestEncodeCwdForClaude(t *testing.T) {
 		cwd, want string
 	}{
 		// Plain path — only slashes transform.
-		{"/Users/rohit/code/flow", "-Users-rohit-code-flow"},
+		{"/Users/alice/code/myapp", "-Users-alice-code-myapp"},
 		// Dotfile segment: `.flow` becomes `-flow`, producing a double
-		// dash after `rohit`.
-		{"/Users/rohit/.flow/tasks/review-unni-prs/workspace",
-			"-Users-rohit--flow-tasks-review-unni-prs-workspace"},
+		// dash after `alice`.
+		{"/Users/alice/.flow/tasks/add-oauth/workspace",
+			"-Users-alice--flow-tasks-add-oauth-workspace"},
 		// Underscores in a path segment also transform — observed on
-		// facets-iac module paths.
-		{"/Users/rohit/facets-iac/capillary-cloud-tf/modules/1_input_instance/application_gcp",
-			"-Users-rohit-facets-iac-capillary-cloud-tf-modules-1-input-instance-application-gcp"},
-		// Underscore-prefix dir — seen in paperclip workspace trees;
+		// Terraform module paths with numeric prefixes.
+		{"/Users/alice/monorepo/tf/modules/1_input_instance/application_gcp",
+			"-Users-alice-monorepo-tf-modules-1-input-instance-application-gcp"},
+		// Underscore-prefix dir — seen in some workspace trees;
 		// `/_default` becomes `--default`.
-		{"/Users/rohit/.paperclip/instances/default/projects/abc/def/_default",
-			"-Users-rohit--paperclip-instances-default-projects-abc-def--default"},
+		{"/Users/alice/.workspaces/instances/default/projects/abc/def/_default",
+			"-Users-alice--workspaces-instances-default-projects-abc-def--default"},
 		// Hyphens, digits, and mixed case pass through unchanged.
-		{"/Users/rohit/Downloads/coinswitch-charts-45dae5e1171f",
-			"-Users-rohit-Downloads-coinswitch-charts-45dae5e1171f"},
+		{"/Users/alice/Downloads/my-charts-45dae5e1171f",
+			"-Users-alice-Downloads-my-charts-45dae5e1171f"},
 	}
 	for _, tc := range cases {
 		if got := EncodeCwdForClaude(tc.cwd); got != tc.want {
