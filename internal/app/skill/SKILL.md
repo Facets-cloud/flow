@@ -147,12 +147,13 @@ Read
   flow list projects [--status active|done] [--include-archived]
 
 Edit / mutate
-  flow edit      <ref>           opens brief.md in $EDITOR, bumps updated_at
-  flow priority  <ref> high|medium|low
-  flow waiting   <ref> "<who or what>"
-  flow waiting   <ref> --clear
-  flow archive   <ref>
-  flow unarchive <ref>
+  flow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at
+  flow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+  flow priority    <ref> high|medium|low
+  flow waiting     <ref> "<who or what>"
+  flow waiting     <ref> --clear
+  flow archive     <ref>
+  flow unarchive   <ref>
 
 Workdirs
   flow workdir list
@@ -899,6 +900,30 @@ long to read at once.
 **When to use:** When the brief and updates for a sibling task don't
 give you enough context, or when you need to understand specific
 implementation decisions made during that task's session.
+
+### Manual repair — `flow update task`
+
+Escape hatch when the DB drifts from reality. Two fields can be
+corrected:
+
+```
+flow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+```
+
+When to use:
+
+- **`--session-id <uuid>`** — the user spawned a Claude session outside
+  `flow do` (e.g. plain `claude` in a terminal) and wants flow to track
+  that session going forward. Or: a session jsonl was restored from a
+  backup under a different UUID and they want `flow do` to resume it.
+  UUID must be v4 format — claude enforces that on `--session-id`.
+- **`--work-dir <path>`** — the repo moved on disk (renamed parent,
+  moved between drives, cloned to a new path). Pass `--mkdir` if the
+  new path doesn't exist yet.
+
+Both flags are optional but at least one must be given. This is a
+manual correction tool — do not run it as a workaround for a bug in
+`flow do`; surface the bug instead.
 
 ## 10. Environment variables flow sets
 

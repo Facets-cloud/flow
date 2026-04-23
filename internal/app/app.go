@@ -31,6 +31,8 @@ func Run(args []string) int {
 		return cmdList(rest)
 	case "edit":
 		return cmdEdit(rest)
+	case "update":
+		return cmdUpdate(rest)
 	case "archive":
 		return cmdArchive(rest)
 	case "unarchive":
@@ -82,8 +84,9 @@ Read:
   flow list projects [--status ...] [--include-archived]
 
 Edit / mutate:
-  flow edit      <ref>
-  flow due       <ref> <date> | --clear                    (set or clear due date; date: YYYY-MM-DD, today, tomorrow, monday, 3d)
+  flow edit        <ref>
+  flow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+  flow due         <ref> <date> | --clear                    (set or clear due date; date: YYYY-MM-DD, today, tomorrow, monday, 3d)
   flow priority  <ref> high|medium|low
   flow waiting   <ref> "<who or what>" | --clear
   flow archive   <ref>
