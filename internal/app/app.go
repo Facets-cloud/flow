@@ -49,6 +49,10 @@ func Run(args []string) int {
 		return cmdTranscript(rest)
 	case "hook":
 		return cmdHook(rest)
+	case "export":
+		return cmdExport(rest)
+	case "import":
+		return cmdImport(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -96,5 +100,11 @@ Workdirs:
   flow workdir list
   flow workdir add <path> [--name <nickname>]
   flow workdir remove <path>
-  flow workdir scan [<root>] [--add]`)
+  flow workdir scan [<root>] [--add]
+
+Share / handoff:
+  flow export task    <slug> [--output <dir>]
+  flow export project <slug> [--output <dir>]
+  flow export all           [--output <dir>]
+  flow import <file> [--force]`)
 }

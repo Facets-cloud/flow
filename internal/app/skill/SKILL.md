@@ -694,6 +694,44 @@ topics) — that state only exists inside the running conversation. The
 hook's job is to make sure the skill is loaded; the skill is what
 runs the check.
 
+### 4.12 Export and import (`flow export` / `flow import`)
+
+**Triggers:** "export this task", "share this project", "hand off to a teammate",
+"export everything", "send my tasks", "import a bundle", "receive a handoff",
+"migrate to another machine", "give someone my tasks".
+
+**Export recipe:**
+
+1. Ask what to export using `AskUserQuestion`:
+   - header: "Export scope"
+   - options: ["This task (`flow export task`)", "A project (`flow export project`)", "Everything (`flow export all`)"]
+2. If task: use `$FLOW_TASK` if set, otherwise ask for the slug.
+   If project: use `$FLOW_PROJECT` if set, otherwise ask for the slug.
+3. Ask where to save with `AskUserQuestion`:
+   - header: "Output dir"
+   - options: ["Current directory (default)", "~/Desktop", "Custom path"]
+   - If "Custom path": ask the user to type it.
+4. Run the appropriate command:
+   ```
+   flow export task <slug> [--output <dir>]
+   flow export project <slug> [--output <dir>]
+   flow export all [--output <dir>]
+   ```
+5. Print the bundle path and tell the user to send the `.tar` file to their teammate.
+
+**Import recipe:**
+
+1. Run: `flow import <file>` (the `.tar` file received from the sender).
+2. If there is a conflict error, offer `--force` (overwrite) via `AskUserQuestion`.
+3. After success: run `flow show task <slug>` or `flow list tasks` to confirm.
+
+**Work-dir note:** `work_dir` paths are portable — the source machine's `$HOME` is replaced with `<HOME>` on export and expanded back to the target's `$HOME` on import. If the path doesn't exist on the target machine, a warning appears. Fix it with:
+```
+flow update task <slug> --work-dir <correct-path>
+```
+
+**Security:** Bundles never contain session IDs, session timestamps, credentials, or any secrets.
+
 ## 6. The `work_dir` question — rules
 
 When you're about to ask the user "where does this task live?", run
