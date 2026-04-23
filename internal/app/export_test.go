@@ -327,5 +327,30 @@ func TestExportProjectNoTasks(t *testing.T) {
 	}
 }
 
+func TestExportProjectIncludesArchivedTasks(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "arch-proj", "Arch Project", filepath.Join(root, "x"), "medium")
+	insertTask(t, db, "active-t", "Active", "backlog", "medium", filepath.Join(root, "x"), "arch-proj")
+	insertTask(t, db, "archived-t", "Archived", "done", "low", filepath.Join(root, "x"), "arch-proj")
+	// Archive the second task.
+	if _, err := db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, flowdb.NowISO(), "archived-t"); err != nil {
+		t.Fatalf("archive task: %v", err)
+	}
+
+	outDir := t.TempDir()
+	out := captureStdout(t, func() {
+		if rc := cmdExport([]string{"project", "arch-proj", "--output", outDir}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	tarPath := strings.TrimSpace(out)
+	if !tarContains(t, tarPath, "tasks/active-t/task.json") {
+		t.Errorf("active task missing from bundle")
+	}
+	if !tarContains(t, tarPath, "tasks/archived-t/task.json") {
+		t.Errorf("archived task missing from bundle — IncludeArchived must be true")
+	}
+}
+
 // Dummy reference to flowdb to avoid unused import if needed.
 var _ = flowdb.TaskFilter{}
