@@ -54,11 +54,10 @@ func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 	}
 }
 
-// TestHookSessionStartRequiresSkillInvocation pins the requirement from
-// brief fix-register-session-path-encoding-always: the injected
-// additionalContext must explicitly instruct the session to invoke the
-// flow skill via the Skill tool, and must position it BEFORE
-// register-session (so skill load does not depend on registration).
+// TestHookSessionStartRequiresSkillInvocation pins the invariant that
+// the injected additionalContext explicitly instructs the session to
+// invoke the flow skill via the Skill tool as its first action, and
+// mentions the task slug so the agent has something anchor-visible.
 func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
 	t.Setenv("FLOW_TASK", "some-slug")
 	out := captureStdout(t, func() {
@@ -86,17 +85,11 @@ func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
 	if !strings.Contains(ctx, "`flow` skill") {
 		t.Errorf("additionalContext must name the `flow` skill, got:\n%s", ctx)
 	}
-	// Skill invocation must come before register-session so skill load
-	// is not gated on registration success.
-	skillIdx := strings.Index(ctx, "Skill tool")
-	regIdx := strings.Index(ctx, "flow register-session")
-	if skillIdx < 0 || regIdx < 0 {
-		t.Fatalf("skill or register-session phrase missing from context:\n%s", ctx)
+	// Self-registration is gone — the UUID is pre-allocated by `flow do`.
+	// Make sure we don't regress by re-introducing it here.
+	if strings.Contains(ctx, "register-session") {
+		t.Errorf("additionalContext should not mention register-session (pre-allocated by flow do):\n%s", ctx)
 	}
-	if skillIdx > regIdx {
-		t.Errorf("skill invocation must precede register-session; skill@%d reg@%d", skillIdx, regIdx)
-	}
-	// Must mention the task slug verbatim for agent-visible context.
 	if !strings.Contains(ctx, "some-slug") {
 		t.Errorf("additionalContext should mention the task slug, got:\n%s", ctx)
 	}
@@ -112,13 +105,8 @@ func TestBuildBootstrapPromptInvokesSkill(t *testing.T) {
 	if !strings.Contains(prompt, "Skill tool") {
 		t.Errorf("bootstrap prompt must instruct Skill tool invocation:\n%s", prompt)
 	}
-	skillIdx := strings.Index(prompt, "Skill tool")
-	regIdx := strings.Index(prompt, "flow register-session")
-	if skillIdx < 0 || regIdx < 0 {
-		t.Fatalf("skill or register-session phrase missing:\n%s", prompt)
-	}
-	if skillIdx > regIdx {
-		t.Errorf("skill invocation must precede register-session; skill@%d reg@%d", skillIdx, regIdx)
+	if strings.Contains(prompt, "register-session") {
+		t.Errorf("bootstrap prompt should not mention register-session (pre-allocated by flow do):\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "task-x") {
 		t.Errorf("bootstrap prompt must mention the task slug")

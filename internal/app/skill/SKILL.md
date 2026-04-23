@@ -136,7 +136,6 @@ Create
 Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions]
   flow done             <ref>
-  flow register-session [<slug>] [--force]    (execution session's first action — self-report session_id)
 
 Read
   flow show task    [<ref>]     (defaults to $FLOW_TASK)
@@ -670,7 +669,7 @@ evidence:
 
 2. **On "Yes, new task":** enter the §5.2 task-intake interview.
    Derive a task name from what you just observed (e.g. "Fix
-   register-session encoding bug I stumbled on while reviewing PRs").
+   rate-limiter bug I stumbled on while reviewing PRs").
    Use the same project as `$FLOW_PROJECT` only if the new work
    genuinely belongs there; otherwise leave it floating or attach to
    a different project per the user's answer during intake. After
@@ -813,28 +812,16 @@ Projects use a shorter template: `What / Why / Where / Scope`. No
 
 ## 9. The execution-session bootstrap contract
 
-When `flow do <task>` spawns a fresh Claude session in a new iTerm tab,
-it does NOT pre-allocate a session_id. The DB row's `session_id` stays
-`NULL` until the new session self-reports. The execution session is
-expected to (a) load this skill via the `Skill` tool, so the rest of
-§5 applies, and (b) call `flow register-session` to capture its own
-UUID. Those two steps are independent — skill invocation never
-depends on register-session succeeding, and vice versa.
+When `flow do <task>` spawns a Claude session in a new iTerm tab, it
+pre-allocates a UUID, writes it to `tasks.session_id` before spawning,
+and passes it to `claude --session-id <uuid>`. This makes the session's
+jsonl file appear at the deterministic path
+`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. There is no
+self-registration step — the DB is authoritative from the moment the
+tab opens.
 
-`flow register-session`:
-
-1. Reads `$FLOW_TASK` (set by `flow do` when spawning the tab).
-2. Looks up the task's `work_dir`.
-3. Scans `~/.claude/projects/<encoded-cwd>/*.jsonl` for the newest file —
-   the session's own jsonl, currently being written. If that lookup
-   misses (e.g. because CC changed its path-encoding rule in a future
-   version), it falls back to scanning every subdir of
-   `~/.claude/projects/` for a jsonl whose recorded `cwd` matches the
-   task's work_dir.
-4. UPDATEs `tasks.session_id` with that file's UUID.
-
-Subsequent `flow do <same-task>` calls will see the now-populated
-`session_id` and spawn `claude --resume <uuid>` instead of a fresh tab.
+Subsequent `flow do <same-task>` calls read that UUID and spawn
+`claude --resume <uuid>` to continue the same conversation.
 
 **If you are the execution session spawned by `flow do`:**
 
@@ -845,23 +832,9 @@ proposing any plan:
    session-start` output already names this step, but the hook is
    belt-and-braces — the Skill tool is the authoritative way to load
    the operating manual that governs workflows, KB discipline, and
-   scope-creep detection. Do this FIRST. It is not gated on any
-   other step; if register-session later fails, the skill still
-   applies.
+   scope-creep detection.
 
-2. **Self-register your session_id:**
-   ```
-   flow register-session
-   ```
-   No arguments — it uses `$FLOW_TASK`. This writes your session UUID
-   to the DB so future `flow do` calls can `claude --resume` you.
-   If it fails with "no *.jsonl found", run `sleep 1 && flow
-   register-session` once and try again. If it still fails, warn the
-   user and continue — the session works, it just won't be resumable.
-   If it says "session already registered", another `flow do` won the
-   race; your tab is a duplicate, ask the user whether to close it.
-
-3. **Load the task context:**
+2. **Load the task context:**
    ```
    flow show task
    ```
@@ -874,7 +847,7 @@ proposing any plan:
    **Do NOT read the `kb:` files at bootstrap.** They're lazy-loaded
    on demand — see §5.10 for when to actually Read them.
 
-4. **Load the parent project context, if any.** If `flow show task`
+3. **Load the parent project context, if any.** If `flow show task`
    printed a `project:` line that isn't `(floating)`, run:
    ```
    flow show project <project-slug>
@@ -890,13 +863,13 @@ proposing any plan:
 
    Again, skip the project's `kb:` section at bootstrap.
 
-5. **Load repo conventions.** Read `CLAUDE.md` in your `work_dir` (if
+4. **Load repo conventions.** Read `CLAUDE.md` in your `work_dir` (if
    present), plus any nested `CLAUDE.md` files under subdirectories
    you plan to modify. These are authoritative for build commands,
    test commands, style, and gotchas — they override any assumption
    you might make from the brief.
 
-6. **Only then begin work.** If any brief section is blank or
+5. **Only then begin work.** If any brief section is blank or
    unclear, ASK the user before inferring. If the user didn't
    specify a "Done when" in the brief, confirm acceptance criteria
    with them before making changes.
@@ -929,7 +902,9 @@ implementation decisions made during that task's session.
 
 ## 10. Environment variables flow sets
 
-When `flow do <task>` spawns an iTerm tab, it exports:
+When `flow do <task>` spawns an iTerm tab, it attaches these env vars
+to the `flowde`/`claude` process (inline on the command line — they do
+NOT persist in the tab's shell after claude exits):
 
 - `FLOW_TASK=<task-slug>` — the current task
 - `FLOW_PROJECT=<project-slug>` — the current project, if the task has one
@@ -938,7 +913,6 @@ Use these as defaults:
 
 - `flow show task` with no argument reads `$FLOW_TASK`.
 - `flow show project` with no argument reads `$FLOW_PROJECT`.
-- `flow register-session` with no argument reads `$FLOW_TASK`.
 - When saving a progress note, assume the current task is `$FLOW_TASK`
   unless the user says otherwise.
 

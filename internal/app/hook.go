@@ -62,16 +62,12 @@ func cmdHookSessionStart(args []string) int {
 			"operating manual for this session: it defines the bootstrap contract, "+
 			"the workflows for starting/saving/logging/archiving work, KB scoop "+
 			"discipline, and the scope-creep detection that keeps unrelated work "+
-			"from landing in the wrong task. Do this FIRST, and do it even if a "+
-			"later step in this list fails — the skill does not depend on "+
-			"register-session succeeding. "+
-			"(2) run `flow register-session` to ensure your session_id is captured "+
-			"(idempotent, no-op on resume); "+
-			"(3) run `flow show task` and use your Read tool on the file at the "+
+			"from landing in the wrong task. "+
+			"(2) run `flow show task` and use your Read tool on the file at the "+
 			"`brief:` path AND every file listed under `updates:`; "+
-			"(4) if a project is listed on the task, run `flow show project <that-slug>` "+
+			"(3) if a project is listed on the task, run `flow show project <that-slug>` "+
 			"and Read its brief and updates too; "+
-			"(5) Read `CLAUDE.md` in your work_dir and any nested CLAUDE.md under "+
+			"(4) Read `CLAUDE.md` in your work_dir and any nested CLAUDE.md under "+
 			"subdirectories you plan to modify. "+
 			"Only then proceed with the user's request. "+
 			"If any brief section is blank or unclear, ASK — do not infer. "+

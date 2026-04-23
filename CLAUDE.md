@@ -43,7 +43,6 @@ flow/
 │   │   ├── init.go                  # flow init, flowRoot(), kbSeeds()
 │   │   ├── list.go                  # flow list tasks|projects
 │   │   ├── priority.go              # flow priority
-│   │   ├── register.go              # flow register-session
 │   │   ├── show.go                  # flow show task|project
 │   │   ├── skill.go                 # flow skill install|uninstall|update
 │   │   ├── transcript.go            # flow transcript — session jsonl reader

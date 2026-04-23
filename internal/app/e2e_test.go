@@ -40,19 +40,14 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	claudeRunner = func(slug, prompt string) error { return nil }
 	t.Cleanup(func() { claudeRunner = oldClaude })
 
-	// Fake "execution session just started writing its jsonl" so
-	// cmdRegisterSession has a file to discover. The newest file in
-	// the encoded work_dir wins, which is what register-session uses.
-	simulateSessionFile := func(workDir, sid string) {
-		encoded := EncodeCwdForClaude(workDir)
-		sessionDir := filepath.Join(tmp, ".claude", "projects", encoded)
-		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(sessionDir, sid+".jsonl"), []byte("{}"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Pin the UUID `flow do` allocates so downstream assertions can
+	// reference a known session_id. In production, newUUID produces a
+	// random v4 UUID that is also written to tasks.session_id before
+	// the iTerm tab spawns and passed to `claude --session-id`.
+	const fixedSID = "e2e-session-uuid"
+	oldNewUUID := newUUID
+	newUUID = func() (string, error) { return fixedSID, nil }
+	t.Cleanup(func() { newUUID = oldNewUUID })
 
 	step := func(name string, rc int) {
 		t.Helper()
@@ -91,8 +86,9 @@ func TestE2EFullRoundtrip(t *testing.T) {
 		t.Fatalf("floating task workspace not created: %v", err)
 	}
 
-	// 5. do — spawns a fresh tab; session_id stays NULL until the
-	// execution session calls register-session.
+	// 5. do — pre-allocates the session UUID and spawns the tab. The
+	// session_id lands in the DB synchronously; no self-registration
+	// step is needed.
 	step("do", cmdDo([]string{"fix-auth-token-expiry"}))
 	db, err := flowdb.OpenDB(filepath.Join(flowRoot, "flow.db"))
 	if err != nil {
@@ -103,42 +99,36 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.SessionID.Valid {
-		t.Errorf("session_id should be NULL after fresh spawn (got %q)", task.SessionID.String)
+	if !task.SessionID.Valid || task.SessionID.String != fixedSID {
+		t.Errorf("session_id after fresh spawn: got %+v, want %s", task.SessionID, fixedSID)
 	}
 	if task.Status != "in-progress" {
 		t.Errorf("status = %q, want in-progress", task.Status)
 	}
 
-	// 5b. Simulate the execution session writing its own jsonl file, then
-	// calling `flow register-session` as its first Bash action. Under
-	// the real flow this happens inside claude; here we replay it.
-	simulateSessionFile(task.WorkDir, "e2e-session-uuid")
-	t.Setenv("FLOW_TASK", "fix-auth-token-expiry")
-	step("register-session", cmdRegisterSession(nil))
-	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
-	if !task.SessionID.Valid || task.SessionID.String != "e2e-session-uuid" {
-		t.Errorf("session_id after register: got %+v, want e2e-session-uuid", task.SessionID)
-	}
-
-	// 5c. Write real jsonl content so transcript can parse it.
+	// 5b. Write real jsonl content at the path claude would have used
+	// given our pre-allocated session_id, so transcript can parse it.
 	{
 		encoded := EncodeCwdForClaude(task.WorkDir)
-		sessionFile := filepath.Join(tmp, ".claude", "projects", encoded, "e2e-session-uuid.jsonl")
-		content := `{"type":"user","message":{"role":"user","content":"Hello"},"uuid":"u1","timestamp":"2026-04-12T10:00:00Z","sessionId":"e2e-session-uuid"}` + "\n" +
-			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there!"}]},"uuid":"a1","timestamp":"2026-04-12T10:00:01Z","sessionId":"e2e-session-uuid"}` + "\n"
+		sessionDir := filepath.Join(tmp, ".claude", "projects", encoded)
+		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		sessionFile := filepath.Join(sessionDir, fixedSID+".jsonl")
+		content := `{"type":"user","message":{"role":"user","content":"Hello"},"uuid":"u1","timestamp":"2026-04-12T10:00:00Z","sessionId":"` + fixedSID + `"}` + "\n" +
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there!"}]},"uuid":"a1","timestamp":"2026-04-12T10:00:01Z","sessionId":"` + fixedSID + `"}` + "\n"
 		if err := os.WriteFile(sessionFile, []byte(content), 0o644); err != nil {
 			t.Fatalf("write session jsonl: %v", err)
 		}
 	}
 
-	// 5d. transcript — should succeed now that session exists.
+	// 5c. transcript — should succeed now that session exists.
 	step("transcript", cmdTranscript([]string{"fix-auth-token-expiry"}))
 
 	// 6. do again — now session_id is populated, should spawn --resume.
 	step("do resume", cmdDo([]string{"fix-auth-token-expiry"}))
 	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
-	if task.SessionID.String != "e2e-session-uuid" {
+	if task.SessionID.String != fixedSID {
 		t.Errorf("session_id should be preserved across resume: got %q", task.SessionID.String)
 	}
 	if !task.SessionLastResumed.Valid {

@@ -43,8 +43,6 @@ func Run(args []string) int {
 		return cmdWorkdir(rest)
 	case "skill":
 		return cmdSkill(rest)
-	case "register-session":
-		return cmdRegisterSession(rest)
 	case "transcript":
 		return cmdTranscript(rest)
 	case "hook":
@@ -74,7 +72,6 @@ Create:
 Sessions:
   flow do                <ref> [--fresh] [--dangerously-skip-permissions]
   flow done              <ref>
-  flow register-session  [<slug>] [--force]    (run from inside an execution session to self-report its session_id)
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
 Read:

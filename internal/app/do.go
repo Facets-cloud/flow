@@ -111,19 +111,54 @@ func cmdDo(args []string) int {
 		return 1
 	}
 
-	now := flowdb.NowISO()
-	if _, err := tx.Exec(
-		`UPDATE tasks SET status='in-progress',
-		 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-		 updated_at=?
-		 WHERE slug=? AND status IN ('backlog','in-progress')`,
-		now, now, task.Slug,
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
+	// Decide bootstrap vs resume based on the row we re-read inside the tx.
+	// Fresh bootstrap means: either the task has no session_id, or --fresh
+	// was passed. In both cases we allocate a new UUID here and claim it
+	// in the DB via the status-flip UPDATE below — so the jsonl file claude
+	// writes is identified deterministically by us, not scraped afterwards.
+	var curSessionID sql.NullString
+	if err := tx.QueryRow(`SELECT session_id FROM tasks WHERE slug=?`, task.Slug).Scan(&curSessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
 	}
-	// Re-select to capture the canonical view (including pre-update
-	// session_id, which is our optimistic-lock witness).
+	needsBootstrap := !curSessionID.Valid || *fresh
+	var sessionID string
+	if needsBootstrap {
+		id, err := newUUID()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
+			return 1
+		}
+		sessionID = id
+	} else {
+		sessionID = curSessionID.String
+	}
+
+	now := flowdb.NowISO()
+	if needsBootstrap {
+		if _, err := tx.Exec(
+			`UPDATE tasks SET status='in-progress',
+			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+			 session_id=?, session_started=?, updated_at=?
+			 WHERE slug=? AND status IN ('backlog','in-progress')`,
+			now, sessionID, now, now, task.Slug,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
+			return 1
+		}
+	} else {
+		if _, err := tx.Exec(
+			`UPDATE tasks SET status='in-progress',
+			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+			 updated_at=?
+			 WHERE slug=? AND status IN ('backlog','in-progress')`,
+			now, now, task.Slug,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
+			return 1
+		}
+	}
+	// Re-select to capture the canonical view.
 	row := tx.QueryRow(`SELECT `+flowdb.TaskCols+` FROM tasks WHERE slug = ?`, task.Slug)
 	fresh2, err := flowdb.ScanTask(row)
 	if err != nil {
@@ -137,7 +172,9 @@ func cmdDo(args []string) int {
 	}
 	committed = true
 
-	preSessionID := task.SessionID // sql.NullString — may be NULL or a UUID
+	if *fresh && curSessionID.Valid {
+		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
+	}
 
 	// Look up project (may be nil).
 	var project *flowdb.Project
@@ -156,32 +193,7 @@ func cmdDo(args []string) int {
 		return 1
 	}
 
-	// Step 7: decide whether to spawn a fresh session or resume.
-	//
-	// NOTE (contract-based bootstrap): flow does NOT try to guess or
-	// capture a session_id upfront. We spawn `claude "<prompt>"` with
-	// no --session-id and no --resume, and the prompt instructs the
-	// execution session to call `flow register-session` as its first
-	// action. register-session scans the encoded-cwd dir for the
-	// newest *.jsonl (its own) and writes the UUID back to the DB.
-	//
-	// --fresh just nulls out any existing session_id so the next
-	// resume path won't try to resume a stale one.
-	needsBootstrap := !preSessionID.Valid || *fresh
-	if *fresh && preSessionID.Valid {
-		now := flowdb.NowISO()
-		if _, err := db.Exec(
-			`UPDATE tasks SET session_id=NULL, session_started=NULL, updated_at=? WHERE slug=?`,
-			now, task.Slug,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "error: clear stale session_id: %v\n", err)
-			return 1
-		}
-		fmt.Printf("--fresh: discarding old session %s\n", preSessionID.String)
-		task.SessionID = sql.NullString{}
-	}
-
-	// Step 8: spawn the iTerm tab.
+	// Spawn the iTerm tab.
 	//
 	// We shell out to `flowde` rather than `claude` directly. `flowde`
 	// is a thin wrapper (cmd/flowde) that runs `flow skill install
@@ -191,16 +203,17 @@ func cmdDo(args []string) int {
 	// flowde so the guarantee is uniform.
 	var command string
 	if needsBootstrap {
-		// Fresh bootstrap path: spawn flowde interactively with the
-		// bootstrap prompt as the first user message. Leave session_id
-		// NULL in the DB — the execution session fills it in via
-		// register-session. No UUID allocation here.
+		// Fresh bootstrap path: we pre-allocated the session UUID above
+		// and committed it to the DB. Passing --session-id to claude
+		// makes it write its jsonl at the deterministic path
+		// ~/.claude/projects/<encoded-cwd>/<sessionID>.jsonl, so there is
+		// nothing to discover afterwards.
 		prompt := buildBootstrapPrompt(task.Slug)
-		command = fmt.Sprintf("flowde %s", iterm.ShellQuote(prompt))
-		fmt.Printf("Spawning fresh session for %s (session_id will self-register)\n", task.Slug)
+		command = fmt.Sprintf("flowde --session-id %s %s", sessionID, iterm.ShellQuote(prompt))
 	} else {
-		// Resume path: we have a known session_id from a prior run.
-		command = "flowde --resume " + task.SessionID.String
+		// Resume path: the UUID we already have in the DB is what claude
+		// used to write its existing jsonl.
+		command = "flowde --resume " + sessionID
 	}
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"
@@ -214,9 +227,7 @@ func cmdDo(args []string) int {
 		return 1
 	}
 
-	// Step 9: single-row updates outside any explicit transaction. These
-	// are only meaningful for the resume path; for a fresh spawn the
-	// session_id is still NULL and will be filled by register-session.
+	// Post-spawn bookkeeping, outside the main tx.
 	now2 := flowdb.NowISO()
 	if !needsBootstrap {
 		if _, err := db.Exec(
@@ -235,9 +246,9 @@ func cmdDo(args []string) int {
 	}
 
 	if needsBootstrap {
-		fmt.Printf("Spawned %s — execution session will self-register its session_id\n", task.Slug)
+		fmt.Printf("Spawned %s (session %s)\n", task.Slug, sessionID)
 	} else {
-		fmt.Printf("Resumed %s (session %s)\n", task.Slug, task.SessionID.String)
+		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
 	}
 	return 0
 }
@@ -247,25 +258,20 @@ func cmdDo(args []string) int {
 // quotes, backticks, or dollar signs — because it gets shell-quoted
 // as a single positional argument to `claude`.
 //
-// The critical first instruction is `flow register-session`. That writes
-// this session's UUID back to the task row so subsequent `flow do`
-// calls resume correctly. Without it, flow has no way to know what
-// session_id the just-spawned claude is using.
-//
-// After registering, the session must load context in order: task
-// brief + task updates, then (if any) project brief + project updates,
-// then CLAUDE.md files in the work_dir. The flow skill enforces this
-// sequence too; the bootstrap prompt is a backup in case the skill
-// isn't auto-activated.
+// The session's UUID is pre-allocated by `flow do` and passed via
+// `claude --session-id <uuid>`, so there is no self-registration step
+// here. The session loads context in order: task brief + task updates,
+// then (if any) project brief + project updates, then CLAUDE.md files
+// in the work_dir. The flow skill enforces this sequence too; the
+// bootstrap prompt is a backup in case the skill isn't auto-activated.
 func buildBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
 		"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection. Do this FIRST, and do not skip it if step 2 later fails — the skill is independent.\n"+
-			"2. Run: flow register-session  (no args, uses FLOW_TASK env var). This records your session_id so future flow do calls can resume this session.\n"+
-			"3. Run: flow show task. Read the file at the brief: path, AND every file listed under updates:.\n"+
-			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief file AND every file listed under its updates: section. The project brief gives cross-task context the task brief omits.\n"+
-			"5. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
-			"6. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
+			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
+			"2. Run: flow show task. Read the file at the brief: path, AND every file listed under updates:.\n"+
+			"3. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief file AND every file listed under its updates: section. The project brief gives cross-task context the task brief omits.\n"+
+			"4. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
+			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
 	)
 }

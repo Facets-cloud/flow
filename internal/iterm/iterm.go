@@ -20,9 +20,11 @@ var Runner = func(args []string) error {
 }
 
 // SpawnTab opens a new iTerm2 tab with the given title, cwd, and command.
-// envVars are exported in the new shell before running command.
+// envVars are attached as an inline prefix to `command` only — so they
+// are present in the spawned process's environment but do NOT persist in
+// the tab's shell after the command exits.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
-	exports := ""
+	envPrefix := ""
 	if len(envVars) > 0 {
 		keys := make([]string, 0, len(envVars))
 		for k := range envVars {
@@ -33,9 +35,9 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		for _, k := range keys {
 			parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
 		}
-		exports = "export " + strings.Join(parts, " ") + " && "
+		envPrefix = strings.Join(parts, " ") + " "
 	}
-	fullCommand := fmt.Sprintf("cd %s && %s%s", ShellQuote(cwd), exports, command)
+	fullCommand := fmt.Sprintf("cd %s && %s%s", ShellQuote(cwd), envPrefix, command)
 	safeCommand := escapeAppleScriptString(fullCommand)
 	safeTitle := escapeAppleScriptString(title)
 

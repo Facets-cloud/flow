@@ -108,12 +108,16 @@ flow done auth
 
 ## How it works under the hood
 
-`flow do <task>` spawns a new iTerm tab running `flowde` (a thin wrapper
-around `claude` that refreshes the flow skill on every launch) with
-environment variables (`FLOW_TASK`, `FLOW_PROJECT`) set. A SessionStart
-hook re-injects context on every resume. The execution session's first action
-is `flow register-session`, which writes its session UUID back to the
-database so future `flow do` calls resume the same conversation.
+`flow do <task>` pre-allocates a session UUID, writes it to the task row,
+and spawns a new iTerm tab running `flowde` (a thin wrapper around
+`claude` that refreshes the flow skill on every launch) with
+`claude --session-id <uuid>` and the `FLOW_TASK` / `FLOW_PROJECT`
+environment variables inlined on the command line (scoped to the claude
+process only, not the tab's shell). The jsonl file lands at the
+deterministic path `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, so
+future `flow do` calls spawn `claude --resume <uuid>` to continue the
+same conversation. A SessionStart hook re-injects the task brief, updates,
+and CLAUDE.md context on every resume.
 
 Briefs live at `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate
 under `~/.flow/tasks/<slug>/updates/`. The flow skill (installed to
