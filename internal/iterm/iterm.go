@@ -23,6 +23,12 @@ var Runner = func(args []string) error {
 // envVars are attached as an inline prefix to `command` only — so they
 // are present in the spawned process's environment but do NOT persist in
 // the tab's shell after the command exits.
+//
+// The typed line is prefixed with a single space so shells with
+// `histignorespace` (zsh) or `HISTCONTROL=ignorespace`/`ignoreboth`
+// (bash) skip writing it to the shared history file. Shells without
+// that opt-in will still record the line — see README for the one-line
+// shell config that turns it on.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	envPrefix := ""
 	if len(envVars) > 0 {
@@ -37,7 +43,7 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		}
 		envPrefix = strings.Join(parts, " ") + " "
 	}
-	fullCommand := fmt.Sprintf("cd %s && %s%s", ShellQuote(cwd), envPrefix, command)
+	fullCommand := fmt.Sprintf(" cd %s && %s%s", ShellQuote(cwd), envPrefix, command)
 	safeCommand := escapeAppleScriptString(fullCommand)
 	safeTitle := escapeAppleScriptString(title)
 
