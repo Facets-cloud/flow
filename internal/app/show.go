@@ -227,6 +227,20 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		}
 	}
 
+	// Auxiliary .md files (sidecar references — not eagerly loaded).
+	auxFiles, err := enumerateAuxFiles(filepath.Join(root, "tasks", t.Slug))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: enumerate aux files: %v\n", err)
+	}
+	if len(auxFiles) == 0 {
+		fmt.Println("other:         (none)")
+	} else {
+		fmt.Println("other:")
+		for _, p := range auxFiles {
+			fmt.Printf("  - %s\n", p)
+		}
+	}
+
 	// Transcript CTA — only shown when the task has a session.
 	if t.SessionID.Valid && t.SessionID.String != "" {
 		fmt.Printf("transcript:    run `flow transcript %s` to view conversation history\n", t.Slug)

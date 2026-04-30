@@ -272,3 +272,13 @@ func TestCmdDoConcurrentFreshTasks(t *testing.T) {
 		t.Errorf("iTerm spawn count=%d, want 2", n)
 	}
 }
+
+func TestBuildBootstrapPromptMentionsOther(t *testing.T) {
+	got := buildBootstrapPrompt("foo")
+	if !strings.Contains(got, "other:") {
+		t.Errorf("expected prompt to mention other:, got:\n%s", got)
+	}
+	if !strings.Contains(got, "load on demand") {
+		t.Errorf("expected prompt to clarify lazy loading, got:\n%s", got)
+	}
+}

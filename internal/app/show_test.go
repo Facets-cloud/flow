@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"database/sql"
 	"flow/internal/flowdb"
 	"io"
@@ -453,4 +454,69 @@ func TestCmdShowTaskConfigurableStaleness(t *testing.T) {
 	if !strings.Contains(out2, "⚠ stale") {
 		t.Errorf("should be stale with threshold 1; out=%q", out2)
 	}
+}
+
+func TestShowTaskListsAuxFiles(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+
+	if rc := cmdAdd([]string{"task", "Foo task", "--slug", "foo", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("cmdAdd rc=%d", rc)
+	}
+
+	taskDir := filepath.Join(root, "tasks", "foo")
+	mustWriteAux(t, filepath.Join(taskDir, "research.md"), "r")
+	mustWriteAux(t, filepath.Join(taskDir, "design.md"), "d")
+	mustWriteAux(t, filepath.Join(taskDir, "skip.txt"), "ignored")
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"task", "foo"}); rc != 0 {
+			t.Fatalf("cmdShow rc=%d", rc)
+		}
+	})
+
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected 'other:' section in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "research.md") {
+		t.Errorf("expected research.md in other:, got:\n%s", out)
+	}
+	if !strings.Contains(out, "design.md") {
+		t.Errorf("expected design.md in other:, got:\n%s", out)
+	}
+	if strings.Contains(out, "skip.txt") {
+		t.Errorf("non-md file should not appear in other:, got:\n%s", out)
+	}
+}
+
+func TestShowTaskNoAuxFiles(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"task", "Bar", "--slug", "bar", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"task", "bar"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected 'other:' section even when empty, got:\n%s", out)
+	}
+}
+
+func captureShowStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
 }
