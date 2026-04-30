@@ -137,6 +137,7 @@ type TaskFilter struct {
 	PlaybookSlug    string // optional; filter to runs of one playbook
 	Since           string // RFC3339 or "" for no lower bound
 	IncludeArchived bool
+	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
 }
 
 // ProjectFilter is the equivalent for ListProjects.
@@ -345,6 +346,8 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 	if filter.Status != "" {
 		where = append(where, "status = ?")
 		args = append(args, filter.Status)
+	} else if filter.ExcludeDone {
+		where = append(where, "status != 'done'")
 	}
 	if filter.Project != "" {
 		where = append(where, "project_slug = ?")

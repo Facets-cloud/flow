@@ -100,7 +100,9 @@ func TestCmdListTasksWaitingOn(t *testing.T) {
 func TestCmdListTasksArchivedHiddenByDefault(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "alive", "A", "backlog", "high", filepath.Join(root, "x"), nil)
-	insertTask(t, db, "dead", "D", "done", "low", filepath.Join(root, "x"), nil)
+	// Use backlog (not done) for the archived row so this test isolates
+	// archived-visibility from done-visibility.
+	insertTask(t, db, "dead", "D", "backlog", "low", filepath.Join(root, "x"), nil)
 	if _, err := db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, flowdb.NowISO(), "dead"); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +124,48 @@ func TestCmdListTasksArchivedHiddenByDefault(t *testing.T) {
 	}
 	if !strings.Contains(out2, "(archived)") {
 		t.Errorf("archived marker missing: %q", out2)
+	}
+}
+
+func TestCmdListTasksDoneHiddenByDefault(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "active", "A", "in-progress", "high", filepath.Join(root, "x"), nil)
+	insertTask(t, db, "shipped", "S", "done", "high", filepath.Join(root, "x"), nil)
+
+	// Default: done hidden.
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "active") {
+		t.Errorf("active task missing: %q", out)
+	}
+	if strings.Contains(out, "shipped") {
+		t.Errorf("done task leaked into default list: %q", out)
+	}
+
+	// --include-done: shows everything.
+	out = captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--include-done"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "shipped") {
+		t.Errorf("done task missing with --include-done: %q", out)
+	}
+
+	// Explicit --status done: shows only done (regardless of default).
+	out = captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--status", "done"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "shipped") {
+		t.Errorf("--status done should show done: %q", out)
+	}
+	if strings.Contains(out, "active") {
+		t.Errorf("--status done should not show in-progress: %q", out)
 	}
 }
 
