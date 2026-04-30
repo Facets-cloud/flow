@@ -2,6 +2,9 @@ package app
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,5 +88,100 @@ func insertRunTaskForSlug(t *testing.T, db *sql.DB, slug, pbSlug, wd string) {
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCmdRunPlaybookCreatesRunTask(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+
+	_, lastScript := stubITerm(t)
+
+	if rc := cmdRun([]string{"playbook", "tri"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+
+	db := openFlowDB(t)
+	rows, err := db.Query(`SELECT slug FROM tasks WHERE kind='playbook_run' AND playbook_slug='tri'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var runSlug string
+	count := 0
+	for rows.Next() {
+		count++
+		if err := rows.Scan(&runSlug); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 run task, got %d", count)
+	}
+	if !strings.HasPrefix(runSlug, "tri--") {
+		t.Errorf("expected slug prefix 'tri--', got %q", runSlug)
+	}
+
+	// brief.md should be a copy of playbook brief.md.
+	root, _ := flowRoot()
+	pbBrief, _ := os.ReadFile(filepath.Join(root, "playbooks", "tri", "brief.md"))
+	runBrief, err := os.ReadFile(filepath.Join(root, "tasks", runSlug, "brief.md"))
+	if err != nil {
+		t.Errorf("run brief.md missing: %v", err)
+	}
+	if string(pbBrief) != string(runBrief) {
+		t.Errorf("run brief should be verbatim copy of playbook brief")
+	}
+
+	// iTerm should have been called with a 'claude' command.
+	script := lastScript()
+	if !strings.Contains(script, "claude --session-id ") {
+		t.Errorf("expected claude session-id in spawn script, got: %q", script)
+	}
+}
+
+func TestCmdRunPlaybookSnapshotIsolation(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	pbBriefPath := filepath.Join(root, "playbooks", "p", "brief.md")
+	if err := os.WriteFile(pbBriefPath, []byte("ORIGINAL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stubITerm(t)
+
+	if rc := cmdRun([]string{"playbook", "p"}); rc != 0 {
+		t.Fatal()
+	}
+
+	db := openFlowDB(t)
+	var runSlug string
+	if err := db.QueryRow(`SELECT slug FROM tasks WHERE kind='playbook_run' AND playbook_slug='p'`).Scan(&runSlug); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mutate the playbook brief.
+	if err := os.WriteFile(pbBriefPath, []byte("MUTATED"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run brief should still be ORIGINAL.
+	runBrief, _ := os.ReadFile(filepath.Join(root, "tasks", runSlug, "brief.md"))
+	if string(runBrief) != "ORIGINAL" {
+		t.Errorf("snapshot leaked: got %q, want ORIGINAL", string(runBrief))
+	}
+}
+
+func TestCmdRunPlaybookMissing(t *testing.T) {
+	setupFlowRoot(t)
+	stubITerm(t)
+	if rc := cmdRun([]string{"playbook", "no-such"}); rc == 0 {
+		t.Errorf("expected non-zero rc for missing playbook")
 	}
 }
