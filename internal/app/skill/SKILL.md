@@ -85,11 +85,12 @@ run `flow list tasks` or `flow list projects` as a probe:
 - If the command **succeeds** (even with zero results): flow is
   initialized. Proceed normally. **Do not check again this session.**
 - If the command **errors** with a message about a missing database:
-  the user hasn't run `flow init` yet. Offer to run it for them:
-  "Looks like flow isn't initialized yet. Want me to run `flow init`
-  to set up the data directory and database?" (The data directory is
-  `$FLOW_ROOT` if set, otherwise `~/.flow`.) If they agree, run
-  `flow init` and then enter the **first-run coaching** below.
+  the user hasn't run `flow init` yet. Use `AskUserQuestion` (header:
+  "Run init?", options: "Yes, run flow init" / "No, I'll do it later")
+  with question text explaining that `flow init` sets up the data
+  directory (`$FLOW_ROOT` if set, otherwise `~/.flow`) and database.
+  If "Yes", run `flow init` and then enter the **first-run coaching**
+  below. If "No", stop.
 
 ### First-run coaching
 
@@ -104,10 +105,13 @@ basics in this order:
    add-project interview. This gets them a project and at least one task
    immediately.
 
-3. **Show how to start work.** After the first task exists, offer:
-   "Run `flow do <slug>` to open a dedicated Claude session for this
-   task. That session gets the brief, updates, and repo conventions
-   automatically."
+3. **Show how to start work.** After the first task exists, use
+   `AskUserQuestion` (header: "Open it now?", options:
+   "Open it now" / "Later, just save") to ask whether to run
+   `flow do <slug>`. Briefly explain in the question: a dedicated
+   Claude session gets the brief, updates, and repo conventions
+   automatically. If "Open it now", proceed to §4.4. If "Later",
+   stop here.
 
 4. **Mention the knowledge base.** "As we work together, I'll
    automatically note durable facts about you and your org in
@@ -184,20 +188,32 @@ auto-generated from the name (truncated to ~6 words).
 
 ## 4a. Interactive choices (use `AskUserQuestion` everywhere)
 
-Whenever you present the user with a choice — yes/no confirmations,
-pick-one-of-several, priority, slug suggestions, project attachment —
-use the `AskUserQuestion` tool so the user can click to select instead
-of typing. Common patterns:
+**This section overrides any inline prose phrasing later in the skill.**
+If a later section says "offer X", "ask Y", or "confirm Z", that
+always means "invoke `AskUserQuestion` with appropriate options" —
+never a prose question typed into the chat.
+
+Every choice the user makes — always AskUserQuestion, never a prose
+question. Yes/no confirmations, pick-one-of-several, priority, slug
+suggestions, project attachment, mutation confirmations, "want me to
+do X?" — every single one runs through the tool so the user can click
+to select instead of typing. Common patterns:
 
 | Pattern | Options |
 |---------|---------|
 | Yes / No | Two options with contextual labels (e.g. "Save it" / "Revise", "Open now" / "Not now") |
 | Pick from list | One option per candidate (tasks, projects, slugs) |
 | Priority | "High", "Medium", "Low" |
+| Mutation confirm | "Yes, do it" / "No, wait" with the action named in the description |
 
 Keep `header` under 12 chars. Put enough context in `question` so
 the choice is clear without scrolling back. If the user already
 answered in their message, don't re-ask — just use their answer.
+
+**Prose questions are deprecated.** Don't write "Want me to do X?"
+or "Should I do Y?" or "(yes/no)" in chat — those force the user to
+type a free-text reply. The tool produces clickable options; always
+prefer the tool.
 
 ## 5. Core workflows
 
@@ -364,8 +380,9 @@ why they made it. Immediately after `flow add project` succeeds:
    sequential §5.2 interviews. Don't try to batch-extract; one
    interview per task.
 5. Only after the first task exists (or the user has explicitly
-   declined), offer `flow do <first-task>` if they want to start
-   immediately.
+   declined), use `AskUserQuestion` (header: "Open it now?", options:
+   "Yes, open it" / "No, keep in backlog") to offer
+   `flow do <first-task>`. If "Yes", proceed to §4.4. If "No", stop.
 
 The rule is about pushing the user one step further than
 `flow add project` — project creation is not a complete action on
@@ -469,25 +486,36 @@ status stays `in-progress`; `waiting_on` is just a freeform note that
 will show up in `flow list` and `flow show task` so the user remembers.
 
 **Unblocking triggers:** "X came back", "got the answer", "unblocked",
-"no longer waiting on X". Action: `flow waiting <task> --clear`.
+"no longer waiting on X". Before mutating, confirm via
+`AskUserQuestion` (header: "Clear waiting?", options:
+"Yes, clear it" / "Wait, not yet"). On "Yes", run
+`flow waiting <task> --clear`. On "Wait, not yet", stop and let the
+user clarify. (This matches the §8 "do not mark done without
+confirmation" anti-pattern philosophy — clearing `waiting_on` is a
+state mutation and deserves the same explicit click.)
 
-Do not infer the task slug silently — use `$FLOW_TASK` if set, otherwise
-ask "which task is this for?" and pass the user's answer as the exact
-alias or slug.
+Do not infer the task slug silently — use `$FLOW_TASK` if set,
+otherwise use `AskUserQuestion` listing in-progress tasks as options
+to disambiguate which task this is for.
 
 ### 4.7 Mark done
 
 **Triggers:** "mark X done", "finish X", "X is done", "close out X".
 
-**Recipe:** run `flow done <ref>`. **Do not close the iTerm tab** and
-**do not kill the Claude session** — `flow done` deliberately leaves
-both intact. The session_id stays on the task row so a future reopen can
-still resume it.
+**Recipe:**
 
-Before running `flow done`, if the user hasn't just saved a progress
-note, use `AskUserQuestion` (header: "Closing note?", options:
-"Yes, save a note first" / "No, just mark done") to offer. If yes,
-run the §5.5 recipe first, then `flow done`.
+1. Confirm via `AskUserQuestion` (header: "Mark done?", options:
+   "Yes, `flow done <slug>`" / "No, not yet") before mutating. Per
+   §8, never mark done without explicit confirmation — even if the
+   user says "great, I finished that".
+2. If the user hasn't just saved a progress note, use
+   `AskUserQuestion` (header: "Closing note?", options:
+   "Yes, save a note first" / "No, just mark done") to offer.
+   On "Yes", run the §4.5 recipe first, then continue.
+3. Run `flow done <ref>`. **Do not close the iTerm tab** and **do
+   not kill the Claude session** — `flow done` deliberately leaves
+   both intact. The session_id stays on the task row so a future
+   reopen can still resume it.
 
 **Playbook-specific notes:**
 
@@ -504,11 +532,16 @@ finished work".
 
 **Recipe:**
 
-- Single task/project: `flow archive <ref>`.
+- Single task/project: confirm via `AskUserQuestion` (header:
+  "Archive?", options: "Yes, archive `<slug>`" / "No, keep it"),
+  then on "Yes" run `flow archive <ref>`.
 - Bulk "archive everything done": run `flow list tasks --status done`.
-  Show the list to the user. Confirm each one unless the user said
-  "archive all done" explicitly — in that case, iterate and archive
-  them all, printing each action as you go.
+  Show the list to the user. Then, unless the user already said
+  "archive all done" explicitly, use `AskUserQuestion` (header:
+  "Archive all?", options: "Yes, archive all listed" / "Pick one by
+  one" / "Cancel"). On "Yes", iterate and archive them all, printing
+  each action. On "Pick one by one", run a single-task `AskUserQuestion`
+  for each. On "Cancel", stop.
 - If the user regrets it: `flow unarchive <ref>`.
 
 Archive never deletes files on disk — brief.md and updates/ remain. Make
@@ -680,13 +713,14 @@ sequence at the moment the fact is heard.
 under an `other:` section. Apply the same lazy-load discipline as KB
 files: load them on demand when relevant to the work, not preemptively.
 
-### 4.11 Scope-creep detection (suggest-and-offer)
+### 4.11 Scope-creep detection (passive — surface via AskUserQuestion)
 
 This is a **passive** workflow like §5.10 — you watch the session as it
-unfolds and intervene only when the evidence is strong. Its purpose is
-to keep a task's transcript and update log focused, instead of letting
-unrelated work pile up under whichever task happens to own the current
-iTerm tab.
+unfolds and intervene only when the evidence is strong. When you
+intervene, the surfacing mechanism is `AskUserQuestion` (never a
+prose "want me to...?" question). Its purpose is to keep a task's
+transcript and update log focused, instead of letting unrelated work
+pile up under whichever task happens to own the current iTerm tab.
 
 **When to consider firing:**
 
@@ -739,18 +773,21 @@ evidence:
    Use the same project as `$FLOW_PROJECT` only if the new work
    genuinely belongs there; otherwise leave it floating or attach to
    a different project per the user's answer during intake. After
-   the new task is saved, offer `flow do <new-slug>` so the follow-on
-   work gets its own transcript.
+   the new task is saved, use `AskUserQuestion` (header:
+   "Open it now?", options: "Yes, open it" / "No, keep in backlog")
+   to offer `flow do <new-slug>` so the follow-on work gets its own
+   transcript.
 
 3. **On "No, stay here":** accept the user's judgement and continue.
    Consider this a signal to update your mental model of what the
    bootstrapped task includes — don't re-ask on the same thread of
    work in the same session.
 
-4. **On "Later":** offer to write a short progress note on the
-   current task capturing the drift observation ("noticed X while
-   doing Y; may need its own task"), then continue with the
-   original work.
+4. **On "Later":** use `AskUserQuestion` (header: "Drop a note?",
+   options: "Yes, save a drift note" / "No, just continue") to offer
+   writing a short progress note on the current task capturing the
+   drift observation ("noticed X while doing Y; may need its own
+   task"), then continue with the original work.
 
 **Why this lives in the skill, not the hook:** the hook's only
 guaranteed side-effect is injecting text at session start. Detection
@@ -786,18 +823,25 @@ same prompt.
 
 **Then before calling `flow add playbook`:**
 
-- Suggest 2-3 slug candidates (same pattern as §4.2). Use AskUserQuestion.
-- Ask about project attachment (same pattern). Optional — playbooks can
-  be floating.
-- `--mkdir` if work_dir doesn't exist.
+- Suggest 2-3 slug candidates via `AskUserQuestion` (header:
+  "Pick a slug", one option per candidate plus "Other" for custom).
+- Project attachment via `AskUserQuestion` (header: "Attach to?",
+  one option per existing project plus "None (floating playbook)").
+  Skip the question if there are no projects.
+- `--mkdir` if work_dir doesn't exist — use `AskUserQuestion`
+  (header: "Create dir?", options: "Yes, create it" / "No, fix the
+  path") same as §6 step 6.
 
-**Draft the brief, show to the user, get "Save it" confirmation.** Then
-run `flow add playbook` and overwrite the stub `brief.md` with the full
-content. Use the playbook brief template from §7.
+**Draft the brief, show to the user**, then use `AskUserQuestion`
+(header: "Brief", options: "Save it" / "Revise") to confirm. Do not
+run `flow add playbook` until the user picks "Save it". Then run it
+and overwrite the stub `brief.md` with the full content. Use the
+playbook brief template from §7.
 
-After save, use AskUserQuestion to offer:
-- "Run it now" → proceed to §4.13
-- "Just save the definition for now"
+After save, use `AskUserQuestion` (header: "Run it now?", options:
+"Run it now" / "Just save the definition") to offer the first run.
+On "Run it now", proceed to §4.13. On "Just save the definition",
+stop.
 
 ### 4.13 Run a playbook
 
@@ -881,25 +925,36 @@ these steps BEFORE asking, so the question is informed:
 1. **Run `flow workdir list`.** Fuzzy-match the task name against
    registered nicknames and paths. If you get an obvious match (e.g.
    task "Add OAuth to budgeting-app" and a registered workdir named
-   `budgeting-app`), propose that path as the default: "Looks like
-   `<path>` — is that right?"
+   `budgeting-app`), propose that path via `AskUserQuestion` (header:
+   "Use this path?", options: "Yes, use `<path>`" / "Pick a different
+   path"). On "Pick a different path", continue to step 2.
 2. **If no local match, check GitHub via `gh`.** Run `gh repo list
    --limit 50 --json name,owner,description`. If any repo name or
-   description plausibly matches the task, propose the top 3 as
-   candidates: "On GitHub I see `<repo-a>`, `<repo-b>`, `<repo-c>` —
-   any of these?" If the user picks one, offer `gh repo clone
-   <owner>/<repo> ~/code/<name>` and, after clone, run `flow workdir
-   add ~/code/<name>` so next time it's a local match.
+   description plausibly matches the task, present the top 3 via
+   `AskUserQuestion` (header: "Which repo?") with one option per
+   candidate (label = `<repo-name>`, description = repo description)
+   plus a "None of these — use a path instead" option. If the user
+   picks a repo, offer (via `AskUserQuestion`, header: "Clone it?",
+   options: "Yes, clone to `~/code/<name>`" / "No, I'll handle it")
+   to run `gh repo clone <owner>/<repo> ~/code/<name>` and, after
+   clone, run `flow workdir add ~/code/<name>` so next time it's a
+   local match.
 3. **If `gh` isn't authenticated** (command errors with an auth
-   message), fall back gracefully: "I couldn't reach GitHub — want to
-   just give me an absolute path?"
+   message), fall back gracefully via `AskUserQuestion` (header:
+   "GitHub unreachable", options: "Give me a path" / "Make it
+   floating"). On "Give me a path", prompt the user for an absolute
+   path (this single text input is fine — there are no enumerable
+   options). On "Make it floating", skip work_dir entirely.
 4. **If the user wants a floating task** (no repo), skip the question
    entirely and let `flow add task` auto-create
    `~/.flow/tasks/<slug>/workspace/`.
 5. **Never guess a path.** Don't invent `~/code/foo` because the task
-   name sounds like "foo". Always confirm with the user.
-6. **If the path doesn't exist**, offer `--mkdir`: "That directory
-   doesn't exist. Want me to pass `--mkdir` so `flow` creates it?"
+   name sounds like "foo". Always confirm via `AskUserQuestion`.
+6. **If the path doesn't exist**, use `AskUserQuestion` (header:
+   "Create dir?", options: "Yes, create it" / "No, fix the path")
+   to ask whether to pass `--mkdir`. On "Yes", append `--mkdir` to
+   the `flow add task` invocation. On "No", loop back to ask for a
+   corrected path.
 
 ## 7. The task brief format
 
@@ -1017,20 +1072,33 @@ Notes:
 
 ## 8. Anti-patterns — do NOT do these
 
+**Confirmation method:** every confirmation in this section means
+`AskUserQuestion`, not a prose question that buries the choice. The
+tool produces clickable options; prose questions force the user to
+type. Always prefer the tool. If you find yourself typing "Want me
+to X?" or "Should I Y?" into chat, stop and use `AskUserQuestion`
+instead.
+
 - **Do not invent context.** If the user says "add a task for the
-  budgeting thing", ASK what the budgeting thing is. Don't write a brief
-  based on your prior-session memory of budgeting apps.
+  budgeting thing", ASK what the budgeting thing is (via
+  `AskUserQuestion` if you can list candidates from existing tasks /
+  workdirs; otherwise a plain prose clarifying question is fine —
+  open-ended "what is this thing?" is not an enumerable choice).
+  Don't write a brief based on your prior-session memory of
+  budgeting apps.
 - **Do not propose solutions during intake.** The user is telling you
   what they want to do, not asking for your opinion on how to do it.
   "What" is one sentence, "Why" is the reason. Neither section is a
   design doc. If you start drafting implementation steps during `flow
   add task`, stop.
 - **Do not silently switch tasks.** If `$FLOW_TASK` is set and the user
-  starts talking about a different one, confirm: "Are we switching to
-  `<other-task>`?" Don't assume.
+  starts talking about a different one, confirm via `AskUserQuestion`
+  (header: "Switch task?", options: "Yes, switch to `<other-task>`" /
+  "No, stay on `<current-task>`"). Don't assume.
 - **Do not mark tasks done without explicit confirmation.** Even if the
-  user says "great, I finished that", confirm: "Want me to `flow done
-  <slug>`?" and wait.
+  user says "great, I finished that", confirm via `AskUserQuestion`
+  (header: "Mark done?", options: "Yes, `flow done <slug>`" / "No,
+  not yet") and wait for the click.
 - **Do not hand-edit `session_id` or any other DB field.** Never edit
   `flow.db` directly, never instruct the user to. The only supported
   mutations are `flow` commands.
@@ -1051,8 +1119,10 @@ Notes:
   between add and your Write call), Read it first, merge thoughtfully,
   and confirm with the user before writing.
 - **Do not forget to offer progress notes.** After a long working
-  session, the user will forget to log what they did. Proactively offer
-  "want me to save a note before we stop?" at natural breakpoints.
+  session, the user will forget to log what they did. At natural
+  breakpoints, proactively use `AskUserQuestion` (header:
+  "Save note?", options: "Yes, save a note" / "No, skip it") to
+  prompt — never a prose "want me to save a note?" question.
 - **Do not silently continue scope-drifted work under the bootstrapped
   task.** When the work genuinely moves off `$FLOW_TASK` (new repo,
   new product, new line of investigation sustained over multiple

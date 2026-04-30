@@ -194,3 +194,17 @@ func TestSkillIntakeMinimal(t *testing.T) {
 		}
 	}
 }
+
+func TestSkillUsesAskUserQuestionConsistently(t *testing.T) {
+	got := string(embeddedSkill)
+	// The skill should have many AskUserQuestion references — at least one
+	// per major workflow that involves user choice.
+	count := strings.Count(got, "AskUserQuestion")
+	if count < 40 {
+		t.Errorf("expected at least 40 AskUserQuestion references in skill, got %d", count)
+	}
+	// §4a should set the policy explicitly.
+	if !strings.Contains(got, "always AskUserQuestion") {
+		t.Errorf("skill §4a should establish 'always AskUserQuestion' as the rule")
+	}
+}
