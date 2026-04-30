@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// cmdList dispatches `flow list tasks|projects|playbooks`. Per spec §5.4.
+// cmdList dispatches `flow list tasks|projects|playbooks|runs`. Per spec §5.4.
 func cmdList(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', or 'playbooks'")
+		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', or 'runs'")
 		return 2
 	}
 	switch args[0] {
@@ -23,6 +23,8 @@ func cmdList(args []string) int {
 		return listProjectsCmd(args[1:])
 	case "playbooks":
 		return listPlaybooksCmd(args[1:])
+	case "runs":
+		return listRunsCmd(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2
@@ -365,6 +367,58 @@ func listPlaybooksCmd(args []string) int {
 			archived = "  (archived)"
 		}
 		fmt.Printf("  %-40s %s%s\n", pb.Slug, proj, archived)
+	}
+	return 0
+}
+
+func listRunsCmd(args []string) int {
+	fs := flagSet("list runs")
+	status := fs.String("status", "", "backlog|in-progress|done")
+	includeArchived := fs.Bool("include-archived", false, "include archived")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	var playbookSlug string
+	if fs.NArg() > 0 {
+		playbookSlug = fs.Arg(0)
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{
+		Kind:            "playbook_run",
+		PlaybookSlug:    playbookSlug,
+		Status:          *status,
+		IncludeArchived: *includeArchived,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(tasks) == 0 {
+		fmt.Println("(no runs)")
+		return 0
+	}
+	for _, tk := range tasks {
+		archived := ""
+		if tk.ArchivedAt.Valid {
+			archived = "  (archived)"
+		}
+		pbCol := ""
+		if tk.PlaybookSlug.Valid {
+			pbCol = "(" + tk.PlaybookSlug.String + ")"
+		}
+		fmt.Printf("  [%s] %-50s %s%s\n", statusAbbrev(tk.Status), tk.Slug, pbCol, archived)
 	}
 	return 0
 }
