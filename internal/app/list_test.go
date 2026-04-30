@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"flow/internal/flowdb"
 	"os"
 	"path/filepath"
@@ -321,6 +322,59 @@ func TestParseSince(t *testing.T) {
 		if !got.Equal(c.want) {
 			t.Errorf("parseSince(%q): got %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestCmdListPlaybooks(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "beta", Name: "Beta", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"playbooks"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") {
+		t.Errorf("expected both playbooks, got:\n%s", out)
+	}
+}
+
+func TestCmdListPlaybooksFiltersByProject(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "P", "--slug", "p1", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	db := openFlowDB(t)
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{
+		Slug:        "in-p1",
+		Name:        "In",
+		WorkDir:     wd,
+		ProjectSlug: sql.NullString{String: "p1", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "floating", Name: "F", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"playbooks", "--project", "p1"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "in-p1") {
+		t.Errorf("expected in-p1 playbook, got:\n%s", out)
+	}
+	if strings.Contains(out, "floating") {
+		t.Errorf("floating playbook should be filtered out, got:\n%s", out)
 	}
 }
 

@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// cmdList dispatches `flow list tasks|projects`. Per spec §5.4.
+// cmdList dispatches `flow list tasks|projects|playbooks`. Per spec §5.4.
 func cmdList(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: list requires 'tasks' or 'projects'")
+		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', or 'playbooks'")
 		return 2
 	}
 	switch args[0] {
@@ -21,6 +21,8 @@ func cmdList(args []string) int {
 		return listTasksCmd(args[1:])
 	case "projects":
 		return listProjectsCmd(args[1:])
+	case "playbooks":
+		return listPlaybooksCmd(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2
@@ -312,6 +314,52 @@ func listProjectsCmd(args []string) int {
 		}
 		fmt.Printf("  %-6s %-*s   %-7s %s %s%s\n",
 			priorityShort(p.Priority), maxSlug, slug, statusW, label, breakdown, arch)
+	}
+	return 0
+}
+
+func listPlaybooksCmd(args []string) int {
+	fs := flagSet("list playbooks")
+	project := fs.String("project", "", "filter by project slug")
+	includeArchived := fs.Bool("include-archived", false, "include archived")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	pbs, err := flowdb.ListPlaybooks(db, flowdb.PlaybookFilter{
+		Project:         *project,
+		IncludeArchived: *includeArchived,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(pbs) == 0 {
+		fmt.Println("(no playbooks)")
+		return 0
+	}
+	for _, pb := range pbs {
+		proj := ""
+		if pb.ProjectSlug.Valid {
+			proj = "(" + pb.ProjectSlug.String + ")"
+		}
+		archived := ""
+		if pb.ArchivedAt.Valid {
+			archived = "  (archived)"
+		}
+		fmt.Printf("  %-40s %s%s\n", pb.Slug, proj, archived)
 	}
 	return 0
 }
