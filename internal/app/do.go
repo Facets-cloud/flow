@@ -195,12 +195,10 @@ func cmdDo(args []string) int {
 
 	// Spawn the iTerm tab.
 	//
-	// We shell out to `flowde` rather than `claude` directly. `flowde`
-	// is a thin wrapper (cmd/flowde) that runs `flow skill install
-	// --force` before exec'ing claude, so every spawned session is
-	// guaranteed to have the current skill file + SessionStart hook in
-	// place. Both the fresh-bootstrap and resume paths go through
-	// flowde so the guarantee is uniform.
+	// We shell out to `claude` directly (no wrapper). The skill on disk at
+	// ~/.claude/skills/flow/SKILL.md is whatever was last installed via
+	// `flow skill install` / `flow skill update`. To refresh it after
+	// upgrading flow, the user runs `flow skill update` manually.
 	var command string
 	if needsBootstrap {
 		// Fresh bootstrap path: we pre-allocated the session UUID above
@@ -209,11 +207,11 @@ func cmdDo(args []string) int {
 		// ~/.claude/projects/<encoded-cwd>/<sessionID>.jsonl, so there is
 		// nothing to discover afterwards.
 		prompt := buildBootstrapPrompt(task.Slug)
-		command = fmt.Sprintf("flowde --session-id %s %s", sessionID, iterm.ShellQuote(prompt))
+		command = fmt.Sprintf("claude --session-id %s %s", sessionID, iterm.ShellQuote(prompt))
 	} else {
 		// Resume path: the UUID we already have in the DB is what claude
 		// used to write its existing jsonl.
-		command = "flowde --resume " + sessionID
+		command = "claude --resume " + sessionID
 	}
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"

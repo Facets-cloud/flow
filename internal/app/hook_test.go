@@ -7,7 +7,7 @@ import (
 )
 
 // TestHookSessionStartNoFlowTaskEmitsAmbientHint pins the contract for
-// ad-hoc sessions (e.g. bare `flowde` with no FLOW_TASK): the hook must
+// ad-hoc sessions (e.g. bare `claude` with no FLOW_TASK): the hook must
 // emit additionalContext naming the flow skill and instructing the
 // session to invoke it via the Skill tool when the user's request
 // touches flow concerns. Without this hint, Claude Code may not

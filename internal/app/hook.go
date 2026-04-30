@@ -36,12 +36,11 @@ func cmdHook(args []string) int {
 //     reload instructions. On a fresh spawn this is redundant with the
 //     bootstrap prompt but harmless; on a resume it's the only way to
 //     force the agent to re-read potentially-updated briefs and updates.
-//   - $FLOW_TASK unset (ad-hoc session, e.g. bare `flowde`): emit a
+//   - $FLOW_TASK unset (ad-hoc session, e.g. bare `claude`): emit a
 //     short hint that the flow skill is installed and should be used
 //     when the request touches task / project / session management.
 //     Without this, Claude Code may not auto-invoke the skill on the
-//     user's first message, so the wrapper's "skill is current"
-//     guarantee would have no observable effect for ad-hoc sessions.
+//     user's first message.
 func cmdHookSessionStart(args []string) int {
 	fs := flagSet("hook session-start")
 	if err := fs.Parse(args); err != nil {
@@ -86,8 +85,8 @@ func cmdHookSessionStart(args []string) int {
 }
 
 // emitAmbientSkillHint is the FLOW_TASK-unset branch of the SessionStart
-// hook. Used for ad-hoc `flowde` / `claude` sessions where there is no
-// specific task to load. It nudges Claude to invoke the flow skill when
+// hook. Used for ad-hoc `claude` sessions where there is no specific
+// task to load. It nudges Claude to invoke the flow skill when
 // the user's request touches flow-managed concerns, and — critically —
 // to offer to create a new flow task or switch to an existing one when
 // the user starts substantive work without a task attached. Otherwise

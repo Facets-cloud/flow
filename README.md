@@ -81,10 +81,9 @@ conversation — same context, same thread, same momentum.
 git clone git@github.com:Facets-cloud/flow.git && cd flow && make install && source ~/.zshrc
 ```
 
-Then run **`flowde`** and say **"let's get to work"**. `flowde` is a thin
-wrapper around `claude` that keeps the flow skill current on every launch
-— use it anywhere you'd normally run `claude`. Flow will guide you from
-there.
+Then run **`claude`** and say **"let's get to work"**. The flow skill
+is installed at ~/.claude/skills/flow/SKILL.md. To refresh it after
+upgrading flow, run `flow skill update` (or `make install` again).
 
 ## Usage
 
@@ -109,15 +108,13 @@ flow done auth
 ## How it works under the hood
 
 `flow do <task>` pre-allocates a session UUID, writes it to the task row,
-and spawns a new iTerm tab running `flowde` (a thin wrapper around
-`claude` that refreshes the flow skill on every launch) with
-`claude --session-id <uuid>` and the `FLOW_TASK` / `FLOW_PROJECT`
-environment variables inlined on the command line (scoped to the claude
-process only, not the tab's shell). The jsonl file lands at the
-deterministic path `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, so
-future `flow do` calls spawn `claude --resume <uuid>` to continue the
-same conversation. A SessionStart hook re-injects the task brief, updates,
-and CLAUDE.md context on every resume.
+and spawns a new iTerm tab running `claude --session-id <uuid>` with
+`FLOW_TASK` / `FLOW_PROJECT` environment variables inlined. The jsonl
+file lands at the deterministic path
+`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, so future `flow do`
+calls spawn `claude --resume <uuid>` to continue the same conversation.
+A SessionStart hook re-injects the task brief, updates, and CLAUDE.md
+context on every resume.
 
 Briefs live at `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate
 under `~/.flow/tasks/<slug>/updates/`. The flow skill (installed to

@@ -201,11 +201,11 @@ func TestCmdDoFuzzyExactWins(t *testing.T) {
 	}
 }
 
-// TestCmdDoSpawnsFlowdeNotClaude pins the wrapper contract: `flow do`
-// shells out to `flowde` (not `claude` directly) for both the fresh
-// bootstrap and the resume paths. The `flowde` wrapper owns the
-// "skill is current" guarantee, so `flow do` must not bypass it.
-func TestCmdDoSpawnsFlowdeNotClaude(t *testing.T) {
+// TestCmdDoSpawnsClaudeNotFlowde pins the post-flowde contract: `flow do`
+// shells out to `claude` directly (no wrapper) for both the fresh
+// bootstrap and the resume paths. Skill freshness is now an explicit
+// `flow skill update` step, not an implicit per-launch refresh.
+func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "wrap-fresh")
 
@@ -214,15 +214,12 @@ func TestCmdDoSpawnsFlowdeNotClaude(t *testing.T) {
 		t.Fatalf("fresh rc=%d", rc)
 	}
 	script := getScript()
-	if !strings.Contains(script, " flowde ") {
-		t.Errorf("fresh spawn must invoke flowde, got:\n%s", script)
+	if !strings.Contains(script, " claude --session-id ") {
+		t.Errorf("fresh spawn must invoke claude --session-id, got:\n%s", script)
 	}
-	// Guard against accidental reintroduction of a direct `claude`
-	// invocation in the spawn command portion. We look for the two
-	// shapes `flow do` used to emit: `claude '<prompt>'` (fresh) and
-	// `claude --resume <uuid>` (resume).
-	if strings.Contains(script, " claude ") {
-		t.Errorf("fresh spawn should not invoke claude directly, got:\n%s", script)
+	// Guard against accidental reintroduction of the flowde wrapper.
+	if strings.Contains(script, "flowde") {
+		t.Errorf("fresh spawn should not invoke flowde, got:\n%s", script)
 	}
 
 	// Now the resume path.
@@ -235,11 +232,11 @@ func TestCmdDoSpawnsFlowdeNotClaude(t *testing.T) {
 		t.Fatalf("resume rc=%d", rc)
 	}
 	script = getScript()
-	if !strings.Contains(script, " flowde --resume resume-sid") {
-		t.Errorf("resume spawn must invoke flowde --resume <uuid>, got:\n%s", script)
+	if !strings.Contains(script, " claude --resume resume-sid") {
+		t.Errorf("resume spawn must invoke claude --resume <uuid>, got:\n%s", script)
 	}
-	if strings.Contains(script, " claude ") {
-		t.Errorf("resume spawn should not invoke claude directly, got:\n%s", script)
+	if strings.Contains(script, "flowde") {
+		t.Errorf("resume spawn should not invoke flowde, got:\n%s", script)
 	}
 }
 
