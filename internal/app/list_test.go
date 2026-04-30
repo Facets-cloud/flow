@@ -378,6 +378,88 @@ func TestCmdListPlaybooksFiltersByProject(t *testing.T) {
 	}
 }
 
+func TestListTasksDefaultExcludesPlaybookRuns(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES ('pb--2026-04-30-10-30', 'pb run', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "regular-1") {
+		t.Errorf("regular task missing:\n%s", out)
+	}
+	if strings.Contains(out, "pb--2026-04-30-10-30") {
+		t.Errorf("playbook run should be hidden by default:\n%s", out)
+	}
+}
+
+func TestListTasksKindOverride(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES ('pb--2026-04-30-10-30', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--kind", "playbook_run"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "pb--2026-04-30-10-30") {
+		t.Errorf("--kind playbook_run should show runs:\n%s", out)
+	}
+}
+
+func TestListTasksKindAll(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES ('pb--run', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--kind", "all"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "regular-1") || !strings.Contains(out, "pb--run") {
+		t.Errorf("--kind all should show both:\n%s", out)
+	}
+}
+
 func TestEnsureUpdatesDir(t *testing.T) {
 	// Coverage for the helper used by tests and future commands.
 	dir, err := ensureUpdatesDir(t.TempDir(), "tasks", "x")

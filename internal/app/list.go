@@ -35,6 +35,7 @@ func listTasksCmd(args []string) int {
 	priority := fs.String("priority", "", "high|medium|low")
 	since := fs.String("since", "", "today|monday|7d|YYYY-MM-DD")
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
+	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -44,6 +45,10 @@ func listTasksCmd(args []string) int {
 		Project:         *project,
 		Priority:        *priority,
 		IncludeArchived: *includeArchived,
+	}
+	// Default kind is "regular"; "all" disables the kind filter.
+	if *kind != "all" {
+		filter.Kind = *kind
 	}
 	if *since != "" {
 		s, err := parseSince(*since, time.Now())
