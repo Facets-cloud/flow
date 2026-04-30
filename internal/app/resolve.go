@@ -53,6 +53,27 @@ func ResolveProject(db *sql.DB, ref string, includeArchived bool) (*flowdb.Proje
 	return p, nil
 }
 
+// ResolvePlaybook resolves a ref to exactly one playbook by slug.
+// includeArchived controls whether archived rows are eligible.
+func ResolvePlaybook(db *sql.DB, ref string, includeArchived bool) (*flowdb.Playbook, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil, fmt.Errorf("empty playbook ref")
+	}
+
+	pb, err := flowdb.GetPlaybook(db, ref)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("no playbook matching %q", ref)
+		}
+		return nil, err
+	}
+	if !includeArchived && pb.ArchivedAt.Valid {
+		return nil, fmt.Errorf("playbook %q is archived", ref)
+	}
+	return pb, nil
+}
+
 // ResolveTaskOrProject resolves a ref that could be either a task or project.
 // Supports optional task/ or project/ prefix. Without prefix, tries both.
 // Errors if the ref matches in both tables.
