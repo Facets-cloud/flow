@@ -206,7 +206,11 @@ func cmdDo(args []string) int {
 		// makes it write its jsonl at the deterministic path
 		// ~/.claude/projects/<encoded-cwd>/<sessionID>.jsonl, so there is
 		// nothing to discover afterwards.
-		prompt := buildBootstrapPrompt(task.Slug)
+		playbookSlug := ""
+		if task.PlaybookSlug.Valid {
+			playbookSlug = task.PlaybookSlug.String
+		}
+		prompt := buildBootstrapPromptForKind(task.Slug, task.Kind, playbookSlug)
 		command = fmt.Sprintf("claude --session-id %s %s", sessionID, iterm.ShellQuote(prompt))
 	} else {
 		// Resume path: the UUID we already have in the DB is what claude
@@ -251,8 +255,12 @@ func cmdDo(args []string) int {
 	return 0
 }
 
-// buildBootstrapPrompt composes the short first-message sent to a newly
-// created Claude session. Intentionally shell-safe — no single/double
+// buildBootstrapPromptForKind dispatches to the right prompt variant
+// based on task kind. For kind='playbook_run' the playbook variant is
+// used; otherwise the regular task variant. Empty kind (legacy rows
+// that somehow didn't migrate) falls through to the regular variant.
+//
+// The bootstrap prompt is intentionally shell-safe — no single/double
 // quotes, backticks, or dollar signs — because it gets shell-quoted
 // as a single positional argument to `claude`.
 //
@@ -262,7 +270,15 @@ func cmdDo(args []string) int {
 // then (if any) project brief + project updates, then CLAUDE.md files
 // in the work_dir. The flow skill enforces this sequence too; the
 // bootstrap prompt is a backup in case the skill isn't auto-activated.
-func buildBootstrapPrompt(slug string) string {
+func buildBootstrapPromptForKind(slug, kind, playbookSlug string) string {
+	if kind == "playbook_run" {
+		return buildPlaybookRunBootstrapPrompt(slug, playbookSlug)
+	}
+	return buildTaskBootstrapPrompt(slug)
+}
+
+// buildTaskBootstrapPrompt is the prompt for regular tasks.
+func buildTaskBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
 		"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
 			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
@@ -272,6 +288,31 @@ func buildBootstrapPrompt(slug string) string {
 			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
 	)
+}
+
+// buildPlaybookRunBootstrapPrompt is the prompt for playbook-run tasks.
+// Adds an explicit `flow show playbook <slug>` context-load step and
+// frames the run's brief as an authoritative snapshot — the session
+// must execute against that snapshot, not re-read the live playbook
+// brief (which may drift between runs).
+func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string) string {
+	return fmt.Sprintf(
+		"You are running playbook `%s` as run `%s`. Do ALL of the following in order before executing anything:\n"+
+			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works.\n"+
+			"2. Run: flow show playbook %s. This shows the playbook's definition and recent runs — context only, not your instructions. Note any files listed under other: — they're sidecar references you can Read on demand if relevant; do not eagerly load them.\n"+
+			"3. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files under other: are references for THIS run; load on demand when relevant. The brief is your authoritative instructions for this run — it was snapshotted from the playbook at the moment this run started. Execute against this, not the live playbook brief.\n"+
+			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief and every file under updates:. Files under other: are on-demand references.\n"+
+			"5. Read CLAUDE.md in your work_dir.\n"+
+			"6. Only then begin executing your brief.",
+		playbookSlug, runSlug, playbookSlug,
+	)
+}
+
+// buildBootstrapPrompt is a backwards-compat shim for old callers that
+// pass only a slug. Now points at the regular-task variant. Tests still
+// call this to verify the regular variant.
+func buildBootstrapPrompt(slug string) string {
+	return buildTaskBootstrapPrompt(slug)
 }
 
 // buildTabTitle returns a short iTerm tab title. Project-scoped tasks get

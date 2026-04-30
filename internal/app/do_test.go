@@ -282,3 +282,61 @@ func TestBuildBootstrapPromptMentionsOther(t *testing.T) {
 		t.Errorf("expected prompt to clarify lazy loading, got:\n%s", got)
 	}
 }
+
+func TestBuildBootstrapPromptForPlaybookRun(t *testing.T) {
+	got := buildBootstrapPromptForKind("p--2026-04-30-10-30", "playbook_run", "p")
+	if !strings.Contains(got, "playbook `p`") {
+		t.Errorf("expected playbook reference, got:\n%s", got)
+	}
+	if !strings.Contains(got, "flow show playbook p") {
+		t.Errorf("expected flow show playbook command, got:\n%s", got)
+	}
+	if !strings.Contains(got, "snapshotted from the playbook") {
+		t.Errorf("expected snapshot framing, got:\n%s", got)
+	}
+	if !strings.Contains(got, "other:") {
+		t.Errorf("expected mention of other:, got:\n%s", got)
+	}
+}
+
+func TestBuildBootstrapPromptForRegularTask(t *testing.T) {
+	got := buildBootstrapPromptForKind("foo", "regular", "")
+	if strings.Contains(got, "playbook") {
+		t.Errorf("regular task prompt shouldn't mention playbook:\n%s", got)
+	}
+	if !strings.Contains(got, "flow show task") {
+		t.Errorf("regular task prompt should mention flow show task:\n%s", got)
+	}
+}
+
+func TestBuildBootstrapPromptForKindWithEmptyKind(t *testing.T) {
+	// Defensive: an empty kind string (legacy rows that somehow didn't
+	// migrate) should fall through to the regular-task variant.
+	got := buildBootstrapPromptForKind("foo", "", "")
+	if strings.Contains(got, "playbook") {
+		t.Errorf("empty kind should default to regular, got:\n%s", got)
+	}
+}
+
+func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+
+	_, lastScript := stubITerm(t)
+
+	// Use cmdRun to create the run-task (it uses cmdDo internally).
+	if rc := cmdRun([]string{"playbook", "tri"}); rc != 0 {
+		t.Fatal()
+	}
+
+	script := lastScript()
+	if !strings.Contains(script, "playbook `tri`") {
+		t.Errorf("expected playbook prompt variant in spawn script, got:\n%s", script)
+	}
+	if !strings.Contains(script, "flow show playbook tri") {
+		t.Errorf("expected 'flow show playbook tri' in spawn script, got:\n%s", script)
+	}
+}
