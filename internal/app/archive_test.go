@@ -171,6 +171,33 @@ func TestCmdArchiveIdempotent(t *testing.T) {
 	}
 }
 
+func TestCmdArchivePlaybook(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdArchive([]string{"p"}); rc != 0 {
+		t.Errorf("archive rc=%d", rc)
+	}
+	pb, err := flowdb.GetPlaybook(db, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pb.ArchivedAt.Valid {
+		t.Errorf("ArchivedAt should be set")
+	}
+
+	if rc := cmdUnarchive([]string{"p"}); rc != 0 {
+		t.Errorf("unarchive rc=%d", rc)
+	}
+	pb, _ = flowdb.GetPlaybook(db, "p")
+	if pb.ArchivedAt.Valid {
+		t.Errorf("ArchivedAt should be cleared")
+	}
+}
+
 func TestCmdArchiveExactSlug(t *testing.T) {
 	root := setupArchiveTestEnv(t)
 	db := reopenArchiveTestDB(t, root)

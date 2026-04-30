@@ -74,6 +74,64 @@ func ResolvePlaybook(db *sql.DB, ref string, includeArchived bool) (*flowdb.Play
 	return pb, nil
 }
 
+// ResolveTaskProjectOrPlaybook resolves a ref that could be a task, project,
+// or playbook. Supports task/, project/, playbook/ prefixes. On bare refs,
+// tries each kind; errors on ambiguity (slug exists in 2+ tables).
+func ResolveTaskProjectOrPlaybook(db *sql.DB, ref string, includeArchived bool) (kind, slug string, err error) {
+	if strings.HasPrefix(ref, "task/") {
+		t, err := ResolveTask(db, strings.TrimPrefix(ref, "task/"), includeArchived)
+		if err != nil {
+			return "", "", err
+		}
+		return "task", t.Slug, nil
+	}
+	if strings.HasPrefix(ref, "project/") {
+		p, err := ResolveProject(db, strings.TrimPrefix(ref, "project/"), includeArchived)
+		if err != nil {
+			return "", "", err
+		}
+		return "project", p.Slug, nil
+	}
+	if strings.HasPrefix(ref, "playbook/") {
+		pb, err := ResolvePlaybook(db, strings.TrimPrefix(ref, "playbook/"), includeArchived)
+		if err != nil {
+			return "", "", err
+		}
+		return "playbook", pb.Slug, nil
+	}
+
+	t, tErr := ResolveTask(db, ref, includeArchived)
+	p, pErr := ResolveProject(db, ref, includeArchived)
+	pb, pbErr := ResolvePlaybook(db, ref, includeArchived)
+
+	matches := []string{}
+	if tErr == nil {
+		matches = append(matches, "task "+t.Slug)
+	}
+	if pErr == nil {
+		matches = append(matches, "project "+p.Slug)
+	}
+	if pbErr == nil {
+		matches = append(matches, "playbook "+pb.Slug)
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", "", fmt.Errorf("no task, project, or playbook matching %q", ref)
+	case 1:
+		switch {
+		case tErr == nil:
+			return "task", t.Slug, nil
+		case pErr == nil:
+			return "project", p.Slug, nil
+		default:
+			return "playbook", pb.Slug, nil
+		}
+	default:
+		return "", "", fmt.Errorf("ambiguous ref %q matches %s; use a prefix like task/, project/, or playbook/", ref, strings.Join(matches, ", "))
+	}
+}
+
 // ResolveTaskOrProject resolves a ref that could be either a task or project.
 // Supports optional task/ or project/ prefix. Without prefix, tries both.
 // Errors if the ref matches in both tables.

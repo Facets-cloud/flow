@@ -102,58 +102,6 @@ func cmdEdit(args []string) int {
 
 // resolveEditRef resolves a ref that could be a task, project, or playbook.
 // Supports task/, project/, and playbook/ prefixes. Includes archived rows.
-// On bare refs, tries each kind in order; errors on ambiguity.
 func resolveEditRef(db *sql.DB, ref string) (kind, slug string, err error) {
-	if strings.HasPrefix(ref, "task/") {
-		t, err := ResolveTask(db, strings.TrimPrefix(ref, "task/"), true)
-		if err != nil {
-			return "", "", err
-		}
-		return "task", t.Slug, nil
-	}
-	if strings.HasPrefix(ref, "project/") {
-		p, err := ResolveProject(db, strings.TrimPrefix(ref, "project/"), true)
-		if err != nil {
-			return "", "", err
-		}
-		return "project", p.Slug, nil
-	}
-	if strings.HasPrefix(ref, "playbook/") {
-		pb, err := ResolvePlaybook(db, strings.TrimPrefix(ref, "playbook/"), true)
-		if err != nil {
-			return "", "", err
-		}
-		return "playbook", pb.Slug, nil
-	}
-
-	t, tErr := ResolveTask(db, ref, true)
-	p, pErr := ResolveProject(db, ref, true)
-	pb, pbErr := ResolvePlaybook(db, ref, true)
-
-	matches := []string{}
-	if tErr == nil {
-		matches = append(matches, "task "+t.Slug)
-	}
-	if pErr == nil {
-		matches = append(matches, "project "+p.Slug)
-	}
-	if pbErr == nil {
-		matches = append(matches, "playbook "+pb.Slug)
-	}
-
-	switch len(matches) {
-	case 0:
-		return "", "", fmt.Errorf("no task, project, or playbook matching %q", ref)
-	case 1:
-		switch {
-		case tErr == nil:
-			return "task", t.Slug, nil
-		case pErr == nil:
-			return "project", p.Slug, nil
-		default:
-			return "playbook", pb.Slug, nil
-		}
-	default:
-		return "", "", fmt.Errorf("ambiguous ref %q matches %s; use a prefix like task/, project/, or playbook/", ref, strings.Join(matches, ", "))
-	}
+	return ResolveTaskProjectOrPlaybook(db, ref, true)
 }
