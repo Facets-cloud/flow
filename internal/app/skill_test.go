@@ -161,3 +161,21 @@ func TestSkillHasPlaybookSections(t *testing.T) {
 		}
 	}
 }
+
+func TestSkillIntakeMinimal(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"Required sections (always asked, in this order)",
+		"Optional sections (offered, can be deferred)",
+		"Detail now",
+		"Defer until you start the task",
+		"Thin task brief (intake-minimal)",
+		"*Deferred — fill in at task start.*",
+		"Deferred-section prompt",
+		"Fill in now",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing %q", want)
+		}
+	}
+}

@@ -243,26 +243,39 @@ solution during intake. You NEVER fill blanks with guesses. If a section
 is unclear, ask. If the user says "I don't know yet", write "Open
 question: ..." in the brief and move on.
 
-**Sections to ask, ONE AT A TIME, in this order:**
+**Required sections (always asked, in this order):**
 
-1. **What?** One sentence describing the work. "Add OAuth login to the
-   budgeting app." Not: "Set up Passport.js with Google as the provider
-   and switch the login form to..." — that's solutioning. Just capture
-   the user's one-sentence framing.
-2. **Why?** Why is this worth doing now? Business reason, user pain,
-   self-motivated curiosity — whatever the user actually says. If they
-   say "just because", write "Because my manager wants to." Don't editorialize.
-3. **Where?** Which codebase or filesystem location. This is where the
-   `work_dir` question happens — see §6 for the full recipe.
-4. **Done when?** Concrete acceptance criteria. Bullet form. "Users can
-   sign in with Google", "session persists across reloads", "docs
-   updated". If the user gives a single fuzzy answer, ask for one more
-   bullet to sharpen it.
-5. **Out of scope?** Explicit non-goals. "Not rebuilding the sign-up
-   flow." "Not touching the mobile app." This is optional — if the user
-   has nothing here, leave it empty.
-6. **Open questions?** Things the user isn't sure about and wants to
-   decide later. Write them literally.
+1. **Name** — one-sentence description of the work. Example: "Add OAuth
+   login to the budgeting app."
+2. **Slug** — short, memorable, ASCII. Use AskUserQuestion to suggest 2–3
+   candidates derived from the name. User picks one or types a custom
+   slug.
+3. **Where?** — work_dir for the task. Use the §6 recipe.
+4. **Priority** — High / Medium / Low via AskUserQuestion. Default Medium.
+
+**Optional sections (offered, can be deferred):**
+
+After the four required fields, use AskUserQuestion:
+
+> "Want to capture more detail now (Why, Done when, Out of scope, Open
+> questions), or defer until you start the task?"
+> - Detail now (recommended for tasks you'll start later)
+> - Defer until you start the task
+
+**Detail now:** run the rest of the original §4.2 sections — Why, Done
+when, Out of scope, Open questions — and draft the full brief. Use the
+full task-brief template from §7.
+
+**Defer:** save the task with a thin brief (template in §7). The
+bootstrap-time prompt (§9 deferred-section prompt) will walk the user
+through the missing sections when they `flow do` the task — at which
+point the user has more context and is more motivated to think about
+acceptance criteria.
+
+**Confirmation flow** (both paths):
+- Show the drafted brief.
+- AskUserQuestion: "Brief — Save it / Revise"
+- Save → `flow add task ...` → overwrite stub brief with content.
 
 **Then, BEFORE calling `flow add task`:**
 
@@ -872,6 +885,39 @@ every file under `updates/` (if any exist) to catch up on prior
 progress.*
 ```
 
+**Thin task brief (intake-minimal):**
+
+```markdown
+# <name>
+
+## What
+<one sentence from intake>
+
+## Why
+*Deferred — fill in at task start.*
+
+## Where
+work_dir: <path>
+
+## Done when
+*Deferred — fill in at task start.*
+
+## Out of scope
+*Deferred*
+
+## Open questions
+*Deferred*
+
+---
+*This brief is thin. Before you start substantive work, the bootstrap
+session will prompt you to fill in the deferred sections.*
+```
+
+A section is "deferred" if its body is the literal string
+`*Deferred — fill in at task start.*` or `*Deferred*`. The bootstrap
+session detects this and offers the user a deferred-section prompt
+(§9).
+
 If a section has no content, leave the heading with an italic "none"
 underneath. Don't omit headings — the parallel structure makes the
 briefs scannable.
@@ -1058,6 +1104,25 @@ append them to the matching `kb/*.md` file on the fly — no permission
 needed, no interview required. Just write and quietly note what you
 recorded. And lazy-read any kb file when you hit a question that
 actually needs that context — not before.
+
+### Deferred-section prompt
+
+If any section body in your brief is the literal `*Deferred — fill in at
+task start.*` or `*Deferred*`, pause before doing any work and offer the
+user (via AskUserQuestion):
+
+- **Fill in now** — run a mini-§4.2 interview for just the missing
+  sections (Why, Done when, Out of scope, Open questions). Save the
+  filled-in brief by overwriting the existing `brief.md`.
+- **Skip — proceed** — accept that scope is implicit. Reasonable for
+  small/known tasks.
+
+This shifts the intake burden from intake-time to task-start-time, where
+the user has more context.
+
+Applies only to regular tasks (kind=regular). Playbook-run briefs are
+snapshots and should not be edited; if the live playbook brief had
+deferred sections, those should have been resolved at playbook intake.
 
 ### Cross-task context via transcripts
 
