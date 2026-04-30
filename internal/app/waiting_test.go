@@ -10,7 +10,7 @@ func TestCmdWaitingSet(t *testing.T) {
 	db := reopenArchiveTestDB(t, root)
 	insertTask(t, db, "work", "Work", "in-progress", "medium", "/tmp/wd", nil)
 
-	if rc := cmdWaiting([]string{"work", "Anshul's review"}); rc != 0 {
+	if rc := cmdWaiting([]string{"work", "Alice's review"}); rc != 0 {
 		t.Fatalf("waiting rc=%d", rc)
 	}
 	var wo sql.NullString
@@ -18,8 +18,8 @@ func TestCmdWaitingSet(t *testing.T) {
 	if err := db.QueryRow("SELECT waiting_on, status FROM tasks WHERE slug='work'").Scan(&wo, &status); err != nil {
 		t.Fatalf("%v", err)
 	}
-	if !wo.Valid || wo.String != "Anshul's review" {
-		t.Errorf("waiting_on got %+v, want Anshul's review", wo)
+	if !wo.Valid || wo.String != "Alice's review" {
+		t.Errorf("waiting_on got %+v, want Alice's review", wo)
 	}
 	if status != "in-progress" {
 		t.Errorf("status should not change, got %q", status)

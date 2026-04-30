@@ -83,7 +83,7 @@ func TestCmdListTasksStaleMarker(t *testing.T) {
 func TestCmdListTasksWaitingOn(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "waiter", "W", "in-progress", "high", filepath.Join(root, "x"), nil)
-	if _, err := db.Exec(`UPDATE tasks SET waiting_on = ? WHERE slug = ?`, "Anshul", "waiter"); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET waiting_on = ? WHERE slug = ?`, "Alice", "waiter"); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
@@ -91,7 +91,7 @@ func TestCmdListTasksWaitingOn(t *testing.T) {
 			t.Errorf("rc=%d", rc)
 		}
 	})
-	if !strings.Contains(out, "[waiting: Anshul]") {
+	if !strings.Contains(out, "[waiting: Alice]") {
 		t.Errorf("expected waiting annotation; out=%q", out)
 	}
 }

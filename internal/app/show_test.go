@@ -249,7 +249,7 @@ func TestCmdShowTaskWorkdirAnnotation(t *testing.T) {
 func TestCmdShowTaskWaitingOn(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "waiter", "W", "in-progress", "medium", filepath.Join(root, "x"), nil)
-	if _, err := db.Exec(`UPDATE tasks SET waiting_on = ? WHERE slug = ?`, "Anshul review", "waiter"); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET waiting_on = ? WHERE slug = ?`, "Alice review", "waiter"); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
@@ -257,7 +257,7 @@ func TestCmdShowTaskWaitingOn(t *testing.T) {
 			t.Errorf("rc=%d", rc)
 		}
 	})
-	if !strings.Contains(out, "waiting_on:    Anshul review") {
+	if !strings.Contains(out, "waiting_on:    Alice review") {
 		t.Errorf("missing waiting_on line; out=%q", out)
 	}
 }
