@@ -115,7 +115,7 @@ func TestCmdEditUnknownRef(t *testing.T) {
 			t.Errorf("rc=%d, want 1", rc)
 		}
 	})
-	if !strings.Contains(out, "no task or project matching") {
+	if !strings.Contains(out, "no task, project, or playbook matching") {
 		t.Errorf("missing error; out=%q", out)
 	}
 }
@@ -229,5 +229,31 @@ func TestCmdEditProjectOnlyByDefault(t *testing.T) {
 	})
 	if !strings.Contains(out, "Edited project soloProj") {
 		t.Errorf("out=%q", out)
+	}
+}
+
+func TestCmdEditPlaybook(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	t.Setenv("EDITOR", "/usr/bin/true")
+	if rc := cmdEdit([]string{"p"}); rc != 0 {
+		t.Errorf("rc=%d", rc)
+	}
+	briefPath := filepath.Join(root, "playbooks", "p", "brief.md")
+	if _, err := os.Stat(briefPath); err != nil {
+		t.Errorf("brief.md missing: %v", err)
+	}
+
+	// updated_at should be bumped — verify the row's updated_at is recent.
+	db := openFlowDB(t)
+	pb, err := flowdb.GetPlaybook(db, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pb.UpdatedAt == "" {
+		t.Errorf("UpdatedAt empty")
 	}
 }

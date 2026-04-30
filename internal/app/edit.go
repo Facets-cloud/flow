@@ -53,6 +53,8 @@ func cmdEdit(args []string) int {
 		briefPath = filepath.Join(root, "tasks", slug, "brief.md")
 	case "project":
 		briefPath = filepath.Join(root, "projects", slug, "brief.md")
+	case "playbook":
+		briefPath = filepath.Join(root, "playbooks", slug, "brief.md")
 	}
 
 	// Ensure the parent directory exists so the editor doesn't refuse.
@@ -87,6 +89,8 @@ func cmdEdit(args []string) int {
 		_, updateErr = db.Exec(`UPDATE tasks SET updated_at = ? WHERE slug = ?`, now, slug)
 	case "project":
 		_, updateErr = db.Exec(`UPDATE projects SET updated_at = ? WHERE slug = ?`, now, slug)
+	case "playbook":
+		_, updateErr = db.Exec(`UPDATE playbooks SET updated_at = ? WHERE slug = ?`, now, slug)
 	}
 	if updateErr != nil {
 		fmt.Fprintf(os.Stderr, "error: bump updated_at: %v\n", updateErr)
@@ -96,8 +100,60 @@ func cmdEdit(args []string) int {
 	return 0
 }
 
-// resolveEditRef resolves a ref that could be a task or a project.
-// Supports task/ and project/ prefixes. Includes archived rows.
+// resolveEditRef resolves a ref that could be a task, project, or playbook.
+// Supports task/, project/, and playbook/ prefixes. Includes archived rows.
+// On bare refs, tries each kind in order; errors on ambiguity.
 func resolveEditRef(db *sql.DB, ref string) (kind, slug string, err error) {
-	return ResolveTaskOrProject(db, ref, true)
+	if strings.HasPrefix(ref, "task/") {
+		t, err := ResolveTask(db, strings.TrimPrefix(ref, "task/"), true)
+		if err != nil {
+			return "", "", err
+		}
+		return "task", t.Slug, nil
+	}
+	if strings.HasPrefix(ref, "project/") {
+		p, err := ResolveProject(db, strings.TrimPrefix(ref, "project/"), true)
+		if err != nil {
+			return "", "", err
+		}
+		return "project", p.Slug, nil
+	}
+	if strings.HasPrefix(ref, "playbook/") {
+		pb, err := ResolvePlaybook(db, strings.TrimPrefix(ref, "playbook/"), true)
+		if err != nil {
+			return "", "", err
+		}
+		return "playbook", pb.Slug, nil
+	}
+
+	t, tErr := ResolveTask(db, ref, true)
+	p, pErr := ResolveProject(db, ref, true)
+	pb, pbErr := ResolvePlaybook(db, ref, true)
+
+	matches := []string{}
+	if tErr == nil {
+		matches = append(matches, "task "+t.Slug)
+	}
+	if pErr == nil {
+		matches = append(matches, "project "+p.Slug)
+	}
+	if pbErr == nil {
+		matches = append(matches, "playbook "+pb.Slug)
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", "", fmt.Errorf("no task, project, or playbook matching %q", ref)
+	case 1:
+		switch {
+		case tErr == nil:
+			return "task", t.Slug, nil
+		case pErr == nil:
+			return "project", p.Slug, nil
+		default:
+			return "playbook", pb.Slug, nil
+		}
+	default:
+		return "", "", fmt.Errorf("ambiguous ref %q matches %s; use a prefix like task/, project/, or playbook/", ref, strings.Join(matches, ", "))
+	}
 }
