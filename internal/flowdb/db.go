@@ -71,9 +71,16 @@ CREATE TABLE IF NOT EXISTS workdirs (
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_slug);
 CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
+`
+
+// indexesPostMigrate are indexes that depend on columns added by
+// runMigrations. Running them in schemaDDL before migrations would fail
+// against an existing pre-migration DB ("no such column"), so they live
+// here and run AFTER migrations land.
+const indexesPostMigrate = `
 CREATE INDEX IF NOT EXISTS idx_tasks_kind          ON tasks(kind);
 CREATE INDEX IF NOT EXISTS idx_tasks_playbook_slug ON tasks(playbook_slug);
-CREATE INDEX IF NOT EXISTS idx_playbooks_project  ON playbooks(project_slug);
+CREATE INDEX IF NOT EXISTS idx_playbooks_project   ON playbooks(project_slug);
 `
 
 // ---------- models ----------
@@ -228,6 +235,13 @@ func runMigrations(db *sql.DB) error {
 		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN playbook_slug TEXT REFERENCES playbooks(slug)`); err != nil {
 			return fmt.Errorf("add tasks.playbook_slug: %w", err)
 		}
+	}
+
+	// Indexes that depend on columns added above. Safe to run after every
+	// migration pass — CREATE INDEX IF NOT EXISTS is idempotent, and by
+	// this point all referenced columns exist.
+	if _, err := db.Exec(indexesPostMigrate); err != nil {
+		return fmt.Errorf("create post-migrate indexes: %w", err)
 	}
 	return nil
 }

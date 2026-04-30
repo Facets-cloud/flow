@@ -158,6 +158,82 @@ func TestMigrationAddsDueDateAndStatusChangedAt(t *testing.T) {
 	}
 }
 
+// TestOpenDBOnPreMigrationDB simulates an existing user upgrading from a
+// pre-feat/playbooks flow.db: tasks table exists but lacks the kind and
+// playbook_slug columns. OpenDB must apply migrations cleanly without
+// CREATE INDEX failing on the missing columns.
+//
+// Regression test: see commit fixing "no such column: kind" — schemaDDL
+// used to include `CREATE INDEX ... ON tasks(kind)` which fails before
+// runMigrations gets a chance to ALTER TABLE.
+func TestOpenDBOnPreMigrationDB(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "flow.db")
+
+	// Create a "pre-migration" DB by hand: just the original tasks schema,
+	// no kind/playbook_slug columns, no playbooks table.
+	pre, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pre.Exec(`
+		CREATE TABLE projects (
+			slug TEXT PRIMARY KEY, name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active', priority TEXT NOT NULL DEFAULT 'medium',
+			work_dir TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			archived_at TEXT
+		);
+		CREATE TABLE tasks (
+			slug TEXT PRIMARY KEY, name TEXT NOT NULL,
+			project_slug TEXT, status TEXT NOT NULL DEFAULT 'backlog',
+			priority TEXT NOT NULL DEFAULT 'medium', work_dir TEXT NOT NULL,
+			waiting_on TEXT, session_id TEXT, session_started TEXT,
+			session_last_resumed TEXT, created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL, archived_at TEXT
+		);
+		CREATE TABLE workdirs (
+			path TEXT PRIMARY KEY, name TEXT, git_remote TEXT,
+			last_used_at TEXT, created_at TEXT NOT NULL
+		);
+		INSERT INTO tasks (slug, name, status, priority, work_dir, created_at, updated_at)
+			VALUES ('legacy', 'Legacy task', 'in-progress', 'high', '/tmp', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+	`); err != nil {
+		pre.Close()
+		t.Fatalf("seed pre-migration DB: %v", err)
+	}
+	pre.Close()
+
+	// Now reopen via OpenDB — must not error.
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB on pre-migration DB: %v", err)
+	}
+	defer db.Close()
+
+	// Verify the legacy row is still readable and has kind='regular' default.
+	var kind string
+	if err := db.QueryRow(`SELECT kind FROM tasks WHERE slug='legacy'`).Scan(&kind); err != nil {
+		t.Fatalf("read legacy row after migration: %v", err)
+	}
+	if kind != "regular" {
+		t.Errorf("legacy row kind: got %q, want regular", kind)
+	}
+
+	// Verify the new playbooks table is queryable.
+	if _, err := db.Exec(`SELECT slug FROM playbooks LIMIT 1`); err != nil {
+		t.Errorf("playbooks table not created: %v", err)
+	}
+
+	// Verify the new indexes exist.
+	for _, idx := range []string{"idx_tasks_kind", "idx_tasks_playbook_slug", "idx_playbooks_project"} {
+		var name string
+		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&name)
+		if err != nil {
+			t.Errorf("index %s not created: %v", idx, err)
+		}
+	}
+}
+
 func TestPlaybooksTableExists(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "flow.db")
