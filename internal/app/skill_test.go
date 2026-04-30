@@ -143,3 +143,21 @@ func TestSkillMentionsPlaybooks(t *testing.T) {
 		}
 	}
 }
+
+func TestSkillHasPlaybookSections(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"### 4.12 Add a playbook",
+		"### 4.13 Run a playbook",
+		"fire the X agent",
+		"kind: playbook_run",
+		"snapshot taken when this run started",
+		"Files listed under `other:`",
+		"load on demand",
+		"Auxiliary files in entity directories",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing %q", want)
+		}
+	}
+}

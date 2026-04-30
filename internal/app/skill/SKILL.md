@@ -661,6 +661,12 @@ immediately — that doesn't require the file to have been loaded first.
 Read-Write just means "load, check for duplicates, write" as a single
 sequence at the moment the fact is heard.
 
+**Auxiliary files in entity directories** (any `.md` files in
+`tasks/<slug>/`, `projects/<slug>/`, or `playbooks/<slug>/` other than
+`brief.md` and the contents of `updates/`) are surfaced by `flow show`
+under an `other:` section. Apply the same lazy-load discipline as KB
+files: load them on demand when relevant to the work, not preemptively.
+
 ### 4.11 Scope-creep detection (suggest-and-offer)
 
 This is a **passive** workflow like §5.10 — you watch the session as it
@@ -744,6 +750,63 @@ runs the check.
 triggers and recipe are identical for playbook-run sessions —
 edits/debugging that drift outside the playbook's scope warrant the
 same prompt.
+
+### 4.12 Add a playbook
+
+**Triggers:** "add a playbook", "create a playbook for X",
+"track this as a playbook", "this is something I'll re-run".
+
+**The interview is the whole point** (same philosophy as §4.2 task intake — you interview, then write down what the user said; you do NOT solution during intake).
+
+**Sections to ask, ONE AT A TIME, in this order:**
+
+1. **What?** One sentence describing what each run does.
+2. **Why?** Why this playbook exists and what value it produces.
+3. **Where?** Work_dir for runs (use §6 recipe).
+4. **Each run does** — concrete steps every invocation performs. Bullet
+   form. Replaces "Done when" from task intake.
+5. **Out of scope?** Non-goals. Optional.
+6. **Signals to watch for** — observable conditions that should change
+   the run's behavior or trigger an escalation. Replaces "Open
+   questions" — playbooks have long lifespans so prospective signals
+   matter more than open questions.
+
+**Then before calling `flow add playbook`:**
+
+- Suggest 2-3 slug candidates (same pattern as §4.2). Use AskUserQuestion.
+- Ask about project attachment (same pattern). Optional — playbooks can
+  be floating.
+- `--mkdir` if work_dir doesn't exist.
+
+**Draft the brief, show to the user, get "Save it" confirmation.** Then
+run `flow add playbook` and overwrite the stub `brief.md` with the full
+content. Use the playbook brief template from §7.
+
+After save, use AskUserQuestion to offer:
+- "Run it now" → proceed to §4.13
+- "Just save the definition for now"
+
+### 4.13 Run a playbook
+
+**Triggers — any of these means "run `flow run playbook <slug>`":**
+- "run the X playbook" / "trigger X" / "fire the X playbook"
+- "fire the X agent" (legacy term users may use — playbook is the canonical name)
+- "start a run of X" / "kick off X"
+- A bare `flow run playbook X` typed as command
+
+**Recipe:**
+
+1. Ask session-mode (Regular vs Skip permissions) via AskUserQuestion —
+   reuses the §4.4 pattern. Skip if the user already specified.
+2. Run: `flow run playbook <slug>` (with `--dangerously-skip-permissions`
+   if chosen).
+3. The command creates a kind=playbook_run task, snapshots the brief,
+   and spawns an iTerm tab. The new tab will boot the flow skill via its
+   bootstrap prompt and execute against the snapshotted brief.
+
+**Anti-pattern (per §8):** never auto-fire. Manual trigger only. Even if
+the user mentions a playbook name in passing, do not run it without an
+explicit verb ("run", "trigger", "fire", "start").
 
 ## 6. The `work_dir` question — rules
 
@@ -946,6 +1009,22 @@ proposing any plan:
 
    **Do NOT read the `kb:` files at bootstrap.** They're lazy-loaded
    on demand — see §5.10 for when to actually Read them.
+
+   **If `flow show task` indicates `kind: playbook_run`:** also run
+   `flow show playbook <playbook-slug>` first (for context: the playbook's
+   intent and recent runs). Note any files under its `other:` section —
+   they're sidecar references you can load on demand. Then read your
+   task's `brief.md` — that's the snapshot taken when this run started,
+   and it's your authoritative instructions. The playbook's live
+   `brief.md` may have evolved since; you don't need to re-read it.
+
+   **Files listed under `other:`** in any `flow show` output (task,
+   project, or playbook) are sidecar references — research notes, decision
+   trees, design docs, etc. dropped into the entity's directory. Do **not**
+   read them eagerly. Read them on demand when something in the brief, in
+   user input, or in the work makes them relevant. This matches the
+   lazy-load principle for KB files (§5.10 in the skill, §4.10 in the
+   section numbering).
 
 3. **Load the parent project context, if any.** If `flow show task`
    printed a `project:` line that isn't `(floating)`, run:
