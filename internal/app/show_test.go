@@ -505,6 +505,47 @@ func TestShowTaskNoAuxFiles(t *testing.T) {
 	}
 }
 
+func TestShowProjectListsAuxFiles(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Auth", "--slug", "auth", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	pdir := filepath.Join(root, "projects", "auth")
+	mustWriteAux(t, filepath.Join(pdir, "decisions.md"), "x")
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"project", "auth"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected other: section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "decisions.md") {
+		t.Errorf("expected decisions.md, got:\n%s", out)
+	}
+}
+
+func TestShowProjectNoAuxFiles(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Bar", "--slug", "barproj", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"project", "barproj"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected other: line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "(none)") {
+		t.Errorf("expected (none) marker, got:\n%s", out)
+	}
+}
+
 func captureShowStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout

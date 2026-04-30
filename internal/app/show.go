@@ -304,6 +304,20 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 		}
 	}
 
+	// Auxiliary .md files (sidecar references — not eagerly loaded).
+	auxFiles, auxErr := enumerateAuxFiles(filepath.Join(root, "projects", p.Slug))
+	if auxErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: enumerate aux files: %v\n", auxErr)
+	}
+	if len(auxFiles) == 0 {
+		fmt.Println("other:       (none)")
+	} else {
+		fmt.Println("other:")
+		for _, fp := range auxFiles {
+			fmt.Printf("  - %s\n", fp)
+		}
+	}
+
 	// Knowledge-base files, same as on `flow show task`.
 	kb := kbFiles(root)
 	if len(kb) == 0 {
