@@ -237,6 +237,73 @@ func TestMigrationAddsTasksKindAndPlaybookSlug(t *testing.T) {
 	}
 }
 
+func TestPlaybookCRUD(t *testing.T) {
+	dir := t.TempDir()
+	db, err := OpenDB(filepath.Join(dir, "flow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	wd := t.TempDir()
+	if err := UpsertPlaybook(db, &Playbook{
+		Slug:    "triage-cs",
+		Name:    "Triage CS inbox",
+		WorkDir: wd,
+	}); err != nil {
+		t.Fatalf("UpsertPlaybook: %v", err)
+	}
+
+	pb, err := GetPlaybook(db, "triage-cs")
+	if err != nil {
+		t.Fatalf("GetPlaybook: %v", err)
+	}
+	if pb.Name != "Triage CS inbox" || pb.WorkDir != wd {
+		t.Errorf("got %+v", pb)
+	}
+
+	pbs, err := ListPlaybooks(db, PlaybookFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pbs) != 1 {
+		t.Errorf("ListPlaybooks: got %d, want 1", len(pbs))
+	}
+}
+
+func TestTaskWithKindAndPlaybookSlug(t *testing.T) {
+	dir := t.TempDir()
+	db, err := OpenDB(filepath.Join(dir, "flow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	wd := t.TempDir()
+	now := NowISO()
+	if err := UpsertPlaybook(db, &Playbook{Slug: "p1", Name: "P1", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES (?, ?, 'backlog', 'playbook_run', ?, 'medium', ?, ?, ?)`,
+		"p1--2026-04-30-10-30", "p1 run", "p1", wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	task, err := GetTask(db, "p1--2026-04-30-10-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Kind != "playbook_run" {
+		t.Errorf("Kind: got %q", task.Kind)
+	}
+	if !task.PlaybookSlug.Valid || task.PlaybookSlug.String != "p1" {
+		t.Errorf("PlaybookSlug: got %+v", task.PlaybookSlug)
+	}
+}
+
 func TestMigrationIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "flow.db")
