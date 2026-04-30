@@ -1,10 +1,15 @@
 BINARY   := flow
 REPO_DIR := $(shell pwd)
 
+# VERSION is injected into the binary via -ldflags. Defaults to "dev";
+# the release workflow overrides this with VERSION=<tag>.
+VERSION  ?= dev
+LDFLAGS  := -X main.version=$(VERSION)
+
 .PHONY: build install uninstall test clean
 
 build:
-	go build -o $(BINARY) .
+	go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
 
 test:
 	go test ./...

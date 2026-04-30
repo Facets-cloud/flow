@@ -108,6 +108,9 @@ func cmdInit(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", skillPath, err)
 			return 1
 		}
+		if err := writeSkillVersion(Version); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
+		}
 		fmt.Printf("installed flow skill to %s\n", skillPath)
 	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)

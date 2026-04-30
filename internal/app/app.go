@@ -7,6 +7,11 @@ import (
 	"os"
 )
 
+// Version holds the binary version string, set by main.go from a
+// `-ldflags -X main.version=<tag>` build. Defaults to "dev" if main
+// never assigns it (e.g. tests linking the package directly).
+var Version = "dev"
+
 // Run is the entry point for the CLI. Returns an exit code.
 func Run(args []string) int {
 	if len(args) == 0 {
@@ -14,7 +19,22 @@ func Run(args []string) int {
 		return 0
 	}
 	cmd, rest := args[0], args[1:]
+
+	// Auto-upgrade the skill + SessionStart hook if the binary version
+	// has changed since the last install. Skipped for `init`, `skill`,
+	// and `--version` — those manage the skill themselves or need to
+	// run before any install state exists. See maybeAutoUpgradeSkill.
 	switch cmd {
+	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help":
+		// no auto-upgrade
+	default:
+		maybeAutoUpgradeSkill()
+	}
+
+	switch cmd {
+	case "--version", "-v", "version":
+		fmt.Println(Version)
+		return 0
 	case "init":
 		return cmdInit(rest)
 	case "add":
