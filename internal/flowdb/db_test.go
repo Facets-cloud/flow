@@ -157,3 +157,97 @@ func TestMigrationAddsDueDateAndStatusChangedAt(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaybooksTableExists(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "flow.db")
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name='playbooks'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rows.Next() {
+		rows.Close()
+		t.Fatal("playbooks table missing")
+	}
+	rows.Close()
+
+	now := NowISO()
+	wd := t.TempDir()
+	if _, err := db.Exec(
+		`INSERT INTO playbooks (slug, name, work_dir, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"p1", "Playbook 1", wd, now, now,
+	); err != nil {
+		t.Fatalf("insert playbook: %v", err)
+	}
+	var slug, name, gotWD string
+	err = db.QueryRow(`SELECT slug, name, work_dir FROM playbooks WHERE slug='p1'`).Scan(&slug, &name, &gotWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "Playbook 1" || gotWD != wd {
+		t.Errorf("unexpected: slug=%q name=%q wd=%q", slug, name, gotWD)
+	}
+}
+
+func TestMigrationAddsTasksKindAndPlaybookSlug(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "flow.db")
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer db.Close()
+
+	hasKind, err := columnExists(db, "tasks", "kind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasKind {
+		t.Error("tasks.kind column missing")
+	}
+	hasPB, err := columnExists(db, "tasks", "playbook_slug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasPB {
+		t.Error("tasks.playbook_slug column missing")
+	}
+
+	// Default kind should be 'regular' for new rows.
+	now := NowISO()
+	wd := t.TempDir()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, created_at, updated_at) VALUES (?, ?, 'backlog', 'medium', ?, ?, ?)`,
+		"t1", "Task 1", wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var kind string
+	if err := db.QueryRow(`SELECT kind FROM tasks WHERE slug='t1'`).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "regular" {
+		t.Errorf("default kind: got %q, want regular", kind)
+	}
+}
+
+func TestMigrationIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "flow.db")
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	db.Close()
+}

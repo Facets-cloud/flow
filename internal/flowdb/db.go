@@ -29,11 +29,23 @@ CREATE TABLE IF NOT EXISTS projects (
     archived_at   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS playbooks (
+    slug          TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    project_slug  TEXT REFERENCES projects(slug),
+    work_dir      TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    archived_at   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
     slug                  TEXT PRIMARY KEY,
     name                  TEXT NOT NULL,
     project_slug          TEXT REFERENCES projects(slug),
     status                TEXT NOT NULL DEFAULT 'backlog' CHECK (status IN ('backlog','in-progress','done')),
+    kind                  TEXT NOT NULL DEFAULT 'regular' CHECK (kind IN ('regular','playbook_run')),
+    playbook_slug         TEXT REFERENCES playbooks(slug),
     priority              TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
     work_dir              TEXT NOT NULL,
     waiting_on            TEXT,
@@ -59,6 +71,9 @@ CREATE TABLE IF NOT EXISTS workdirs (
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_slug);
 CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_kind          ON tasks(kind);
+CREATE INDEX IF NOT EXISTS idx_tasks_playbook_slug ON tasks(playbook_slug);
+CREATE INDEX IF NOT EXISTS idx_playbooks_project  ON playbooks(project_slug);
 `
 
 // ---------- models ----------
@@ -182,6 +197,32 @@ func runMigrations(db *sql.DB) error {
 	if !has {
 		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN status_changed_at TEXT`); err != nil {
 			return fmt.Errorf("add tasks.status_changed_at: %w", err)
+		}
+	}
+
+	// playbooks table: created via schemaDDL on every OpenDB, so no ALTER needed
+	// for the table itself. Just ensure tasks columns are present.
+
+	has, err = columnExists(db, "tasks", "kind")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'`); err != nil {
+			return fmt.Errorf("add tasks.kind: %w", err)
+		}
+		// Note: SQLite doesn't allow CHECK constraints on ADD COLUMN; the
+		// CHECK is only enforced for fresh tables (see schemaDDL). Application
+		// code should validate enum values before insert.
+	}
+
+	has, err = columnExists(db, "tasks", "playbook_slug")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN playbook_slug TEXT REFERENCES playbooks(slug)`); err != nil {
+			return fmt.Errorf("add tasks.playbook_slug: %w", err)
 		}
 	}
 	return nil
