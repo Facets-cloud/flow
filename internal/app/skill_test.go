@@ -208,3 +208,34 @@ func TestSkillUsesAskUserQuestionConsistently(t *testing.T) {
 		t.Errorf("skill §4a should establish 'always AskUserQuestion' as the rule")
 	}
 }
+
+func TestSkillHasPlaybookPersistAdjustmentsPattern(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"Persisting in-run adjustments back to the playbook",
+		"frozen snapshot",
+		"playbooks/<slug>/brief.md",
+		"Persist to playbook",
+		"Just this run",
+		"Never edit the run-task's own `brief.md`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing %q", want)
+		}
+	}
+}
+
+func TestPlaybookRunBootstrapMentionsPersistAdjustments(t *testing.T) {
+	prompt := buildPlaybookRunBootstrapPrompt("p--2026-04-30-10-30", "p")
+	for _, want := range []string{
+		"adjusts the playbook",
+		"AskUserQuestion",
+		"Persist to playbook",
+		"playbooks/p/brief.md",
+		"frozen snapshot",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("playbook-run bootstrap prompt missing %q; got:\n%s", want, prompt)
+		}
+	}
+}

@@ -303,8 +303,10 @@ func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string) string {
 			"3. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files under other: are references for THIS run; load on demand when relevant. The brief is your authoritative instructions for this run — it was snapshotted from the playbook at the moment this run started. Execute against this, not the live playbook brief.\n"+
 			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief and every file under updates:. Files under other: are on-demand references.\n"+
 			"5. Read CLAUDE.md in your work_dir.\n"+
-			"6. Only then begin executing your brief.",
-		playbookSlug, runSlug, playbookSlug,
+			"6. Only then begin executing your brief.\n"+
+			"\n"+
+			"While executing: if the user adjusts the playbook's procedure during this run (e.g. 'let's always do X', 'change the approach for...', 'this step should also...'), pause and ask via AskUserQuestion whether to persist the change to the playbook's live brief.md so future runs benefit. Options: 'Persist to playbook' (Edit playbooks/%s/brief.md), 'Just this run' (no change to live playbook), 'Both — persist + log a note in playbooks/%s/updates/'. The run's own brief.md is a frozen snapshot — never edit it to change future behavior; that's what the live playbook brief is for. See flow skill §4.13 for the full pattern.",
+		playbookSlug, runSlug, playbookSlug, playbookSlug, playbookSlug,
 	)
 }
 

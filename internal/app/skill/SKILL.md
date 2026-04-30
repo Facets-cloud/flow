@@ -865,6 +865,58 @@ stop.
 the user mentions a playbook name in passing, do not run it without an
 explicit verb ("run", "trigger", "fire", "start").
 
+#### Persisting in-run adjustments back to the playbook
+
+A playbook run executes against a **frozen snapshot** of the playbook's
+`brief.md`. Sometimes during a run the user adjusts the procedure —
+"let's always do X here", "change the approach for step 3", "this step
+should also check Y". When that happens, the run-time session has two
+sources of truth diverging:
+
+- The run's `brief.md` snapshot — what THIS run is executing against
+- The playbook's live `brief.md` — what FUTURE runs will inherit
+
+If the user's adjustment is meant to apply only to this run, do nothing
+extra. But if it's a procedural improvement worth keeping, the live
+playbook brief should be updated — otherwise next week's run forgets
+the lesson.
+
+**Trigger this prompt when:** the user makes a non-trivial procedural
+change during a run — adds a step, changes the approach for a step,
+adds a signal to watch for, narrows or expands scope. Tiny tactical
+tweaks ("skip step 4 today, the system is offline") don't count;
+durable changes do.
+
+**Recipe — use AskUserQuestion:**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "Persist this change to the playbook so future runs include it?",
+    header: "Persist?",
+    options: [
+      { label: "Persist to playbook",  description: "Edit playbooks/<slug>/brief.md so future runs inherit the change" },
+      { label: "Just this run",         description: "Apply to this run only; future runs continue with the existing playbook" },
+      { label: "Both — persist + note", description: "Edit the live playbook AND log the rationale in playbooks/<slug>/updates/" }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+**Important rules:**
+
+- **Never edit the run-task's own `brief.md`** to change future behavior.
+  That's a frozen snapshot — editing it has no effect on future runs and
+  obscures what the run actually executed against.
+- **The live playbook brief lives at `~/.flow/playbooks/<slug>/brief.md`.**
+  Edit that file directly when persisting.
+- **The "Both" option** is the right answer when the change is worth
+  capturing AND its rationale is non-obvious from the diff alone — the
+  update note explains *why*, the brief edit captures *what*.
+- **Do not auto-persist without asking.** Even a clear improvement may
+  be deliberately scoped to this run by the user.
+
 ### 4.14 Substantive-unrelated-work check (passive, ongoing)
 
 This is a **passive workflow** that runs alongside every other workflow.
