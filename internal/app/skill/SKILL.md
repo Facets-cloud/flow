@@ -928,8 +928,8 @@ manual correction tool — do not run it as a workaround for a bug in
 ## 10. Environment variables flow sets
 
 When `flow do <task>` spawns an iTerm tab, it attaches these env vars
-to the `flowde`/`claude` process (inline on the command line — they do
-NOT persist in the tab's shell after claude exits):
+to the `claude` process (inline on the command line — they do NOT
+persist in the tab's shell after claude exits):
 
 - `FLOW_TASK=<task-slug>` — the current task
 - `FLOW_PROJECT=<project-slug>` — the current project, if the task has one
