@@ -318,6 +318,71 @@ func TestBuildBootstrapPromptForKindWithEmptyKind(t *testing.T) {
 	}
 }
 
+func TestBuildPlaybookRunBootstrapPromptFirstRun(t *testing.T) {
+	got := buildPlaybookRunBootstrapPrompt("p--2026-04-30-10-30", "p", true)
+	for _, want := range []string{
+		"FIRST RUN OF THIS PLAYBOOK",
+		"crystallizes",
+		"Add to playbook brief",
+		"Save as sidecar file",
+		"Capture anything from this run back to the playbook before closing",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("first-run prompt missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+func TestBuildPlaybookRunBootstrapPromptNotFirstRun(t *testing.T) {
+	got := buildPlaybookRunBootstrapPrompt("p--2026-04-30-10-30", "p", false)
+	if strings.Contains(got, "FIRST RUN OF THIS PLAYBOOK") {
+		t.Errorf("non-first-run prompt should NOT have first-run banner; got:\n%s", got)
+	}
+	// Still has the persist-adjustments paragraph (not first-run-specific).
+	if !strings.Contains(got, "adjusts the playbook") {
+		t.Errorf("base playbook prompt missing persist-adjustments para")
+	}
+}
+
+func TestCmdDoSetsFirstRunBannerForFirstPlaybookRun(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri-fr", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	_, lastScript := stubITerm(t)
+	if rc := cmdRun([]string{"playbook", "tri-fr"}); rc != 0 {
+		t.Fatal()
+	}
+	script := lastScript()
+	if !strings.Contains(script, "FIRST RUN OF THIS PLAYBOOK") {
+		t.Errorf("expected first-run banner in spawn script, got:\n%s", script)
+	}
+}
+
+func TestCmdDoOmitsFirstRunBannerForSecondPlaybookRun(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage 2", "--slug", "tri-2", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	_, lastScript := stubITerm(t)
+	// First run.
+	if rc := cmdRun([]string{"playbook", "tri-2"}); rc != 0 {
+		t.Fatal()
+	}
+	if !strings.Contains(lastScript(), "FIRST RUN OF THIS PLAYBOOK") {
+		t.Fatal("expected first-run banner on first invocation")
+	}
+	// Second run.
+	if rc := cmdRun([]string{"playbook", "tri-2"}); rc != 0 {
+		t.Fatal()
+	}
+	if strings.Contains(lastScript(), "FIRST RUN OF THIS PLAYBOOK") {
+		t.Errorf("second run should NOT have first-run banner; got:\n%s", lastScript())
+	}
+}
+
 func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
 	setupFlowRoot(t)
 	wd := t.TempDir()

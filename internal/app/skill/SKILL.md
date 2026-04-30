@@ -917,6 +917,69 @@ AskUserQuestion({
 - **Do not auto-persist without asking.** Even a clear improvement may
   be deliberately scoped to this run by the user.
 
+#### First-run capture (special case)
+
+The **first run** of a playbook is where the actual procedure
+crystallizes. The brief was written aspirationally; concrete commands,
+scripts, decision rules, and edge cases get discovered for the first
+time. Without active capture, all that learning evaporates when the run
+closes.
+
+**Detection:** the bootstrap prompt sets a banner — "⚡ THIS IS THE
+FIRST RUN OF THIS PLAYBOOK ⚡" — when the run-task is the only
+non-archived `kind=playbook_run` row for its `playbook_slug`. Treat
+that as your signal.
+
+**Behavior on first run — be more proactive than usual:**
+
+1. **Scripts and commands.** When you write a script, settle on a
+   concrete command, or develop a snippet that wasn't in the brief,
+   pause and AskUserQuestion *immediately*:
+
+   ```
+   AskUserQuestion({
+     questions: [{
+       question: "Capture this <script|command|decision> back to the playbook?",
+       header: "Capture?",
+       options: [
+         { label: "Add to playbook brief",  description: "Append/edit the relevant section of playbooks/<slug>/brief.md — future runs see it inline" },
+         { label: "Save as sidecar file",   description: "Write to playbooks/<slug>/<topic>.md (e.g., decision-tree.md, sample-script.md). Surfaced under other: for on-demand load" },
+         { label: "Just this run",          description: "Apply locally; don't change the playbook (rare for first run)" }
+       ],
+       multiSelect: false
+     }]
+   })
+   ```
+
+2. **Edge cases / signals.** When the user hits a condition the brief
+   didn't anticipate, AskUserQuestion whether to add it to the "Signals
+   to watch for" section of the live brief.
+
+3. **End-of-run capture sweep.** Before `flow done`, AskUserQuestion:
+
+   > "Capture anything from this run back to the playbook before closing?"
+   > - Yes — walk me through what to capture
+   > - No, close out as-is
+
+   On "walk me through": list the candidate captures (scripts produced,
+   decisions made, edge cases hit, commands actually used). Offer each
+   one via AskUserQuestion individually so the user can opt in
+   per-item.
+
+**Sidecar files vs brief edits:**
+
+- **Brief edits** are for *procedural* changes — additions to "Each run
+  does", new "Signals to watch for", clarified scope. Inline content
+  that every future run benefits from seeing during bootstrap.
+- **Sidecar files** (`playbooks/<slug>/<topic>.md`) are for *artifacts*
+  — scripts, decision trees, sample outputs, reference tables. Things
+  that future runs may or may not need; they're surfaced under `other:`
+  in `flow show playbook` and loaded on-demand by the run session.
+
+**Capture-back is a primary deliverable of the first run.** Not an
+afterthought. After the first run, the playbook should be
+substantially more concrete than it started.
+
 ### 4.14 Substantive-unrelated-work check (passive, ongoing)
 
 This is a **passive workflow** that runs alongside every other workflow.

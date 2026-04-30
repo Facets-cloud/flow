@@ -207,10 +207,22 @@ func cmdDo(args []string) int {
 		// ~/.claude/projects/<encoded-cwd>/<sessionID>.jsonl, so there is
 		// nothing to discover afterwards.
 		playbookSlug := ""
+		isFirstRun := false
 		if task.PlaybookSlug.Valid {
 			playbookSlug = task.PlaybookSlug.String
+			// First run = this is the only non-archived run-task for the
+			// playbook. The current run row was just inserted by
+			// cmdRunPlaybook, so a count of 1 means no prior runs exist.
+			var runCount int
+			if err := db.QueryRow(
+				`SELECT COUNT(*) FROM tasks WHERE playbook_slug = ? AND kind = 'playbook_run' AND archived_at IS NULL`,
+				playbookSlug,
+			).Scan(&runCount); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: count playbook runs: %v\n", err)
+			}
+			isFirstRun = runCount <= 1
 		}
-		prompt := buildBootstrapPromptForKind(task.Slug, task.Kind, playbookSlug)
+		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
 		command = fmt.Sprintf("claude --session-id %s %s", sessionID, iterm.ShellQuote(prompt))
 	} else {
 		// Resume path: the UUID we already have in the DB is what claude
@@ -270,9 +282,21 @@ func cmdDo(args []string) int {
 // then (if any) project brief + project updates, then CLAUDE.md files
 // in the work_dir. The flow skill enforces this sequence too; the
 // bootstrap prompt is a backup in case the skill isn't auto-activated.
+// Kept for callers (and tests) that don't track first-run state. New
+// callers should use buildBootstrapPromptForKindV2 to opt into the
+// first-run variant when relevant.
 func buildBootstrapPromptForKind(slug, kind, playbookSlug string) string {
+	return buildBootstrapPromptForKindV2(slug, kind, playbookSlug, false)
+}
+
+// buildBootstrapPromptForKindV2 is the kind-aware dispatcher with first-
+// run awareness for playbook runs. When isFirstRun=true on a playbook
+// run, a richer "capture-aggressive" prompt is emitted that nudges the
+// session to harvest scripts, edge cases, and decision rules back into
+// the live playbook brief / sidecar files.
+func buildBootstrapPromptForKindV2(slug, kind, playbookSlug string, isFirstRun bool) string {
 	if kind == "playbook_run" {
-		return buildPlaybookRunBootstrapPrompt(slug, playbookSlug)
+		return buildPlaybookRunBootstrapPrompt(slug, playbookSlug, isFirstRun)
 	}
 	return buildTaskBootstrapPrompt(slug)
 }
@@ -295,8 +319,8 @@ func buildTaskBootstrapPrompt(slug string) string {
 // frames the run's brief as an authoritative snapshot — the session
 // must execute against that snapshot, not re-read the live playbook
 // brief (which may drift between runs).
-func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string) string {
-	return fmt.Sprintf(
+func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string, isFirstRun bool) string {
+	base := fmt.Sprintf(
 		"You are running playbook `%s` as run `%s`. Do ALL of the following in order before executing anything:\n"+
 			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works.\n"+
 			"2. Run: flow show playbook %s. This shows the playbook's definition and recent runs — context only, not your instructions. Note any files listed under other: — they're sidecar references you can Read on demand if relevant; do not eagerly load them.\n"+
@@ -308,6 +332,30 @@ func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string) string {
 			"While executing: if the user adjusts the playbook's procedure during this run (e.g. 'let's always do X', 'change the approach for...', 'this step should also...'), pause and ask via AskUserQuestion whether to persist the change to the playbook's live brief.md so future runs benefit. Options: 'Persist to playbook' (Edit playbooks/%s/brief.md), 'Just this run' (no change to live playbook), 'Both — persist + log a note in playbooks/%s/updates/'. The run's own brief.md is a frozen snapshot — never edit it to change future behavior; that's what the live playbook brief is for. See flow skill §4.13 for the full pattern.",
 		playbookSlug, runSlug, playbookSlug, playbookSlug, playbookSlug,
 	)
+
+	if !isFirstRun {
+		return base
+	}
+
+	firstRunAddendum := fmt.Sprintf(
+		"\n"+
+			"\n"+
+			"⚡ THIS IS THE FIRST RUN OF THIS PLAYBOOK ⚡\n"+
+			"\n"+
+			"The brief was written aspirationally; this run is where the actual procedure crystallizes. Be MORE proactive than usual about capturing back to the live playbook. Specifically:\n"+
+			"\n"+
+			"- When you write a script, command, or settle on a concrete decision rule that wasn't in the brief: don't wait for the user to ask. Pause and AskUserQuestion whether to capture it. Three capture targets:\n"+
+			"    • 'Add to playbook brief' — append/edit the relevant section of playbooks/%s/brief.md so future runs see it inline\n"+
+			"    • 'Save as sidecar file' — write to playbooks/%s/<topic>.md (e.g. decision-tree.md, sample-script.md, edge-cases.md). These get surfaced under `other:` in flow show playbook for future runs to load on demand\n"+
+			"    • 'Just this run' — apply locally, don't change the playbook (rare; usually means it's run-specific)\n"+
+			"- When you discover an edge case or signal worth watching: AskUserQuestion whether to add it to the 'Signals to watch for' section of the live brief.\n"+
+			"- Before flow done at the end of the run, AskUserQuestion: 'Capture anything from this run back to the playbook before closing?' Options: 'Yes — walk me through what to capture' / 'No, close out as-is'. The 'walk me through' path: list candidate captures (scripts produced, decisions made, edge cases hit, commands you ended up using) and offer per-item via AskUserQuestion.\n"+
+			"\n"+
+			"After this run, the playbook should be substantially more concrete than the aspirational brief it started with. That's the point. Treat capture-back as a primary deliverable of the first run, not an afterthought.",
+		playbookSlug, playbookSlug,
+	)
+
+	return base + firstRunAddendum
 }
 
 // buildBootstrapPrompt is a backwards-compat shim for old callers that

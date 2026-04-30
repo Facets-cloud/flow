@@ -225,8 +225,24 @@ func TestSkillHasPlaybookPersistAdjustmentsPattern(t *testing.T) {
 	}
 }
 
+func TestSkillHasFirstRunCapturePattern(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"First-run capture",
+		"FIRST RUN OF THIS PLAYBOOK",
+		"crystallizes",
+		"Save as sidecar file",
+		"Capture anything from this run back to the playbook",
+		"Capture-back is a primary deliverable of the first run",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing first-run capture content %q", want)
+		}
+	}
+}
+
 func TestPlaybookRunBootstrapMentionsPersistAdjustments(t *testing.T) {
-	prompt := buildPlaybookRunBootstrapPrompt("p--2026-04-30-10-30", "p")
+	prompt := buildPlaybookRunBootstrapPrompt("p--2026-04-30-10-30", "p", false)
 	for _, want := range []string{
 		"adjusts the playbook",
 		"AskUserQuestion",
