@@ -1,12 +1,10 @@
 BINARY   := flow
-WRAPPER  := flowde
 REPO_DIR := $(shell pwd)
 
 .PHONY: build install uninstall test clean
 
 build:
 	go build -o $(BINARY) .
-	go build -o $(WRAPPER) ./cmd/flowde
 
 test:
 	go test ./...
@@ -30,4 +28,4 @@ uninstall:
 	@echo "Skill and hook removed. Remove the PATH line from ~/.zshrc manually if desired."
 
 clean:
-	rm -f $(BINARY) $(WRAPPER)
+	rm -f $(BINARY) flowde

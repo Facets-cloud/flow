@@ -49,16 +49,21 @@ func setArchivedAt(args []string, archive bool) int {
 
 	// For unarchive we must include archived rows; for archive we exclude them.
 	includeArchived := !archive
-	kind, slug, err := ResolveTaskOrProject(db, ref, includeArchived)
+	kind, slug, err := ResolveTaskProjectOrPlaybook(db, ref, includeArchived)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 
 	now := flowdb.NowISO()
-	table := "tasks"
-	if kind == "project" {
+	var table string
+	switch kind {
+	case "task":
+		table = "tasks"
+	case "project":
 		table = "projects"
+	case "playbook":
+		table = "playbooks"
 	}
 	var q string
 	var qargs []any

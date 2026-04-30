@@ -23,10 +23,10 @@ session. Sections to cover: What / Why / Where / Done when / Out of scope /
 Open questions.
 `
 
-// cmdAdd dispatches `flow add project|task ...`.
+// cmdAdd dispatches `flow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: add requires 'project' or 'task'")
+		fmt.Fprintln(os.Stderr, "error: add requires 'project', 'task', or 'playbook'")
 		return 2
 	}
 	switch args[0] {
@@ -34,6 +34,8 @@ func cmdAdd(args []string) int {
 		return addProject(args[1:])
 	case "task":
 		return addTask(args[1:])
+	case "playbook":
+		return addPlaybook(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown add subcommand %q\n", args[0])
 	return 2

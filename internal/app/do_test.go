@@ -201,11 +201,11 @@ func TestCmdDoFuzzyExactWins(t *testing.T) {
 	}
 }
 
-// TestCmdDoSpawnsFlowdeNotClaude pins the wrapper contract: `flow do`
-// shells out to `flowde` (not `claude` directly) for both the fresh
-// bootstrap and the resume paths. The `flowde` wrapper owns the
-// "skill is current" guarantee, so `flow do` must not bypass it.
-func TestCmdDoSpawnsFlowdeNotClaude(t *testing.T) {
+// TestCmdDoSpawnsClaudeNotFlowde pins the post-flowde contract: `flow do`
+// shells out to `claude` directly (no wrapper) for both the fresh
+// bootstrap and the resume paths. Skill freshness is now an explicit
+// `flow skill update` step, not an implicit per-launch refresh.
+func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "wrap-fresh")
 
@@ -214,15 +214,12 @@ func TestCmdDoSpawnsFlowdeNotClaude(t *testing.T) {
 		t.Fatalf("fresh rc=%d", rc)
 	}
 	script := getScript()
-	if !strings.Contains(script, " flowde ") {
-		t.Errorf("fresh spawn must invoke flowde, got:\n%s", script)
+	if !strings.Contains(script, " claude --session-id ") {
+		t.Errorf("fresh spawn must invoke claude --session-id, got:\n%s", script)
 	}
-	// Guard against accidental reintroduction of a direct `claude`
-	// invocation in the spawn command portion. We look for the two
-	// shapes `flow do` used to emit: `claude '<prompt>'` (fresh) and
-	// `claude --resume <uuid>` (resume).
-	if strings.Contains(script, " claude ") {
-		t.Errorf("fresh spawn should not invoke claude directly, got:\n%s", script)
+	// Guard against accidental reintroduction of the flowde wrapper.
+	if strings.Contains(script, "flowde") {
+		t.Errorf("fresh spawn should not invoke flowde, got:\n%s", script)
 	}
 
 	// Now the resume path.
@@ -235,11 +232,11 @@ func TestCmdDoSpawnsFlowdeNotClaude(t *testing.T) {
 		t.Fatalf("resume rc=%d", rc)
 	}
 	script = getScript()
-	if !strings.Contains(script, " flowde --resume resume-sid") {
-		t.Errorf("resume spawn must invoke flowde --resume <uuid>, got:\n%s", script)
+	if !strings.Contains(script, " claude --resume resume-sid") {
+		t.Errorf("resume spawn must invoke claude --resume <uuid>, got:\n%s", script)
 	}
-	if strings.Contains(script, " claude ") {
-		t.Errorf("resume spawn should not invoke claude directly, got:\n%s", script)
+	if strings.Contains(script, "flowde") {
+		t.Errorf("resume spawn should not invoke flowde, got:\n%s", script)
 	}
 }
 
@@ -273,5 +270,138 @@ func TestCmdDoConcurrentFreshTasks(t *testing.T) {
 	}
 	if n := atomic.LoadInt64(spawns); n != 2 {
 		t.Errorf("iTerm spawn count=%d, want 2", n)
+	}
+}
+
+func TestBuildBootstrapPromptMentionsOther(t *testing.T) {
+	got := buildBootstrapPrompt("foo")
+	if !strings.Contains(got, "other:") {
+		t.Errorf("expected prompt to mention other:, got:\n%s", got)
+	}
+	if !strings.Contains(got, "load on demand") {
+		t.Errorf("expected prompt to clarify lazy loading, got:\n%s", got)
+	}
+}
+
+func TestBuildBootstrapPromptForPlaybookRun(t *testing.T) {
+	got := buildBootstrapPromptForKind("p--2026-04-30-10-30", "playbook_run", "p")
+	if !strings.Contains(got, "playbook `p`") {
+		t.Errorf("expected playbook reference, got:\n%s", got)
+	}
+	if !strings.Contains(got, "flow show playbook p") {
+		t.Errorf("expected flow show playbook command, got:\n%s", got)
+	}
+	if !strings.Contains(got, "snapshotted from the playbook") {
+		t.Errorf("expected snapshot framing, got:\n%s", got)
+	}
+	if !strings.Contains(got, "other:") {
+		t.Errorf("expected mention of other:, got:\n%s", got)
+	}
+}
+
+func TestBuildBootstrapPromptForRegularTask(t *testing.T) {
+	got := buildBootstrapPromptForKind("foo", "regular", "")
+	if strings.Contains(got, "playbook") {
+		t.Errorf("regular task prompt shouldn't mention playbook:\n%s", got)
+	}
+	if !strings.Contains(got, "flow show task") {
+		t.Errorf("regular task prompt should mention flow show task:\n%s", got)
+	}
+}
+
+func TestBuildBootstrapPromptForKindWithEmptyKind(t *testing.T) {
+	// Defensive: an empty kind string (legacy rows that somehow didn't
+	// migrate) should fall through to the regular-task variant.
+	got := buildBootstrapPromptForKind("foo", "", "")
+	if strings.Contains(got, "playbook") {
+		t.Errorf("empty kind should default to regular, got:\n%s", got)
+	}
+}
+
+func TestBuildPlaybookRunBootstrapPromptFirstRun(t *testing.T) {
+	got := buildPlaybookRunBootstrapPrompt("p--2026-04-30-10-30", "p", true)
+	for _, want := range []string{
+		"FIRST RUN OF THIS PLAYBOOK",
+		"crystallizes",
+		"Add to playbook brief",
+		"Save as sidecar file",
+		"Capture anything from this run back to the playbook before closing",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("first-run prompt missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+func TestBuildPlaybookRunBootstrapPromptNotFirstRun(t *testing.T) {
+	got := buildPlaybookRunBootstrapPrompt("p--2026-04-30-10-30", "p", false)
+	if strings.Contains(got, "FIRST RUN OF THIS PLAYBOOK") {
+		t.Errorf("non-first-run prompt should NOT have first-run banner; got:\n%s", got)
+	}
+	// Still has the persist-adjustments paragraph (not first-run-specific).
+	if !strings.Contains(got, "adjusts the playbook") {
+		t.Errorf("base playbook prompt missing persist-adjustments para")
+	}
+}
+
+func TestCmdDoSetsFirstRunBannerForFirstPlaybookRun(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri-fr", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	_, lastScript := stubITerm(t)
+	if rc := cmdRun([]string{"playbook", "tri-fr"}); rc != 0 {
+		t.Fatal()
+	}
+	script := lastScript()
+	if !strings.Contains(script, "FIRST RUN OF THIS PLAYBOOK") {
+		t.Errorf("expected first-run banner in spawn script, got:\n%s", script)
+	}
+}
+
+func TestCmdDoOmitsFirstRunBannerForSecondPlaybookRun(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage 2", "--slug", "tri-2", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	_, lastScript := stubITerm(t)
+	// First run.
+	if rc := cmdRun([]string{"playbook", "tri-2"}); rc != 0 {
+		t.Fatal()
+	}
+	if !strings.Contains(lastScript(), "FIRST RUN OF THIS PLAYBOOK") {
+		t.Fatal("expected first-run banner on first invocation")
+	}
+	// Second run.
+	if rc := cmdRun([]string{"playbook", "tri-2"}); rc != 0 {
+		t.Fatal()
+	}
+	if strings.Contains(lastScript(), "FIRST RUN OF THIS PLAYBOOK") {
+		t.Errorf("second run should NOT have first-run banner; got:\n%s", lastScript())
+	}
+}
+
+func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+
+	_, lastScript := stubITerm(t)
+
+	// Use cmdRun to create the run-task (it uses cmdDo internally).
+	if rc := cmdRun([]string{"playbook", "tri"}); rc != 0 {
+		t.Fatal()
+	}
+
+	script := lastScript()
+	if !strings.Contains(script, "playbook `tri`") {
+		t.Errorf("expected playbook prompt variant in spawn script, got:\n%s", script)
+	}
+	if !strings.Contains(script, "flow show playbook tri") {
+		t.Errorf("expected 'flow show playbook tri' in spawn script, got:\n%s", script)
 	}
 }

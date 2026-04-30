@@ -53,6 +53,8 @@ func cmdEdit(args []string) int {
 		briefPath = filepath.Join(root, "tasks", slug, "brief.md")
 	case "project":
 		briefPath = filepath.Join(root, "projects", slug, "brief.md")
+	case "playbook":
+		briefPath = filepath.Join(root, "playbooks", slug, "brief.md")
 	}
 
 	// Ensure the parent directory exists so the editor doesn't refuse.
@@ -87,6 +89,8 @@ func cmdEdit(args []string) int {
 		_, updateErr = db.Exec(`UPDATE tasks SET updated_at = ? WHERE slug = ?`, now, slug)
 	case "project":
 		_, updateErr = db.Exec(`UPDATE projects SET updated_at = ? WHERE slug = ?`, now, slug)
+	case "playbook":
+		_, updateErr = db.Exec(`UPDATE playbooks SET updated_at = ? WHERE slug = ?`, now, slug)
 	}
 	if updateErr != nil {
 		fmt.Fprintf(os.Stderr, "error: bump updated_at: %v\n", updateErr)
@@ -96,8 +100,8 @@ func cmdEdit(args []string) int {
 	return 0
 }
 
-// resolveEditRef resolves a ref that could be a task or a project.
-// Supports task/ and project/ prefixes. Includes archived rows.
+// resolveEditRef resolves a ref that could be a task, project, or playbook.
+// Supports task/, project/, and playbook/ prefixes. Includes archived rows.
 func resolveEditRef(db *sql.DB, ref string) (kind, slug string, err error) {
-	return ResolveTaskOrProject(db, ref, true)
+	return ResolveTaskProjectOrPlaybook(db, ref, true)
 }

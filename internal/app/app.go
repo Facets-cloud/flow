@@ -21,6 +21,8 @@ func Run(args []string) int {
 		return cmdAdd(rest)
 	case "do":
 		return cmdDo(rest)
+	case "run":
+		return cmdRun(rest)
 	case "done":
 		return cmdDone(rest)
 	case "due":
@@ -96,5 +98,11 @@ Workdirs:
   flow workdir list
   flow workdir add <path> [--name <nickname>]
   flow workdir remove <path>
-  flow workdir scan [<root>] [--add]`)
+  flow workdir scan [<root>] [--add]
+
+Playbooks:
+  flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
+  flow run playbook   <slug> [--dangerously-skip-permissions]
+  flow show playbook  <ref>
+  flow list playbooks [--project <slug>] [--include-archived]`)
 }

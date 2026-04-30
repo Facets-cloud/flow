@@ -55,6 +55,13 @@ said.
   an optional `waiting_on` freeform note, and a `brief.md`. Tasks also
   carry a Claude `session_id` once `flow do` has bootstrapped a session
   for them.
+- **Playbooks** are reusable, runnable definitions. A playbook has a
+  name, slug, work_dir, optional `project_slug`, and a `brief.md` that
+  describes what each invocation should do. Each invocation creates a
+  **playbook-run** — a task with `kind=playbook_run` — that has its
+  own session, its own snapshotted `brief.md`, and its own
+  `updates/`. Editing a playbook's `brief.md` does not affect past
+  runs; runs are reproducible.
 - **Workdirs** is a convenience registry of known local repo paths. It
   exists so this skill can match repo intent ("the budgeting app")
   to a path on disk. It is not the source of truth for any task's
@@ -78,11 +85,12 @@ run `flow list tasks` or `flow list projects` as a probe:
 - If the command **succeeds** (even with zero results): flow is
   initialized. Proceed normally. **Do not check again this session.**
 - If the command **errors** with a message about a missing database:
-  the user hasn't run `flow init` yet. Offer to run it for them:
-  "Looks like flow isn't initialized yet. Want me to run `flow init`
-  to set up the data directory and database?" (The data directory is
-  `$FLOW_ROOT` if set, otherwise `~/.flow`.) If they agree, run
-  `flow init` and then enter the **first-run coaching** below.
+  the user hasn't run `flow init` yet. Use `AskUserQuestion` (header:
+  "Run init?", options: "Yes, run flow init" / "No, I'll do it later")
+  with question text explaining that `flow init` sets up the data
+  directory (`$FLOW_ROOT` if set, otherwise `~/.flow`) and database.
+  If "Yes", run `flow init` and then enter the **first-run coaching**
+  below. If "No", stop.
 
 ### First-run coaching
 
@@ -97,10 +105,13 @@ basics in this order:
    add-project interview. This gets them a project and at least one task
    immediately.
 
-3. **Show how to start work.** After the first task exists, offer:
-   "Run `flow do <slug>` to open a dedicated Claude session for this
-   task. That session gets the brief, updates, and repo conventions
-   automatically."
+3. **Show how to start work.** After the first task exists, use
+   `AskUserQuestion` (header: "Open it now?", options:
+   "Open it now" / "Later, just save") to ask whether to run
+   `flow do <slug>`. Briefly explain in the question: a dedicated
+   Claude session gets the brief, updates, and repo conventions
+   automatically. If "Open it now", proceed to §4.4. If "Later",
+   stop here.
 
 4. **Mention the knowledge base.** "As we work together, I'll
    automatically note durable facts about you and your org in
@@ -132,19 +143,26 @@ Create
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
                            [--priority high|medium|low]
+  flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions]
   flow done             <ref>
 
+Playbook runs
+  flow run playbook <slug>          spawn a fresh run session (new task with kind=playbook_run)
+  flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
+
 Read
   flow show task    [<ref>]     (defaults to $FLOW_TASK)
   flow show project [<ref>]     (defaults to $FLOW_PROJECT)
+  flow show playbook    [<ref>]
   flow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
   flow list tasks    [--status backlog|in-progress|done] [--project <slug>]
                      [--priority high|medium|low] [--since today|monday|7d|YYYY-MM-DD]
                      [--include-archived]
   flow list projects [--status active|done] [--include-archived]
+  flow list playbooks   [--project <slug>] [--include-archived]
 
 Edit / mutate
   flow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at
@@ -154,6 +172,7 @@ Edit / mutate
   flow waiting     <ref> --clear
   flow archive     <ref>
   flow unarchive   <ref>
+  (flow edit, flow archive, flow unarchive also accept playbook refs)
 
 Workdirs
   flow workdir list
@@ -169,20 +188,42 @@ auto-generated from the name (truncated to ~6 words).
 
 ## 4a. Interactive choices (use `AskUserQuestion` everywhere)
 
-Whenever you present the user with a choice — yes/no confirmations,
-pick-one-of-several, priority, slug suggestions, project attachment —
-use the `AskUserQuestion` tool so the user can click to select instead
-of typing. Common patterns:
+**This section overrides any inline prose phrasing later in the skill.**
+If a later section says "offer X", "ask Y", or "confirm Z", that
+always means "invoke `AskUserQuestion` with appropriate options" —
+never a prose question typed into the chat.
+
+Every choice the user makes — always AskUserQuestion, never a prose
+question. Yes/no confirmations, pick-one-of-several, priority, slug
+suggestions, project attachment, mutation confirmations, "want me to
+do X?" — every single one runs through the tool so the user can click
+to select instead of typing. Common patterns:
 
 | Pattern | Options |
 |---------|---------|
 | Yes / No | Two options with contextual labels (e.g. "Save it" / "Revise", "Open now" / "Not now") |
 | Pick from list | One option per candidate (tasks, projects, slugs) |
 | Priority | "High", "Medium", "Low" |
+| Mutation confirm | "Yes, do it" / "No, wait" with the action named in the description |
 
 Keep `header` under 12 chars. Put enough context in `question` so
 the choice is clear without scrolling back. If the user already
 answered in their message, don't re-ask — just use their answer.
+
+**Prose questions are deprecated.** Don't write "Want me to do X?"
+or "Should I do Y?" or "(yes/no)" in chat — those force the user to
+type a free-text reply. The tool produces clickable options; always
+prefer the tool.
+
+**Mid-interview drift.** Within an open-ended interview (intake,
+deferred-section prompt), the parent question may be free-form
+("Why?", "Done when?") but follow-up clarifications often narrow into
+enumerable choices (architectures, install methods, yes/no). The
+moment a sub-question has 2–4 discrete options, switch to
+AskUserQuestion. Don't keep typing prose just because you started in
+prose. The "interview" framing governs the *opening* question; every
+narrowing inside it follows the same always-AskUserQuestion rule as
+the rest of the skill.
 
 ## 5. Core workflows
 
@@ -206,6 +247,10 @@ working on", "where did I leave off", "give me a status".
    - **Waiting on someone**: pull out tasks with `waiting_on` set so the
      user can see the whole block at once.
    - **Stale** (anything with the ⚠ marker): call these out explicitly.
+   - **Active playbooks**: any playbook with a run in the past 7 days.
+     Pull from `flow list runs --since 7d` grouped by playbook; show
+     playbook slug + most recent run timestamp. Skip if there are no
+     runs in the window — don't show an empty header.
 5. Use `AskUserQuestion` to let the user pick which task to work on.
    List each in-progress and high-priority backlog task as an option
    (label = slug, description = one-line summary). Include an "Add a
@@ -224,26 +269,39 @@ solution during intake. You NEVER fill blanks with guesses. If a section
 is unclear, ask. If the user says "I don't know yet", write "Open
 question: ..." in the brief and move on.
 
-**Sections to ask, ONE AT A TIME, in this order:**
+**Required sections (always asked, in this order):**
 
-1. **What?** One sentence describing the work. "Add OAuth login to the
-   budgeting app." Not: "Set up Passport.js with Google as the provider
-   and switch the login form to..." — that's solutioning. Just capture
-   the user's one-sentence framing.
-2. **Why?** Why is this worth doing now? Business reason, user pain,
-   self-motivated curiosity — whatever the user actually says. If they
-   say "just because", write "Because my manager wants to." Don't editorialize.
-3. **Where?** Which codebase or filesystem location. This is where the
-   `work_dir` question happens — see §6 for the full recipe.
-4. **Done when?** Concrete acceptance criteria. Bullet form. "Users can
-   sign in with Google", "session persists across reloads", "docs
-   updated". If the user gives a single fuzzy answer, ask for one more
-   bullet to sharpen it.
-5. **Out of scope?** Explicit non-goals. "Not rebuilding the sign-up
-   flow." "Not touching the mobile app." This is optional — if the user
-   has nothing here, leave it empty.
-6. **Open questions?** Things the user isn't sure about and wants to
-   decide later. Write them literally.
+1. **Name** — one-sentence description of the work. Example: "Add OAuth
+   login to the budgeting app."
+2. **Slug** — short, memorable, ASCII. Use AskUserQuestion to suggest 2–3
+   candidates derived from the name. User picks one or types a custom
+   slug.
+3. **Where?** — work_dir for the task. Use the §6 recipe.
+4. **Priority** — High / Medium / Low via AskUserQuestion. Default Medium.
+
+**Optional sections (offered, can be deferred):**
+
+After the four required fields, use AskUserQuestion:
+
+> "Want to capture more detail now (Why, Done when, Out of scope, Open
+> questions), or defer until you start the task?"
+> - Detail now (recommended for tasks you'll start later)
+> - Defer until you start the task
+
+**Detail now:** run the rest of the original §4.2 sections — Why, Done
+when, Out of scope, Open questions — and draft the full brief. Use the
+full task-brief template from §7.
+
+**Defer:** save the task with a thin brief (template in §7). The
+bootstrap-time prompt (§9 deferred-section prompt) will walk the user
+through the missing sections when they `flow do` the task — at which
+point the user has more context and is more motivated to think about
+acceptance criteria.
+
+**Confirmation flow** (both paths):
+- Show the drafted brief.
+- AskUserQuestion: "Brief — Save it / Revise"
+- Save → `flow add task ...` → overwrite stub brief with content.
 
 **Then, BEFORE calling `flow add task`:**
 
@@ -332,8 +390,9 @@ why they made it. Immediately after `flow add project` succeeds:
    sequential §5.2 interviews. Don't try to batch-extract; one
    interview per task.
 5. Only after the first task exists (or the user has explicitly
-   declined), offer `flow do <first-task>` if they want to start
-   immediately.
+   declined), use `AskUserQuestion` (header: "Open it now?", options:
+   "Yes, open it" / "No, keep in backlog") to offer
+   `flow do <first-task>`. If "Yes", proceed to §4.4. If "No", stop.
 
 The rule is about pushing the user one step further than
 `flow add project` — project creation is not a complete action on
@@ -409,10 +468,16 @@ that…", "record that I…", "document that I just…".
 3. **Show the filename and the content to the user.** Then use
    `AskUserQuestion` (header: "Save note?", options: "Save it" /
    "Revise") to confirm. Do not write silently.
-4. Determine the task slug from `$FLOW_TASK` (usually set in the current
-   iTerm tab's env) or by asking the user, or — if the user named the
-   task in the request — by running `flow show task <that-ref>` to get
-   the canonical slug.
+4. Determine the entity:
+   - For a **regular task**, notes go under
+     `~/.flow/tasks/<slug>/updates/`. Slug from `$FLOW_TASK` or asked.
+   - For a **playbook run**, notes ALSO go under
+     `~/.flow/tasks/<run-slug>/updates/` (runs are tasks).
+   - For a **playbook definition**, notes go under
+     `~/.flow/playbooks/<slug>/updates/` for cross-invocation observations
+     ("noticed flaky output when X", "next iteration should consolidate
+     steps 2 and 3"). Use this when capturing things that should inform
+     the playbook itself, not a single run.
 5. Use the `Write` tool to create
    `~/.flow/tasks/<slug>/updates/<filename>.md` with the confirmed
    content. If the user is noting project-level progress, use
@@ -431,25 +496,44 @@ status stays `in-progress`; `waiting_on` is just a freeform note that
 will show up in `flow list` and `flow show task` so the user remembers.
 
 **Unblocking triggers:** "X came back", "got the answer", "unblocked",
-"no longer waiting on X". Action: `flow waiting <task> --clear`.
+"no longer waiting on X". Before mutating, confirm via
+`AskUserQuestion` (header: "Clear waiting?", options:
+"Yes, clear it" / "Wait, not yet"). On "Yes", run
+`flow waiting <task> --clear`. On "Wait, not yet", stop and let the
+user clarify. (This matches the §8 "do not mark done without
+confirmation" anti-pattern philosophy — clearing `waiting_on` is a
+state mutation and deserves the same explicit click.)
 
-Do not infer the task slug silently — use `$FLOW_TASK` if set, otherwise
-ask "which task is this for?" and pass the user's answer as the exact
-alias or slug.
+Do not infer the task slug silently — use `$FLOW_TASK` if set,
+otherwise use `AskUserQuestion` listing in-progress tasks as options
+to disambiguate which task this is for.
 
 ### 4.7 Mark done
 
 **Triggers:** "mark X done", "finish X", "X is done", "close out X".
 
-**Recipe:** run `flow done <ref>`. **Do not close the iTerm tab** and
-**do not kill the Claude session** — `flow done` deliberately leaves
-both intact. The session_id stays on the task row so a future reopen can
-still resume it.
+**Recipe:**
 
-Before running `flow done`, if the user hasn't just saved a progress
-note, use `AskUserQuestion` (header: "Closing note?", options:
-"Yes, save a note first" / "No, just mark done") to offer. If yes,
-run the §5.5 recipe first, then `flow done`.
+1. Confirm via `AskUserQuestion` (header: "Mark done?", options:
+   "Yes, `flow done <slug>`" / "No, not yet") before mutating. Per
+   §8, never mark done without explicit confirmation — even if the
+   user says "great, I finished that".
+2. If the user hasn't just saved a progress note, use
+   `AskUserQuestion` (header: "Closing note?", options:
+   "Yes, save a note first" / "No, just mark done") to offer.
+   On "Yes", run the §4.5 recipe first, then continue.
+3. Run `flow done <ref>`. **Do not close the iTerm tab** and **do
+   not kill the Claude session** — `flow done` deliberately leaves
+   both intact. The session_id stays on the task row so a future
+   reopen can still resume it.
+
+**Playbook-specific notes:**
+
+- **Run-tasks** (kind=playbook_run) support `flow done <run-slug>` like
+  any task.
+- Note: **playbook definitions are never "done" — they're archived.**
+  When a playbook is no longer in use, run `flow archive <playbook-slug>`.
+  There is no `flow done playbook` command.
 
 ### 4.8 Archive / cleanup
 
@@ -458,15 +542,28 @@ finished work".
 
 **Recipe:**
 
-- Single task/project: `flow archive <ref>`.
+- Single task/project: confirm via `AskUserQuestion` (header:
+  "Archive?", options: "Yes, archive `<slug>`" / "No, keep it"),
+  then on "Yes" run `flow archive <ref>`.
 - Bulk "archive everything done": run `flow list tasks --status done`.
-  Show the list to the user. Confirm each one unless the user said
-  "archive all done" explicitly — in that case, iterate and archive
-  them all, printing each action as you go.
+  Show the list to the user. Then, unless the user already said
+  "archive all done" explicitly, use `AskUserQuestion` (header:
+  "Archive all?", options: "Yes, archive all listed" / "Pick one by
+  one" / "Cancel"). On "Yes", iterate and archive them all, printing
+  each action. On "Pick one by one", run a single-task `AskUserQuestion`
+  for each. On "Cancel", stop.
 - If the user regrets it: `flow unarchive <ref>`.
 
 Archive never deletes files on disk — brief.md and updates/ remain. Make
 sure the user knows this so they don't worry about losing notes.
+
+**Playbooks:**
+- `flow archive <playbook-slug>` hides the playbook from
+  `flow list playbooks` but does not affect past runs (they're independent
+  task rows). Past runs can be archived independently with
+  `flow archive <run-slug>`.
+- "Bulk clean up done runs" pattern: `flow list runs --status done`,
+  then archive each.
 
 ### 4.9 Weekly review
 
@@ -483,6 +580,8 @@ week", "friday review".
 4. `flow list tasks --status backlog --priority high` — what's queued.
 5. `flow workdir list` — surface any workdir that hasn't been used in
    30+ days; mention these as "consider archiving" candidates.
+6. `flow list runs --since monday` — group by playbook slug, count runs,
+   pull each playbook's most-recent run timestamp.
 
 Produce a digest in this exact shape:
 
@@ -501,6 +600,9 @@ Produce a digest in this exact shape:
 
 ## Workdir hygiene
 - <path> — untouched since <date>
+
+## Playbook activity
+- <playbook-slug> — N runs this week, most recent <date>
 ```
 
 Do not solve anything during a weekly review — it's a reporting
@@ -615,13 +717,20 @@ immediately — that doesn't require the file to have been loaded first.
 Read-Write just means "load, check for duplicates, write" as a single
 sequence at the moment the fact is heard.
 
-### 4.11 Scope-creep detection (suggest-and-offer)
+**Auxiliary files in entity directories** (any `.md` files in
+`tasks/<slug>/`, `projects/<slug>/`, or `playbooks/<slug>/` other than
+`brief.md` and the contents of `updates/`) are surfaced by `flow show`
+under an `other:` section. Apply the same lazy-load discipline as KB
+files: load them on demand when relevant to the work, not preemptively.
+
+### 4.11 Scope-creep detection (passive — surface via AskUserQuestion)
 
 This is a **passive** workflow like §5.10 — you watch the session as it
-unfolds and intervene only when the evidence is strong. Its purpose is
-to keep a task's transcript and update log focused, instead of letting
-unrelated work pile up under whichever task happens to own the current
-iTerm tab.
+unfolds and intervene only when the evidence is strong. When you
+intervene, the surfacing mechanism is `AskUserQuestion` (never a
+prose "want me to...?" question). Its purpose is to keep a task's
+transcript and update log focused, instead of letting unrelated work
+pile up under whichever task happens to own the current iTerm tab.
 
 **When to consider firing:**
 
@@ -674,18 +783,21 @@ evidence:
    Use the same project as `$FLOW_PROJECT` only if the new work
    genuinely belongs there; otherwise leave it floating or attach to
    a different project per the user's answer during intake. After
-   the new task is saved, offer `flow do <new-slug>` so the follow-on
-   work gets its own transcript.
+   the new task is saved, use `AskUserQuestion` (header:
+   "Open it now?", options: "Yes, open it" / "No, keep in backlog")
+   to offer `flow do <new-slug>` so the follow-on work gets its own
+   transcript.
 
 3. **On "No, stay here":** accept the user's judgement and continue.
    Consider this a signal to update your mental model of what the
    bootstrapped task includes — don't re-ask on the same thread of
    work in the same session.
 
-4. **On "Later":** offer to write a short progress note on the
-   current task capturing the drift observation ("noticed X while
-   doing Y; may need its own task"), then continue with the
-   original work.
+4. **On "Later":** use `AskUserQuestion` (header: "Drop a note?",
+   options: "Yes, save a drift note" / "No, just continue") to offer
+   writing a short progress note on the current task capturing the
+   drift observation ("noticed X while doing Y; may need its own
+   task"), then continue with the original work.
 
 **Why this lives in the skill, not the hook:** the hook's only
 guaranteed side-effect is injecting text at session start. Detection
@@ -693,6 +805,242 @@ requires inspecting what you've done this session (edits, debugging
 topics) — that state only exists inside the running conversation. The
 hook's job is to make sure the skill is loaded; the skill is what
 runs the check.
+
+**Note:** "the bootstrapped task" includes playbook-run tasks. The
+triggers and recipe are identical for playbook-run sessions —
+edits/debugging that drift outside the playbook's scope warrant the
+same prompt.
+
+### 4.12 Add a playbook
+
+**Triggers:** "add a playbook", "create a playbook for X",
+"track this as a playbook", "this is something I'll re-run".
+
+**The interview is the whole point** (same philosophy as §4.2 task intake — you interview, then write down what the user said; you do NOT solution during intake).
+
+**Sections to ask, ONE AT A TIME, in this order:**
+
+1. **What?** One sentence describing what each run does.
+2. **Why?** Why this playbook exists and what value it produces.
+3. **Where?** Work_dir for runs (use §6 recipe).
+4. **Each run does** — concrete steps every invocation performs. Bullet
+   form. Replaces "Done when" from task intake.
+5. **Out of scope?** Non-goals. Optional.
+6. **Signals to watch for** — observable conditions that should change
+   the run's behavior or trigger an escalation. Replaces "Open
+   questions" — playbooks have long lifespans so prospective signals
+   matter more than open questions.
+
+**Then before calling `flow add playbook`:**
+
+- Suggest 2-3 slug candidates via `AskUserQuestion` (header:
+  "Pick a slug", one option per candidate plus "Other" for custom).
+- Project attachment via `AskUserQuestion` (header: "Attach to?",
+  one option per existing project plus "None (floating playbook)").
+  Skip the question if there are no projects.
+- `--mkdir` if work_dir doesn't exist — use `AskUserQuestion`
+  (header: "Create dir?", options: "Yes, create it" / "No, fix the
+  path") same as §6 step 6.
+
+**Draft the brief, show to the user**, then use `AskUserQuestion`
+(header: "Brief", options: "Save it" / "Revise") to confirm. Do not
+run `flow add playbook` until the user picks "Save it". Then run it
+and overwrite the stub `brief.md` with the full content. Use the
+playbook brief template from §7.
+
+After save, use `AskUserQuestion` (header: "Run it now?", options:
+"Run it now" / "Just save the definition") to offer the first run.
+On "Run it now", proceed to §4.13. On "Just save the definition",
+stop.
+
+### 4.13 Run a playbook
+
+**Triggers — any of these means "run `flow run playbook <slug>`":**
+- "run the X playbook" / "trigger X" / "fire the X playbook"
+- "fire the X agent" (legacy term users may use — playbook is the canonical name)
+- "start a run of X" / "kick off X"
+- A bare `flow run playbook X` typed as command
+
+**Recipe:**
+
+1. Ask session-mode (Regular vs Skip permissions) via AskUserQuestion —
+   reuses the §4.4 pattern. Skip if the user already specified.
+2. Run: `flow run playbook <slug>` (with `--dangerously-skip-permissions`
+   if chosen).
+3. The command creates a kind=playbook_run task, snapshots the brief,
+   and spawns an iTerm tab. The new tab will boot the flow skill via its
+   bootstrap prompt and execute against the snapshotted brief.
+
+**Anti-pattern (per §8):** never auto-fire. Manual trigger only. Even if
+the user mentions a playbook name in passing, do not run it without an
+explicit verb ("run", "trigger", "fire", "start").
+
+#### Persisting in-run adjustments back to the playbook
+
+A playbook run executes against a **frozen snapshot** of the playbook's
+`brief.md`. Sometimes during a run the user adjusts the procedure —
+"let's always do X here", "change the approach for step 3", "this step
+should also check Y". When that happens, the run-time session has two
+sources of truth diverging:
+
+- The run's `brief.md` snapshot — what THIS run is executing against
+- The playbook's live `brief.md` — what FUTURE runs will inherit
+
+If the user's adjustment is meant to apply only to this run, do nothing
+extra. But if it's a procedural improvement worth keeping, the live
+playbook brief should be updated — otherwise next week's run forgets
+the lesson.
+
+**Trigger this prompt when:** the user makes a non-trivial procedural
+change during a run — adds a step, changes the approach for a step,
+adds a signal to watch for, narrows or expands scope. Tiny tactical
+tweaks ("skip step 4 today, the system is offline") don't count;
+durable changes do.
+
+**Recipe — use AskUserQuestion:**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "Persist this change to the playbook so future runs include it?",
+    header: "Persist?",
+    options: [
+      { label: "Persist to playbook",  description: "Edit playbooks/<slug>/brief.md so future runs inherit the change" },
+      { label: "Just this run",         description: "Apply to this run only; future runs continue with the existing playbook" },
+      { label: "Both — persist + note", description: "Edit the live playbook AND log the rationale in playbooks/<slug>/updates/" }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+**Important rules:**
+
+- **Never edit the run-task's own `brief.md`** to change future behavior.
+  That's a frozen snapshot — editing it has no effect on future runs and
+  obscures what the run actually executed against.
+- **The live playbook brief lives at `~/.flow/playbooks/<slug>/brief.md`.**
+  Edit that file directly when persisting.
+- **The "Both" option** is the right answer when the change is worth
+  capturing AND its rationale is non-obvious from the diff alone — the
+  update note explains *why*, the brief edit captures *what*.
+- **Do not auto-persist without asking.** Even a clear improvement may
+  be deliberately scoped to this run by the user.
+
+#### First-run capture (special case)
+
+The **first run** of a playbook is where the actual procedure
+crystallizes. The brief was written aspirationally; concrete commands,
+scripts, decision rules, and edge cases get discovered for the first
+time. Without active capture, all that learning evaporates when the run
+closes.
+
+**Detection:** the bootstrap prompt sets a banner — "⚡ THIS IS THE
+FIRST RUN OF THIS PLAYBOOK ⚡" — when the run-task is the only
+non-archived `kind=playbook_run` row for its `playbook_slug`. Treat
+that as your signal.
+
+**Behavior on first run — be more proactive than usual:**
+
+1. **Scripts and commands.** When you write a script, settle on a
+   concrete command, or develop a snippet that wasn't in the brief,
+   pause and AskUserQuestion *immediately*:
+
+   ```
+   AskUserQuestion({
+     questions: [{
+       question: "Capture this <script|command|decision> back to the playbook?",
+       header: "Capture?",
+       options: [
+         { label: "Add to playbook brief",  description: "Append/edit the relevant section of playbooks/<slug>/brief.md — future runs see it inline" },
+         { label: "Save as sidecar file",   description: "Write to playbooks/<slug>/<topic>.md (e.g., decision-tree.md, sample-script.md). Surfaced under other: for on-demand load" },
+         { label: "Just this run",          description: "Apply locally; don't change the playbook (rare for first run)" }
+       ],
+       multiSelect: false
+     }]
+   })
+   ```
+
+2. **Edge cases / signals.** When the user hits a condition the brief
+   didn't anticipate, AskUserQuestion whether to add it to the "Signals
+   to watch for" section of the live brief.
+
+3. **End-of-run capture sweep.** Before `flow done`, AskUserQuestion:
+
+   > "Capture anything from this run back to the playbook before closing?"
+   > - Yes — walk me through what to capture
+   > - No, close out as-is
+
+   On "walk me through": list the candidate captures (scripts produced,
+   decisions made, edge cases hit, commands actually used). Offer each
+   one via AskUserQuestion individually so the user can opt in
+   per-item.
+
+**Sidecar files vs brief edits:**
+
+- **Brief edits** are for *procedural* changes — additions to "Each run
+  does", new "Signals to watch for", clarified scope. Inline content
+  that every future run benefits from seeing during bootstrap.
+- **Sidecar files** (`playbooks/<slug>/<topic>.md`) are for *artifacts*
+  — scripts, decision trees, sample outputs, reference tables. Things
+  that future runs may or may not need; they're surfaced under `other:`
+  in `flow show playbook` and loaded on-demand by the run session.
+
+**Capture-back is a primary deliverable of the first run.** Not an
+afterthought. After the first run, the playbook should be
+substantially more concrete than it started.
+
+### 4.14 Substantive-unrelated-work check (passive, ongoing)
+
+This is a **passive workflow** that runs alongside every other workflow.
+It fires when substantive work emerges that doesn't belong to the
+current task binding.
+
+**Triggers (any one is enough):**
+
+- In a **dispatch session** (FLOW_TASK unset):
+  - You've been in active design / brainstorming / debugging
+    discussion for ≥ 2 turns about a concrete topic, OR
+  - You've made any Edit/Write tool calls, OR
+  - You've invoked a process skill (`superpowers:brainstorming`,
+    `superpowers:writing-plans`, `superpowers:executing-plans`,
+    `superpowers:systematic-debugging`,
+    `superpowers:test-driven-development`) — a process-skill invocation
+    is itself a substantive-work signal.
+- In a **bound session** (FLOW_TASK set): same triggers as §4.11
+  (work moved off the bootstrapped task's scope).
+
+**NOT a trigger:**
+
+- One-off question answered in a single turn.
+- Reading files / running queries to inform an answer.
+- The very first message after session start (you don't yet know if
+  this is one-off or substantive).
+
+**Recipe:**
+
+1. Pause current work.
+2. Run `flow list tasks --status in-progress` and
+   `flow list tasks --status backlog --priority high` to see candidates.
+3. Use AskUserQuestion to offer three options:
+   - **Create a new flow task** for this work (run §4.2 minimal intake,
+     then optionally `flow do <new-slug>`).
+   - **Switch to an existing task** (list candidates as options;
+     on selection, spawn `flow do <slug>`).
+   - **Proceed ad-hoc** (user accepts no resumability, no context
+     accumulation).
+
+**Process-skill ordering:** when a process skill triggers this check,
+load the skill first (so the user sees the right tool engage), then
+**before** taking the skill's first concrete action, run the check.
+If the user picks "create new task" or "switch to existing task," the
+process skill resumes inside the new session, not this one.
+
+**Important: this is an ongoing check, not one-shot.** Re-evaluate the
+triggers each turn — especially when transitioning into design /
+implementation / debugging work. The SessionStart hook gets you the
+first check; you are responsible for every subsequent check.
+Re-evaluate on every turn.
 
 ## 6. The `work_dir` question — rules
 
@@ -702,25 +1050,36 @@ these steps BEFORE asking, so the question is informed:
 1. **Run `flow workdir list`.** Fuzzy-match the task name against
    registered nicknames and paths. If you get an obvious match (e.g.
    task "Add OAuth to budgeting-app" and a registered workdir named
-   `budgeting-app`), propose that path as the default: "Looks like
-   `<path>` — is that right?"
+   `budgeting-app`), propose that path via `AskUserQuestion` (header:
+   "Use this path?", options: "Yes, use `<path>`" / "Pick a different
+   path"). On "Pick a different path", continue to step 2.
 2. **If no local match, check GitHub via `gh`.** Run `gh repo list
    --limit 50 --json name,owner,description`. If any repo name or
-   description plausibly matches the task, propose the top 3 as
-   candidates: "On GitHub I see `<repo-a>`, `<repo-b>`, `<repo-c>` —
-   any of these?" If the user picks one, offer `gh repo clone
-   <owner>/<repo> ~/code/<name>` and, after clone, run `flow workdir
-   add ~/code/<name>` so next time it's a local match.
+   description plausibly matches the task, present the top 3 via
+   `AskUserQuestion` (header: "Which repo?") with one option per
+   candidate (label = `<repo-name>`, description = repo description)
+   plus a "None of these — use a path instead" option. If the user
+   picks a repo, offer (via `AskUserQuestion`, header: "Clone it?",
+   options: "Yes, clone to `~/code/<name>`" / "No, I'll handle it")
+   to run `gh repo clone <owner>/<repo> ~/code/<name>` and, after
+   clone, run `flow workdir add ~/code/<name>` so next time it's a
+   local match.
 3. **If `gh` isn't authenticated** (command errors with an auth
-   message), fall back gracefully: "I couldn't reach GitHub — want to
-   just give me an absolute path?"
+   message), fall back gracefully via `AskUserQuestion` (header:
+   "GitHub unreachable", options: "Give me a path" / "Make it
+   floating"). On "Give me a path", prompt the user for an absolute
+   path (this single text input is fine — there are no enumerable
+   options). On "Make it floating", skip work_dir entirely.
 4. **If the user wants a floating task** (no repo), skip the question
    entirely and let `flow add task` auto-create
    `~/.flow/tasks/<slug>/workspace/`.
 5. **Never guess a path.** Don't invent `~/code/foo` because the task
-   name sounds like "foo". Always confirm with the user.
-6. **If the path doesn't exist**, offer `--mkdir`: "That directory
-   doesn't exist. Want me to pass `--mkdir` so `flow` creates it?"
+   name sounds like "foo". Always confirm via `AskUserQuestion`.
+6. **If the path doesn't exist**, use `AskUserQuestion` (header:
+   "Create dir?", options: "Yes, create it" / "No, fix the path")
+   to ask whether to pass `--mkdir`. On "Yes", append `--mkdir` to
+   the `flow add task` invocation. On "No", loop back to ask for a
+   corrected path.
 
 ## 7. The task brief format
 
@@ -758,6 +1117,39 @@ every file under `updates/` (if any exist) to catch up on prior
 progress.*
 ```
 
+**Thin task brief (intake-minimal):**
+
+```markdown
+# <name>
+
+## What
+<one sentence from intake>
+
+## Why
+*Deferred — fill in at task start.*
+
+## Where
+work_dir: <path>
+
+## Done when
+*Deferred — fill in at task start.*
+
+## Out of scope
+*Deferred*
+
+## Open questions
+*Deferred*
+
+---
+*This brief is thin. Before you start substantive work, the bootstrap
+session will prompt you to fill in the deferred sections.*
+```
+
+A section is "deferred" if its body is the literal string
+`*Deferred — fill in at task start.*` or `*Deferred*`. The bootstrap
+session detects this and offers the user a deferred-section prompt
+(§9).
+
 If a section has no content, leave the heading with an italic "none"
 underneath. Don't omit headings — the parallel structure makes the
 briefs scannable.
@@ -765,22 +1157,73 @@ briefs scannable.
 Projects use a shorter template: `What / Why / Where / Scope`. No
 "Done when", no "Open questions" (projects are ongoing).
 
+**Playbook brief template:**
+
+```markdown
+# <name>
+
+## What
+<one sentence describing what each run does>
+
+## Why
+<short paragraph>
+
+## Where
+work_dir: <absolute path>
+
+## Each run does
+- <step 1>
+- <step 2>
+- <step 3>
+
+## Out of scope
+- <non-goal 1>
+
+## Signals to watch for
+- <signal 1>
+
+---
+*Run with `flow run playbook <slug>`. Each run gets its own session
+and a snapshot of this brief at run time. Editing this file does not
+retroactively change past runs.*
+```
+
+Notes:
+- No "Done when" — playbooks are never done.
+- "Each run does" replaces "Done when" as the action-oriented section.
+- "Signals to watch for" replaces "Open questions" — playbooks are
+  long-running, so the relevant prospective concern is signals to
+  notice and respond to, not open questions to resolve.
+
 ## 8. Anti-patterns — do NOT do these
 
+**Confirmation method:** every confirmation in this section means
+`AskUserQuestion`, not a prose question that buries the choice. The
+tool produces clickable options; prose questions force the user to
+type. Always prefer the tool. If you find yourself typing "Want me
+to X?" or "Should I Y?" into chat, stop and use `AskUserQuestion`
+instead.
+
 - **Do not invent context.** If the user says "add a task for the
-  budgeting thing", ASK what the budgeting thing is. Don't write a brief
-  based on your prior-session memory of budgeting apps.
+  budgeting thing", ASK what the budgeting thing is (via
+  `AskUserQuestion` if you can list candidates from existing tasks /
+  workdirs; otherwise a plain prose clarifying question is fine —
+  open-ended "what is this thing?" is not an enumerable choice).
+  Don't write a brief based on your prior-session memory of
+  budgeting apps.
 - **Do not propose solutions during intake.** The user is telling you
   what they want to do, not asking for your opinion on how to do it.
   "What" is one sentence, "Why" is the reason. Neither section is a
   design doc. If you start drafting implementation steps during `flow
   add task`, stop.
 - **Do not silently switch tasks.** If `$FLOW_TASK` is set and the user
-  starts talking about a different one, confirm: "Are we switching to
-  `<other-task>`?" Don't assume.
+  starts talking about a different one, confirm via `AskUserQuestion`
+  (header: "Switch task?", options: "Yes, switch to `<other-task>`" /
+  "No, stay on `<current-task>`"). Don't assume.
 - **Do not mark tasks done without explicit confirmation.** Even if the
-  user says "great, I finished that", confirm: "Want me to `flow done
-  <slug>`?" and wait.
+  user says "great, I finished that", confirm via `AskUserQuestion`
+  (header: "Mark done?", options: "Yes, `flow done <slug>`" / "No,
+  not yet") and wait for the click.
 - **Do not hand-edit `session_id` or any other DB field.** Never edit
   `flow.db` directly, never instruct the user to. The only supported
   mutations are `flow` commands.
@@ -801,8 +1244,10 @@ Projects use a shorter template: `What / Why / Where / Scope`. No
   between add and your Write call), Read it first, merge thoughtfully,
   and confirm with the user before writing.
 - **Do not forget to offer progress notes.** After a long working
-  session, the user will forget to log what they did. Proactively offer
-  "want me to save a note before we stop?" at natural breakpoints.
+  session, the user will forget to log what they did. At natural
+  breakpoints, proactively use `AskUserQuestion` (header:
+  "Save note?", options: "Yes, save a note" / "No, skip it") to
+  prompt — never a prose "want me to save a note?" question.
 - **Do not silently continue scope-drifted work under the bootstrapped
   task.** When the work genuinely moves off `$FLOW_TASK` (new repo,
   new product, new line of investigation sustained over multiple
@@ -810,6 +1255,16 @@ Projects use a shorter template: `What / Why / Where / Scope`. No
   `AskUserQuestion` and offer to branch into a new task. Letting
   unrelated work accumulate under the wrong task poisons that task's
   transcript and buries decisions the user will later want to find.
+- **Do not auto-fire `flow run playbook`.** Playbooks are
+  manual-trigger only. Even if a user mentions a playbook by name in
+  passing, do NOT run it without an explicit verb ("run", "trigger",
+  "fire", "start").
+- **Do not edit a run-task's `brief.md` to change the playbook's
+  behavior for future runs.** That brief is a frozen snapshot. To
+  change behavior, edit the playbook's `brief.md` and start a new
+  run.
+- **Do not propose scheduling during playbook intake.** Scheduled
+  invocation is out of scope for v1; playbooks are manual.
 
 ## 9. The execution-session bootstrap contract
 
@@ -848,6 +1303,22 @@ proposing any plan:
    **Do NOT read the `kb:` files at bootstrap.** They're lazy-loaded
    on demand — see §5.10 for when to actually Read them.
 
+   **If `flow show task` indicates `kind: playbook_run`:** also run
+   `flow show playbook <playbook-slug>` first (for context: the playbook's
+   intent and recent runs). Note any files under its `other:` section —
+   they're sidecar references you can load on demand. Then read your
+   task's `brief.md` — that's the snapshot taken when this run started,
+   and it's your authoritative instructions. The playbook's live
+   `brief.md` may have evolved since; you don't need to re-read it.
+
+   **Files listed under `other:`** in any `flow show` output (task,
+   project, or playbook) are sidecar references — research notes, decision
+   trees, design docs, etc. dropped into the entity's directory. Do **not**
+   read them eagerly. Read them on demand when something in the brief, in
+   user input, or in the work makes them relevant. This matches the
+   lazy-load principle for KB files (§5.10 in the skill, §4.10 in the
+   section numbering).
+
 3. **Load the parent project context, if any.** If `flow show task`
    printed a `project:` line that isn't `(floating)`, run:
    ```
@@ -880,6 +1351,25 @@ append them to the matching `kb/*.md` file on the fly — no permission
 needed, no interview required. Just write and quietly note what you
 recorded. And lazy-read any kb file when you hit a question that
 actually needs that context — not before.
+
+### Deferred-section prompt
+
+If any section body in your brief is the literal `*Deferred — fill in at
+task start.*` or `*Deferred*`, pause before doing any work and offer the
+user (via AskUserQuestion):
+
+- **Fill in now** — run a mini-§4.2 interview for just the missing
+  sections (Why, Done when, Out of scope, Open questions). Save the
+  filled-in brief by overwriting the existing `brief.md`.
+- **Skip — proceed** — accept that scope is implicit. Reasonable for
+  small/known tasks.
+
+This shifts the intake burden from intake-time to task-start-time, where
+the user has more context.
+
+Applies only to regular tasks (kind=regular). Playbook-run briefs are
+snapshots and should not be edited; if the live playbook brief had
+deferred sections, those should have been resolved at playbook intake.
 
 ### Cross-task context via transcripts
 
@@ -928,8 +1418,8 @@ manual correction tool — do not run it as a workaround for a bug in
 ## 10. Environment variables flow sets
 
 When `flow do <task>` spawns an iTerm tab, it attaches these env vars
-to the `flowde`/`claude` process (inline on the command line — they do
-NOT persist in the tab's shell after claude exits):
+to the `claude` process (inline on the command line — they do NOT
+persist in the tab's shell after claude exits):
 
 - `FLOW_TASK=<task-slug>` — the current task
 - `FLOW_PROJECT=<project-slug>` — the current project, if the task has one
@@ -951,3 +1441,8 @@ a progress note. The second-worst outcome is running `flow do` on the
 wrong task. Both are avoided by one clarifying question. The user's time
 budget for a clarifying question is vastly lower than their budget for
 fixing a wrong save after the fact.
+
+In a dispatch session (FLOW_TASK unset), also re-check §4.14
+(substantive-unrelated-work) on every turn. The skill is responsible
+for ongoing detection; the SessionStart hook is only a one-shot
+trigger.

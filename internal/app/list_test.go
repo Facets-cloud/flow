@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"flow/internal/flowdb"
 	"os"
 	"path/filepath"
@@ -99,7 +100,9 @@ func TestCmdListTasksWaitingOn(t *testing.T) {
 func TestCmdListTasksArchivedHiddenByDefault(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "alive", "A", "backlog", "high", filepath.Join(root, "x"), nil)
-	insertTask(t, db, "dead", "D", "done", "low", filepath.Join(root, "x"), nil)
+	// Use backlog (not done) for the archived row so this test isolates
+	// archived-visibility from done-visibility.
+	insertTask(t, db, "dead", "D", "backlog", "low", filepath.Join(root, "x"), nil)
 	if _, err := db.Exec(`UPDATE tasks SET archived_at = ? WHERE slug = ?`, flowdb.NowISO(), "dead"); err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +124,48 @@ func TestCmdListTasksArchivedHiddenByDefault(t *testing.T) {
 	}
 	if !strings.Contains(out2, "(archived)") {
 		t.Errorf("archived marker missing: %q", out2)
+	}
+}
+
+func TestCmdListTasksDoneHiddenByDefault(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "active", "A", "in-progress", "high", filepath.Join(root, "x"), nil)
+	insertTask(t, db, "shipped", "S", "done", "high", filepath.Join(root, "x"), nil)
+
+	// Default: done hidden.
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "active") {
+		t.Errorf("active task missing: %q", out)
+	}
+	if strings.Contains(out, "shipped") {
+		t.Errorf("done task leaked into default list: %q", out)
+	}
+
+	// --include-done: shows everything.
+	out = captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--include-done"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "shipped") {
+		t.Errorf("done task missing with --include-done: %q", out)
+	}
+
+	// Explicit --status done: shows only done (regardless of default).
+	out = captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--status", "done"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "shipped") {
+		t.Errorf("--status done should show done: %q", out)
+	}
+	if strings.Contains(out, "active") {
+		t.Errorf("--status done should not show in-progress: %q", out)
 	}
 }
 
@@ -321,6 +366,226 @@ func TestParseSince(t *testing.T) {
 		if !got.Equal(c.want) {
 			t.Errorf("parseSince(%q): got %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestCmdListPlaybooks(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "alpha", Name: "Alpha", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "beta", Name: "Beta", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"playbooks"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") {
+		t.Errorf("expected both playbooks, got:\n%s", out)
+	}
+}
+
+func TestCmdListPlaybooksFiltersByProject(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "P", "--slug", "p1", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	db := openFlowDB(t)
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{
+		Slug:        "in-p1",
+		Name:        "In",
+		WorkDir:     wd,
+		ProjectSlug: sql.NullString{String: "p1", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "floating", Name: "F", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"playbooks", "--project", "p1"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "in-p1") {
+		t.Errorf("expected in-p1 playbook, got:\n%s", out)
+	}
+	if strings.Contains(out, "floating") {
+		t.Errorf("floating playbook should be filtered out, got:\n%s", out)
+	}
+}
+
+func TestListTasksDefaultExcludesPlaybookRuns(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES ('pb--2026-04-30-10-30', 'pb run', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "regular-1") {
+		t.Errorf("regular task missing:\n%s", out)
+	}
+	if strings.Contains(out, "pb--2026-04-30-10-30") {
+		t.Errorf("playbook run should be hidden by default:\n%s", out)
+	}
+}
+
+func TestListTasksKindOverride(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES ('pb--2026-04-30-10-30', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--kind", "playbook_run"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "pb--2026-04-30-10-30") {
+		t.Errorf("--kind playbook_run should show runs:\n%s", out)
+	}
+}
+
+func TestListTasksKindAll(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "pb", Name: "PB", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES ('pb--run', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--kind", "all"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "regular-1") || !strings.Contains(out, "pb--run") {
+		t.Errorf("--kind all should show both:\n%s", out)
+	}
+}
+
+func TestCmdListRuns(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p1", Name: "P1", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p2", Name: "P2", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	now := flowdb.NowISO()
+	for _, slug := range []string{"p1--2026-04-30-10-30", "p1--2026-04-30-11-00"} {
+		if _, err := db.Exec(
+			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+			 VALUES (?, ?, 'in-progress', 'playbook_run', 'p1', 'medium', ?, ?, ?)`,
+			slug, slug, wd, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+		 VALUES ('p2--2026-04-30-10-30', 'p2-r', 'done', 'playbook_run', 'p2', 'medium', ?, ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// All runs
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"runs"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "p1--") || !strings.Contains(out, "p2--") {
+		t.Errorf("expected all runs:\n%s", out)
+	}
+
+	// Filtered by playbook
+	out = captureShowStdout(t, func() {
+		if rc := cmdList([]string{"runs", "p1"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "p1--") {
+		t.Errorf("expected p1 runs:\n%s", out)
+	}
+	if strings.Contains(out, "p2--") {
+		t.Errorf("p2 runs should be filtered out:\n%s", out)
+	}
+}
+
+func TestCmdListRunsByStatus(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	wd := t.TempDir()
+	if err := flowdb.UpsertPlaybook(db, &flowdb.Playbook{Slug: "p", Name: "P", WorkDir: wd}); err != nil {
+		t.Fatal(err)
+	}
+	now := flowdb.NowISO()
+	for _, r := range []struct{ slug, status string }{
+		{"p--ip", "in-progress"},
+		{"p--dn", "done"},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+			 VALUES (?, ?, ?, 'playbook_run', 'p', 'medium', ?, ?, ?)`,
+			r.slug, r.slug, r.status, wd, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdList([]string{"runs", "--status", "done"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "p--dn") {
+		t.Errorf("expected done run:\n%s", out)
+	}
+	if strings.Contains(out, "p--ip") {
+		t.Errorf("in-progress run should be filtered out:\n%s", out)
 	}
 }
 

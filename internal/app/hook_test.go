@@ -7,11 +7,10 @@ import (
 )
 
 // TestHookSessionStartNoFlowTaskEmitsAmbientHint pins the contract for
-// ad-hoc sessions (e.g. bare `flowde` with no FLOW_TASK): the hook must
-// emit additionalContext naming the flow skill and instructing the
-// session to invoke it via the Skill tool when the user's request
-// touches flow concerns. Without this hint, Claude Code may not
-// auto-invoke the skill on the user's first turn.
+// ad-hoc sessions (e.g. bare `claude` with no FLOW_TASK): the hook must
+// emit a one-liner pointing at §4.14 of the flow skill. The skill —
+// not the hook — owns the substantive-work detection logic and offers
+// the three-choice prompt; the hook is only the one-shot trigger.
 func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 	t.Setenv("FLOW_TASK", "")
 	out := captureStdout(t, func() {
@@ -32,25 +31,18 @@ func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 		t.Errorf("hookEventName = %q, want SessionStart", parsed.HookSpecificOutput.HookEventName)
 	}
 	ctx := parsed.HookSpecificOutput.AdditionalContext
-	if !strings.Contains(ctx, "`flow` skill") {
-		t.Errorf("ambient hint must name the `flow` skill, got:\n%s", ctx)
+	// Must point at §4.14 of the flow skill (skill owns the logic).
+	if !strings.Contains(ctx, "4.14") {
+		t.Errorf("ambient hint must reference §4.14, got:\n%s", ctx)
 	}
-	if !strings.Contains(ctx, "Skill tool") {
-		t.Errorf("ambient hint must instruct Skill tool invocation, got:\n%s", ctx)
+	// Must communicate that the check is ongoing, not one-shot.
+	if !strings.Contains(ctx, "ongoing, not one-shot") {
+		t.Errorf("ambient hint must say %q, got:\n%s", "ongoing, not one-shot", ctx)
 	}
 	// Must NOT include task-specific instructions (register-session,
 	// reading the brief) since there is no task bound to this session.
 	if strings.Contains(ctx, "flow register-session") {
 		t.Errorf("ambient hint should not instruct register-session (no FLOW_TASK bound):\n%s", ctx)
-	}
-	// Must nudge the session to offer "create new task or switch to an
-	// existing one" when the user starts substantive work — otherwise
-	// the session's transcript is homeless. Both levers must be named.
-	if !strings.Contains(ctx, "create a new flow task") {
-		t.Errorf("ambient hint must offer to create a new task, got:\n%s", ctx)
-	}
-	if !strings.Contains(ctx, "switch to an existing task") {
-		t.Errorf("ambient hint must offer to switch to an existing task, got:\n%s", ctx)
 	}
 }
 

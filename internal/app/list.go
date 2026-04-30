@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// cmdList dispatches `flow list tasks|projects`. Per spec §5.4.
+// cmdList dispatches `flow list tasks|projects|playbooks|runs`. Per spec §5.4.
 func cmdList(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: list requires 'tasks' or 'projects'")
+		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', or 'runs'")
 		return 2
 	}
 	switch args[0] {
@@ -21,6 +21,10 @@ func cmdList(args []string) int {
 		return listTasksCmd(args[1:])
 	case "projects":
 		return listProjectsCmd(args[1:])
+	case "playbooks":
+		return listPlaybooksCmd(args[1:])
+	case "runs":
+		return listRunsCmd(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2
@@ -33,6 +37,8 @@ func listTasksCmd(args []string) int {
 	priority := fs.String("priority", "", "high|medium|low")
 	since := fs.String("since", "", "today|monday|7d|YYYY-MM-DD")
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
+	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
+	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -42,6 +48,16 @@ func listTasksCmd(args []string) int {
 		Project:         *project,
 		Priority:        *priority,
 		IncludeArchived: *includeArchived,
+	}
+	// Default kind is "regular"; "all" disables the kind filter.
+	if *kind != "all" {
+		filter.Kind = *kind
+	}
+	// Hide done tasks by default. Skipped if --status is given (user
+	// explicitly chose a status, including possibly "done") or if
+	// --include-done is set.
+	if *status == "" && !*includeDone {
+		filter.ExcludeDone = true
 	}
 	if *since != "" {
 		s, err := parseSince(*since, time.Now())
@@ -312,6 +328,104 @@ func listProjectsCmd(args []string) int {
 		}
 		fmt.Printf("  %-6s %-*s   %-7s %s %s%s\n",
 			priorityShort(p.Priority), maxSlug, slug, statusW, label, breakdown, arch)
+	}
+	return 0
+}
+
+func listPlaybooksCmd(args []string) int {
+	fs := flagSet("list playbooks")
+	project := fs.String("project", "", "filter by project slug")
+	includeArchived := fs.Bool("include-archived", false, "include archived")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	pbs, err := flowdb.ListPlaybooks(db, flowdb.PlaybookFilter{
+		Project:         *project,
+		IncludeArchived: *includeArchived,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(pbs) == 0 {
+		fmt.Println("(no playbooks)")
+		return 0
+	}
+	for _, pb := range pbs {
+		proj := ""
+		if pb.ProjectSlug.Valid {
+			proj = "(" + pb.ProjectSlug.String + ")"
+		}
+		archived := ""
+		if pb.ArchivedAt.Valid {
+			archived = "  (archived)"
+		}
+		fmt.Printf("  %-40s %s%s\n", pb.Slug, proj, archived)
+	}
+	return 0
+}
+
+func listRunsCmd(args []string) int {
+	fs := flagSet("list runs")
+	status := fs.String("status", "", "backlog|in-progress|done")
+	includeArchived := fs.Bool("include-archived", false, "include archived")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	var playbookSlug string
+	if fs.NArg() > 0 {
+		playbookSlug = fs.Arg(0)
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{
+		Kind:            "playbook_run",
+		PlaybookSlug:    playbookSlug,
+		Status:          *status,
+		IncludeArchived: *includeArchived,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(tasks) == 0 {
+		fmt.Println("(no runs)")
+		return 0
+	}
+	for _, tk := range tasks {
+		archived := ""
+		if tk.ArchivedAt.Valid {
+			archived = "  (archived)"
+		}
+		pbCol := ""
+		if tk.PlaybookSlug.Valid {
+			pbCol = "(" + tk.PlaybookSlug.String + ")"
+		}
+		fmt.Printf("  [%s] %-50s %s%s\n", statusAbbrev(tk.Status), tk.Slug, pbCol, archived)
 	}
 	return 0
 }

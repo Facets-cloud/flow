@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"database/sql"
 	"flow/internal/flowdb"
 	"io"
@@ -453,4 +454,166 @@ func TestCmdShowTaskConfigurableStaleness(t *testing.T) {
 	if !strings.Contains(out2, "⚠ stale") {
 		t.Errorf("should be stale with threshold 1; out=%q", out2)
 	}
+}
+
+func TestShowTaskListsAuxFiles(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+
+	if rc := cmdAdd([]string{"task", "Foo task", "--slug", "foo", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("cmdAdd rc=%d", rc)
+	}
+
+	taskDir := filepath.Join(root, "tasks", "foo")
+	mustWriteAux(t, filepath.Join(taskDir, "research.md"), "r")
+	mustWriteAux(t, filepath.Join(taskDir, "design.md"), "d")
+	mustWriteAux(t, filepath.Join(taskDir, "skip.txt"), "ignored")
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"task", "foo"}); rc != 0 {
+			t.Fatalf("cmdShow rc=%d", rc)
+		}
+	})
+
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected 'other:' section in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "research.md") {
+		t.Errorf("expected research.md in other:, got:\n%s", out)
+	}
+	if !strings.Contains(out, "design.md") {
+		t.Errorf("expected design.md in other:, got:\n%s", out)
+	}
+	if strings.Contains(out, "skip.txt") {
+		t.Errorf("non-md file should not appear in other:, got:\n%s", out)
+	}
+}
+
+func TestShowTaskNoAuxFiles(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"task", "Bar", "--slug", "bar", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"task", "bar"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected 'other:' section even when empty, got:\n%s", out)
+	}
+}
+
+func TestShowProjectListsAuxFiles(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Auth", "--slug", "auth", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	pdir := filepath.Join(root, "projects", "auth")
+	mustWriteAux(t, filepath.Join(pdir, "decisions.md"), "x")
+
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"project", "auth"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected other: section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "decisions.md") {
+		t.Errorf("expected decisions.md, got:\n%s", out)
+	}
+}
+
+func TestShowProjectNoAuxFiles(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Bar", "--slug", "barproj", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"project", "barproj"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "other:") {
+		t.Errorf("expected other: line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "(none)") {
+		t.Errorf("expected (none) marker, got:\n%s", out)
+	}
+}
+
+func TestCmdShowPlaybook(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"playbook", "tri"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	for _, want := range []string{
+		"slug:",
+		"tri",
+		"brief:",
+		"runs (last 5):",
+		"kb:",
+		"other:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, out)
+		}
+	}
+	briefPath := filepath.Join(root, "playbooks", "tri", "brief.md")
+	if !strings.Contains(out, briefPath) {
+		t.Errorf("expected brief path %q, got:\n%s", briefPath, out)
+	}
+}
+
+func TestCmdShowPlaybookListsRecentRuns(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	db := openFlowDB(t)
+	now := flowdb.NowISO()
+	for _, runSlug := range []string{"p--2026-04-30-10-30", "p--2026-04-30-11-00"} {
+		if _, err := db.Exec(
+			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+			 VALUES (?, ?, 'in-progress', 'playbook_run', 'p', 'medium', ?, ?, ?)`,
+			runSlug, runSlug, wd, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"playbook", "p"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "p--2026-04-30-10-30") || !strings.Contains(out, "p--2026-04-30-11-00") {
+		t.Errorf("expected both runs in output, got:\n%s", out)
+	}
+}
+
+func captureShowStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
 }
