@@ -225,6 +225,19 @@ func TestSkillHasPlaybookPersistAdjustmentsPattern(t *testing.T) {
 	}
 }
 
+func TestSkillHasMidInterviewDriftRule(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"Mid-interview drift",
+		"sub-question has 2–4 discrete options",
+		"Don't keep typing prose just because you started",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing mid-interview-drift content %q", want)
+		}
+	}
+}
+
 func TestSkillHasFirstRunCapturePattern(t *testing.T) {
 	got := string(embeddedSkill)
 	for _, want := range []string{

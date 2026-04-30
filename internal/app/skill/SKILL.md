@@ -215,6 +215,16 @@ or "Should I do Y?" or "(yes/no)" in chat — those force the user to
 type a free-text reply. The tool produces clickable options; always
 prefer the tool.
 
+**Mid-interview drift.** Within an open-ended interview (intake,
+deferred-section prompt), the parent question may be free-form
+("Why?", "Done when?") but follow-up clarifications often narrow into
+enumerable choices (architectures, install methods, yes/no). The
+moment a sub-question has 2–4 discrete options, switch to
+AskUserQuestion. Don't keep typing prose just because you started in
+prose. The "interview" framing governs the *opening* question; every
+narrowing inside it follows the same always-AskUserQuestion rule as
+the rest of the skill.
+
 ## 5. Core workflows
 
 These are the load-bearing part of the skill. When the user says one of
