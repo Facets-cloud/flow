@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-// cmdShow dispatches `flow show task|project`. Per spec §5.4.
+// cmdShow dispatches `flow show task|project|playbook`. Per spec §5.4.
 func cmdShow(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: show requires 'task' or 'project'")
+		fmt.Fprintln(os.Stderr, "error: show requires 'task', 'project', or 'playbook'")
 		return 2
 	}
 	switch args[0] {
@@ -23,6 +23,8 @@ func cmdShow(args []string) int {
 		return showTaskCmd(args[1:])
 	case "project":
 		return showProjectCmd(args[1:])
+	case "playbook":
+		return showPlaybookCmd(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown show subcommand %q\n", args[0])
 	return 2
@@ -115,6 +117,48 @@ func showProjectCmd(args []string) int {
 		return 1
 	}
 	printProjectMetadata(db, p, root)
+	return 0
+}
+
+// showPlaybookCmd implements `flow show playbook [<ref>]`.
+func showPlaybookCmd(args []string) int {
+	fs := flagSet("show playbook")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ref := ""
+	if fs.NArg() > 0 {
+		ref = fs.Arg(0)
+	}
+	if ref == "" {
+		fmt.Fprintln(os.Stderr, "error: no playbook ref given")
+		return 1
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	pb, err := ResolvePlaybook(db, ref, true) // include archived for show
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	root, err := flowRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	printPlaybookMetadata(db, pb, root)
 	return 0
 }
 
@@ -349,6 +393,104 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 	}
 	fmt.Printf("tasks:       %d total  (%d in-progress, %d backlog, %d done)\n",
 		len(tasks), inProg, backlog, done)
+}
+
+// printPlaybookMetadata writes the human-readable view of a playbook row.
+func printPlaybookMetadata(db *sql.DB, pb *flowdb.Playbook, root string) {
+	archivedMarker := ""
+	if pb.ArchivedAt.Valid {
+		archivedMarker = "  (archived)"
+	}
+	fmt.Printf("slug:        %s%s\n", pb.Slug, archivedMarker)
+	fmt.Printf("name:        %s\n", pb.Name)
+	if pb.ProjectSlug.Valid {
+		fmt.Printf("project:     %s\n", pb.ProjectSlug.String)
+	} else {
+		fmt.Printf("project:     (floating)\n")
+	}
+
+	wdLine := pb.WorkDir
+	if wd, err := flowdb.GetWorkdir(db, pb.WorkDir); err == nil {
+		var parts []string
+		if wd.Name.Valid && wd.Name.String != "" {
+			parts = append(parts, "known: "+wd.Name.String)
+		} else {
+			parts = append(parts, "known")
+		}
+		if wd.GitRemote.Valid && wd.GitRemote.String != "" {
+			parts = append(parts, "origin: "+wd.GitRemote.String)
+		}
+		wdLine = fmt.Sprintf("%s  [%s]", pb.WorkDir, strings.Join(parts, ", "))
+	}
+	fmt.Printf("work_dir:    %s\n", wdLine)
+
+	fmt.Printf("created:     %s\n", pb.CreatedAt)
+	fmt.Printf("updated:     %s\n", pb.UpdatedAt)
+	if pb.ArchivedAt.Valid {
+		fmt.Printf("archived:    %s\n", pb.ArchivedAt.String)
+	}
+
+	pbDir := filepath.Join(root, "playbooks", pb.Slug)
+	briefPath := filepath.Join(pbDir, "brief.md")
+	fmt.Printf("brief:       %s\n", briefPath)
+
+	updates := listUpdateFiles(filepath.Join(pbDir, "updates"))
+	if len(updates) == 0 {
+		fmt.Println("updates:     (none)")
+	} else {
+		fmt.Println("updates:")
+		for _, u := range updates {
+			fmt.Printf("  - %s\n", u)
+		}
+	}
+
+	// Recent runs (last 5).
+	runs, err := flowdb.ListTasks(db, flowdb.TaskFilter{
+		Kind:         "playbook_run",
+		PlaybookSlug: pb.Slug,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: list runs: %v\n", err)
+	}
+	if len(runs) == 0 {
+		fmt.Println("runs (last 5): (none)")
+	} else {
+		// Sort by created_at descending so the most recent appears first.
+		sort.Slice(runs, func(i, j int) bool { return runs[i].CreatedAt > runs[j].CreatedAt })
+		max := 5
+		if len(runs) < max {
+			max = len(runs)
+		}
+		fmt.Println("runs (last 5):")
+		for _, r := range runs[:max] {
+			fmt.Printf("  %-50s [%s]\n", r.Slug, statusAbbrev(r.Status))
+		}
+	}
+
+	// Aux files (sidecar references — on-demand load).
+	auxFiles, auxErr := enumerateAuxFiles(pbDir)
+	if auxErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: enumerate aux files: %v\n", auxErr)
+	}
+	if len(auxFiles) == 0 {
+		fmt.Println("other:       (none)")
+	} else {
+		fmt.Println("other:")
+		for _, fp := range auxFiles {
+			fmt.Printf("  - %s\n", fp)
+		}
+	}
+
+	// KB refs.
+	kb := kbFiles(root)
+	if len(kb) == 0 {
+		fmt.Println("kb:          (none)")
+	} else {
+		fmt.Println("kb:")
+		for _, k := range kb {
+			fmt.Printf("  - %s\n", k)
+		}
+	}
 }
 
 // listUpdateFiles returns absolute paths to all *.md files under dir,

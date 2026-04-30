@@ -546,6 +546,62 @@ func TestShowProjectNoAuxFiles(t *testing.T) {
 	}
 }
 
+func TestCmdShowPlaybook(t *testing.T) {
+	root := setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"playbook", "tri"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	for _, want := range []string{
+		"slug:",
+		"tri",
+		"brief:",
+		"runs (last 5):",
+		"kb:",
+		"other:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, out)
+		}
+	}
+	briefPath := filepath.Join(root, "playbooks", "tri", "brief.md")
+	if !strings.Contains(out, briefPath) {
+		t.Errorf("expected brief path %q, got:\n%s", briefPath, out)
+	}
+}
+
+func TestCmdShowPlaybookListsRecentRuns(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	db := openFlowDB(t)
+	now := flowdb.NowISO()
+	for _, runSlug := range []string{"p--2026-04-30-10-30", "p--2026-04-30-11-00"} {
+		if _, err := db.Exec(
+			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
+			 VALUES (?, ?, 'in-progress', 'playbook_run', 'p', 'medium', ?, ?, ?)`,
+			runSlug, runSlug, wd, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureShowStdout(t, func() {
+		if rc := cmdShow([]string{"playbook", "p"}); rc != 0 {
+			t.Fatal()
+		}
+	})
+	if !strings.Contains(out, "p--2026-04-30-10-30") || !strings.Contains(out, "p--2026-04-30-11-00") {
+		t.Errorf("expected both runs in output, got:\n%s", out)
+	}
+}
+
 func captureShowStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
