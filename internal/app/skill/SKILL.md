@@ -55,6 +55,13 @@ said.
   an optional `waiting_on` freeform note, and a `brief.md`. Tasks also
   carry a Claude `session_id` once `flow do` has bootstrapped a session
   for them.
+- **Playbooks** are reusable, runnable definitions. A playbook has a
+  name, slug, work_dir, optional `project_slug`, and a `brief.md` that
+  describes what each invocation should do. Each invocation creates a
+  **playbook-run** — a task with `kind=playbook_run` — that has its
+  own session, its own snapshotted `brief.md`, and its own
+  `updates/`. Editing a playbook's `brief.md` does not affect past
+  runs; runs are reproducible.
 - **Workdirs** is a convenience registry of known local repo paths. It
   exists so this skill can match repo intent ("the budgeting app")
   to a path on disk. It is not the source of truth for any task's
@@ -132,19 +139,26 @@ Create
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
                            [--priority high|medium|low]
+  flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions]
   flow done             <ref>
 
+Playbook runs
+  flow run playbook <slug>          spawn a fresh run session (new task with kind=playbook_run)
+  flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
+
 Read
   flow show task    [<ref>]     (defaults to $FLOW_TASK)
   flow show project [<ref>]     (defaults to $FLOW_PROJECT)
+  flow show playbook    [<ref>]
   flow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
   flow list tasks    [--status backlog|in-progress|done] [--project <slug>]
                      [--priority high|medium|low] [--since today|monday|7d|YYYY-MM-DD]
                      [--include-archived]
   flow list projects [--status active|done] [--include-archived]
+  flow list playbooks   [--project <slug>] [--include-archived]
 
 Edit / mutate
   flow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at
@@ -154,6 +168,7 @@ Edit / mutate
   flow waiting     <ref> --clear
   flow archive     <ref>
   flow unarchive   <ref>
+  (flow edit, flow archive, flow unarchive also accept playbook refs)
 
 Workdirs
   flow workdir list
@@ -206,6 +221,10 @@ working on", "where did I leave off", "give me a status".
    - **Waiting on someone**: pull out tasks with `waiting_on` set so the
      user can see the whole block at once.
    - **Stale** (anything with the ⚠ marker): call these out explicitly.
+   - **Active playbooks**: any playbook with a run in the past 7 days.
+     Pull from `flow list runs --since 7d` grouped by playbook; show
+     playbook slug + most recent run timestamp. Skip if there are no
+     runs in the window — don't show an empty header.
 5. Use `AskUserQuestion` to let the user pick which task to work on.
    List each in-progress and high-priority backlog task as an option
    (label = slug, description = one-line summary). Include an "Add a
@@ -409,10 +428,16 @@ that…", "record that I…", "document that I just…".
 3. **Show the filename and the content to the user.** Then use
    `AskUserQuestion` (header: "Save note?", options: "Save it" /
    "Revise") to confirm. Do not write silently.
-4. Determine the task slug from `$FLOW_TASK` (usually set in the current
-   iTerm tab's env) or by asking the user, or — if the user named the
-   task in the request — by running `flow show task <that-ref>` to get
-   the canonical slug.
+4. Determine the entity:
+   - For a **regular task**, notes go under
+     `~/.flow/tasks/<slug>/updates/`. Slug from `$FLOW_TASK` or asked.
+   - For a **playbook run**, notes ALSO go under
+     `~/.flow/tasks/<run-slug>/updates/` (runs are tasks).
+   - For a **playbook definition**, notes go under
+     `~/.flow/playbooks/<slug>/updates/` for cross-invocation observations
+     ("noticed flaky output when X", "next iteration should consolidate
+     steps 2 and 3"). Use this when capturing things that should inform
+     the playbook itself, not a single run.
 5. Use the `Write` tool to create
    `~/.flow/tasks/<slug>/updates/<filename>.md` with the confirmed
    content. If the user is noting project-level progress, use
@@ -451,6 +476,14 @@ note, use `AskUserQuestion` (header: "Closing note?", options:
 "Yes, save a note first" / "No, just mark done") to offer. If yes,
 run the §5.5 recipe first, then `flow done`.
 
+**Playbook-specific notes:**
+
+- **Run-tasks** (kind=playbook_run) support `flow done <run-slug>` like
+  any task.
+- Note: **playbook definitions are never "done" — they're archived.**
+  When a playbook is no longer in use, run `flow archive <playbook-slug>`.
+  There is no `flow done playbook` command.
+
 ### 4.8 Archive / cleanup
 
 **Triggers:** "archive X", "clean up", "clean up my done tasks", "hide
@@ -468,6 +501,14 @@ finished work".
 Archive never deletes files on disk — brief.md and updates/ remain. Make
 sure the user knows this so they don't worry about losing notes.
 
+**Playbooks:**
+- `flow archive <playbook-slug>` hides the playbook from
+  `flow list playbooks` but does not affect past runs (they're independent
+  task rows). Past runs can be archived independently with
+  `flow archive <run-slug>`.
+- "Bulk clean up done runs" pattern: `flow list runs --status done`,
+  then archive each.
+
 ### 4.9 Weekly review
 
 **Triggers:** "weekly review", "week in review", "what did I ship this
@@ -483,6 +524,8 @@ week", "friday review".
 4. `flow list tasks --status backlog --priority high` — what's queued.
 5. `flow workdir list` — surface any workdir that hasn't been used in
    30+ days; mention these as "consider archiving" candidates.
+6. `flow list runs --since monday` — group by playbook slug, count runs,
+   pull each playbook's most-recent run timestamp.
 
 Produce a digest in this exact shape:
 
@@ -501,6 +544,9 @@ Produce a digest in this exact shape:
 
 ## Workdir hygiene
 - <path> — untouched since <date>
+
+## Playbook activity
+- <playbook-slug> — N runs this week, most recent <date>
 ```
 
 Do not solve anything during a weekly review — it's a reporting
@@ -694,6 +740,11 @@ topics) — that state only exists inside the running conversation. The
 hook's job is to make sure the skill is loaded; the skill is what
 runs the check.
 
+**Note:** "the bootstrapped task" includes playbook-run tasks. The
+triggers and recipe are identical for playbook-run sessions —
+edits/debugging that drift outside the playbook's scope warrant the
+same prompt.
+
 ## 6. The `work_dir` question — rules
 
 When you're about to ask the user "where does this task live?", run
@@ -765,6 +816,44 @@ briefs scannable.
 Projects use a shorter template: `What / Why / Where / Scope`. No
 "Done when", no "Open questions" (projects are ongoing).
 
+**Playbook brief template:**
+
+```markdown
+# <name>
+
+## What
+<one sentence describing what each run does>
+
+## Why
+<short paragraph>
+
+## Where
+work_dir: <absolute path>
+
+## Each run does
+- <step 1>
+- <step 2>
+- <step 3>
+
+## Out of scope
+- <non-goal 1>
+
+## Signals to watch for
+- <signal 1>
+
+---
+*Run with `flow run playbook <slug>`. Each run gets its own session
+and a snapshot of this brief at run time. Editing this file does not
+retroactively change past runs.*
+```
+
+Notes:
+- No "Done when" — playbooks are never done.
+- "Each run does" replaces "Done when" as the action-oriented section.
+- "Signals to watch for" replaces "Open questions" — playbooks are
+  long-running, so the relevant prospective concern is signals to
+  notice and respond to, not open questions to resolve.
+
 ## 8. Anti-patterns — do NOT do these
 
 - **Do not invent context.** If the user says "add a task for the
@@ -810,6 +899,16 @@ Projects use a shorter template: `What / Why / Where / Scope`. No
   `AskUserQuestion` and offer to branch into a new task. Letting
   unrelated work accumulate under the wrong task poisons that task's
   transcript and buries decisions the user will later want to find.
+- **Do not auto-fire `flow run playbook`.** Playbooks are
+  manual-trigger only. Even if a user mentions a playbook by name in
+  passing, do NOT run it without an explicit verb ("run", "trigger",
+  "fire", "start").
+- **Do not edit a run-task's `brief.md` to change the playbook's
+  behavior for future runs.** That brief is a frozen snapshot. To
+  change behavior, edit the playbook's `brief.md` and start a new
+  run.
+- **Do not propose scheduling during playbook intake.** Scheduled
+  invocation is out of scope for v1; playbooks are manual.
 
 ## 9. The execution-session bootstrap contract
 

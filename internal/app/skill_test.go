@@ -115,3 +115,31 @@ func TestSkillUnknownSubcommand(t *testing.T) {
 		t.Errorf("missing subcommand rc=%d, want 2", rc)
 	}
 }
+
+func TestSkillMentionsPlaybooks(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"## 2. The model",
+		"**Playbooks**",
+		"flow add playbook",
+		"flow run playbook",
+		"flow list playbooks",
+		"flow show playbook",
+		"flow list runs",
+		"Active playbooks",
+		"playbooks/<slug>/updates/",
+		"playbook definitions are never \"done\" — they're archived",
+		"flow archive <playbook-slug>",
+		"## Playbook activity",
+		"Each run does",
+		"Signals to watch for",
+		"Do not auto-fire `flow run playbook`",
+		"snapshot",
+		"Do not propose scheduling during playbook intake",
+		"the bootstrapped task\" includes playbook-run tasks",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing %q", want)
+		}
+	}
+}
