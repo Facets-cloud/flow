@@ -162,6 +162,21 @@ func TestSkillHasPlaybookSections(t *testing.T) {
 	}
 }
 
+func TestSkillSection414(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"### 4.14 Substantive-unrelated-work check",
+		"ongoing check, not one-shot",
+		"superpowers:brainstorming",
+		"Re-evaluate on every turn",
+		"Process-skill ordering",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing %q", want)
+		}
+	}
+}
+
 func TestSkillIntakeMinimal(t *testing.T) {
 	got := string(embeddedSkill)
 	for _, want := range []string{

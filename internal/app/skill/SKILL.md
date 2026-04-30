@@ -821,6 +821,58 @@ After save, use AskUserQuestion to offer:
 the user mentions a playbook name in passing, do not run it without an
 explicit verb ("run", "trigger", "fire", "start").
 
+### 4.14 Substantive-unrelated-work check (passive, ongoing)
+
+This is a **passive workflow** that runs alongside every other workflow.
+It fires when substantive work emerges that doesn't belong to the
+current task binding.
+
+**Triggers (any one is enough):**
+
+- In a **dispatch session** (FLOW_TASK unset):
+  - You've been in active design / brainstorming / debugging
+    discussion for ≥ 2 turns about a concrete topic, OR
+  - You've made any Edit/Write tool calls, OR
+  - You've invoked a process skill (`superpowers:brainstorming`,
+    `superpowers:writing-plans`, `superpowers:executing-plans`,
+    `superpowers:systematic-debugging`,
+    `superpowers:test-driven-development`) — a process-skill invocation
+    is itself a substantive-work signal.
+- In a **bound session** (FLOW_TASK set): same triggers as §4.11
+  (work moved off the bootstrapped task's scope).
+
+**NOT a trigger:**
+
+- One-off question answered in a single turn.
+- Reading files / running queries to inform an answer.
+- The very first message after session start (you don't yet know if
+  this is one-off or substantive).
+
+**Recipe:**
+
+1. Pause current work.
+2. Run `flow list tasks --status in-progress` and
+   `flow list tasks --status backlog --priority high` to see candidates.
+3. Use AskUserQuestion to offer three options:
+   - **Create a new flow task** for this work (run §4.2 minimal intake,
+     then optionally `flow do <new-slug>`).
+   - **Switch to an existing task** (list candidates as options;
+     on selection, spawn `flow do <slug>`).
+   - **Proceed ad-hoc** (user accepts no resumability, no context
+     accumulation).
+
+**Process-skill ordering:** when a process skill triggers this check,
+load the skill first (so the user sees the right tool engage), then
+**before** taking the skill's first concrete action, run the check.
+If the user picks "create new task" or "switch to existing task," the
+process skill resumes inside the new session, not this one.
+
+**Important: this is an ongoing check, not one-shot.** Re-evaluate the
+triggers each turn — especially when transitioning into design /
+implementation / debugging work. The SessionStart hook gets you the
+first check; you are responsible for every subsequent check.
+Re-evaluate on every turn.
+
 ## 6. The `work_dir` question — rules
 
 When you're about to ask the user "where does this task live?", run
@@ -1194,3 +1246,8 @@ a progress note. The second-worst outcome is running `flow do` on the
 wrong task. Both are avoided by one clarifying question. The user's time
 budget for a clarifying question is vastly lower than their budget for
 fixing a wrong save after the fact.
+
+In a dispatch session (FLOW_TASK unset), also re-check §4.14
+(substantive-unrelated-work) on every turn. The skill is responsible
+for ongoing detection; the SessionStart hook is only a one-shot
+trigger.

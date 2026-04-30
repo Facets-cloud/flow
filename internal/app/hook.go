@@ -93,28 +93,9 @@ func cmdHookSessionStart(args []string) int {
 // the transcript of this session is homeless: no brief, no updates, no
 // resumability tomorrow.
 func emitAmbientSkillHint() int {
-	hint := "The `flow` skill is installed in this Claude Code environment " +
-		"(see ~/.claude/skills/flow/SKILL.md). It manages the user's personal " +
-		"tasks, per-task Claude sessions, and a knowledge base of durable " +
-		"facts about the user, their org, products, processes, and business. " +
-		"Invoke it via the Skill tool whenever the user's request touches " +
-		"tasks, projects, sessions, progress notes, priorities, or any `flow` " +
-		"CLI usage — including natural-language phrasings like 'what should " +
-		"I work on', 'start my day', 'add a task', 'resume X', 'save a note', " +
-		"or 'mark done'. " +
-		"IMPORTANT: this session is not bound to any flow task (FLOW_TASK is " +
-		"unset). If the user starts substantive work — anything beyond a " +
-		"one-shot question, like building a feature, debugging an issue, or " +
-		"making edits across multiple turns — pause before diving in and " +
-		"invoke the flow skill. Run `flow list tasks --status in-progress` " +
-		"and `flow list tasks --status backlog` to see candidates, then use " +
-		"AskUserQuestion to offer three choices: (a) create a new flow task " +
-		"for this work (runs the §5.2 intake interview), (b) switch to an " +
-		"existing task (list the matches as options, spawn `flow do <slug>` " +
-		"on selection), or (c) proceed ad-hoc without a task (user accepts " +
-		"that this session won't be resumable and won't accumulate context). " +
-		"If the request is unrelated to flow and is clearly a one-off, ignore " +
-		"this hint."
+	hint := "This session is not bound to any flow task (FLOW_TASK is unset).\n" +
+		"When substantive work emerges, run §4.14 of the flow skill to offer the user a flow task.\n" +
+		"The check is ongoing, not one-shot — re-evaluate on every turn."
 	return emitSessionStartContext(hint)
 }
 
