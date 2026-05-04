@@ -72,18 +72,72 @@ conversation — same context, same thread, same momentum.
 ## Prerequisites
 
 - macOS (iTerm2 for session spawning)
-- Go 1.25+ (to build from source)
 - [Claude Code](https://claude.ai/claude-code) CLI installed
 
 ## Install
 
+Download the latest binary for your Mac, mark it executable, clear the
+quarantine flag, and put it on your PATH:
+
 ```bash
-git clone git@github.com:Facets-cloud/flow.git && cd flow && make install && source ~/.zshrc
+# Apple Silicon (M1/M2/M3/M4):
+ARCH=arm64
+# Intel:
+# ARCH=amd64
+
+curl -fsSL -o /usr/local/bin/flow \
+  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
+chmod +x /usr/local/bin/flow
+xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
+
+flow init
 ```
 
-Then run **`claude`** and say **"let's get to work"**. The flow skill
-is installed at ~/.claude/skills/flow/SKILL.md. To refresh it after
-upgrading flow, run `flow skill update` (or `make install` again).
+`flow init` creates `~/.flow/`, the database, the knowledge base, and
+installs the flow skill into `~/.claude/skills/flow/SKILL.md` plus a
+SessionStart hook in `~/.claude/settings.json`.
+
+Then run **`claude`** and say **"let's get to work"**.
+
+> The `xattr` step removes Gatekeeper's quarantine attribute so macOS
+> doesn't refuse to run the unsigned binary. If you prefer, the first
+> launch will fail and you can right-click → Open in Finder to allow
+> it instead.
+
+## Upgrade
+
+Re-download the binary the same way you installed it:
+
+```bash
+curl -fsSL -o /usr/local/bin/flow \
+  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
+chmod +x /usr/local/bin/flow
+xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
+```
+
+The next time you run any flow command, the binary detects the version
+bump and refreshes the skill + SessionStart hook automatically. Check
+the running version with:
+
+```bash
+flow --version
+```
+
+## Build from source
+
+If you want to hack on flow, clone and build with the included
+Makefile:
+
+```bash
+git clone git@github.com:Facets-cloud/flow.git
+cd flow
+make install     # builds, adds repo dir to PATH, installs skill + hook
+source ~/.zshrc
+flow init
+```
+
+Local dev builds are tagged `dev` and skip the auto-upgrade check, so
+you can iterate on the skill without your changes being clobbered.
 
 ## Usage
 

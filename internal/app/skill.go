@@ -32,6 +32,45 @@ func skillInstallPath() (string, error) {
 	return filepath.Join(home, ".claude", "skills", "flow", "SKILL.md"), nil
 }
 
+// skillVersionPath returns the sidecar file that records which binary
+// version installed the current SKILL.md — used by the auto-upgrade
+// check to decide whether to refresh the skill.
+func skillVersionPath() (string, error) {
+	skill, err := skillInstallPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(skill), "VERSION"), nil
+}
+
+// readSkillVersion returns the recorded version string, or "" if the
+// sidecar file is missing or unreadable.
+func readSkillVersion() string {
+	p, err := skillVersionPath()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// writeSkillVersion records v as the version of the binary that
+// installed the current SKILL.md. Errors are non-fatal — failing to
+// write the sidecar should never block a successful skill install.
+func writeSkillVersion(v string) error {
+	p, err := skillVersionPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(v+"\n"), 0o644)
+}
+
 // userSettingsPath returns ~/.claude/settings.json.
 func userSettingsPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -39,6 +78,45 @@ func userSettingsPath() (string, error) {
 		return "", fmt.Errorf("no home dir: %w", err)
 	}
 	return filepath.Join(home, ".claude", "settings.json"), nil
+}
+
+// maybeAutoUpgradeSkill checks the recorded skill version against the
+// running binary's version and, if they differ, refreshes the skill +
+// SessionStart hook. Designed to run on every flow invocation so the
+// user gets a self-healing upgrade flow after replacing the binary.
+//
+// The check is intentionally conservative — it does nothing when:
+//   - The binary is a "dev" build (Version == "dev"). Local devs use
+//     `make install` and shouldn't fight an auto-installer.
+//   - The skill isn't installed at all (sentinel: SKILL.md missing).
+//     Treat this as an explicit user opt-out; never re-install.
+//   - The recorded version already matches Version. The common path.
+//
+// All errors are silent — auto-upgrade is best-effort plumbing, not a
+// command. A user-visible failure here would be far more annoying than
+// the eventual symptom of a stale skill.
+func maybeAutoUpgradeSkill() {
+	if Version == "" || Version == "dev" {
+		return
+	}
+	skillPath, err := skillInstallPath()
+	if err != nil {
+		return
+	}
+	if _, err := os.Stat(skillPath); err != nil {
+		// Not installed → user opted out; don't reinstall behind their back.
+		return
+	}
+	if readSkillVersion() == Version {
+		return
+	}
+	// Version mismatch — refresh skill bytes and the SessionStart hook.
+	if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
+		return
+	}
+	_ = writeSkillVersion(Version)
+	_, _ = installSessionStartHook()
+	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
 // cmdSkill dispatches `flow skill install|uninstall|update`.
@@ -88,6 +166,9 @@ func skillInstall(args []string, forceDefault bool) int {
 	if err := os.WriteFile(dest, embeddedSkill, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", dest, err)
 		return 1
+	}
+	if err := writeSkillVersion(Version); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
 	}
 	fmt.Printf("installed flow skill to %s\n", dest)
 
