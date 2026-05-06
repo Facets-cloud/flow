@@ -22,6 +22,11 @@ const hookCommand = "flow hook session-start"
 // fresh startup and `claude --resume`.
 const hookMatcher = "startup|resume"
 
+// userPromptSubmitHookCommand is the exact string written into
+// settings.json under hooks.UserPromptSubmit. Same stability rule as
+// hookCommand: changing this string would orphan existing installs.
+const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
+
 // skillInstallPath returns the absolute path where the skill should be
 // installed on disk: ~/.claude/skills/flow/SKILL.md.
 func skillInstallPath() (string, error) {
@@ -116,6 +121,7 @@ func maybeAutoUpgradeSkill() {
 	}
 	_ = writeSkillVersion(Version)
 	_, _ = installSessionStartHook()
+	_, _ = installUserPromptSubmitHook()
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
@@ -188,6 +194,15 @@ func skillInstall(args []string, forceDefault bool) int {
 	} else {
 		fmt.Println("SessionStart hook already installed — leaving as is")
 	}
+	if added, err := installUserPromptSubmitHook(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install UserPromptSubmit hook: %v\n", err)
+		return 0
+	} else if added {
+		settings, _ := userSettingsPath()
+		fmt.Printf("installed UserPromptSubmit hook in %s (nudges flow skill on every ad-hoc prompt)\n", settings)
+	} else {
+		fmt.Println("UserPromptSubmit hook already installed — leaving as is")
+	}
 	return 0
 }
 
@@ -224,19 +239,54 @@ func skillUninstall(args []string) int {
 		settings, _ := userSettingsPath()
 		fmt.Printf("removed SessionStart hook from %s\n", settings)
 	}
+	if removed, err := uninstallUserPromptSubmitHook(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not remove UserPromptSubmit hook: %v\n", err)
+		return 0
+	} else if removed {
+		settings, _ := userSettingsPath()
+		fmt.Printf("removed UserPromptSubmit hook from %s\n", settings)
+	}
 	return 0
 }
 
 // installSessionStartHook idempotently adds the flow SessionStart hook
-// to ~/.claude/settings.json. Returns (added, err) where added is true
-// if the settings file was actually modified (false if the hook was
-// already present).
-//
-// The merge preserves all existing top-level keys, all existing hooks
-// under other events (PreToolUse, etc.), and all existing SessionStart
-// entries. It only appends a new entry if no existing SessionStart
-// entry references `flow hook session-start`.
+// to ~/.claude/settings.json. Thin wrapper around installClaudeHook.
 func installSessionStartHook() (bool, error) {
+	return installClaudeHook("SessionStart", hookMatcher, hookCommand)
+}
+
+// uninstallSessionStartHook removes the flow SessionStart hook entry.
+// Thin wrapper around uninstallClaudeHook.
+func uninstallSessionStartHook() (bool, error) {
+	return uninstallClaudeHook("SessionStart", hookCommand)
+}
+
+// installUserPromptSubmitHook idempotently adds the flow
+// UserPromptSubmit hook. Fires on every user prompt; the hook command
+// itself decides whether to emit additionalContext (FLOW_TASK unset)
+// or no-op (FLOW_TASK set).
+func installUserPromptSubmitHook() (bool, error) {
+	// UserPromptSubmit doesn't take a matcher.
+	return installClaudeHook("UserPromptSubmit", "", userPromptSubmitHookCommand)
+}
+
+// uninstallUserPromptSubmitHook removes the flow UserPromptSubmit hook
+// entry. Thin wrapper around uninstallClaudeHook.
+func uninstallUserPromptSubmitHook() (bool, error) {
+	return uninstallClaudeHook("UserPromptSubmit", userPromptSubmitHookCommand)
+}
+
+// installClaudeHook idempotently adds a hook entry for the given
+// Claude Code event to ~/.claude/settings.json. matcher may be empty —
+// some events (UserPromptSubmit, Notification) don't use a matcher and
+// the field is omitted from the entry. command is both the literal
+// command Claude Code will execute AND the marker we look for to decide
+// whether the hook is already installed.
+//
+// Returns (added, err) where added is true iff the file was modified.
+// The merge preserves all existing top-level keys, all hooks under
+// other events, and all existing entries under the same event.
+func installClaudeHook(event, matcher, command string) (bool, error) {
 	path, err := userSettingsPath()
 	if err != nil {
 		return false, err
@@ -263,11 +313,9 @@ func installSessionStartHook() (bool, error) {
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	sessionStart, _ := hooks["SessionStart"].([]any)
+	entries, _ := hooks[event].([]any)
 
-	// Walk existing SessionStart entries; if any inner hook's command
-	// equals our marker, it's already installed.
-	for _, entry := range sessionStart {
+	for _, entry := range entries {
 		m, ok := entry.(map[string]any)
 		if !ok {
 			continue
@@ -278,24 +326,25 @@ func installSessionStartHook() (bool, error) {
 			if !ok {
 				continue
 			}
-			if cmd, _ := hm["command"].(string); cmd == hookCommand {
+			if cmd, _ := hm["command"].(string); cmd == command {
 				return false, nil
 			}
 		}
 	}
 
-	// Not present — append our entry.
 	newEntry := map[string]any{
-		"matcher": hookMatcher,
 		"hooks": []any{
 			map[string]any{
 				"type":    "command",
-				"command": hookCommand,
+				"command": command,
 			},
 		},
 	}
-	sessionStart = append(sessionStart, newEntry)
-	hooks["SessionStart"] = sessionStart
+	if matcher != "" {
+		newEntry["matcher"] = matcher
+	}
+	entries = append(entries, newEntry)
+	hooks[event] = entries
 	settings["hooks"] = hooks
 
 	out, err := json.MarshalIndent(settings, "", "  ")
@@ -309,10 +358,10 @@ func installSessionStartHook() (bool, error) {
 	return true, nil
 }
 
-// uninstallSessionStartHook removes any SessionStart entry whose inner
-// hooks reference the flow hook command. Returns (removed, err) where
-// removed is true if the settings file was actually modified.
-func uninstallSessionStartHook() (bool, error) {
+// uninstallClaudeHook removes any entry under hooks.<event> whose
+// inner hook list contains a command matching the given marker.
+// Returns (removed, err) where removed is true iff the file changed.
+func uninstallClaudeHook(event, command string) (bool, error) {
 	path, err := userSettingsPath()
 	if err != nil {
 		return false, err
@@ -332,14 +381,14 @@ func uninstallSessionStartHook() (bool, error) {
 	if hooks == nil {
 		return false, nil
 	}
-	sessionStart, _ := hooks["SessionStart"].([]any)
-	if len(sessionStart) == 0 {
+	entries, _ := hooks[event].([]any)
+	if len(entries) == 0 {
 		return false, nil
 	}
 
 	changed := false
-	kept := make([]any, 0, len(sessionStart))
-	for _, entry := range sessionStart {
+	kept := make([]any, 0, len(entries))
+	for _, entry := range entries {
 		m, ok := entry.(map[string]any)
 		if !ok {
 			kept = append(kept, entry)
@@ -354,14 +403,13 @@ func uninstallSessionStartHook() (bool, error) {
 				continue
 			}
 			cmd, _ := hm["command"].(string)
-			if strings.TrimSpace(cmd) == hookCommand {
+			if strings.TrimSpace(cmd) == command {
 				changed = true
 				continue
 			}
 			filteredInner = append(filteredInner, h)
 		}
 		if len(filteredInner) == 0 {
-			// Entry had only our hook → drop the entry entirely.
 			changed = true
 			continue
 		}
@@ -373,9 +421,9 @@ func uninstallSessionStartHook() (bool, error) {
 		return false, nil
 	}
 	if len(kept) == 0 {
-		delete(hooks, "SessionStart")
+		delete(hooks, event)
 	} else {
-		hooks["SessionStart"] = kept
+		hooks[event] = kept
 	}
 	if len(hooks) == 0 {
 		delete(settings, "hooks")

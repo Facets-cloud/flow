@@ -42,6 +42,38 @@ edits they imply. You never edit `flow.db` directly. You never solve
 problems during task intake — you interview, then write what the user
 said.
 
+## 1a. When invoked explicitly with no intent
+
+If this skill is invoked without a trigger phrase — for example the
+user typed `/flow` or asked you to load the flow skill but did not
+say what they want done — DO NOT auto-run any workflow. Do not
+silently call `flow list tasks`, do not enter §4.1 "start the day",
+do not propose opening a task, do not start an intake interview.
+The user just asked what this skill is for. Answer that question
+first; let them choose what happens next.
+
+**Behavior:**
+
+1. In 2–3 sentences, describe what you can do for the user with
+   flow under the hood — capture work as briefs, log progress
+   notes, resume Claude sessions across days, track what they're
+   waiting on. Frame it as your capabilities, not commands. The
+   user does not need to learn flow's CLI.
+2. Use `AskUserQuestion` (header: "What now?") to offer the main
+   actions. Pick 3–4 options that fit the current state — for
+   example:
+   - "Show me what's on my plate" — runs §4.1 start-the-day.
+   - "Add a new task" — runs §4.2 task intake.
+   - "Add a project" — runs §4.3 project intake.
+   - "Just exploring" — stop and wait.
+3. Dispatch on the user's pick. If "Just exploring" or the user
+   skips the question, stop and let them lead.
+
+This section ONLY governs the bare-invocation case. Trigger-phrase
+recipes in §4 ("what should I work on", "add a task", etc.) still
+fire on natural-language requests — when the user already expressed
+an intent, follow the matching recipe instead of re-asking via §1a.
+
 ## 2. The model
 
 - **Projects** group related tasks. Every project has a name, a slug, a
@@ -85,12 +117,12 @@ run `flow list tasks` or `flow list projects` as a probe:
 - If the command **succeeds** (even with zero results): flow is
   initialized. Proceed normally. **Do not check again this session.**
 - If the command **errors** with a message about a missing database:
-  the user hasn't run `flow init` yet. Use `AskUserQuestion` (header:
-  "Run init?", options: "Yes, run flow init" / "No, I'll do it later")
-  with question text explaining that `flow init` sets up the data
-  directory (`$FLOW_ROOT` if set, otherwise `~/.flow`) and database.
-  If "Yes", run `flow init` and then enter the **first-run coaching**
-  below. If "No", stop.
+  the user hasn't initialized flow yet. Use `AskUserQuestion` (header:
+  "Set up flow?", options: "Yes, set it up" / "No, not now") with
+  question text describing flow as a personal task and session
+  manager that will store its data in `$FLOW_ROOT` (or `~/.flow` if
+  unset). On "Yes", run `flow init` yourself and then enter the
+  **first-run coaching** below. On "No", stop.
 
 ### First-run coaching
 
@@ -383,9 +415,9 @@ why they made it. Immediately after `flow add project` succeeds:
    Where / Done when / Out of scope / Open questions as usual.
 3. If the user says "I don't know yet" or "just create the project
    for now", DO NOT create a placeholder task and DO NOT silently
-   drop it. Instead, explicitly tell them: "OK, no task for now.
-   Remember: run `flow add task --project <slug>` before `flow do`,
-   because there's nothing to do yet on this project."
+   drop it. Instead, explicitly tell them: "OK, no task for now —
+   just tell me when you're ready to add one and I'll set it up."
+   Do not surface the underlying `flow` commands.
 4. If the user describes several tasks at once, create them all via
    sequential §5.2 interviews. Don't try to batch-extract; one
    interview per task.
@@ -451,6 +483,34 @@ and stop. Do NOT:
 If `flow do` itself errored (rc != 0), relay the error and stop. Do
 not attempt workarounds; the user will decide what to do next.
 
+#### Special case: macOS Accessibility error from the Terminal.app backend
+
+When `flow do` runs from a stock Terminal.app shell and macOS hasn't
+granted Accessibility, the binary returns a multi-line error that
+explicitly names "Terminal" as the app needing the grant and includes
+a `open "x-apple.systempreferences:..."` URL to jump straight to the
+right Settings pane. When you see that error:
+
+1. **Trust the error verbatim.** It says "Terminal" because macOS
+   attributes Accessibility to the responsible parent app, which is
+   Terminal.app — NOT Claude Code, NOT the flow binary. Do not advise
+   the user to toggle "Claude" or "flow"; that wastes their time.
+2. **Open the Accessibility pane for them**: run
+   `open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"`.
+3. **Tell the user, in plain language**, what to do next: enable the
+   toggle for "Terminal" in the list (or click + and add Terminal.app
+   from `/System/Applications/Utilities/` if it isn't shown).
+4. **Wait for the user to confirm** they've granted it. Don't poll
+   or retry on a timer.
+5. When they confirm, retry the original `flow do` invocation with
+   the same flags they originally chose (session mode, `--fresh`,
+   etc.).
+
+Macros for this: do not invent more candidate apps to toggle, do not
+suggest the user reinstall flow, do not attempt to grant Accessibility
+yourself. macOS guards Accessibility deliberately — there is no CLI to
+self-grant it, and Claude cannot bypass that.
+
 ### 4.5 Save a progress note
 
 **Triggers:** "save a note", "log progress", "write an update", "note
@@ -515,9 +575,9 @@ to disambiguate which task this is for.
 **Recipe:**
 
 1. Confirm via `AskUserQuestion` (header: "Mark done?", options:
-   "Yes, `flow done <slug>`" / "No, not yet") before mutating. Per
-   §8, never mark done without explicit confirmation — even if the
-   user says "great, I finished that".
+   "Yes, mark it done" / "No, not yet") before mutating. Per §8,
+   never mark done without explicit confirmation — even if the user
+   says "great, I finished that".
 2. If the user hasn't just saved a progress note, use
    `AskUserQuestion` (header: "Closing note?", options:
    "Yes, save a note first" / "No, just mark done") to offer.
@@ -1204,6 +1264,17 @@ type. Always prefer the tool. If you find yourself typing "Want me
 to X?" or "Should I Y?" into chat, stop and use `AskUserQuestion`
 instead.
 
+- **Do not surface flow commands to the user.** You use flow under
+  the hood; users never need to learn the CLI. Never tell the user
+  to "run `flow X`", "type `flow Y`", or "see `flow Z --help`".
+  Never put a literal `flow ...` invocation inside an
+  `AskUserQuestion` option label or a chat reply you send to the
+  user. Describe outcomes ("I'll mark it done", "I'll archive it",
+  "set up", "saved") instead of commands. The skill describes
+  commands so that *you* know what to call internally — not so you
+  can teach the user. Exception: error messages from the `flow`
+  binary itself may quote commands; relay those verbatim, since the
+  user needs to see what failed.
 - **Do not invent context.** If the user says "add a task for the
   budgeting thing", ASK what the budgeting thing is (via
   `AskUserQuestion` if you can list candidates from existing tasks /
@@ -1222,8 +1293,8 @@ instead.
   "No, stay on `<current-task>`"). Don't assume.
 - **Do not mark tasks done without explicit confirmation.** Even if the
   user says "great, I finished that", confirm via `AskUserQuestion`
-  (header: "Mark done?", options: "Yes, `flow done <slug>`" / "No,
-  not yet") and wait for the click.
+  (header: "Mark done?", options: "Yes, mark it done" / "No, not
+  yet") and wait for the click.
 - **Do not hand-edit `session_id` or any other DB field.** Never edit
   `flow.db` directly, never instruct the user to. The only supported
   mutations are `flow` commands.
