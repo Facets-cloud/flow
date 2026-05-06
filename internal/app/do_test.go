@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
 	"strings"
@@ -85,6 +86,95 @@ func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
 	}
 	if !strings.Contains(script, "fresh-task") {
 		t.Errorf("spawn script missing task slug: %s", script)
+	}
+}
+
+// TestCmdDoFreshSpawnFailureRollsBackSessionID pins the rollback
+// invariant: when a fresh-bootstrap spawn fails (e.g. Terminal.app
+// Accessibility denied), the session_id we pre-allocated must be
+// nilled out so the next `flow do` retries bootstrap fresh. Without
+// this, the DB ends up with a session_id pointing at a non-existent
+// jsonl file, and every subsequent `flow do` runs `claude --resume
+// <uuid>` which fails with "No conversation found" indefinitely.
+//
+// Repro of the user-reported bug: spawn-failure → DB has orphan
+// session_id → next flow do takes resume path → claude can't find
+// the jsonl. The fix preserves the status flip (task is in-progress
+// even though spawn failed) but undoes the session_id allocation.
+func TestCmdDoFreshSpawnFailureRollsBackSessionID(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "fail-task")
+
+	const pinnedSID = "ffffffff-aaaa-bbbb-cccc-dddddddddddd"
+	oldNewUUID := newUUID
+	newUUID = func() (string, error) { return pinnedSID, nil }
+	t.Cleanup(func() { newUUID = oldNewUUID })
+
+	// Stub iterm.Runner to fail every call — simulates the
+	// Accessibility-denied path on Terminal.app, but works equally
+	// well to model any spawn failure.
+	old := iterm.Runner
+	iterm.Runner = func(args []string) error { return errors.New("simulated osascript failure") }
+	t.Cleanup(func() { iterm.Runner = old })
+
+	if rc := cmdDo([]string{"fail-task"}); rc != 1 {
+		t.Errorf("cmdDo on spawn failure: got rc=%d, want 1", rc)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "fail-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionID.Valid {
+		t.Errorf("session_id should be NULL after spawn failure rollback; got %q", task.SessionID.String)
+	}
+	if task.SessionStarted.Valid {
+		t.Errorf("session_started should be NULL after spawn failure rollback; got %q", task.SessionStarted.String)
+	}
+	// Status flip is preserved — the task is genuinely in-progress
+	// even though spawn failed. The user's next attempt should
+	// resume that intent without re-flipping.
+	if task.Status != "in-progress" {
+		t.Errorf("status after spawn failure: got %q, want in-progress (flip preserved)", task.Status)
+	}
+}
+
+// TestCmdDoResumeSpawnFailureKeepsSessionID is the inverse of the
+// fresh-bootstrap case: when a RESUME spawn fails (the session_id
+// already pointed at a real jsonl from a previous successful spawn),
+// the DB row must be left untouched. A transient osascript failure
+// should not cost the user their conversation history.
+func TestCmdDoResumeSpawnFailureKeepsSessionID(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "resume-fail-task")
+
+	db := openFlowDB(t)
+	const existingSID = "real-existing-sid"
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug='resume-fail-task'`,
+		existingSID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	old := iterm.Runner
+	iterm.Runner = func(args []string) error { return errors.New("simulated osascript failure") }
+	t.Cleanup(func() { iterm.Runner = old })
+
+	if rc := cmdDo([]string{"resume-fail-task"}); rc != 1 {
+		t.Errorf("cmdDo on resume spawn failure: got rc=%d, want 1", rc)
+	}
+
+	db = openFlowDB(t)
+	task, err := flowdb.GetTask(db, "resume-fail-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != existingSID {
+		t.Errorf("session_id was rolled back on a RESUME spawn failure; got %+v, want %s",
+			task.SessionID, existingSID)
 	}
 }
 

@@ -8,9 +8,10 @@ import (
 
 // TestHookSessionStartNoFlowTaskEmitsAmbientHint pins the contract for
 // ad-hoc sessions (e.g. bare `claude` with no FLOW_TASK): the hook must
-// emit a one-liner pointing at §4.14 of the flow skill. The skill —
-// not the hook — owns the substantive-work detection logic and offers
-// the three-choice prompt; the hook is only the one-shot trigger.
+// emit a value-prop framing that names flow, instructs Skill-tool
+// invocation, and explicitly disclaims any "substantive" gate. The
+// skill — not the hook — owns the decision of whether to offer a task,
+// save a KB entry, or stay quiet.
 func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 	t.Setenv("FLOW_TASK", "")
 	out := captureStdout(t, func() {
@@ -31,16 +32,29 @@ func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 		t.Errorf("hookEventName = %q, want SessionStart", parsed.HookSpecificOutput.HookEventName)
 	}
 	ctx := parsed.HookSpecificOutput.AdditionalContext
-	// Must point at §4.14 of the flow skill (skill owns the logic).
-	if !strings.Contains(ctx, "4.14") {
-		t.Errorf("ambient hint must reference §4.14, got:\n%s", ctx)
+	for _, want := range []string{
+		"already tracks",
+		"`flow` skill",
+		"Skill tool",
+		"knowledge base",
+		"AskUserQuestion",
+		"existing flow task",
+		"create a new one",
+		"~/.flow/kb/",
+		"don't recognize",
+	} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("ambient hint missing %q; got:\n%s", want, ctx)
+		}
 	}
-	// Must communicate that the check is ongoing, not one-shot.
-	if !strings.Contains(ctx, "ongoing, not one-shot") {
-		t.Errorf("ambient hint must say %q, got:\n%s", "ongoing, not one-shot", ctx)
+	// The hint must NOT mention "substantive" — naming the past gate
+	// just primes Claude to think about gating again. Affirmative
+	// framing only: load the skill, confirm task binding, proceed.
+	if strings.Contains(ctx, "substantive") {
+		t.Errorf("ambient hint must not mention 'substantive'; got:\n%s", ctx)
 	}
-	// Must NOT include task-specific instructions (register-session,
-	// reading the brief) since there is no task bound to this session.
+	// Must NOT include task-specific instructions (no register-session,
+	// no slug-bound reload).
 	if strings.Contains(ctx, "flow register-session") {
 		t.Errorf("ambient hint should not instruct register-session (no FLOW_TASK bound):\n%s", ctx)
 	}
@@ -84,6 +98,70 @@ func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
 	}
 	if !strings.Contains(ctx, "some-slug") {
 		t.Errorf("additionalContext should mention the task slug, got:\n%s", ctx)
+	}
+}
+
+// TestHookUserPromptSubmitAdHocEmitsSkillNudge pins the contract for
+// ad-hoc sessions (FLOW_TASK unset): every prompt must produce a
+// hookSpecificOutput payload that nudges Claude to invoke the flow
+// skill and apply §4.14 — without keyword gating, since users won't
+// say "create a task" themselves.
+func TestHookUserPromptSubmitAdHocEmitsSkillNudge(t *testing.T) {
+	t.Setenv("FLOW_TASK", "")
+	out := captureStdout(t, func() {
+		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	var parsed struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("parse hook output: %v\nraw: %s", err, out)
+	}
+	if parsed.HookSpecificOutput.HookEventName != "UserPromptSubmit" {
+		t.Errorf("hookEventName = %q, want UserPromptSubmit",
+			parsed.HookSpecificOutput.HookEventName)
+	}
+	ctx := parsed.HookSpecificOutput.AdditionalContext
+	for _, want := range []string{
+		"already tracks",
+		"`flow` skill",
+		"Skill tool",
+		"knowledge base",
+		"AskUserQuestion",
+		"existing flow task",
+		"create a new one",
+		"~/.flow/kb/",
+		"don't recognize",
+	} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("UserPromptSubmit ambient hint missing %q; got:\n%s", want, ctx)
+		}
+	}
+	// Must NOT mention "substantive" — see SessionStart test for the
+	// rationale (don't prime Claude on the rejected gate).
+	if strings.Contains(ctx, "substantive") {
+		t.Errorf("UserPromptSubmit hint must not mention 'substantive'; got:\n%s", ctx)
+	}
+}
+
+// TestHookUserPromptSubmitBoundIsNoOp pins the bound-session contract:
+// when FLOW_TASK is set, the hook exits 0 with no output. The
+// SessionStart hook already loaded full task context; repeating it on
+// every prompt would be noisy and expensive.
+func TestHookUserPromptSubmitBoundIsNoOp(t *testing.T) {
+	t.Setenv("FLOW_TASK", "some-slug")
+	out := captureStdout(t, func() {
+		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected empty stdout when FLOW_TASK is set, got:\n%s", out)
 	}
 }
 

@@ -76,7 +76,8 @@ bugs reproduce deterministically with a small command sequence.
 
 ## Scope
 
-flow is **macOS + iTerm2 + Claude Code** by design. Cross-platform
-support, alternative spawners, and non-Claude integrations are out of
-scope for the current motion. If you have a use case that would change
-that, open an issue first to discuss before sending code.
+flow is **macOS (iTerm2 or stock Terminal.app) + Claude Code** by
+design. Linux/tmux/zellij/wezterm, Windows Terminal, and non-Claude
+integrations are out of scope for the current motion. If you have a
+use case that would change that, open an issue first to discuss
+before sending code.

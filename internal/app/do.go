@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"flow/internal/flowdb"
-	"flow/internal/iterm"
+	"flow/internal/spawner"
 	"fmt"
 	"net/url"
 	"os"
@@ -223,7 +223,7 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
-		command = fmt.Sprintf("claude --session-id %s %s", sessionID, iterm.ShellQuote(prompt))
+		command = fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
 	} else {
 		// Resume path: the UUID we already have in the DB is what claude
 		// used to write its existing jsonl.
@@ -236,7 +236,28 @@ func cmdDo(args []string) int {
 	if project != nil {
 		envVars["FLOW_PROJECT"] = project.Slug
 	}
-	if err := iterm.SpawnTab(buildTabTitle(project, task), cwd, command, envVars); err != nil {
+	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, envVars); err != nil {
+		if needsBootstrap {
+			// Spawn failed before claude could write its jsonl. Undo
+			// the session_id pre-allocation so the next `flow do`
+			// retries bootstrap fresh; otherwise the DB has a
+			// session_id with no backing jsonl and every subsequent
+			// `flow do` runs `claude --resume <uuid>` which fails
+			// with "No conversation found" indefinitely. The status
+			// flip is preserved: the task is genuinely in-progress
+			// even when spawn fails, and the user's next attempt
+			// should resume that intent.
+			//
+			// The WHERE clause guards against a concurrent `flow do`
+			// having mutated session_id between commit and now —
+			// only nil it out if it's still the UUID we allocated.
+			if _, undoErr := db.Exec(
+				`UPDATE tasks SET session_id=NULL, session_started=NULL WHERE slug=? AND session_id=?`,
+				task.Slug, sessionID,
+			); undoErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+			}
+		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
