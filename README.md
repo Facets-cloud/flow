@@ -138,9 +138,10 @@ In any Claude Code session:
 
 > Upgrade flow from https://github.com/Facets-cloud/flow
 
-Or download the new binary the same way you installed it — the next
-flow command auto-refreshes the skill and SessionStart hook. Check
-the running version with `flow --version`.
+Claude fetches the latest release binary and runs `flow skill
+update` to refresh the skill and re-wire the SessionStart and
+UserPromptSubmit hooks. Check the running version with
+`flow --version`.
 
 ## Quickstart
 
