@@ -1,5 +1,9 @@
 # flow
 
+*The working memory between you and [Claude Code](https://claude.ai/claude-code) — for developers who use it daily on macOS.*
+
+<!-- TODO: hero asciinema/GIF — "let's work on auth" → flowde launches new tab → Claude greets with task context. -->
+
 You don't hire a new engineer every day. You hire one, and you work together.
 
 Claude is the most capable coding partner you've ever had — but every
@@ -62,8 +66,10 @@ conversation — same context, same thread, same momentum.
   with full context injected — brief, progress notes, repo conventions,
   knowledge base. Resume the same session tomorrow with the same command.
 - **Knowledge base** — five markdown files tracking durable facts about
-  you, your org, your products, your processes, and your business. Claude
-  reads these and learns them over time. You never repeat yourself.
+  you, the people you work with, the products you build, your conventions,
+  and the customers or markets you care about. Solo? Use whichever buckets
+  fit. Claude reads them and learns them over time. You never repeat
+  yourself.
 - **Progress notes** — append-only logs under each task. Context survives
   across sessions so Claude knows what happened last time.
 - **A Claude skill** interprets natural language into flow commands. Say
@@ -129,12 +135,16 @@ If you want to hack on flow, clone and build with the included
 Makefile:
 
 ```bash
-git clone git@github.com:Facets-cloud/flow.git
+git clone https://github.com/Facets-cloud/flow.git
 cd flow
-make install     # builds, adds repo dir to PATH, installs skill + hook
-source ~/.zshrc
+make install     # builds, copies binary to ~/.local/bin/flow, installs skill + hook
 flow init
 ```
+
+`make install` places the binary in `~/.local/bin/flow` and asks before
+appending an `export PATH=…` line to your shell rc file. If you decline,
+either add the line yourself or invoke flow as `~/.local/bin/flow`.
+`make uninstall` removes the binary and the skill + SessionStart hook.
 
 Local dev builds are tagged `dev` and skip the auto-upgrade check, so
 you can iterate on the skill without your changes being clobbered.
@@ -158,6 +168,31 @@ flow do auth
 flow list tasks --status in-progress
 flow done auth
 ```
+
+## Who flow is for
+
+- Indie devs who run multiple Claude sessions across projects and lose
+  context between them.
+- Senior ICs at small teams who use Claude as their daily pair
+  programmer.
+- Anyone who's ever opened a fresh Claude tab and thought *"wait, where
+  did I leave off"*.
+
+## flow is / flow isn't
+
+**flow is**
+
+- For developers who use Claude Code daily.
+- macOS + iTerm2 only.
+- One user, one machine — fully local, no server, no telemetry.
+- Opinionated about session structure: one task, one session, one tab.
+
+**flow isn't**
+
+- A team task tracker — use Linear, Jira, or Asana for that.
+- A drop-in replacement for TaskWarrior or todo.txt outside Claude
+  workflows.
+- Cross-platform (Linux/Windows) — by design, for now.
 
 ## How it works under the hood
 

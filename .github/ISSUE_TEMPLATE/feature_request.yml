@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest a new capability or improvement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        flow is intentionally small and macOS+iTerm+Claude-Code-only.
+        Before opening, glance at the `Scope` section in
+        [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) — features that
+        broaden scope (cross-platform, alternative spawners, non-Claude
+        integrations) need a discussion first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: |
+        Describe the situation. What does today's flow do (or not do)
+        that creates friction? Concrete > abstract.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        Sketch an interface or behaviour. Even half-formed ideas help.
+        If it's a new command, what would the invocation look like?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        Workarounds you've already tried, or other shapes of the same
+        feature you considered and rejected.
+    validations:
+      required: false
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope notes
+      description: |
+        Does this fit the macOS + iTerm + Claude Code motion? If not,
+        explain why it's worth carrying anyway.
+    validations:
+      required: false
