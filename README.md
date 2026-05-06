@@ -1,232 +1,278 @@
 # flow
 
-*The working memory between you and [Claude Code](https://claude.ai/claude-code) — for developers who use it daily on macOS.*
+![Status](https://img.shields.io/badge/status-alpha-orange) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-<!-- TODO: hero asciinema/GIF — "let's work on auth" → flowde launches new tab → Claude greets with task context. -->
+> A complete task manager for Claude Code — and the working memory
+> layer that turns every session from a brilliant new hire into the
+> engineer on your team.
 
-You don't hire a new engineer every day. You hire one, and you work together.
+<!-- TODO: hero asciinema/GIF — "let's work on auth" → flow do launches new tab → Claude greets with task context. -->
 
-Claude is the most capable coding partner you've ever had — but every
-session starts from zero. It doesn't know what you're building, what you
-tried yesterday, or why you care. You re-explain yourself constantly.
-The more sessions you run, the worse it gets.
+## Why flow
 
-flow is the working relationship between you and Claude.
+If you use Claude Code daily, you've felt the ceiling: every session
+is a new hire. Brilliant, capable, ready to help — but with no memory
+of yesterday's decisions, last week's migrations, or the half-finished
+threads in your other tabs. You spend the first ten minutes of every
+session catching it up.
 
-It's not a task tracker. It's not a session manager. It's the layer that
-turns isolated Claude conversations into continuous collaboration — where
-context compounds instead of evaporating.
+flow changes the relationship. It's a complete task manager —
+projects, tasks, structured briefs, progress notes, playbooks for
+recurring work — *and* a working memory layer that injects all of it
+into every Claude session automatically. Capture once, work with
+Claude on it forever.
 
-## The problem
+The first session feels normal. By session ten, Claude knows your
+codebase quirks, your team, the customer you keep mentioning, and
+the migration you're three steps into. By session fifty, it's the
+engineer on your team — not a new hire you re-explain yourself to
+every morning.
 
-Think about how you use Claude today:
+Built for power users who want Claude to *work with them*, not just
+*help them*.
 
-- You start a session, explain your project, get deep into a problem.
-  Next morning: fresh session, start over.
-- You have five sessions open. Which one had the auth discussion?
-  Which one has your half-finished migration?
-- You ask Claude to help prioritize — but it doesn't know what your
-  week looks like.
-- A colleague who's worked with you for a month knows your org, your
-  role, your products, your team's quirks, your deployment process.
-  Claude knows none of this. Every session, it's a stranger.
+## How context compounds
 
-The bottleneck isn't Claude's capability. It's context.
+Every task feeds the same knowledge base. Every closed task makes
+the next one smarter.
 
-## What flow does
+```
+                                       ┌────────────────────────┐
+                                       │   ~/.flow/kb/          │
+                                       │   user · org · products│
+                                       │   processes · business │
+                                       └─────▲──────────▲───────┘
+                                             │          │
+                  flow do <task>             │ scoop    │ sweep
+   ┌────────┐  ─────────────────▶  ┌─────────┴──────────┴─────┐
+   │  Task  │                      │      Claude session      │
+   │  brief │  ◀──── updates ───── │  loads brief + kb +      │
+   │ +notes │                      │  notes + repo conventions│
+   └────────┘  ─── flow done ───▶  └──────────────────────────┘
+                                       (auto-sweep transcript
+                                        into kb on done)
+```
 
-flow sits between you and Claude. You tell flow what you're working on
-and why. Claude gets that context automatically — every session, every
-time.
+- **Scoop (live):** during a session the flow skill listens for
+  durable facts you mention — your role, a teammate's name, a
+  product convention — and appends them to the matching kb file
+  on the fly.
+- **Sweep (on `flow done`):** when you close a task, flow spawns
+  a headless Claude pass that re-reads the entire transcript and
+  pulls anything kb-worthy that the live scoop missed. The status
+  flip is the contract; the sweep is best-effort.
+- **Cross-reference:** `flow transcript <sibling-task>` lets a
+  current session read what was decided in a related one — useful
+  when the brief alone doesn't carry enough context.
 
-**You capture your work once.**
-Projects, tasks, priorities, acceptance criteria — structured through a
-quick interview, not a form. Flow asks what, why, where, and done-when,
-then writes it down.
+Net effect: the longer you use flow, the more your knowledge base
+grows, the less you re-explain yourself.
 
-**Claude shows up informed.**
-When you start a session on a task, Claude gets the brief, the progress
-notes, the repo conventions, and your knowledge base — before you say a
-word.
+## Playbooks for the work you do on cadence
 
-**Context compounds.**
-Progress notes accumulate. Your knowledge base grows. What Claude knows
-about you on day 50 is radically different from day 1. You stop
-repeating yourself. Claude starts anticipating.
+Some work repeats. Weekly reviews. Daily PR triage. On-call rotations.
+Customer-meeting prep.
 
-**Sessions persist.**
-Pick up where you left off. `flow do auth` resumes the same Claude
-conversation — same context, same thread, same momentum.
+A **playbook** is a reusable run definition — a markdown brief that
+describes what a run does. `flow run playbook weekly-review` snapshots
+that brief into a fresh task and spawns a new Claude session against
+it. Every run is reproducible (it executes against a frozen snapshot,
+so editing the playbook later doesn't rewrite history) and contributes
+back to the knowledge base on `flow done` like any other task.
 
-## How it works
+```
+┌──────────┐  flow run playbook weekly-review
+│ Playbook │ ────────▶ snapshot ─────▶ new task ─────▶ new session
+│  brief   │           (frozen for                     (executes
+└──────────┘            reproducibility)                against snapshot)
+```
 
-- **Projects and tasks** live in a local SQLite database. Each task gets
-  a markdown brief capturing what, why, where, and done-when.
-- **`flow do <task>`** spawns a Claude session in a dedicated iTerm tab
-  with full context injected — brief, progress notes, repo conventions,
-  knowledge base. Resume the same session tomorrow with the same command.
-- **Knowledge base** — five markdown files tracking durable facts about
-  you, the people you work with, the products you build, your conventions,
-  and the customers or markets you care about. Solo? Use whichever buckets
-  fit. Claude reads them and learns them over time. You never repeat
-  yourself.
-- **Progress notes** — append-only logs under each task. Context survives
-  across sessions so Claude knows what happened last time.
-- **A Claude skill** interprets natural language into flow commands. Say
-  "what should I work on" or "add a task" — the skill handles the rest.
-
-## Prerequisites
-
-- macOS (iTerm2 for session spawning)
-- [Claude Code](https://claude.ai/claude-code) CLI installed
+Same compounding mechanic — your weekly review session two months from
+now will know everything every prior weekly review surfaced.
 
 ## Install
 
-Download the latest binary for your Mac, mark it executable, clear the
-quarantine flag, and put it on your PATH:
+In any Claude Code session, paste this:
+
+> Install flow from https://github.com/Facets-cloud/flow
+
+Claude reads the repo, downloads the binary, and runs `flow init` —
+which installs the flow skill into `~/.claude/skills/flow/SKILL.md`
+and registers a SessionStart hook so every future Claude session
+loads the skill automatically. Then say **"let's get to work"** and
+follow along.
+
+<details>
+<summary>Manual install (curl + chmod + flow init)</summary>
 
 ```bash
-# Apple Silicon (M1/M2/M3/M4):
-ARCH=arm64
-# Intel:
-# ARCH=amd64
+# 1. Download the binary for your Mac.
+ARCH=arm64        # Apple Silicon (M1/M2/M3/M4) — use amd64 for Intel.
 
 curl -fsSL -o /usr/local/bin/flow \
   "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
 chmod +x /usr/local/bin/flow
 xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
 
+# 2. Initialize. This is required — it creates ~/.flow/, the SQLite
+#    index, the knowledge base, AND installs the Claude skill +
+#    SessionStart hook. Without this step, Claude can't talk to flow.
 flow init
 ```
 
-`flow init` creates `~/.flow/`, the database, the knowledge base, and
-installs the flow skill into `~/.claude/skills/flow/SKILL.md` plus a
-SessionStart hook in `~/.claude/settings.json`.
+`flow init` is the step that wires flow into Claude Code. It:
 
-Then run **`claude`** and say **"let's get to work"**.
+- Creates `~/.flow/` (database, kb, projects, tasks, playbooks)
+- Writes the flow skill to `~/.claude/skills/flow/SKILL.md`
+- Adds a SessionStart hook to `~/.claude/settings.json` so every new
+  Claude Code session auto-loads the skill
 
-> The `xattr` step removes Gatekeeper's quarantine attribute so macOS
-> doesn't refuse to run the unsigned binary. If you prefer, the first
-> launch will fail and you can right-click → Open in Finder to allow
-> it instead.
+The `xattr` step removes Gatekeeper's quarantine attribute so macOS
+doesn't refuse to run the unsigned binary.
+
+</details>
 
 ## Upgrade
 
-Re-download the binary the same way you installed it:
+In any Claude Code session:
 
-```bash
-curl -fsSL -o /usr/local/bin/flow \
-  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
-chmod +x /usr/local/bin/flow
-xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
-```
+> Upgrade flow from https://github.com/Facets-cloud/flow
 
-The next time you run any flow command, the binary detects the version
-bump and refreshes the skill + SessionStart hook automatically. Check
-the running version with:
+Or download the new binary the same way you installed it — the next
+flow command auto-refreshes the skill and SessionStart hook. Check
+the running version with `flow --version`.
 
-```bash
-flow --version
-```
-
-## Build from source
-
-If you want to hack on flow, clone and build with the included
-Makefile:
-
-```bash
-git clone https://github.com/Facets-cloud/flow.git
-cd flow
-make install     # builds, copies binary to ~/.local/bin/flow, installs skill + hook
-flow init
-```
-
-`make install` places the binary in `~/.local/bin/flow` and asks before
-appending an `export PATH=…` line to your shell rc file. If you decline,
-either add the line yourself or invoke flow as `~/.local/bin/flow`.
-`make uninstall` removes the binary and the skill + SessionStart hook.
-
-Local dev builds are tagged `dev` and skip the auto-upgrade check, so
-you can iterate on the skill without your changes being clobbered.
-
-## Usage
-
-You don't need to memorize commands. Just talk to Claude:
-
-- **"what should I work on"** — shows your task list
-- **"add a task"** — interviews you and saves a structured brief
-- **"resume auth"** — opens a dedicated Claude session for that task
-- **"save a note"** — logs progress under the current task
-- **"mark done"** — closes out the task
-
-For direct CLI use:
+## Quickstart
 
 ```bash
 flow add project "My App" --work-dir ~/code/my-app
 flow add task "Add auth" --project my-app --slug auth
-flow do auth
-flow list tasks --status in-progress
-flow done auth
+flow do auth          # opens a Claude session bound to this task
 ```
 
-## Who flow is for
+Or just open Claude and say **"let's get to work"**. The skill
+handles the rest.
 
-- Indie devs who run multiple Claude sessions across projects and lose
-  context between them.
-- Senior ICs at small teams who use Claude as their daily pair
-  programmer.
-- Anyone who's ever opened a fresh Claude tab and thought *"wait, where
-  did I leave off"*.
+## What you get
 
-## flow is / flow isn't
-
-**flow is**
-
-- For developers who use Claude Code daily.
-- macOS + iTerm2 only.
-- One user, one machine — fully local, no server, no telemetry.
-- Opinionated about session structure: one task, one session, one tab.
-
-**flow isn't**
-
-- A team task tracker — use Linear, Jira, or Asana for that.
-- A drop-in replacement for TaskWarrior or todo.txt outside Claude
-  workflows.
-- Cross-platform (Linux/Windows) — by design, for now.
+- **One task, one Claude session, one tab.** `flow do <task>`
+  spawns a dedicated iTerm tab. Tomorrow's `flow do <task>` resumes
+  the same conversation.
+- **Interview-driven task capture.** No forms. flow asks
+  what / why / where / done-when, then writes a structured brief.
+- **A knowledge base that grows.** Five markdown buckets for
+  durable facts about you, your team, products, processes, and
+  customers. Live-appended during sessions; auto-swept from
+  transcripts on `flow done`.
+- **Per-task progress notes.** Append-only logs. Pick up where
+  you left off, even after a week away.
+- **Playbooks for cadence work.** Weekly reviews, daily triage,
+  on-call rotations — define once, run on demand.
+- **A Claude skill that speaks plain English.** "What should I
+  work on", "resume auth", "save a note" — the skill turns intent
+  into flow commands.
 
 ## How it works under the hood
 
-`flow do <task>` pre-allocates a session UUID, writes it to the task row,
-and spawns a new iTerm tab running `claude --session-id <uuid>` with
-`FLOW_TASK` / `FLOW_PROJECT` environment variables inlined. The jsonl
-file lands at the deterministic path
-`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, so future `flow do`
-calls spawn `claude --resume <uuid>` to continue the same conversation.
-A SessionStart hook re-injects the task brief, updates, and CLAUDE.md
-context on every resume.
+`flow do <task>` pre-allocates a session UUID, writes it to the
+task row, and spawns an iTerm tab running `claude --session-id <uuid>`
+with `FLOW_TASK` / `FLOW_PROJECT` inlined. The jsonl file lands at
+the deterministic path `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`,
+so future `flow do` calls run `claude --resume <uuid>` to continue
+the same conversation. A SessionStart hook re-injects the task brief,
+updates, and CLAUDE.md context on every resume.
 
-Briefs live at `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate
-under `~/.flow/tasks/<slug>/updates/`. The flow skill (installed to
-`~/.claude/skills/flow/SKILL.md`) interprets natural language into flow
-commands and enforces interview-driven intake.
+## Your data — local, portable, yours
 
-## Data directory
-
-All runtime state lives under `~/.flow/` (or `$FLOW_ROOT` if set):
+Everything flow stores lives under `~/.flow/` (override with
+`$FLOW_ROOT`). No server, no cloud, no telemetry. Plain markdown
+beside a SQLite index — readable in any editor, versionable in git.
 
 ```
 ~/.flow/
-  flow.db          # SQLite database
-  kb/              # knowledge base (5 markdown files)
-  projects/        # per-project briefs and updates
-  tasks/           # per-task briefs and updates
+  flow.db                          # SQLite — projects, tasks, playbooks index
+  kb/
+    user.md  org.md  products.md
+    processes.md  business.md      # 5 markdown buckets, append-only
+  projects/<slug>/
+    brief.md
+    updates/YYYY-MM-DD-*.md
+  tasks/<slug>/
+    brief.md
+    updates/YYYY-MM-DD-*.md
+  playbooks/<slug>/
+    brief.md
+    updates/YYYY-MM-DD-*.md
 ```
 
-## Environment variables
+The SQLite database is an *index*, not the source of truth — every
+task and project has its real content in the markdown files next to
+it. You could delete `flow.db` and rebuild it from the markdown if
+you had to.
 
-| Variable | Purpose |
-|---|---|
-| `FLOW_ROOT` | Override the default `~/.flow` data directory |
-| `FLOW_TASK` | Set by `flow do` — current task slug |
-| `FLOW_PROJECT` | Set by `flow do` — current project slug |
-| `FLOW_STALE_DAYS` | Staleness threshold in days (default: 3) |
+### Backup & sync
+
+Pick whichever fits your workflow:
+
+- **Git (recommended for single-user history).**
+  ```bash
+  cd ~/.flow && git init && git add . && git commit -m "initial"
+  ```
+  Commit periodically. The SQLite file is binary, so diffs aren't
+  useful, but each commit is a clean snapshot. **If you push to a
+  shared remote**, add `kb/` to `.gitignore` first — kb files often
+  contain personal or org-sensitive notes you don't want public.
+
+- **Time Machine / system backup.** Just works, no setup.
+
+- **iCloud Drive / Dropbox / Google Drive.** Symlink `~/.flow` into
+  the synced folder:
+  ```bash
+  mv ~/.flow ~/Library/Mobile\ Documents/com~apple~CloudDocs/flow
+  ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/flow ~/.flow
+  ```
+  ⚠️ **Don't run flow on two machines simultaneously** through a
+  synced folder — SQLite doesn't tolerate concurrent writes from
+  separate hosts and you can corrupt `flow.db`. Use this for backup
+  + occasional second-machine access, not active multi-machine use.
+
+- **Manual rsync.** `rsync -a ~/.flow/ /path/to/backup/flow/` on a
+  schedule. Same caveat about concurrent writes.
+
+To move flow to a new machine: copy `~/.flow/` over, install the
+binary, and run `flow init` once — it'll pick up the existing data
+and reinstall the skill + hook.
+
+## Where flow runs (and where we'd love help)
+
+Today flow runs on **macOS + iTerm2 + Claude Code only**. That's the
+stack we use, and that's what the session-spawn layer was built and
+tested against.
+
+The architecture is portable — session spawning is one small
+package — but other harnesses (Codex, Cursor, plain shell) and other
+terminals (Linux + tmux/zellij/wezterm, Windows Terminal) need
+contributors who run those stacks daily and care enough to wire them
+in. If that's you, [a PR is very welcome](CONTRIBUTING.md).
+
+## Where flow came from
+
+flow started as an internal tool at Facets. We use Claude Code every
+day, and the context-loss problem was eating into how much of the
+tool's capability we could actually use. flow fixed that for us — to
+the point where we couldn't imagine working without it. We're
+open-sourcing it as-is because it might do the same for you.
+
+This is not a Facets product. There's no signup, no cloud, no upsell.
+Just the tool we built for ourselves.
+
+## Docs & contributing
+
+- [Contributing](CONTRIBUTING.md) — bug reports, PRs, dev setup
+- [Changelog](CHANGELOG.md)
+- [Security](SECURITY.md) — how to report issues
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+
+## License
+
+[MIT](LICENSE) — © 2026 Facets Cloud
