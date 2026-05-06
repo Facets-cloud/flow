@@ -1,0 +1,75 @@
+name: Bug report
+description: Something isn't working as expected
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. flow is a small CLI; a tight reproduction
+        usually points straight at the fix.
+
+  - type: input
+    id: flow-version
+    attributes:
+      label: flow version
+      description: Output of `flow --version`
+      placeholder: "v0.1.0-alpha.1"
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: "14.4 (Sonoma)"
+    validations:
+      required: true
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`
+      placeholder: "1.0.x"
+    validations:
+      required: false
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Minimal command sequence that triggers the bug. flow is fully
+        local, so most bugs reproduce deterministically.
+      placeholder: |
+        1. `flow add task "..."`
+        2. `flow do ...`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include full error output / stack traces if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: |
+        Custom `$FLOW_ROOT`? Non-zsh shell? Anything unusual about your
+        setup that might be relevant.
+    validations:
+      required: false

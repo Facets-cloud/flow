@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/Facets-cloud/flow/discussions
+    about: |
+      For open-ended questions, design discussions, or "is this the
+      right tool for X" — please use Discussions instead of opening an
+      issue.
