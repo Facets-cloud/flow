@@ -145,13 +145,7 @@ UserPromptSubmit hooks. Check the running version with
 
 ## Quickstart
 
-```bash
-flow add project "My App" --work-dir ~/code/my-app
-flow add task "Add auth" --project my-app --slug auth
-flow do auth          # opens a Claude session bound to this task
-```
-
-Or just open Claude and say **"let's get to work"**. The skill
+Just open Claude and say **"let's get to work"**. The skill
 handles the rest.
 
 ## What you get
