@@ -128,11 +128,89 @@ func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
 		t.Error("call prompt is empty")
 	}
 	// Sanity-check the prompt mentions key behavior so a regression in
-	// buildKBSweepPrompt that drops the skill load or the transcript
-	// step gets caught here.
+	// buildCloseoutSweepPrompt that drops the skill load or the
+	// transcript step gets caught here.
 	for _, want := range []string{"flow skill", "flow transcript has-session", "kb/"} {
 		if !contains(got.prompt, want) {
 			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+// TestCmdDoneCloseoutSweepIncludesProjectStep verifies that when the
+// task is attached to a project, the close-out prompt includes the
+// project-update step pointing at the project's updates/ directory.
+func TestCmdDoneCloseoutSweepIncludesProjectStep(t *testing.T) {
+	setupFlowRoot(t)
+	calls := stubClaudeRunner(t, nil)
+
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "Some Proj", "--slug", "sp", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("add project rc=%d", rc)
+	}
+	if rc := cmdAdd([]string{"task", "Has Proj", "--project", "sp"}); rc != 0 {
+		t.Fatalf("add task rc=%d", rc)
+	}
+
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug=?`,
+		"hp-uuid", flowdb.NowISO(), "has-proj",
+	); err != nil {
+		t.Fatalf("seed session_id: %v", err)
+	}
+	db.Close()
+
+	if rc := cmdDone([]string{"has-proj"}); rc != 0 {
+		t.Fatalf("done rc=%d", rc)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("expected 1 sweep call, got %d", len(*calls))
+	}
+	got := (*calls)[0].prompt
+	for _, want := range []string{
+		"Project update",
+		"\"sp\"",
+		"~/.flow/projects/sp/updates/",
+	} {
+		if !contains(got, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+// TestCmdDoneCloseoutSweepSkipsProjectStepForFloating verifies that
+// floating tasks (no project) get a prompt without any project-update
+// instructions or path references.
+func TestCmdDoneCloseoutSweepSkipsProjectStepForFloating(t *testing.T) {
+	setupFlowRoot(t)
+	calls := stubClaudeRunner(t, nil)
+
+	if rc := cmdAdd([]string{"task", "Floating"}); rc != 0 {
+		t.Fatalf("add task rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug=?`,
+		"f-uuid", flowdb.NowISO(), "floating",
+	); err != nil {
+		t.Fatalf("seed session_id: %v", err)
+	}
+	db.Close()
+
+	if rc := cmdDone([]string{"floating"}); rc != 0 {
+		t.Fatalf("done rc=%d", rc)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("expected 1 sweep call, got %d", len(*calls))
+	}
+	got := (*calls)[0].prompt
+	for _, unwanted := range []string{
+		"Project update",
+		"~/.flow/projects/",
+	} {
+		if contains(got, unwanted) {
+			t.Errorf("floating-task prompt unexpectedly contains %q", unwanted)
 		}
 	}
 }
