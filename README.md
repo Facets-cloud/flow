@@ -137,10 +137,14 @@ Makefile:
 ```bash
 git clone https://github.com/Facets-cloud/flow.git
 cd flow
-make install     # builds, adds repo dir to PATH, installs skill + hook
-source ~/.zshrc
+make install     # builds, copies binary to ~/.local/bin/flow, installs skill + hook
 flow init
 ```
+
+`make install` places the binary in `~/.local/bin/flow` and asks before
+appending an `export PATH=…` line to your shell rc file. If you decline,
+either add the line yourself or invoke flow as `~/.local/bin/flow`.
+`make uninstall` removes the binary and the skill + SessionStart hook.
 
 Local dev builds are tagged `dev` and skip the auto-upgrade check, so
 you can iterate on the skill without your changes being clobbered.
