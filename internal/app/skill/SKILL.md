@@ -32,7 +32,7 @@ tasks, workdirs, session IDs) lives in a single SQLite database at
 "briefs" at `~/.flow/projects/<slug>/brief.md` and
 `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate as dated
 markdown files under each entity's `updates/` subdirectory. The user runs
-one long-lived Claude session per task in its own iTerm tab, resumed via
+one long-lived Claude session per task in its own terminal tab, resumed via
 `flow do <task>`.
 
 You are speaking inside one of those Claude sessions (or the user's
@@ -513,13 +513,13 @@ its own, it's the start of a two-or-more-step workflow.
 4. Pass `--fresh` ONLY if the user explicitly asked for a fresh session
    (e.g. "start over", "fresh session", "--fresh"). Never on your own.
 
-**After `flow do` succeeds** it has already spawned an iTerm tab and
+**After `flow do` succeeds** it has already spawned a terminal tab and
 exported the env vars. Your job is done. Report "opened tab: <title>"
 and stop. Do NOT:
 
 - Run diagnostic commands like `pgrep`, `ls ~/.claude/projects/...`,
   or `osascript` to try to verify the tab opened.
-- Try to spawn an iTerm tab yourself with osascript. `flow do` already
+- Try to spawn a terminal tab yourself with osascript or zellij. `flow do` already
   did this.
 - Re-run `flow do` unless the user explicitly asked for a retry.
 - Try to peek into the new session's activity. It's a separate
@@ -664,7 +664,7 @@ closure is a silent loss of durable knowledge.
    `AskUserQuestion` (header: "Closing note?", options:
    "Yes, save a note first" / "No, just mark done") to offer.
    On "Yes", run the §4.5 recipe first, then continue.
-3. Run `flow done <ref>`. **Do not close the iTerm tab** and **do
+3. Run `flow done <ref>`. **Do not close the terminal tab** and **do
    not kill the Claude session** — `flow done` deliberately leaves
    both intact. The session_id stays on the task row so a future
    reopen can still resume it. The close-out sweep runs after the
@@ -919,7 +919,7 @@ unfolds and intervene only when the evidence is strong. When you
 intervene, the surfacing mechanism is `AskUserQuestion` (never a
 prose "want me to...?" question). Its purpose is to keep a task's
 transcript and update log focused, instead of letting unrelated work
-pile up under whichever task happens to own the current iTerm tab.
+pile up under whichever task happens to own the current terminal tab.
 
 **When to consider firing:**
 
@@ -1057,7 +1057,7 @@ stop.
 2. Run: `flow run playbook <slug>` (with `--dangerously-skip-permissions`
    if chosen).
 3. The command creates a kind=playbook_run task, snapshots the brief,
-   and spawns an iTerm tab. The new tab will boot the flow skill via its
+   and spawns a terminal tab. The new tab will boot the flow skill via its
    bootstrap prompt and execute against the snapshotted brief.
 
 **Anti-pattern (per §8):** never auto-fire. Manual trigger only. Even if
@@ -1653,7 +1653,7 @@ instead.
 
 ## 9. The execution-session bootstrap contract
 
-When `flow do <task>` spawns a Claude session in a new iTerm tab, it
+When `flow do <task>` spawns a Claude session in a new terminal tab, it
 pre-allocates a UUID, writes it to `tasks.session_id` before spawning,
 and passes it to `claude --session-id <uuid>`. This makes the session's
 jsonl file appear at the deterministic path
@@ -1832,7 +1832,7 @@ them as workarounds for a bug in `flow do`; surface the bug instead.
 
 ## 10. Environment variables flow sets
 
-When `flow do <task>` spawns an iTerm tab, it attaches these env vars
+When `flow do <task>` spawns a terminal tab, it attaches these env vars
 to the `claude` process (inline on the command line — they do NOT
 persist in the tab's shell after claude exits):
 
