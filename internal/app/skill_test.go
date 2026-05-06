@@ -359,6 +359,58 @@ func TestSkillHasMidInterviewDriftRule(t *testing.T) {
 	}
 }
 
+// TestSkillHasUpgradeWorkflow pins the §4.15 upgrade procedure: the
+// skill must know how to walk the user through replacing the binary
+// per the README at https://github.com/Facets-cloud/flow and then
+// running `flow skill update`. It must also recognize the
+// `flow-version-stale:` signal the SessionStart hook emits when the
+// local binary lags the latest GitHub release.
+func TestSkillHasUpgradeWorkflow(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"### 4.15 Upgrade flow itself",
+		"https://github.com/Facets-cloud/flow",
+		"flow --version",
+		"flow skill update",
+		"flow-version-stale:",
+		"xattr -d com.apple.quarantine",
+		"Do not invent download URLs",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing upgrade workflow content: %q", want)
+		}
+	}
+}
+
+// TestSkillEmphasizesCloseOutValue pins §4.7's framing of `flow done`
+// as the load-bearing moment that persists the session's learnings —
+// it triggers the close-out sweep that writes KB + project update.
+// Without this content the skill treats closure as bookkeeping and
+// Claude never proactively offers to close, which means the user's
+// learnings stay locked in the transcript.
+func TestSkillEmphasizesCloseOutValue(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"Why closing matters",
+		"close-out sweep",
+		"that distillation never happens",
+		"silent loss of durable knowledge",
+		"Recognizing natural close-out moments",
+		// Expanded trigger list must include real-world wrap-up phrasing,
+		// not just the literal verbs the old skill listed.
+		"shipped",
+		"PR merged",
+		"deployed",
+		"that's working",
+		// Matching §8 anti-pattern reinforces the rule.
+		"Do not let work wrap up without prompting closure",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing close-out emphasis: %q", want)
+		}
+	}
+}
+
 // TestSkillHasAccessibilityErrorRecipe pins the §4.4 recipe for
 // handling the macOS Accessibility error from the Terminal.app
 // backend: name Terminal definitively (not Claude/flow), open the

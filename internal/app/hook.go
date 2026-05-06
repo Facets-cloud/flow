@@ -91,7 +91,29 @@ func cmdHookSessionStart(args []string) int {
 		slug,
 	)
 
-	return emitSessionStartContext(instructions)
+	return emitSessionStartContext(instructions + appendStaleVersionHint())
+}
+
+// appendStaleVersionHint returns a short suffix to add to SessionStart
+// hint payloads when the local flow binary is older than the latest
+// GitHub release. Returns "" when the check fails, the cache is fresh
+// and matches, or the running binary is a dev build (no version
+// embedded). The check is best-effort and silent on any error —
+// session-start latency must not be impacted by a flaky network.
+func appendStaleVersionHint() string {
+	if Version == "" || Version == "dev" {
+		return ""
+	}
+	latest := LatestRelease()
+	if latest == "" || latest == Version {
+		return ""
+	}
+	return fmt.Sprintf(
+		" flow-version-stale: %s — the running flow binary is %s but a newer release is available. "+
+			"When natural, offer the user an upgrade per skill §4.15 (Upgrade flow itself). "+
+			"Do not interrupt active work to push this; surface it at a pause.",
+		latest, Version,
+	)
 }
 
 // emitAmbientSkillHint is the FLOW_TASK-unset branch of the SessionStart
@@ -121,7 +143,7 @@ func emitAmbientSkillHint() int {
 		"hold project and task context. Names and context that are non-obvious from " +
 		"this conversation alone are very likely already documented there. The skill's " +
 		"§4.10 governs how to lazy-load these without reading them eagerly every turn."
-	return emitSessionStartContext(hint)
+	return emitSessionStartContext(hint + appendStaleVersionHint())
 }
 
 // emitSessionStartContext is a thin wrapper around emitHookContext for

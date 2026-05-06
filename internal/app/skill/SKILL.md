@@ -570,7 +570,27 @@ to disambiguate which task this is for.
 
 ### 4.7 Mark done
 
-**Triggers:** "mark X done", "finish X", "X is done", "close out X".
+**Triggers — explicit:** "mark X done", "finish X", "X is done",
+"close out X", "wrap up X".
+
+**Triggers — wrap-up signals (treat as candidate triggers, then
+confirm via AskUserQuestion):** "shipped", "PR merged", "deployed",
+"released", "wrapped up", "that's working", "bug fixed", "test
+passes", "ready to ship", "all good now", "we're good", "that did
+it".
+
+**Why closing matters — read this before treating `flow done` as
+bookkeeping.** `flow done` is not just a status flip. It runs a
+headless Claude sweep over the task's transcript that distills
+durable facts into the user's KB (`~/.flow/kb/`) and, when the task
+has a project, writes a project update at
+`~/.flow/projects/<slug>/updates/` summarizing what got done and
+why. **If a task never closes, that distillation never happens.**
+Learnings stay locked in the transcript and never reach central
+tracking — which is precisely the value the user installed flow to
+capture. Treat closure as the load-bearing moment of the workflow,
+not a clean-up afterthought. Letting work wrap up without prompting
+closure is a silent loss of durable knowledge.
 
 **Recipe:**
 
@@ -585,12 +605,59 @@ to disambiguate which task this is for.
 3. Run `flow done <ref>`. **Do not close the iTerm tab** and **do
    not kill the Claude session** — `flow done` deliberately leaves
    both intact. The session_id stays on the task row so a future
-   reopen can still resume it.
+   reopen can still resume it. The close-out sweep runs after the
+   status flip; relay any NUDGE block `flow done` prints back to
+   the user verbatim.
+
+**Recognizing natural close-out moments — passive workflow.**
+
+This is a passive workflow that runs alongside §4.10 (KB scoop) and
+§4.11 (scope-creep): you watch the conversation for signals that
+substantive work is wrapping up even when the user hasn't said the
+word "done". When a signal fires, proactively offer closure via
+`AskUserQuestion` — don't wait for the user to remember.
+
+**When to fire:**
+
+- Wrap-up phrasing from the wrap-up trigger list above.
+- A clear milestone just landed (PR merged, deploy succeeded, all
+  tests green, last open question on the brief resolved) and the
+  user has moved to small-talk or signaled satisfaction ("perfect",
+  "that's it", "nice", "thanks").
+- The user references a separate task in a way that implies a
+  context switch ("now let me look at <other thing>") — offer to
+  close the current one first if its work is at a coherent stopping
+  point.
+
+**When NOT to fire:**
+
+- Mid-debugging or mid-implementation, even if a partial milestone
+  was hit. Closure is for coherent stopping points, not every green
+  test.
+- The user explicitly said "more work coming" earlier this session —
+  remember that signal and don't re-ask on the same thread.
+- The very first turns of a session — the user just opened the task;
+  let the work happen first.
+
+**Recipe:**
+
+1. Pause your current line of response.
+2. Use `AskUserQuestion` (header: "Mark done?", options:
+   "Yes — close it and run the close-out sweep" / "Not yet, more
+   work coming"). The "Yes" option's description should name the
+   sweep: "flow done distills KB entries and a project update from
+   this transcript — closing now persists what we learned this
+   session."
+3. On "Yes", proceed to the §4.7 recipe above (closing-note offer,
+   then `flow done`).
+4. On "Not yet", accept the answer and don't re-ask on the same
+   thread of work in the same session.
 
 **Playbook-specific notes:**
 
 - **Run-tasks** (kind=playbook_run) support `flow done <run-slug>` like
-  any task.
+  any task. Their close-out sweep also runs and can capture
+  playbook-specific learnings.
 - Note: **playbook definitions are never "done" — they're archived.**
   When a playbook is no longer in use, run `flow archive <playbook-slug>`.
   There is no `flow done playbook` command.
@@ -1102,6 +1169,50 @@ implementation / debugging work. The SessionStart hook gets you the
 first check; you are responsible for every subsequent check.
 Re-evaluate on every turn.
 
+### 4.15 Upgrade flow itself
+
+**Triggers:** "update flow", "upgrade flow", "is there a new version
+of flow", "new flow version", "what version am I on", "what's the
+latest flow", "flow is stale", a bare `flow --version` typed as
+command-like input. Also fires when the SessionStart hook reports
+`flow-version-stale: <new-version>` in its additionalContext (the
+hook does an at-most-once-per-day cached check against GitHub
+releases) — when you see that signal, proactively offer the upgrade
+via `AskUserQuestion`.
+
+**Recipe:**
+
+1. Run `flow --version` to capture the currently-installed version.
+2. The canonical install/upgrade procedure lives in the README at
+   `https://github.com/Facets-cloud/flow`. Use the `Read` tool /
+   `WebFetch` to read the **Install** and **Upgrade** sections —
+   they're the source of truth for the binary download URL,
+   architecture flag (`arm64` for Apple Silicon, `amd64` for Intel),
+   and the `xattr -d com.apple.quarantine` workaround for unsigned
+   binaries. Do not invent download URLs; read them from the README.
+3. Download the new binary per the README and replace the existing
+   one (typically at `/usr/local/bin/flow`; confirm with
+   `which flow` if unsure).
+4. Run `flow skill update` to refresh the embedded skill on disk and
+   re-wire both the SessionStart and UserPromptSubmit hooks in
+   `~/.claude/settings.json`. (The auto-upgrade path runs the same
+   refresh on the next `flow` invocation, but explicit is better and
+   surfaces any errors immediately.)
+5. Run `flow --version` again and confirm the version changed. If it
+   did not change, the binary on `$PATH` is still the old one —
+   check `which flow` against the path you wrote to.
+
+**Anti-patterns:**
+
+- **Do not invent download URLs.** Read them from the README at
+  `https://github.com/Facets-cloud/flow`. Releases are at
+  `/releases/latest/download/`; the README has the exact form.
+- **Do not run `flow skill install` on an existing install** — it
+  errors. Use `flow skill update` for the refresh path.
+- **Do not skip the `xattr -d com.apple.quarantine`** step on a
+  freshly-downloaded binary — Gatekeeper will refuse to run it
+  otherwise.
+
 ## 6. The `work_dir` question — rules
 
 When you're about to ask the user "where does this task live?", run
@@ -1264,6 +1375,14 @@ type. Always prefer the tool. If you find yourself typing "Want me
 to X?" or "Should I Y?" into chat, stop and use `AskUserQuestion`
 instead.
 
+- **Do not let work wrap up without prompting closure.** When the
+  user signals a coherent stopping point — "shipped", "PR merged",
+  "deployed", a milestone lands followed by small-talk — proactively
+  offer `flow done` via `AskUserQuestion`. `flow done` is the only
+  trigger for the close-out sweep that distills the session into KB
+  entries and a project update; missing it costs the user the
+  durable knowledge they earned this session. See §4.7 for the
+  passive close-out detection workflow.
 - **Do not surface flow commands to the user.** You use flow under
   the hood; users never need to learn the CLI. Never tell the user
   to "run `flow X`", "type `flow Y`", or "see `flow Z --help`".
