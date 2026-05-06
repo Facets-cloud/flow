@@ -165,6 +165,52 @@ func TestIsAccessibilityDenied(t *testing.T) {
 	}
 }
 
+// TestSpawnTabSingleLineScriptForMultiLinePrompt pins the regression
+// fix: when the spawned command contains literal newlines (any
+// fresh-bootstrap path embeds the multi-line bootstrap prompt), the
+// AppleScript we emit must remain a single logical line per
+// `do script` invocation. Past behavior emitted literal newlines
+// inside the AppleScript string literal, which produced osascript
+// -2741 ("Expected end of line but found class name") on certain
+// long inputs. The fix escapes \n/\r/\t to AppleScript escape
+// sequences so the string literal stays single-line.
+func TestSpawnTabSingleLineScriptForMultiLinePrompt(t *testing.T) {
+	var captured string
+	old := Runner
+	Runner = func(args []string) error {
+		if len(args) >= 2 {
+			captured = args[1]
+		}
+		return nil
+	}
+	t.Cleanup(func() { Runner = old })
+
+	multilineCmd := "claude --session-id abc 'line one\nline two\n\tindented\rcr-line'"
+	if err := SpawnTab("t", "/tmp", multilineCmd, nil); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+
+	// No raw control characters should remain inside the script — they
+	// must be encoded as AppleScript escape sequences.
+	if strings.Contains(captured, "line one\nline two") {
+		t.Errorf("captured script still contains literal newline between prompt lines:\n%s", captured)
+	}
+	if strings.Contains(captured, "\tindented") {
+		t.Errorf("captured script still contains literal tab:\n%s", captured)
+	}
+	if strings.Contains(captured, "\rcr-line") {
+		t.Errorf("captured script still contains literal CR:\n%s", captured)
+	}
+
+	// And the escape sequences must be present (`\n`, `\r`, `\t` as
+	// two-character sequences inside the double-quoted string literal).
+	for _, want := range []string{`line one\nline two`, `\tindented`, `\rcr-line`} {
+		if !strings.Contains(captured, want) {
+			t.Errorf("expected AppleScript escape %q in script:\n%s", want, captured)
+		}
+	}
+}
+
 // TestShellQuote is a sanity check on the local helper — same contract
 // as iterm.ShellQuote.
 func TestShellQuote(t *testing.T) {

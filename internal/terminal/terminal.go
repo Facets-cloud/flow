@@ -156,8 +156,27 @@ func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// escapeAppleScriptString prepares s for embedding inside an
+// AppleScript double-quoted string literal. Beyond the obvious `\` and
+// `"`, we also escape newlines / carriage returns / tabs to their
+// AppleScript escape sequences (`\n`, `\r`, `\t`) so the resulting
+// string literal is single-line. AppleScript decodes the escapes back
+// to literal control chars before handing the string to `do script`,
+// so the shell sees the original multi-line content. This sidesteps
+// a class of osascript -2741 ("Expected end of line but found class
+// name") failures that surfaced on long multi-line prompts where the
+// embedded literal newlines confused the parser.
+//
+// Order matters: replace `\` first (it adds new `\` characters that
+// must not be re-escaped), then `"`, then the control chars. The
+// control-char replacements introduce new `\n` / `\r` / `\t`
+// sequences whose backslashes do NOT get double-escaped because the
+// `\\` pass already happened.
 func escapeAppleScriptString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	s = strings.ReplaceAll(s, "\t", `\t`)
 	return s
 }

@@ -66,8 +66,18 @@ func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// escapeAppleScriptString prepares s for embedding inside an
+// AppleScript double-quoted string literal. Newlines / carriage
+// returns / tabs are converted to their AppleScript escape sequences
+// (`\n`, `\r`, `\t`) so the resulting literal is single-line. See
+// the matching helper in internal/terminal for the rationale —
+// keeping the two backends consistent so neither one silently
+// regresses.
 func escapeAppleScriptString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	s = strings.ReplaceAll(s, "\t", `\t`)
 	return s
 }
