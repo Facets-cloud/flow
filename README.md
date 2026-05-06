@@ -152,8 +152,9 @@ handles the rest.
 
 - **One task, one Claude session, one tab.** `flow do <task>`
   spawns a dedicated tab in iTerm2, stock macOS Terminal, or your
-  current zellij session — flow picks whichever you launched it from.
-  Tomorrow's `flow do <task>` resumes the same conversation.
+  current zellij session (requires zellij ≥ 0.40) — flow picks
+  whichever you launched it from. Tomorrow's `flow do <task>`
+  resumes the same conversation.
 - **Interview-driven task capture.** No forms. flow asks
   what / why / where / done-when, then writes a structured brief.
 - **A knowledge base that grows.** Five markdown buckets for
