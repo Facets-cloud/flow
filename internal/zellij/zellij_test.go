@@ -3,6 +3,7 @@ package zellij
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,40 @@ func TestSpawnTabPropagatesNewTabError(t *testing.T) {
 	}
 	if err.Error() != want.Error() {
 		t.Errorf("expected pass-through of new-tab error, got: %v", err)
+	}
+}
+
+// TestSpawnTabFlattensEmbeddedNewlines verifies that any `\n` inside
+// `command` is replaced with a space before write-chars. Without this,
+// zellij types each line into the PTY as a separate Enter-terminated
+// command, which breaks the bootstrap prompt (a multi-line numbered
+// list) — the shell ends up trying to execute "1. Invoke...",
+// "2. Run...", etc. as commands.
+func TestSpawnTabFlattensEmbeddedNewlines(t *testing.T) {
+	var captured []string
+	old := Runner
+	Runner = func(args []string) error {
+		if len(args) >= 3 && args[1] == "write-chars" {
+			captured = append(captured, args[2])
+		}
+		return nil
+	}
+	t.Cleanup(func() { Runner = old })
+
+	cmd := "claude --session-id abc 'line1\nline2\nline3'"
+	if err := SpawnTab("t", "/tmp", cmd, nil); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 write-chars call, got %d", len(captured))
+	}
+	want := " claude --session-id abc 'line1 line2 line3'\n"
+	if captured[0] != want {
+		t.Errorf("write-chars line = %q; want %q", captured[0], want)
+	}
+	// Only one newline (the line-submit terminator) should be present.
+	if got := strings.Count(captured[0], "\n"); got != 1 {
+		t.Errorf("write-chars line contains %d newlines; want exactly 1", got)
 	}
 }
 
