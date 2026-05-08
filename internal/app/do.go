@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 )
 
 // openConcurrentDB opens flow.db with a generous busy_timeout so that two
@@ -55,6 +56,7 @@ func cmdDo(args []string) int {
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
+	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -79,6 +81,21 @@ func cmdDo(args []string) int {
 	task, rc := findTask(db, query)
 	if rc != 0 {
 		return rc
+	}
+
+	// Live-session guard: if this task's session_id is already running
+	// in another claude process (e.g., the user has a tab open for it),
+	// refuse to spawn a duplicate. --force overrides. The check is
+	// best-effort: ps failures fall through silently rather than block.
+	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
+		if live, err := liveClaudeSessions(); err == nil {
+			if live[strings.ToLower(task.SessionID.String)] {
+				fmt.Fprintf(os.Stderr,
+					"error: task %q has a live Claude session (%s) running elsewhere — switch to that tab, or pass --force to open another\n",
+					task.Slug, task.SessionID.String)
+				return 1
+			}
+		}
 	}
 
 	// Step 2: atomic status flip inside a transaction. Captures preSessionID

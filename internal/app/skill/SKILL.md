@@ -174,12 +174,13 @@ Setup
 Create
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
-                           [--priority high|medium|low]
+                           [--priority high|medium|low] [--due <date>] [--assignee <name>]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
-  flow do               <ref> [--fresh] [--dangerously-skip-permissions]
+  flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
   flow done             <ref>
+  flow find-session     <marker>       (resolve a Claude session UUID via marker-grep — see §4.16)
 
 Playbook runs
   flow run playbook <slug>          spawn a fresh run session (new task with kind=playbook_run)
@@ -197,13 +198,15 @@ Read
   flow list playbooks   [--project <slug>] [--include-archived]
 
 Edit / mutate
-  flow edit        <ref>           opens brief.md in $EDITOR, bumps updated_at
-  flow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
-  flow priority    <ref> high|medium|low
-  flow waiting     <ref> "<who or what>"
-  flow waiting     <ref> --clear
-  flow archive     <ref>
-  flow unarchive   <ref>
+  flow edit           <ref>          opens brief.md in $EDITOR, bumps updated_at
+  flow update task    <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+                            [--status backlog|in-progress|done] [--priority high|medium|low]
+                            [--assignee <name>] [--clear-assignee]
+                            [--due-date <date>] [--clear-due]
+                            [--waiting "<who or what>"] [--clear-waiting]
+  flow update project <ref> [--priority high|medium|low]
+  flow archive        <ref>
+  flow unarchive      <ref>
   (flow edit, flow archive, flow unarchive also accept playbook refs)
 
 Workdirs
@@ -386,10 +389,48 @@ work_dir: <path>
 *Before you start on this task, read CLAUDE.md in the work_dir.*
 ```
 
+**Optional tag step (low-friction).** Right after the brief saves —
+before offering "Open now?" — surface a single tag question. Cheap
+to skip; preserves vocabulary discipline (§4.16a) at intake without
+adding a required field.
+
+1. Run `flow list tags` to discover the user's existing vocabulary.
+2. Use `AskUserQuestion` (header: "Tags?", `multiSelect: true`):
+   - If existing tags came back: include the top 3 (most-used) as
+     options labelled `#<tag>` with description "N tasks already
+     have this tag". Add an option "New tag(s)" — when the user
+     picks this via Other, they type comma-separated values. Add a
+     final option "Skip — no tags" so the step is one click to
+     bypass.
+   - If no tags exist yet: just ask "Tag this task? (optional)"
+     with options "Yes, set tags" / "Skip — no tags". On "Yes",
+     prompt the user (prose is fine, there's nothing to suggest)
+     for comma-separated values.
+3. If the user picks any combination of existing tags and/or
+   typed values, run `flow update task <slug> --tag <t1> --tag <t2> ...`.
+4. If the user picks "Skip", do nothing.
+
+This step is OPTIONAL by design — never block intake on it. If the
+user has expressed urgency ("just save it"), skip the question
+entirely.
+
 Finally, use `AskUserQuestion` (header: "Open now?", options:
 "Yes, open it" / "No, keep in backlog") to offer `flow do <slug>`.
 If yes, proceed to the §4.4 recipe (which will ask session mode).
 If no, stop.
+
+> **Retrospective-capture hint.** If this task is recording work that
+> already happened (in this session or in an existing one the user has
+> open elsewhere) — not future work — the right next step is **§4.16
+> binding**, not `flow do`. `flow do` would spawn a fresh session and
+> lose the conversation context the task is meant to preserve. Quietly
+> mention §4.16 to the user before offering "Open now?" if the framing
+> ("record what we just did", "track this conversation as a task",
+> "register the script I just wrote") makes retrospective intent
+> obvious. Don't add a third option here — leave the binary "Open
+> now? / Keep in backlog" choice intact for the common future-work
+> case; just point at §4.16 in the chat when the signal is clearly
+> retrospective.
 
 ### 4.3 Add a project
 
@@ -483,6 +524,23 @@ and stop. Do NOT:
 If `flow do` itself errored (rc != 0), relay the error and stop. Do
 not attempt workarounds; the user will decide what to do next.
 
+#### Special case: live-session guard
+
+`flow do` refuses to spawn when the task's `session_id` is already
+running in another Claude process — typically because the user has the
+task's tab open elsewhere and forgot. The error names the running
+session ID and points at `--force`. When you see it:
+
+1. Tell the user, in plain language, that the task already has a
+   running session in another tab. Suggest they switch to that tab.
+2. Offer via AskUserQuestion (header: "Open another?", options:
+   "Switch to the existing tab" / "Open another anyway") whether to
+   bypass the guard. On "Open another anyway", retry with `--force`.
+
+Don't auto-retry with `--force`. The guard exists because two live
+sessions on the same task fork the conversation and cause confusion;
+bypassing it should be an explicit choice.
+
 #### Special case: macOS Accessibility error from the Terminal.app backend
 
 When `flow do` runs from a stock Terminal.app shell and macOS hasn't
@@ -551,7 +609,7 @@ Do NOT run any `flow` command for this — updates are just files.
 **Triggers:** "I'm waiting on <X>", "blocked on <Y>", "stuck until <Z>",
 "need <person> to respond", "pinged <X>".
 
-**Recipe:** run `flow waiting <current-task> "<who or what>"`. The
+**Recipe:** run `flow update task <current-task> --waiting "<who or what>"`. The
 status stays `in-progress`; `waiting_on` is just a freeform note that
 will show up in `flow list` and `flow show task` so the user remembers.
 
@@ -559,10 +617,10 @@ will show up in `flow list` and `flow show task` so the user remembers.
 "no longer waiting on X". Before mutating, confirm via
 `AskUserQuestion` (header: "Clear waiting?", options:
 "Yes, clear it" / "Wait, not yet"). On "Yes", run
-`flow waiting <task> --clear`. On "Wait, not yet", stop and let the
-user clarify. (This matches the §8 "do not mark done without
-confirmation" anti-pattern philosophy — clearing `waiting_on` is a
-state mutation and deserves the same explicit click.)
+`flow update task <task> --clear-waiting`. On "Wait, not yet", stop
+and let the user clarify. (This matches the §8 "do not mark done
+without confirmation" anti-pattern philosophy — clearing `waiting_on`
+is a state mutation and deserves the same explicit click.)
 
 Do not infer the task slug silently — use `$FLOW_TASK` if set,
 otherwise use `AskUserQuestion` listing in-progress tasks as options
@@ -828,7 +886,7 @@ category of fact. Signals that it's time to Read one:
 Signals it's NOT time to read the KB:
 
 - The user ran a one-shot mutation command (`flow done`, `flow archive`,
-  `flow priority`, `flow waiting`) and you're just relaying the result.
+  `flow update task`, etc.) and you're just relaying the result.
 - The current task is purely mechanical and self-contained ("run the
   tests", "fix the obvious typo").
 - You already read the relevant file earlier this session and nothing
@@ -1213,6 +1271,139 @@ via `AskUserQuestion`.
   freshly-downloaded binary — Gatekeeper will refuse to run it
   otherwise.
 
+### 4.16a Tagging tasks
+
+**Triggers:** "tag this task as X", "add a tag X to <task>", "what
+tags does <task> have", "show all tags", "list my tags", "what tags
+are in use", "find all tasks tagged X".
+
+**What tags are:** free-form single-string labels attached to tasks
+for cross-cutting identification — `#frontend`, `#urgent`,
+`#tech-debt`, `#h2-2026`, `#triage`, `#research`. Stored normalized
+(lowercase, trimmed). Many-to-many: a task can have any number of
+tags, a tag can be on any number of tasks. Tags are *single strings*
+— if you want kv-style semantics (`type:bug`, `priority:p0`), use a
+`key:value` colon convention inside the string. Don't introduce a
+parallel kv schema.
+
+**The vocabulary discipline rule:** before suggesting a new tag for
+a task, ALWAYS run `flow list tags` first. That command lists every
+tag in use across non-archived tasks with a per-tag task count. Reuse
+existing tags whenever they fit — the user's tag vocabulary is more
+useful when it stays consistent. Inventing a synonym (e.g.
+`#frontend` when `#ui` already has 8 tasks) fragments the tag space
+and makes filtering useless.
+
+**Recipe — add tags:**
+
+1. Run `flow list tags` and read the output. Note any existing tag
+   that matches the user's intent.
+2. If a good match exists, propose it via AskUserQuestion (header:
+   "Use existing tag?", options: existing-tag candidates + "Use a
+   new tag"). Skip this step if the user already named the exact
+   tag.
+3. Run `flow update task <ref> --tag <tag1> --tag <tag2> ...`.
+   `--tag` is repeatable — pass it once per tag value. Tags are
+   normalized to lowercase + trimmed; idempotent on duplicates.
+
+**Recipe — remove or clear:**
+
+- `flow update task <ref> --remove-tag <tag1> --remove-tag <tag2>`
+  removes specific tags (also repeatable).
+- `flow update task <ref> --clear-tags` removes all tags from a task.
+  Confirm via AskUserQuestion (header: "Clear all tags?", options:
+  "Yes, clear all" / "No, name specific tags") before mutating —
+  clearing is destructive and per §8 every state mutation deserves
+  a click.
+- `--clear-tags` and `--remove-tag` are mutually exclusive (clear
+  removes everything anyway). `--clear-tags --tag <new>` is allowed
+  and means "wipe and replace with `<new>`" — useful for retagging.
+
+**Recipe — find tasks by tag:**
+
+- `flow list tasks --tag <tag>` filters the task list to that tag.
+  Combine with `--status`, `--project`, `--priority`, etc.
+
+**Display:** list/show output renders tags as `#tag1 #tag2` tokens
+trailing the row. The hashtag prefix is render-only — do not type
+`#` into `--tag` values (it would be normalized away, but treat the
+rule as "tag values are unprefixed strings").
+
+**Anti-patterns:**
+
+- **Do not invent new tags without checking `flow list tags` first.**
+  The vocabulary discipline rule isn't optional.
+- **Do not use kv-style alternative storage.** Single strings with
+  `key:value` convention are the canonical form.
+- **Do not auto-tag.** Always confirm with the user before adding
+  tags they didn't explicitly name. The exception is when the user's
+  request literally names the tag ("tag this `#frontend`").
+
+### 4.16 Bind an in-flight Claude session to a task
+
+**Triggers:** "bind this session to <task>", "track this session under
+<task>", "attach this conversation to <task>", "update <task> with my
+current session id", "this session is for <task>". Also fires when
+the user manually creates a flow task while already deep in an ad-hoc
+Claude session and wants future `flow do <slug>` to resume *this*
+conversation rather than start a new one.
+
+**Why this exists:** sessions spawned by `flow do` already have their
+session_id pre-allocated and recorded in flow.db. But sometimes the
+user starts an ad-hoc `claude` session, gets deep into substantive
+work, and only later decides to track it as a flow task. There is no
+public Claude CLI flag that surfaces the current session ID after the
+fact, so we have to discover it via the transcript on disk.
+
+**Recipe — three discrete tool calls in order:**
+
+1. **Resolve or create the target task slug.** If the task doesn't
+   exist yet, run §4.2 task intake first. Save the slug — call it
+   `<slug>` below.
+2. **Emit a unique marker via Bash** (one tool call, by itself):
+   ```
+   echo "FLOW_BIND_MARKER_<random>"
+   ```
+   Use a marker with at least 12 characters of entropy (e.g.
+   `$RANDOM-$RANDOM-$RANDOM` or a uuidgen). The Bash tool result is
+   what enters the JSONL transcript — you must let this tool call
+   *return* before grepping, since the JSONL doesn't flush mid-call.
+3. **Resolve the session ID and bind**, in a SEPARATE Bash call:
+   ```
+   sid=$(flow find-session "<the-marker-you-emitted>") \
+     && flow update task <slug> --session-id "$sid"
+   ```
+   `flow find-session` scans `~/.claude/projects/*/*.jsonl` for the
+   marker. Exactly one file should contain it (this conversation's).
+   The basename, minus `.jsonl`, is the session UUID — that's what
+   binds back to flow.
+
+**Failure modes and how to handle them:**
+
+- `flow find-session` reports "no session jsonl contains marker": the
+  JSONL hadn't flushed yet. This shouldn't happen if step 2 was a
+  truly separate tool call, but if it does, emit a fresh marker and
+  retry from step 2.
+- `flow find-session` reports "matches N sessions": your marker
+  wasn't unique enough — pick a longer/more random one and retry
+  from step 2.
+- `flow update task` reports invalid UUID: the basename of the jsonl
+  isn't a v4 UUID. Surface the error to the user — don't try to
+  patch around it.
+
+**Anti-patterns:**
+
+- **Do not run all three steps in one Bash call.** The JSONL flush
+  happens between tool calls, not within one. A single call that
+  echoes then greps will return zero matches.
+- **Do not invent or guess the session UUID.** The marker-grep is
+  the only reliable way; ps-based detection only works for sessions
+  spawned with `--session-id` or `--resume`, which ad-hoc sessions
+  aren't.
+- **Do not bind without confirming the task slug.** If multiple
+  tasks could plausibly own this conversation, AskUserQuestion to
+  pick.
+
 ## 6. The `work_dir` question — rules
 
 When you're about to ask the user "where does this task live?", run
@@ -1581,29 +1772,59 @@ long to read at once.
 give you enough context, or when you need to understand specific
 implementation decisions made during that task's session.
 
-### Manual repair — `flow update task`
+### Field edits — `flow update task` / `flow update project`
 
-Escape hatch when the DB drifts from reality. Two fields can be
-corrected:
+`flow update task` is the canonical lane for in-place field edits on
+a task. `flow update project` is the same for project rows (priority
+only, for now). All field setters live here — there are no per-field
+mini-commands like `flow priority` / `flow due` / `flow waiting` /
+`flow assignee` (those used to exist; they were folded into update).
 
 ```
-flow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+flow update task <ref>
+    [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+    [--status backlog|in-progress|done]
+    [--priority high|medium|low]
+    [--assignee <name>] [--clear-assignee]
+    [--due-date <date>]   [--clear-due]
+    [--waiting "<who or what>"] [--clear-waiting]
+
+flow update project <ref>
+    [--priority high|medium|low]
 ```
 
-When to use:
+When to use which flag:
 
 - **`--session-id <uuid>`** — the user spawned a Claude session outside
   `flow do` (e.g. plain `claude` in a terminal) and wants flow to track
-  that session going forward. Or: a session jsonl was restored from a
-  backup under a different UUID and they want `flow do` to resume it.
-  UUID must be v4 format — claude enforces that on `--session-id`.
+  that session going forward. Most common path is the §4.16
+  binding workflow which discovers the UUID via marker-grep first,
+  then runs this. UUID must be v4 format — claude enforces that on
+  `--session-id`.
 - **`--work-dir <path>`** — the repo moved on disk (renamed parent,
   moved between drives, cloned to a new path). Pass `--mkdir` if the
   new path doesn't exist yet.
+- **`--status <s>`** — primary use case is rolling a `done` task back
+  to `in-progress` so `flow do` will reopen it (the do-from-done path
+  is gated). Also handy for backlog → in-progress without spawning a
+  session, or in-progress → backlog to "demote" a task you're not
+  actively working on. Setting status to a value it already has is a
+  no-op.
+- **`--priority <p>`** — change a task or project priority. Same enum
+  as creation: high|medium|low.
+- **`--assignee <name>` / `--clear-assignee`** — set or clear the task
+  assignee. Convention: NULL = "self" (default); any other value =
+  "assigned to that name". The list/show output surfaces the assignee
+  only when it's non-null.
+- **`--due-date <date>` / `--clear-due`** — set or clear the due date.
+  Date formats: `YYYY-MM-DD`, `today`, `tomorrow`, weekday names, `Nd`.
+- **`--waiting "<X>"` / `--clear-waiting`** — set or clear the
+  `waiting_on` freeform note (see §4.6). Status stays in-progress;
+  the note is just there to remind the user.
 
-Both flags are optional but at least one must be given. This is a
-manual correction tool — do not run it as a workaround for a bug in
-`flow do`; surface the bug instead.
+At least one field-changing flag must be given. The "manual correction"
+flags (`--session-id`, `--work-dir`) are escape hatches — do not run
+them as workarounds for a bug in `flow do`; surface the bug instead.
 
 ## 10. Environment variables flow sets
 

@@ -118,41 +118,59 @@ func cmdDone(args []string) int {
 // to the LLM — empty or purely-mechanical sessions yield no new
 // entries and no project update.
 func buildCloseoutSweepPrompt(slug, projectSlug string) string {
-	header := fmt.Sprintf(
-		"You are running an automated close-out sweep for completed flow task %q. Do this:\n\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads §4.10 (the scoop-mode KB rules) and §4.5 (update-file shape) which you must follow exactly.\n\n"+
+	mindset := "## How to think about this sweep\n\n" +
+		"**KB entries** (in ~/.flow/kb/*.md) are forever — they sit at the top of every future task brief. Bar: very strict. Default: write nothing.\n\n"
+	if projectSlug != "" {
+		mindset = "## How to think about this sweep\n\n" +
+			"Two things happen here, with deliberately DIFFERENT bars:\n" +
+			"  - **KB entries** (in ~/.flow/kb/*.md) are forever — they sit at the top of every future task brief. Bar: very strict. Default: write nothing.\n" +
+			"  - The **project log entry** is local to the project and a sibling task may benefit from a richer narrative. Bar: looser. A bit rich is fine. Default: write something if the session moved the project forward.\n\n"
+	}
+
+	preamble := fmt.Sprintf(
+		"You are running an automated close-out sweep for completed flow task %q.\n\n"+
+			"%s"+
+			"## Steps\n\n"+
+			"1. Invoke the flow skill via the Skill tool. This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
 			"2. Run: flow transcript %s\n"+
-			"   This prints the conversation transcript from the task's Claude session. Read it carefully.\n\n"+
-			"3. KB sweep. For each of these five files, decide whether the transcript revealed any durable facts that belong there per §4.10's bucket table:\n"+
-			"   - ~/.flow/kb/user.md\n"+
-			"   - ~/.flow/kb/org.md\n"+
-			"   - ~/.flow/kb/products.md\n"+
-			"   - ~/.flow/kb/processes.md\n"+
-			"   - ~/.flow/kb/business.md\n\n"+
-			"4. For each KB file you decide needs new entries, Read it first to check for duplicates, then append entries using the §4.10 entry format (one dated bullet per fact, never invent, never embellish, deduplicate against existing entries).\n\n",
-		slug, slug,
+			"   This prints the conversation transcript from the task's Claude session. Read it carefully end to end.\n\n"+
+			"3. KB sweep — strict bar, distill the essence.\n\n"+
+			"   For each of these five files, ask: across the WHOLE transcript, is there a durable fact about the user, their org, products, processes, or business that belongs there per §4.10's bucket table AND meets ALL three bars below?\n"+
+			"     - ~/.flow/kb/user.md\n"+
+			"     - ~/.flow/kb/org.md\n"+
+			"     - ~/.flow/kb/products.md\n"+
+			"     - ~/.flow/kb/processes.md\n"+
+			"     - ~/.flow/kb/business.md\n\n"+
+			"   The three bars (ALL must be met):\n"+
+			"     a. **Durable** — still true / still relevant in three months. Not 'today I felt X', not 'we tried approach Y for this one PR'.\n"+
+			"     b. **Surprising or non-obvious** — not derivable from the code, the README, or what a sibling task would already know.\n"+
+			"     c. **Future-relevant** — a future Claude session would change a decision because of it. If you can't picture that, skip.\n\n"+
+			"   Most task transcripts contribute nothing to the KB. Mechanical work, narrow bug fixes, local refactors, routine debugging — these almost never produce KB entries. The expected answer for most files on most tasks is 'no'. Don't reach.\n\n"+
+			"4. Writing KB entries — INTERPRET the essence; do not transcribe.\n\n"+
+			"   This is the close-out mode of §4.10 and is DIFFERENT from real-time scoop. In real-time scoop you capture what the user just said, mostly verbatim, because it's a single fresh fact. Here you've read the whole conversation — your job is to SYNTHESIZE: pull out the durable insight in compact paraphrase, in your own words, capturing the essence and (where helpful) the why. Avoid quote dumps. One concise dated bullet per insight.\n\n"+
+			"   For each KB file you decide needs an entry, Read it first to check for duplicates (in any form — paraphrase, near-duplicate, superset). If something similar already exists, skip; do not append. Append using the §4.10 entry format: one dated bullet per insight, your own paraphrase capturing the essence, never invent or embellish beyond what the transcript supports.\n\n",
+		slug, mindset, slug,
 	)
 
 	tailNum := "5"
 	projectStep := ""
 	if projectSlug != "" {
 		projectStep = fmt.Sprintf(
-			"5. Project update. This task is attached to project %q. Consider whether the transcript shows substantive project-level decisions, learnings, or status changes that future sessions on sibling tasks should benefit from. If so, write ONE update file at:\n"+
-				"   ~/.flow/projects/%s/updates/YYYY-MM-DD-<kebab-title>.md\n"+
-				"   - Filename: today's date in YYYY-MM-DD followed by a 3-5 word kebab-case title.\n"+
-				"   - Shape per skill §4.5: <=10 lines, two paragraphs. Paragraph 1: what got decided/learned/shipped at the project level. Paragraph 2: what is next or now open. Optional trailing 'Blocked on: <X>' line.\n"+
-				"   - Substance gate: write ONLY if the session moved the project forward in a way future sibling-task sessions should know about. Mechanical work, narrow bug fixes, and local-only refactors usually do not warrant a project update — skip in that case. There is no obligation to produce a file.\n"+
-				"   - Do NOT write a template or placeholder. Either write a real update or skip.\n\n",
+			"5. Project update — looser bar, narrative OK.\n\n"+
+				"   This task is attached to project %q. The project log is local and lives next to the work, so a richer entry is fine — capture what got decided, what shipped, what was tried, what's now open. Sibling-task sessions will read this to catch up.\n\n"+
+				"   Write ONE file at:\n"+
+				"     ~/.flow/projects/%s/updates/YYYY-MM-DD-<kebab-title>.md\n"+
+				"   Shape per skill §4.5: roughly two paragraphs (can stretch a little if there's real substance). Paragraph 1: what got decided / learned / shipped at the project level. Paragraph 2: what is next or now open. Optional trailing 'Blocked on: <X>' line.\n\n"+
+				"   The (still real, but looser) bar: write ONLY if the session moved the project forward — a decision was made, something shipped, a learning emerged, a blocker was added/removed, an approach was chosen, etc. Skip when the work was purely mechanical with no project-level narrative (e.g. a single typo fix). Do NOT write a template or a 'task X was marked done' summary. The goal is something a sibling-task session would actually want to read; if you can't picture that, skip.\n\n",
 			projectSlug, projectSlug,
 		)
 		tailNum = "6"
 	}
 
 	tail := fmt.Sprintf(
-		"%s. Do not output a chat summary. Just write the files silently and exit.\n\n"+
-			"If the transcript is empty or contains nothing durable, do nothing. This is normal — most tasks will not yield new entries.",
+		"%s. Do not output a chat summary. Write any files silently and exit. Empty output is a successful sweep when the transcript didn't warrant entries.\n",
 		tailNum,
 	)
 
-	return header + projectStep + tail
+	return preamble + projectStep + tail
 }
