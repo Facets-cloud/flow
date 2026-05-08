@@ -150,21 +150,21 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	// 11. list projects
 	step("list projects", cmdList([]string{"projects"}))
 
-	// 12. waiting
-	step("waiting set", cmdWaiting([]string{"fix-auth-token-expiry", "Alice review"}))
+	// 12. waiting (via flow update task)
+	step("waiting set", cmdUpdate([]string{"task", "fix-auth-token-expiry", "--waiting", "Alice review"}))
 	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
 	if !task.WaitingOn.Valid || task.WaitingOn.String != "Alice review" {
 		t.Errorf("waiting_on = %v, want Alice review", task.WaitingOn)
 	}
 
-	step("waiting clear", cmdWaiting([]string{"fix-auth-token-expiry", "--clear"}))
+	step("waiting clear", cmdUpdate([]string{"task", "fix-auth-token-expiry", "--clear-waiting"}))
 	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
 	if task.WaitingOn.Valid {
 		t.Errorf("waiting_on should be cleared, got %v", task.WaitingOn)
 	}
 
-	// 13. priority
-	step("priority", cmdPriority([]string{"fix-auth-token-expiry", "high"}))
+	// 13. priority (via flow update task)
+	step("priority", cmdUpdate([]string{"task", "fix-auth-token-expiry", "--priority", "high"}))
 	task, _ = flowdb.GetTask(db, "fix-auth-token-expiry")
 	if task.Priority != "high" {
 		t.Errorf("priority = %q, want high", task.Priority)

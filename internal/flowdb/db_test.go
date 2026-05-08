@@ -158,6 +158,33 @@ func TestMigrationAddsDueDateAndStatusChangedAt(t *testing.T) {
 	}
 }
 
+func TestMigrationAddsAssignee(t *testing.T) {
+	db := openTempDB(t)
+	has, err := columnExists(db, "tasks", "assignee")
+	if err != nil {
+		t.Fatalf("columnExists(assignee): %v", err)
+	}
+	if !has {
+		t.Error("tasks.assignee column should exist after migration")
+	}
+	// Default for new rows must be NULL ("self") — not an empty string.
+	now := NowISO()
+	wd := t.TempDir()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, created_at, updated_at) VALUES (?, ?, 'backlog', 'medium', ?, ?, ?)`,
+		"a1", "Assignee default", wd, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var assignee sql.NullString
+	if err := db.QueryRow(`SELECT assignee FROM tasks WHERE slug='a1'`).Scan(&assignee); err != nil {
+		t.Fatal(err)
+	}
+	if assignee.Valid {
+		t.Errorf("default assignee should be NULL; got %q", assignee.String)
+	}
+}
+
 // TestOpenDBOnPreMigrationDB simulates an existing user upgrading from a
 // pre-feat/playbooks flow.db: tasks table exists but lacks the kind and
 // playbook_slug columns. OpenDB must apply migrations cleanly without

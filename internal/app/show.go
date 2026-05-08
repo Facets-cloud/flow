@@ -236,10 +236,26 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	if t.WaitingOn.Valid && t.WaitingOn.String != "" {
 		fmt.Printf("waiting_on:    %s\n", t.WaitingOn.String)
 	}
+	if t.Assignee.Valid && t.Assignee.String != "" {
+		fmt.Printf("assignee:      %s\n", t.Assignee.String)
+	}
+
+	if tags, err := flowdb.GetTaskTags(db, t.Slug); err == nil && len(tags) > 0 {
+		parts := make([]string, len(tags))
+		for i, tg := range tags {
+			parts[i] = "#" + tg
+		}
+		fmt.Printf("tags:          %s\n", strings.Join(parts, " "))
+	}
 
 	sid := "(not bootstrapped)"
 	if t.SessionID.Valid && t.SessionID.String != "" {
 		sid = t.SessionID.String
+		if live, err := liveClaudeSessions(); err == nil {
+			if live[strings.ToLower(t.SessionID.String)] {
+				sid += "  [live]"
+			}
+		}
 	}
 	fmt.Printf("session_id:            %s\n", sid)
 	sstart := "(not bootstrapped)"

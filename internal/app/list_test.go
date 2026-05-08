@@ -697,3 +697,49 @@ func TestCmdListTasksConfigurableStaleness(t *testing.T) {
 		t.Errorf("should be stale with threshold 1; out=%q", out2)
 	}
 }
+
+func TestListTagsAggregates(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "lt-1")
+	seedTask(t, "lt-2")
+	seedTask(t, "lt-3")
+	cmdUpdate([]string{"task", "lt-1", "--tag", "urgent", "--tag", "frontend", "--tag", "backend"})
+	cmdUpdate([]string{"task", "lt-2", "--tag", "urgent", "--tag", "frontend"})
+	cmdUpdate([]string{"task", "lt-3", "--tag", "urgent"})
+
+	// Smoke: command returns 0 with content. Aggregation correctness is
+	// covered at the flowdb layer via flowdb.ListAllTags.
+	if rc := cmdList([]string{"tags"}); rc != 0 {
+		t.Errorf("rc=%d", rc)
+	}
+}
+
+func TestListTagsEmpty(t *testing.T) {
+	setupFlowRoot(t)
+	if rc := cmdList([]string{"tags"}); rc != 0 {
+		t.Errorf("rc=%d on empty DB", rc)
+	}
+}
+
+func TestListTagsAggregatesValues(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "lt-a")
+	seedTask(t, "lt-b")
+	cmdUpdate([]string{"task", "lt-a", "--tag", "alpha", "--tag", "beta"})
+	cmdUpdate([]string{"task", "lt-b", "--tag", "alpha"})
+
+	db := openFlowDB(t)
+	got, err := flowdb.ListAllTags(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d, want 2: %+v", len(got), got)
+	}
+	if got[0].Tag != "alpha" || got[0].Count != 2 {
+		t.Errorf("first should be alpha×2, got %+v", got[0])
+	}
+	if got[1].Tag != "beta" || got[1].Count != 1 {
+		t.Errorf("second should be beta×1, got %+v", got[1])
+	}
+}

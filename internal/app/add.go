@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -148,6 +149,7 @@ func addTask(args []string) int {
 	workDir := fs.String("work-dir", "", "work directory (overrides project default)")
 	priority := fs.String("priority", "medium", "high|medium|low")
 	dueFlag := fs.String("due", "", "due date (YYYY-MM-DD, today, tomorrow, monday, 3d)")
+	assigneeFlag := fs.String("assignee", "", "optional assignee (default: self)")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
@@ -243,11 +245,16 @@ func addTask(args []string) int {
 		dueDate = d.Format("2006-01-02")
 	}
 
+	var assignee any = nil
+	if a := strings.TrimSpace(*assigneeFlag); a != "" {
+		assignee = a
+	}
+
 	now := flowdb.NowISO()
 	if _, err := db.Exec(
-		`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, due_date, status_changed_at, created_at, updated_at)
-		 VALUES (?, ?, ?, 'backlog', ?, ?, ?, ?, ?, ?)`,
-		slug, name, projectSlug, *priority, absWorkDir, dueDate, now, now, now,
+		`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, due_date, assignee, status_changed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, 'backlog', ?, ?, ?, ?, ?, ?, ?)`,
+		slug, name, projectSlug, *priority, absWorkDir, dueDate, assignee, now, now, now,
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "error: insert task: %v\n", err)
 		return 1

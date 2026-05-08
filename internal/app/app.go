@@ -45,8 +45,6 @@ func Run(args []string) int {
 		return cmdRun(rest)
 	case "done":
 		return cmdDone(rest)
-	case "due":
-		return cmdDue(rest)
 	case "show":
 		return cmdShow(rest)
 	case "list":
@@ -59,10 +57,8 @@ func Run(args []string) int {
 		return cmdArchive(rest)
 	case "unarchive":
 		return cmdUnarchive(rest)
-	case "priority":
-		return cmdPriority(rest)
-	case "waiting":
-		return cmdWaiting(rest)
+	case "find-session":
+		return cmdFindSession(rest)
 	case "workdir":
 		return cmdWorkdir(rest)
 	case "skill":
@@ -102,15 +98,21 @@ Read:
   flow show task       [<ref>]
   flow show project    [<ref>]
   flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
-  flow list tasks    [--status ...] [--project ...] [--priority ...] [--since ...] [--include-archived]
+  flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
+  flow list tags                                            (every tag in use, with per-tag task counts)
 
 Edit / mutate:
   flow edit        <ref>
-  flow update task <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
-  flow due         <ref> <date> | --clear                    (set or clear due date; date: YYYY-MM-DD, today, tomorrow, monday, 3d)
-  flow priority  <ref> high|medium|low
-  flow waiting   <ref> "<who or what>" | --clear
+  flow update task    <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+                            [--status <s>] [--priority h|m|l]
+                            [--assignee <name>] [--clear-assignee]
+                            [--due-date <date>] [--clear-due]
+                            [--waiting "<who or what>"] [--clear-waiting]
+                            [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
+  flow update project <ref> [--priority h|m|l]
+  flow do          <ref> [--fresh] [--dangerously-skip-permissions] [--force]   (--force overrides the live-session guard)
+  flow find-session <marker>                                 (echo a unique marker in a separate Bash call first; this scans ~/.claude/projects/*/*.jsonl)
   flow archive   <ref>
   flow unarchive <ref>
 
