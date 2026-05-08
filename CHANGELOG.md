@@ -7,23 +7,67 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] — 2026-05-08
+
 ### Added
 
-- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`,
-  GitHub issue + PR templates.
-- README polish: tagline, ICP framing, Claude Code link, "flow is /
-  isn't" section, persona examples, asciinema placeholder.
+- **Free-form tags on tasks.** New `task_tags(task_slug, tag,
+  created_at)` table; values normalized lowercase + trimmed. Add via
+  `flow update task <ref> --tag <t>` (repeatable, idempotent), remove
+  via `--remove-tag`, wipe via `--clear-tags`. Filter task listings via
+  `flow list tasks --tag <t>`. Aggregate listing via `flow list tags`
+  (distinct tags + per-tag task counts) so tag vocabulary stays
+  consistent over time.
+- **Assignee on tasks.** `tasks.assignee TEXT`. Set at create time via
+  `flow add task --assignee <name>`; post-creation via `flow update
+  task --assignee` / `--clear-assignee`. NULL = self (default);
+  non-null renders as `[@name]` in list/show output.
+- **Live-session detection.** `flow list tasks` and `flow show task`
+  mark `[live]` next to tasks whose `session_id` matches a running
+  Claude process (parsed from `ps`). `flow do <ref>` refuses to spawn
+  a duplicate when the task's session is already running elsewhere;
+  `--force` overrides.
+- **`flow find-session <marker>`.** Scans
+  `~/.claude/projects/*/*.jsonl` for a marker and prints the matching
+  session UUID — the reliable in-flight session-ID capture path.
+  Errors deterministically on zero or multiple matches.
+- **`flow update project <ref> --priority`.** Project priority is now
+  editable after creation.
+- **Reverse status transitions.** `flow update task <ref> --status
+  in-progress` works on `done` tasks, letting `flow do` reopen them.
 
 ### Changed
 
-- `make install` now copies the binary to `~/.local/bin/flow` instead of
-  adding the repo dir to PATH; `make uninstall` is symmetric.
-- `make install` prompts before modifying your shell rc file.
-- README `Build from source` instructions use HTTPS, not SSH.
+- **`flow update task` is now the canonical lane for all in-place
+  field edits.** New flags: `--status`, `--priority`, `--assignee` /
+  `--clear-assignee`, `--due-date` / `--clear-due`, `--waiting` /
+  `--clear-waiting`, repeatable `--tag` / `--remove-tag`,
+  `--clear-tags`. The existing `--session-id` and `--work-dir`
+  escape hatches stay.
+- **Close-out sweep prompt rewritten with two-tier discipline.** KB
+  step is strict — default = write nothing; three bars (durable /
+  surprising / future-relevant); distill the essence rather than
+  quote-dump (deliberate departure from §4.10 real-time scoop). The
+  project-log step is more permissive — narrative is fine when the
+  session moved the project forward. Floating-task prompts omit
+  project-update concepts entirely.
+- **Skill (`SKILL.md`).** New §4.16 (binding an in-flight session to
+  a task via marker-grep). New §4.16a (tagging — vocabulary
+  discipline rule that says read `flow list tags` before inventing).
+  §4.2 intake gets an optional tag step at the end (offers existing
+  tags via multi-select AskUserQuestion) and a subtle
+  retrospective-capture hint pointing at §4.16. §4.6 waiting
+  workflow rewired through `flow update task --waiting`. Cheat sheet
+  rewritten.
 
 ### Removed
 
-- Internal planning docs (`docs/plans/`, `docs/specs/`).
+- **Legacy field-setter mini-commands consolidated into
+  `flow update task`:** `flow priority`, `flow due`, `flow waiting`,
+  `flow assignee`, `flow tag`, `flow tags`. The aggregate listing
+  for tags moved to `flow list tags`. One canonical verb for
+  in-place edits — fewer commands to learn, no parallel paths for
+  the same field.
 
 ## [0.1.0-alpha.1] — 2026-05-04
 
@@ -61,5 +105,6 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.6]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.6
 [0.1.0-alpha.1]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.1

@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// cmdList dispatches `flow list tasks|projects|playbooks|runs`. Per spec §5.4.
+// cmdList dispatches `flow list tasks|projects|playbooks|runs|tags`.
 func cmdList(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', or 'runs'")
+		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', 'runs', or 'tags'")
 		return 2
 	}
 	switch args[0] {
@@ -25,9 +25,48 @@ func cmdList(args []string) int {
 		return listPlaybooksCmd(args[1:])
 	case "runs":
 		return listRunsCmd(args[1:])
+	case "tags":
+		return listTagsCmd(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2
+}
+
+// listTagsCmd prints all distinct tags currently in use across non-archived
+// tasks, with a per-tag task count. Sorted by count descending so the
+// most-used tags appear first. Read this before suggesting new tag
+// names — keeps the user's tag vocabulary consistent.
+func listTagsCmd(args []string) int {
+	fs := flagSet("list tags")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open db: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	tags, err := flowdb.ListAllTags(db)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(tags) == 0 {
+		fmt.Println("(no tags in use)")
+		return 0
+	}
+	for _, tc := range tags {
+		fmt.Printf("  #%-30s %d tasks\n", tc.Tag, tc.Count)
+	}
+	return 0
 }
 
 func listTasksCmd(args []string) int {
@@ -35,6 +74,7 @@ func listTasksCmd(args []string) int {
 	status := fs.String("status", "", "backlog|in-progress|done")
 	project := fs.String("project", "", "project slug")
 	priority := fs.String("priority", "", "high|medium|low")
+	tag := fs.String("tag", "", "only tasks carrying this tag (case-insensitive)")
 	since := fs.String("since", "", "today|monday|7d|YYYY-MM-DD")
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
 	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
@@ -47,6 +87,7 @@ func listTasksCmd(args []string) int {
 		Status:          *status,
 		Project:         *project,
 		Priority:        *priority,
+		Tag:             flowdb.NormalizeTag(*tag),
 		IncludeArchived: *includeArchived,
 	}
 	// Default kind is "regular"; "all" disables the kind filter.
@@ -98,6 +139,19 @@ func listTasksCmd(args []string) int {
 
 	now := time.Now()
 
+	// Best-effort scan of running claude processes. ps failures are
+	// silently ignored — the list still renders, just without [live]
+	// markers. See sessions.go for the limitations.
+	live, _ := liveClaudeSessions()
+
+	// Batch-load tags for every task in the result set. Failures are
+	// non-fatal; the list still renders without #tag tokens.
+	slugs := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		slugs = append(slugs, t.Slug)
+	}
+	tagsByTask, _ := flowdb.GetTaskTagsBatch(db, slugs)
+
 	// Compute max slug+name width for alignment. We render
 	// "<slug>  <name>" as the identity column; truncate later.
 	type row struct {
@@ -109,6 +163,9 @@ func listTasksCmd(args []string) int {
 		due      string
 		stale    string
 		waiting  string
+		assignee string
+		liveTag  string
+		tags     string
 		archived bool
 		done     bool
 	}
@@ -162,6 +219,21 @@ func listTasksCmd(args []string) int {
 		if t.WaitingOn.Valid && t.WaitingOn.String != "" {
 			r.waiting = "[waiting: " + t.WaitingOn.String + "]"
 		}
+		if t.Assignee.Valid && t.Assignee.String != "" {
+			r.assignee = "[@" + t.Assignee.String + "]"
+		}
+		if t.SessionID.Valid && t.SessionID.String != "" {
+			if live[strings.ToLower(t.SessionID.String)] {
+				r.liveTag = "[live]"
+			}
+		}
+		if tags, ok := tagsByTask[t.Slug]; ok && len(tags) > 0 {
+			parts := make([]string, len(tags))
+			for i, tg := range tags {
+				parts[i] = "#" + tg
+			}
+			r.tags = strings.Join(parts, " ")
+		}
 		rows = append(rows, r)
 	}
 
@@ -206,6 +278,18 @@ func listTasksCmd(args []string) int {
 		if r.waiting != "" {
 			sb.WriteString("  ")
 			sb.WriteString(r.waiting)
+		}
+		if r.assignee != "" {
+			sb.WriteString("  ")
+			sb.WriteString(r.assignee)
+		}
+		if r.liveTag != "" {
+			sb.WriteString("  ")
+			sb.WriteString(r.liveTag)
+		}
+		if r.tags != "" {
+			sb.WriteString("  ")
+			sb.WriteString(r.tags)
 		}
 		if r.archived {
 			sb.WriteString("  (archived)")

@@ -44,6 +44,46 @@ func seedTask(t *testing.T, slug string) {
 	}
 }
 
+// TestCmdDoLiveSessionGuard checks that a task whose session_id is in
+// the live-claude-process set refuses to spawn unless --force is passed.
+// This is feature 3 of the bundled fields/sessions task.
+func TestCmdDoLiveSessionGuard(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "live-task")
+
+	const pinnedSID = "abcdef12-3456-4789-8abc-def012345678"
+	// Pre-bind the task to the pinned session so the live check has
+	// something to match against. (Without bootstrapping via cmdDo —
+	// that would also try to spawn an iTerm tab.)
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug='live-task'`,
+		pinnedSID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make ps say this UUID is alive.
+	stubPS(t, "  PID COMMAND\n12345 /bin/claude --session-id "+pinnedSID+"\n")
+
+	count, _ := stubITerm(t)
+	if rc := cmdDo([]string{"live-task"}); rc != 1 {
+		t.Errorf("cmdDo: rc=%d, want 1 when live session blocks spawn", rc)
+	}
+	if *count != 0 {
+		t.Errorf("iterm spawn count = %d, want 0 (guard should block)", *count)
+	}
+
+	// --force should bypass the guard. iTerm runner is still stubbed
+	// from above, so spawning will succeed.
+	if rc := cmdDo([]string{"live-task", "--force"}); rc != 0 {
+		t.Errorf("cmdDo --force: rc=%d, want 0 (guard bypassed)", rc)
+	}
+	if *count != 1 {
+		t.Errorf("iterm spawn count after --force = %d, want 1", *count)
+	}
+}
+
 // TestCmdDoFreshAllocatesSessionID verifies the pre-allocation contract:
 // a fresh task gets a UUID written to tasks.session_id and spawns
 // `claude --session-id <uuid> "<prompt>"` so the jsonl file claude creates

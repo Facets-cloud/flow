@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     work_dir              TEXT NOT NULL,
     waiting_on            TEXT,
     due_date              TEXT,
+    assignee              TEXT,
     status_changed_at     TEXT,
     session_id            TEXT,
     session_started       TEXT,
@@ -68,9 +69,17 @@ CREATE TABLE IF NOT EXISTS workdirs (
     created_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS task_tags (
+    task_slug   TEXT NOT NULL REFERENCES tasks(slug) ON DELETE CASCADE,
+    tag         TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (task_slug, tag)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_slug);
 CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
+CREATE INDEX IF NOT EXISTS idx_task_tags_tag    ON task_tags(tag);
 `
 
 // indexesPostMigrate are indexes that depend on columns added by
@@ -109,6 +118,7 @@ type Task struct {
 	WorkDir            string
 	WaitingOn          sql.NullString
 	DueDate            sql.NullString
+	Assignee           sql.NullString
 	StatusChangedAt    sql.NullString
 	SessionID          sql.NullString
 	SessionStarted     sql.NullString
@@ -135,6 +145,7 @@ type TaskFilter struct {
 	Priority        string
 	Kind            string // "regular" (default), "playbook_run", or "" for all
 	PlaybookSlug    string // optional; filter to runs of one playbook
+	Tag             string // optional; only tasks carrying this tag (already normalized)
 	Since           string // RFC3339 or "" for no lower bound
 	IncludeArchived bool
 	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
@@ -238,6 +249,16 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
+	has, err = columnExists(db, "tasks", "assignee")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN assignee TEXT`); err != nil {
+			return fmt.Errorf("add tasks.assignee: %w", err)
+		}
+	}
+
 	// Indexes that depend on columns added above. Safe to run after every
 	// migration pass — CREATE INDEX IF NOT EXISTS is idempotent, and by
 	// this point all referenced columns exist.
@@ -319,14 +340,14 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, status_changed_at, session_id, session_started, session_last_resumed, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
 	err := row.Scan(
 		&t.Slug, &t.Name, &t.ProjectSlug, &t.Status, &t.Kind, &t.PlaybookSlug,
 		&t.Priority, &t.WorkDir,
-		&t.WaitingOn, &t.DueDate, &t.StatusChangedAt, &t.SessionID,
+		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.StatusChangedAt, &t.SessionID,
 		&t.SessionStarted, &t.SessionLastResumed, &t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)
 	if err != nil {
@@ -364,6 +385,10 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 	if filter.Priority != "" {
 		where = append(where, "priority = ?")
 		args = append(args, filter.Priority)
+	}
+	if filter.Tag != "" {
+		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE tag = ?)")
+		args = append(args, filter.Tag)
 	}
 	if filter.Since != "" {
 		where = append(where, "updated_at >= ?")
@@ -510,6 +535,133 @@ func ListPlaybooks(db *sql.DB, filter PlaybookFilter) ([]*Playbook, error) {
 			return nil, fmt.Errorf("scan playbook: %w", err)
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ---------- task tag queries ----------
+
+// NormalizeTag canonicalizes a tag for storage and comparison: trim
+// whitespace, lowercase. Returns "" for input that contains nothing
+// after trimming — callers should treat "" as invalid.
+func NormalizeTag(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// AddTaskTag attaches a tag to a task. Idempotent: re-adding an existing
+// (task_slug, tag) pair is a no-op via INSERT OR IGNORE.
+func AddTaskTag(db *sql.DB, slug, tag string) error {
+	t := NormalizeTag(tag)
+	if t == "" {
+		return fmt.Errorf("tag is empty")
+	}
+	_, err := db.Exec(
+		`INSERT OR IGNORE INTO task_tags (task_slug, tag, created_at) VALUES (?, ?, ?)`,
+		slug, t, NowISO(),
+	)
+	if err != nil {
+		return fmt.Errorf("add tag %s on %s: %w", t, slug, err)
+	}
+	return nil
+}
+
+// RemoveTaskTag detaches a tag from a task. No error if the pair doesn't
+// exist; caller can pre-check via GetTaskTags.
+func RemoveTaskTag(db *sql.DB, slug, tag string) error {
+	t := NormalizeTag(tag)
+	if t == "" {
+		return fmt.Errorf("tag is empty")
+	}
+	_, err := db.Exec(`DELETE FROM task_tags WHERE task_slug = ? AND tag = ?`, slug, t)
+	if err != nil {
+		return fmt.Errorf("remove tag %s from %s: %w", t, slug, err)
+	}
+	return nil
+}
+
+// ClearTaskTags removes all tags from a task.
+func ClearTaskTags(db *sql.DB, slug string) error {
+	_, err := db.Exec(`DELETE FROM task_tags WHERE task_slug = ?`, slug)
+	if err != nil {
+		return fmt.Errorf("clear tags for %s: %w", slug, err)
+	}
+	return nil
+}
+
+// GetTaskTags returns the tags on a single task, sorted alphabetically.
+func GetTaskTags(db *sql.DB, slug string) ([]string, error) {
+	rows, err := db.Query(`SELECT tag FROM task_tags WHERE task_slug = ? ORDER BY tag`, slug)
+	if err != nil {
+		return nil, fmt.Errorf("get tags for %s: %w", slug, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// GetTaskTagsBatch returns tags for many tasks in one query, keyed by
+// task slug. Used by list output to avoid N+1 queries.
+func GetTaskTagsBatch(db *sql.DB, slugs []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(slugs))
+	if len(slugs) == 0 {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(slugs)-1) + "?"
+	args := make([]any, 0, len(slugs))
+	for _, s := range slugs {
+		args = append(args, s)
+	}
+	q := `SELECT task_slug, tag FROM task_tags WHERE task_slug IN (` + placeholders + `) ORDER BY task_slug, tag`
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("batch get tags: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var slug, tag string
+		if err := rows.Scan(&slug, &tag); err != nil {
+			return nil, err
+		}
+		out[slug] = append(out[slug], tag)
+	}
+	return out, rows.Err()
+}
+
+// TagCount is the (tag, task-count) pair returned by ListAllTags.
+type TagCount struct {
+	Tag   string
+	Count int
+}
+
+// ListAllTags returns every distinct tag in use, with the number of
+// non-archived tasks that carry it. Sorted by count descending, then
+// tag ascending — most-used tags first.
+func ListAllTags(db *sql.DB) ([]TagCount, error) {
+	rows, err := db.Query(`
+		SELECT t.tag, COUNT(*) AS n
+		FROM task_tags t
+		JOIN tasks tk ON tk.slug = t.task_slug
+		WHERE tk.archived_at IS NULL
+		GROUP BY t.tag
+		ORDER BY n DESC, t.tag ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list tags: %w", err)
+	}
+	defer rows.Close()
+	var out []TagCount
+	for rows.Next() {
+		var tc TagCount
+		if err := rows.Scan(&tc.Tag, &tc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
 	}
 	return out, rows.Err()
 }
