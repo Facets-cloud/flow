@@ -389,10 +389,11 @@ work_dir: <path>
 *Before you start on this task, read CLAUDE.md in the work_dir.*
 ```
 
-**Optional tag step (low-friction).** Right after the brief saves —
-before offering "Open now?" — surface a single tag question. Cheap
-to skip; preserves vocabulary discipline (§4.16a) at intake without
-adding a required field.
+**Tag step — always ask, easy to skip.** Right after the brief
+saves — before offering "Open now?" — you MUST surface a single
+tag question. The user gets to pick "Skip" with one click; that
+makes the step optional from the *user's* side, not yours. Do NOT
+pre-skip this step on the user's behalf.
 
 1. Run `flow list tags` to discover the user's existing vocabulary.
 2. Use `AskUserQuestion` (header: "Tags?", `multiSelect: true`):
@@ -408,11 +409,14 @@ adding a required field.
      for comma-separated values.
 3. If the user picks any combination of existing tags and/or
    typed values, run `flow update task <slug> --tag <t1> --tag <t2> ...`.
-4. If the user picks "Skip", do nothing.
+4. If the user picks "Skip", do nothing — and move on to the
+   "Open now?" question without dwelling.
 
-This step is OPTIONAL by design — never block intake on it. If the
-user has expressed urgency ("just save it"), skip the question
-entirely.
+The ONLY case where you may legitimately skip surfacing the question
+is when the user has explicitly said something like "no more
+questions, just save it" or "just save it" earlier in the same
+turn. Otherwise, ask. Don't second-guess; preserve their right to
+skip by giving them the click, not by pre-deciding for them.
 
 Finally, use `AskUserQuestion` (header: "Open now?", options:
 "Yes, open it" / "No, keep in backlog") to offer `flow do <slug>`.
