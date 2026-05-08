@@ -101,67 +101,22 @@ func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
 	}
 }
 
-// TestHookUserPromptSubmitAdHocEmitsSkillNudge pins the contract for
-// ad-hoc sessions (FLOW_TASK unset): every prompt must produce a
-// hookSpecificOutput payload that nudges Claude to invoke the flow
-// skill and apply §4.14 — without keyword gating, since users won't
-// say "create a task" themselves.
-func TestHookUserPromptSubmitAdHocEmitsSkillNudge(t *testing.T) {
-	t.Setenv("FLOW_TASK", "")
-	out := captureStdout(t, func() {
-		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
-			t.Fatalf("rc=%d", rc)
+// TestHookUserPromptSubmitIsNoOp pins the v0.1.0-alpha.7 contract:
+// the UserPromptSubmit hook is a permanent no-op — exits 0 with no
+// stdout regardless of FLOW_TASK state. Kept around only for forward
+// compatibility with stale settings.json entries on older installs.
+// `flow skill install` actively removes the entry on upgrade.
+func TestHookUserPromptSubmitIsNoOp(t *testing.T) {
+	for _, flowTask := range []string{"", "some-slug"} {
+		t.Setenv("FLOW_TASK", flowTask)
+		out := captureStdout(t, func() {
+			if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
+				t.Fatalf("FLOW_TASK=%q: rc=%d", flowTask, rc)
+			}
+		})
+		if strings.TrimSpace(out) != "" {
+			t.Errorf("FLOW_TASK=%q: expected empty stdout, got:\n%s", flowTask, out)
 		}
-	})
-	var parsed struct {
-		HookSpecificOutput struct {
-			HookEventName     string `json:"hookEventName"`
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
-	}
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		t.Fatalf("parse hook output: %v\nraw: %s", err, out)
-	}
-	if parsed.HookSpecificOutput.HookEventName != "UserPromptSubmit" {
-		t.Errorf("hookEventName = %q, want UserPromptSubmit",
-			parsed.HookSpecificOutput.HookEventName)
-	}
-	ctx := parsed.HookSpecificOutput.AdditionalContext
-	for _, want := range []string{
-		"already tracks",
-		"`flow` skill",
-		"Skill tool",
-		"knowledge base",
-		"AskUserQuestion",
-		"existing flow task",
-		"create a new one",
-		"~/.flow/kb/",
-		"don't recognize",
-	} {
-		if !strings.Contains(ctx, want) {
-			t.Errorf("UserPromptSubmit ambient hint missing %q; got:\n%s", want, ctx)
-		}
-	}
-	// Must NOT mention "substantive" — see SessionStart test for the
-	// rationale (don't prime Claude on the rejected gate).
-	if strings.Contains(ctx, "substantive") {
-		t.Errorf("UserPromptSubmit hint must not mention 'substantive'; got:\n%s", ctx)
-	}
-}
-
-// TestHookUserPromptSubmitBoundIsNoOp pins the bound-session contract:
-// when FLOW_TASK is set, the hook exits 0 with no output. The
-// SessionStart hook already loaded full task context; repeating it on
-// every prompt would be noisy and expensive.
-func TestHookUserPromptSubmitBoundIsNoOp(t *testing.T) {
-	t.Setenv("FLOW_TASK", "some-slug")
-	out := captureStdout(t, func() {
-		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
-			t.Fatalf("rc=%d", rc)
-		}
-	})
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("expected empty stdout when FLOW_TASK is set, got:\n%s", out)
 	}
 }
 

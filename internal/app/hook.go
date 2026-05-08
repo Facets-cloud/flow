@@ -169,39 +169,22 @@ func emitHookContext(event, ctx string) int {
 	return 0
 }
 
-// cmdHookUserPromptSubmit implements `flow hook user-prompt-submit`.
-// In ad-hoc sessions (FLOW_TASK unset) it emits a directive instructing
-// Claude to invoke the flow skill BEFORE responding and to apply
-// §4.14. No keyword gate — the directive fires on every prompt because
-// users describe substantive work in their own words ("help me build
-// X", "fix this bug") and won't say "create a task" themselves.
+// cmdHookUserPromptSubmit is a permanent no-op kept only for forward
+// compatibility with stale `~/.claude/settings.json` entries that
+// reference `flow hook user-prompt-submit`. The hook used to emit a
+// per-prompt skill nudge in ad-hoc sessions, but the per-turn token
+// cost of injecting ~200 words of additionalContext on every prompt
+// outweighed the marginal value over the SessionStart hook.
 //
-// In bound sessions (FLOW_TASK set) it exits 0 with no output. The
-// SessionStart hook already loaded full task context for those, and
-// repeating that on every prompt would be noisy and expensive.
+// `flow skill install` (and the auto-upgrade path) now actively
+// remove any UserPromptSubmit entry from settings.json, so this code
+// path should not be hit on upgraded installs. Kept here so users on
+// older binaries with stale settings entries don't see hook errors
+// in the meantime.
 func cmdHookUserPromptSubmit(args []string) int {
 	fs := flagSet("hook user-prompt-submit")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if os.Getenv("FLOW_TASK") != "" {
-		// Bound session — no-op.
-		return 0
-	}
-	hint := "The user already tracks their work and knowledge in flow (a personal " +
-		"task/session manager with a central knowledge base of durable facts about " +
-		"them, their org, and their work) and this Claude session is unbound. Their " +
-		"tasks and KB already exist. Before responding: invoke the `flow` skill via " +
-		"the Skill tool if you haven't already this session — it is the operating " +
-		"manual for capturing work as flow tasks, logging progress, and keeping the " +
-		"user's KB current. When the user starts any work in this session, before " +
-		"doing it, confirm with them via AskUserQuestion: is this part of an existing " +
-		"flow task, or should we create a new one? The user's work belongs in flow — " +
-		"don't silently proceed in an unbound transcript. " +
-		"If the user's wording is non-standard or uses names/codenames/tools you " +
-		"don't recognize, consult flow's KB (~/.flow/kb/), project briefs " +
-		"(~/.flow/projects/), and task briefs (~/.flow/tasks/) before guessing or " +
-		"asking. The skill's §4.10 governs lazy-loading so you don't read everything " +
-		"every turn."
-	return emitHookContext("UserPromptSubmit", hint)
+	return 0
 }
