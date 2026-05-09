@@ -158,10 +158,10 @@ func TestSkillUninstallIdempotent(t *testing.T) {
 	}
 }
 
-// TestSkillInstallWritesBothHooks verifies install wires up BOTH the
-// SessionStart hook (existing behavior) and the new UserPromptSubmit
-// hook into ~/.claude/settings.json.
-func TestSkillInstallWritesBothHooks(t *testing.T) {
+// TestSkillInstallWritesSessionStartHook verifies install wires up the
+// SessionStart hook into ~/.claude/settings.json. The UserPromptSubmit
+// hook was retired in v0.1.0-alpha.7 — install MUST NOT add it.
+func TestSkillInstallWritesSessionStartHook(t *testing.T) {
 	home := withTempHome(t)
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
@@ -174,14 +174,15 @@ func TestSkillInstallWritesBothHooks(t *testing.T) {
 	if !hookEventReferencesCommand(hooks, "SessionStart", "flow hook session-start") {
 		t.Errorf("SessionStart hook missing or wrong command: %#v", hooks["SessionStart"])
 	}
-	if !hookEventReferencesCommand(hooks, "UserPromptSubmit", "flow hook user-prompt-submit") {
-		t.Errorf("UserPromptSubmit hook missing or wrong command: %#v", hooks["UserPromptSubmit"])
+	// UserPromptSubmit must not be installed by fresh install.
+	if hookEventReferencesCommand(hooks, "UserPromptSubmit", "flow hook user-prompt-submit") {
+		t.Errorf("install should NOT add UserPromptSubmit hook; got %#v", hooks["UserPromptSubmit"])
 	}
 }
 
 // TestSkillInstallIsIdempotent verifies a second install --force does
-// not duplicate either hook entry. Past regressions append duplicates
-// silently; pin against that.
+// not duplicate the SessionStart entry. Past regressions append
+// duplicates silently; pin against that.
 func TestSkillInstallIsIdempotent(t *testing.T) {
 	home := withTempHome(t)
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
@@ -192,17 +193,103 @@ func TestSkillInstallIsIdempotent(t *testing.T) {
 	}
 	settings := readSettings(t, filepath.Join(home, ".claude", "settings.json"))
 	hooks, _ := settings["hooks"].(map[string]any)
-	for _, event := range []string{"SessionStart", "UserPromptSubmit"} {
-		entries, _ := hooks[event].([]any)
-		if got := countMatchingHookEntries(entries, expectedCommand(event)); got != 1 {
-			t.Errorf("%s: got %d matching entries, want 1", event, got)
-		}
+	entries, _ := hooks["SessionStart"].([]any)
+	if got := countMatchingHookEntries(entries, expectedCommand("SessionStart")); got != 1 {
+		t.Errorf("SessionStart: got %d matching entries, want 1", got)
 	}
 }
 
-// TestSkillUninstallRemovesBothHooks verifies uninstall strips both
-// hook entries and ends with an empty hooks map (or no hooks key).
-func TestSkillUninstallRemovesBothHooks(t *testing.T) {
+// TestSkillInstallRemovesStaleUserPromptSubmit verifies the upgrade
+// path: an existing settings.json with a UserPromptSubmit hook entry
+// (legacy install from <= v0.1.0-alpha.6) gets that entry removed by
+// `flow skill install --force`, even on a fresh skill install.
+func TestSkillInstallRemovesStaleUserPromptSubmit(t *testing.T) {
+	home := withTempHome(t)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := `{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "flow hook user-prompt-submit"}]}
+    ]
+  }
+}`
+	if err := os.WriteFile(settingsPath, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	settings := readSettings(t, settingsPath)
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hookEventReferencesCommand(hooks, "UserPromptSubmit", "flow hook user-prompt-submit") {
+		t.Errorf("install should remove stale UserPromptSubmit hook; got %#v", hooks["UserPromptSubmit"])
+	}
+	// SessionStart should still get installed normally.
+	if !hookEventReferencesCommand(hooks, "SessionStart", "flow hook session-start") {
+		t.Errorf("SessionStart hook missing after install: %#v", hooks["SessionStart"])
+	}
+}
+
+// TestSkillInstallPreservesUnrelatedHooks pins the safety property:
+// removing flow's UserPromptSubmit hook MUST NOT touch other commands
+// the user has wired under UserPromptSubmit (e.g. their own scripts),
+// and MUST NOT touch other event keys (SessionEnd, PreToolUse, etc.).
+func TestSkillInstallPreservesUnrelatedHooks(t *testing.T) {
+	home := withTempHome(t)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mixed := `{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "flow hook user-prompt-submit"}]},
+      {"hooks": [{"type": "command", "command": "my-custom-tool --watch"}]}
+    ],
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "user-pretool-script"}]}
+    ]
+  },
+  "someUnrelatedKey": "preserve-me"
+}`
+	if err := os.WriteFile(settingsPath, []byte(mixed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	settings := readSettings(t, settingsPath)
+
+	// flow's UPS entry gone; user's UPS entry preserved.
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hookEventReferencesCommand(hooks, "UserPromptSubmit", "flow hook user-prompt-submit") {
+		t.Errorf("flow UPS hook should be removed; got %#v", hooks["UserPromptSubmit"])
+	}
+	if !hookEventReferencesCommand(hooks, "UserPromptSubmit", "my-custom-tool --watch") {
+		t.Errorf("user's UPS hook MUST be preserved; got %#v", hooks["UserPromptSubmit"])
+	}
+
+	// PreToolUse untouched.
+	if !hookEventReferencesCommand(hooks, "PreToolUse", "user-pretool-script") {
+		t.Errorf("PreToolUse hook MUST be preserved; got %#v", hooks["PreToolUse"])
+	}
+
+	// Top-level non-hook key untouched.
+	if v, _ := settings["someUnrelatedKey"].(string); v != "preserve-me" {
+		t.Errorf("unrelated top-level key should be preserved, got %v", settings["someUnrelatedKey"])
+	}
+}
+
+// TestSkillUninstallRemovesSessionStartHook verifies uninstall strips
+// the SessionStart entry. (The UserPromptSubmit hook is no longer
+// installed, so its absence after uninstall is verified by the
+// install-side tests.)
+func TestSkillUninstallRemovesSessionStartHook(t *testing.T) {
 	home := withTempHome(t)
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)

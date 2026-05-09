@@ -121,7 +121,10 @@ func maybeAutoUpgradeSkill() {
 	}
 	_ = writeSkillVersion(Version)
 	_, _ = installSessionStartHook()
-	_, _ = installUserPromptSubmitHook()
+	// UserPromptSubmit hook was removed in v0.1.0-alpha.7 — the
+	// per-prompt token cost wasn't worth the marginal value. Actively
+	// uninstall any stale entry left behind by older binaries.
+	_, _ = uninstallUserPromptSubmitHook()
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
@@ -194,14 +197,16 @@ func skillInstall(args []string, forceDefault bool) int {
 	} else {
 		fmt.Println("SessionStart hook already installed — leaving as is")
 	}
-	if added, err := installUserPromptSubmitHook(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install UserPromptSubmit hook: %v\n", err)
+	// UserPromptSubmit hook was removed in v0.1.0-alpha.7. Actively
+	// uninstall any stale entry left behind by older binaries so a
+	// fresh `flow skill install` (or `update`) leaves a clean
+	// settings.json.
+	if removed, err := uninstallUserPromptSubmitHook(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not remove stale UserPromptSubmit hook: %v\n", err)
 		return 0
-	} else if added {
+	} else if removed {
 		settings, _ := userSettingsPath()
-		fmt.Printf("installed UserPromptSubmit hook in %s (nudges flow skill on every ad-hoc prompt)\n", settings)
-	} else {
-		fmt.Println("UserPromptSubmit hook already installed — leaving as is")
+		fmt.Printf("removed stale UserPromptSubmit hook from %s (no longer used)\n", settings)
 	}
 	return 0
 }
@@ -261,17 +266,11 @@ func uninstallSessionStartHook() (bool, error) {
 	return uninstallClaudeHook("SessionStart", hookCommand)
 }
 
-// installUserPromptSubmitHook idempotently adds the flow
-// UserPromptSubmit hook. Fires on every user prompt; the hook command
-// itself decides whether to emit additionalContext (FLOW_TASK unset)
-// or no-op (FLOW_TASK set).
-func installUserPromptSubmitHook() (bool, error) {
-	// UserPromptSubmit doesn't take a matcher.
-	return installClaudeHook("UserPromptSubmit", "", userPromptSubmitHookCommand)
-}
-
-// uninstallUserPromptSubmitHook removes the flow UserPromptSubmit hook
-// entry. Thin wrapper around uninstallClaudeHook.
+// uninstallUserPromptSubmitHook removes any stale flow UserPromptSubmit
+// hook entry from ~/.claude/settings.json. The hook itself was
+// removed in v0.1.0-alpha.7 — see cmdHookUserPromptSubmit. Both
+// `flow skill install` and `maybeAutoUpgradeSkill` call this on every
+// upgrade so existing-user installs converge to a clean settings.json.
 func uninstallUserPromptSubmitHook() (bool, error) {
 	return uninstallClaudeHook("UserPromptSubmit", userPromptSubmitHookCommand)
 }

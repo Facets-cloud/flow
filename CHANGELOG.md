@@ -7,6 +7,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Removed
+
+- **UserPromptSubmit hook.** Per-prompt skill nudge in ad-hoc Claude
+  sessions retired — the ~200 words of `additionalContext` injected
+  on every user prompt cost more in tokens than it returned in
+  marginal §4.14 reliability over the SessionStart hook alone. The
+  command itself (`flow hook user-prompt-submit`) is now a permanent
+  no-op so any stale entry left behind in older `~/.claude/settings.json`
+  files doesn't error; both `flow skill install` and the auto-upgrade
+  path actively remove the entry, leaving any unrelated user-defined
+  hooks in the same event untouched.
+
 ## [0.1.0-alpha.6] — 2026-05-08
 
 ### Added
