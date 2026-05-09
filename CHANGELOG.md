@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] — 2026-05-09
+
 ### Removed
 
 - **UserPromptSubmit hook.** Per-prompt skill nudge in ad-hoc Claude
