@@ -165,6 +165,123 @@ func TestIsAccessibilityDenied(t *testing.T) {
 	}
 }
 
+// TestFocusSessionEmptyID short-circuits without touching ps.
+func TestFocusSessionEmptyID(t *testing.T) {
+	psCalled := false
+	old := PSRunner
+	PSRunner = func() ([]byte, error) { psCalled = true; return nil, nil }
+	t.Cleanup(func() { PSRunner = old })
+
+	focused, err := FocusSession("")
+	if focused || err != nil {
+		t.Errorf("FocusSession(\"\") = (%v, %v); want (false, nil)", focused, err)
+	}
+	if psCalled {
+		t.Error("PSRunner should not be called for empty session id")
+	}
+}
+
+// TestFocusSessionMatchesAndFocuses verifies the happy path drives
+// osascript with the right tty against Terminal.app's dictionary.
+func TestFocusSessionMatchesAndFocuses(t *testing.T) {
+	const uuid = "11111111-2222-4333-8444-555555555555"
+	const psOutput = `  PID TTY      COMMAND
+12345 ttys012  /Users/me/.bun/bin/claude --session-id 11111111-2222-4333-8444-555555555555
+`
+	stubPS(t, psOutput, nil)
+	var captured []string
+	stubRunnerOutput(t, func(args []string) ([]byte, error) {
+		captured = args
+		return []byte("ok\n"), nil
+	})
+
+	focused, err := FocusSession(uuid)
+	if err != nil || !focused {
+		t.Fatalf("FocusSession = (%v, %v); want (true, nil)", focused, err)
+	}
+	if len(captured) < 2 {
+		t.Fatalf("RunnerOutput called with %d args; want >=2", len(captured))
+	}
+	script := captured[1]
+	if !strings.Contains(script, `tell application "Terminal"`) {
+		t.Errorf("script does not target Terminal.app: %s", script)
+	}
+	if !strings.Contains(script, `if tty of t is "/dev/ttys012"`) {
+		t.Errorf("script does not match /dev/ttys012: %s", script)
+	}
+}
+
+// TestFocusSessionScriptMissReturnsFalse — ps found a match but the
+// AppleScript walked all tabs without finding the tty.
+func TestFocusSessionScriptMissReturnsFalse(t *testing.T) {
+	const uuid = "11111111-2222-4333-8444-555555555555"
+	stubPS(t, `  PID TTY      COMMAND
+12345 ttys012  /usr/local/bin/claude --session-id 11111111-2222-4333-8444-555555555555
+`, nil)
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte("miss"), nil })
+
+	focused, err := FocusSession(uuid)
+	if focused || err != nil {
+		t.Errorf("got (%v, %v); want (false, nil) for script miss", focused, err)
+	}
+}
+
+// TestFocusSessionPSError surfaces ps failures.
+func TestFocusSessionPSError(t *testing.T) {
+	stubPS(t, "", errors.New("ps blew up"))
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	if focused || err == nil {
+		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
+	}
+}
+
+// TestFocusSessionOsascriptError surfaces script-runtime failures
+// distinct from "no match".
+func TestFocusSessionOsascriptError(t *testing.T) {
+	const uuid = "11111111-2222-4333-8444-555555555555"
+	stubPS(t, `  PID TTY      COMMAND
+12345 ttys012  /usr/local/bin/claude --session-id 11111111-2222-4333-8444-555555555555
+`, nil)
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return nil, errors.New("osascript exit 1") })
+
+	focused, err := FocusSession(uuid)
+	if focused || err == nil {
+		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
+	}
+}
+
+// TestFocusSessionSkipsNoControllingTTY ignores claude rows whose tty is "??".
+func TestFocusSessionSkipsNoControllingTTY(t *testing.T) {
+	const uuid = "11111111-2222-4333-8444-555555555555"
+	stubPS(t, `  PID TTY      COMMAND
+12345 ??       /usr/local/bin/claude --session-id 11111111-2222-4333-8444-555555555555
+`, nil)
+	osCalled := false
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { osCalled = true; return nil, nil })
+
+	focused, err := FocusSession(uuid)
+	if focused || err != nil {
+		t.Errorf("got (%v, %v); want (false, nil)", focused, err)
+	}
+	if osCalled {
+		t.Error("osascript should not be called when tty is ??")
+	}
+}
+
+func stubPS(t *testing.T, out string, retErr error) {
+	t.Helper()
+	old := PSRunner
+	PSRunner = func() ([]byte, error) { return []byte(out), retErr }
+	t.Cleanup(func() { PSRunner = old })
+}
+
+func stubRunnerOutput(t *testing.T, fn func([]string) ([]byte, error)) {
+	t.Helper()
+	old := RunnerOutput
+	RunnerOutput = fn
+	t.Cleanup(func() { RunnerOutput = old })
+}
+
 // TestShellQuote is a sanity check on the local helper — same contract
 // as iterm.ShellQuote.
 func TestShellQuote(t *testing.T) {

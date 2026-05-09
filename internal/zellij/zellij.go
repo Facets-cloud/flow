@@ -28,8 +28,10 @@
 package zellij
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -43,6 +45,13 @@ var Runner = func(args []string) error {
 		return fmt.Errorf("zellij failed: %v: %s", err, string(out))
 	}
 	return nil
+}
+
+// RunnerOutput executes zellij and returns stdout. Used by FocusSession
+// to read `zellij action list-panes --all --json`. Separate var from
+// Runner so existing SpawnTab tests stay untouched.
+var RunnerOutput = func(args []string) ([]byte, error) {
+	return exec.Command("zellij", args...).Output()
 }
 
 // SpawnTab opens a new zellij tab in the current session, sets its
@@ -72,6 +81,87 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	flat := strings.ReplaceAll(command, "\n", " ")
 	line := " " + envPrefix + flat + "\n"
 	return Runner([]string{"action", "write-chars", line})
+}
+
+// FocusSession tries to focus the zellij pane currently running
+// `claude` with the given session UUID. Returns (true, nil) on focus,
+// (false, nil) if no pane in the current zellij session matches, and
+// (false, err) only on a backend failure (zellij CLI errored or
+// returned malformed JSON).
+//
+// Mechanism: `zellij action list-panes --all --json` returns every
+// pane's `pane_command` (the actual command line of the running
+// process). We scan for a pane whose command contains
+// `claude --session-id <uuid>` or `--resume <uuid>`, then call
+// `zellij action focus-pane-id terminal_<id>` to switch to it.
+//
+// Limitation: list-panes covers only the *current* zellij session.
+// If the user opened the task tab from a different zellij session,
+// this returns (false, nil) and the caller falls through to the
+// existing "running elsewhere" error.
+func FocusSession(sessionID string) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+	out, err := RunnerOutput([]string{"action", "list-panes", "--all", "--json"})
+	if err != nil {
+		return false, fmt.Errorf("zellij list-panes: %w", err)
+	}
+	paneID, ok, err := paneIDForClaudeSession(out, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if err := Runner([]string{"action", "focus-pane-id", fmt.Sprintf("terminal_%d", paneID)}); err != nil {
+		return false, fmt.Errorf("zellij focus-pane-id: %w", err)
+	}
+	return true, nil
+}
+
+// paneInfo is the subset of zellij's list-panes JSON we care about.
+// Pane records have many more fields (geometry, plugin metadata, etc.)
+// but only id, is_plugin, and pane_command matter for focus matching.
+type paneInfo struct {
+	ID          int    `json:"id"`
+	IsPlugin    bool   `json:"is_plugin"`
+	PaneCommand string `json:"pane_command"`
+}
+
+// claudeSessionRowRe matches `claude` invocations carrying a session
+// UUID in the same shape as the iterm/terminal regex.
+var claudeSessionRowRe = regexp.MustCompile(
+	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
+)
+
+// paneIDForClaudeSession parses zellij list-panes JSON and returns the
+// pane id of the first non-plugin pane whose pane_command runs
+// `claude` with the given session UUID. Returns (0, false, nil) if no
+// match. Returns (0, false, err) on JSON parse failure.
+func paneIDForClaudeSession(jsonBytes []byte, sessionID string) (int, bool, error) {
+	var panes []paneInfo
+	if err := json.Unmarshal(jsonBytes, &panes); err != nil {
+		return 0, false, fmt.Errorf("parse list-panes JSON: %w", err)
+	}
+	needle := strings.ToLower(sessionID)
+	for _, p := range panes {
+		if p.IsPlugin || p.PaneCommand == "" {
+			continue
+		}
+		if !strings.Contains(p.PaneCommand, "claude") {
+			continue
+		}
+		matches := claudeSessionRowRe.FindStringSubmatch(p.PaneCommand)
+		if len(matches) < 2 {
+			continue
+		}
+		if strings.ToLower(matches[1]) != needle {
+			continue
+		}
+		return p.ID, true, nil
+	}
+	return 0, false, nil
 }
 
 // ShellQuote wraps s in single quotes with proper escaping. Same

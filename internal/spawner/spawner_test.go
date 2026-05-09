@@ -259,6 +259,91 @@ func TestSpawnTabRoutesToWarp(t *testing.T) {
 	}
 }
 
+// TestFocusSessionRoutesToITerm — when Detect() resolves to iTerm,
+// FocusSession invokes the iterm backend.
+func TestFocusSessionRoutesToITerm(t *testing.T) {
+	Override = BackendITerm
+	t.Cleanup(func() { Override = "" })
+
+	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*itermCalled {
+		t.Error("expected iterm focus path to be called")
+	}
+	if *terminalCalled || *zellijCalled {
+		t.Error("only iterm focus path should be called")
+	}
+}
+
+// TestFocusSessionRoutesToTerminal — Override=Terminal hits the
+// terminal backend.
+func TestFocusSessionRoutesToTerminal(t *testing.T) {
+	Override = BackendTerminal
+	t.Cleanup(func() { Override = "" })
+
+	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*terminalCalled {
+		t.Error("expected terminal focus path to be called")
+	}
+	if *itermCalled || *zellijCalled {
+		t.Error("only terminal focus path should be called")
+	}
+}
+
+// TestFocusSessionRoutesToZellij — Override=Zellij hits the zellij
+// backend.
+func TestFocusSessionRoutesToZellij(t *testing.T) {
+	Override = BackendZellij
+	t.Cleanup(func() { Override = "" })
+
+	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*zellijCalled {
+		t.Error("expected zellij focus path to be called")
+	}
+	if *itermCalled || *terminalCalled {
+		t.Error("only zellij focus path should be called")
+	}
+}
+
+// stubAllFocusBackends replaces the per-backend PSRunner / RunnerOutput
+// vars with stubs that flip a bool when the backend's FocusSession
+// path runs. Restores originals on cleanup.
+func stubAllFocusBackends(t *testing.T) (*bool, *bool, *bool) {
+	t.Helper()
+	var itermCalled, terminalCalled, zellijCalled bool
+
+	oldITermPS := iterm.PSRunner
+	iterm.PSRunner = func() ([]byte, error) {
+		itermCalled = true
+		return []byte(""), nil // empty ps output -> ttyForClaudeSession returns "" -> (false, nil)
+	}
+	t.Cleanup(func() { iterm.PSRunner = oldITermPS })
+
+	oldTermPS := terminal.PSRunner
+	terminal.PSRunner = func() ([]byte, error) {
+		terminalCalled = true
+		return []byte(""), nil
+	}
+	t.Cleanup(func() { terminal.PSRunner = oldTermPS })
+
+	oldZellijRO := zellij.RunnerOutput
+	zellij.RunnerOutput = func(args []string) ([]byte, error) {
+		zellijCalled = true
+		return []byte("[]"), nil // empty pane list -> (false, nil)
+	}
+	t.Cleanup(func() { zellij.RunnerOutput = oldZellijRO })
+
+	return &itermCalled, &terminalCalled, &zellijCalled
+}
+
 // TestShellQuoteParity makes sure the re-exported helper matches
 // every backend's implementation. All backends quote identically.
 func TestShellQuoteParity(t *testing.T) {
