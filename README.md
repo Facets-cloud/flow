@@ -99,23 +99,7 @@ brew install --cask Facets-cloud/tap/flow
 flow init
 ```
 
-### Quick Install (macOS & Linux)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Facets-cloud/flow/main/install.sh | bash
-flow init
-```
-
-> [!IMPORTANT]
-> **macOS Users**: Since the binary is currently unsigned, macOS will "quarantine" it. The install script automatically tries to remove this flag, but if you see a "Developer cannot be verified" error, run:
-> `xattr -d com.apple.quarantine $(which flow)`
-
-### Windows (PowerShell)
-
-```powershell
-iwr https://raw.githubusercontent.com/Facets-cloud/flow/main/install.ps1 | iex
-flow init
-```
 
 ### via Claude Code
 
