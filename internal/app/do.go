@@ -100,11 +100,34 @@ func cmdDo(args []string) int {
 
 	// Live-session guard: if this task's session_id is already running
 	// in another claude process (e.g., the user has a tab open for it),
-	// refuse to spawn a duplicate. --force overrides. The check is
+	// try to focus that tab. If the focus succeeds, exit 0 — the user
+	// gets switched to the existing tab. If the focus path can't find
+	// the tab (different terminal app, different zellij session, etc.)
+	// or itself errors, fall back to refusing the spawn so the user
+	// knows to switch manually or pass --force. The ps check is
 	// best-effort: ps failures fall through silently rather than block.
+	//
+	// Duplicate detection: if more than one claude process is running
+	// the same session UUID (possible via prior --force, or a manual
+	// `claude --resume <uuid>` in another tab), warn before focusing.
+	// Both processes write to the same session jsonl and can race —
+	// the user almost certainly wants to know.
 	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
 		if live, err := liveClaudeSessions(); err == nil {
 			if live[strings.ToLower(task.SessionID.String)] {
+				if n := countClaudeProcessesForSession(task.SessionID.String); n > 1 {
+					fmt.Fprintf(os.Stderr,
+						"warning: %d claude processes are running session %s — both write to the same transcript and may race; close duplicates if unintended\n",
+						n, task.SessionID.String)
+				}
+				focused, ferr := spawner.FocusSession(task.SessionID.String)
+				if focused {
+					fmt.Printf("Already open: %s — switched to existing tab\n", task.Slug)
+					return 0
+				}
+				if ferr != nil {
+					fmt.Fprintf(os.Stderr, "warning: focus attempt failed: %v\n", ferr)
+				}
 				fmt.Fprintf(os.Stderr,
 					"error: task %q has a live Claude session (%s) running elsewhere — switch to that tab, or pass --force to open another\n",
 					task.Slug, task.SessionID.String)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -63,6 +64,49 @@ func TestLiveClaudeSessionsIgnoresNonClaude(t *testing.T) {
 	}
 	if len(live) != 0 {
 		t.Errorf("non-claude line should not contribute; got %v", live)
+	}
+}
+
+func TestCountClaudeProcessesForSessionEmptyID(t *testing.T) {
+	stubPS(t, "  PID COMMAND\n12345 /bin/claude --session-id 11111111-2222-4333-8444-555555555555\n")
+	if got := countClaudeProcessesForSession(""); got != 0 {
+		t.Errorf("count for empty UUID = %d, want 0", got)
+	}
+}
+
+func TestCountClaudeProcessesForSessionSingle(t *testing.T) {
+	const psOutput = `  PID COMMAND
+12345 /bin/claude --session-id 11111111-2222-4333-8444-555555555555
+`
+	stubPS(t, psOutput)
+	if got := countClaudeProcessesForSession("11111111-2222-4333-8444-555555555555"); got != 1 {
+		t.Errorf("count = %d, want 1", got)
+	}
+}
+
+// TestCountClaudeProcessesForSessionDuplicates pins the duplicate
+// detection behavior: two claude processes running the same UUID
+// (possible via prior --force) yield a count of 2 so do.go can warn.
+func TestCountClaudeProcessesForSessionDuplicates(t *testing.T) {
+	const psOutput = `  PID COMMAND
+12345 /bin/claude --session-id 11111111-2222-4333-8444-555555555555
+12346 /bin/claude --resume 11111111-2222-4333-8444-555555555555
+12347 /bin/claude --session-id ffffffff-ffff-4fff-8fff-ffffffffffff
+`
+	stubPS(t, psOutput)
+	if got := countClaudeProcessesForSession("11111111-2222-4333-8444-555555555555"); got != 2 {
+		t.Errorf("count for duplicates = %d, want 2", got)
+	}
+}
+
+func TestCountClaudeProcessesForSessionPSError(t *testing.T) {
+	old := psRunner
+	psRunner = func() ([]byte, error) {
+		return nil, errors.New("ps blew up")
+	}
+	t.Cleanup(func() { psRunner = old })
+	if got := countClaudeProcessesForSession("11111111-2222-4333-8444-555555555555"); got != 0 {
+		t.Errorf("count on ps error = %d, want 0 (best-effort)", got)
 	}
 }
 

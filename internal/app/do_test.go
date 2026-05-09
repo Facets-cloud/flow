@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,8 +60,12 @@ func seedTask(t *testing.T, slug string) {
 }
 
 // TestCmdDoLiveSessionGuard checks that a task whose session_id is in
-// the live-claude-process set refuses to spawn unless --force is passed.
-// This is feature 3 of the bundled fields/sessions task.
+// the live-claude-process set refuses to spawn (when focus can't find
+// the tab) unless --force is passed. This is feature 3 of the
+// bundled fields/sessions task. The focus path is short-circuited by
+// stubbing iterm.PSRunner with empty output so ttyForClaudeSession
+// returns "" → FocusSession returns (false, nil) → fall through to
+// the original error message.
 func TestCmdDoLiveSessionGuard(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "live-task")
@@ -75,24 +82,154 @@ func TestCmdDoLiveSessionGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Make ps say this UUID is alive.
+	// Make ps (the app-level psRunner) say this UUID is alive so the
+	// live guard fires.
 	stubPS(t, "  PID COMMAND\n12345 /bin/claude --session-id "+pinnedSID+"\n")
+
+	// Make iterm.PSRunner (the focus-path probe) return no rows so the
+	// focus attempt deterministically returns (false, nil) and we fall
+	// through to the original "running elsewhere" error.
+	oldFocusPS := iterm.PSRunner
+	iterm.PSRunner = func() ([]byte, error) { return []byte(""), nil }
+	t.Cleanup(func() { iterm.PSRunner = oldFocusPS })
 
 	count, _ := stubITerm(t)
 	if rc := cmdDo([]string{"live-task"}); rc != 1 {
-		t.Errorf("cmdDo: rc=%d, want 1 when live session blocks spawn", rc)
+		t.Errorf("cmdDo: rc=%d, want 1 when live session blocks spawn (focus miss)", rc)
 	}
 	if *count != 0 {
 		t.Errorf("iterm spawn count = %d, want 0 (guard should block)", *count)
 	}
 
-	// --force should bypass the guard. iTerm runner is still stubbed
-	// from above, so spawning will succeed.
+	// --force should bypass the guard (and the focus attempt). iTerm
+	// runner is still stubbed from above, so spawning will succeed.
 	if rc := cmdDo([]string{"live-task", "--force"}); rc != 0 {
 		t.Errorf("cmdDo --force: rc=%d, want 0 (guard bypassed)", rc)
 	}
 	if *count != 1 {
 		t.Errorf("iterm spawn count after --force = %d, want 1", *count)
+	}
+}
+
+// TestCmdDoLiveSessionFocusesExistingTab pins the new behavior: when a
+// task's session is already running AND the active backend can locate
+// its tab, `flow do` focuses that tab and exits 0 instead of erroring.
+// No new tab is spawned.
+func TestCmdDoLiveSessionFocusesExistingTab(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "open-task")
+
+	const pinnedSID = "abcdef12-3456-4789-8abc-def012345678"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug='open-task'`,
+		pinnedSID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// App-level liveClaudeSessions sees the UUID as alive.
+	stubPS(t, "  PID COMMAND\n12345 /bin/claude --session-id "+pinnedSID+"\n")
+
+	// iterm focus path: ps yields a row with tty, then osascript
+	// reports "ok" → FocusSession returns (true, nil).
+	oldFocusPS := iterm.PSRunner
+	iterm.PSRunner = func() ([]byte, error) {
+		return []byte("  PID TTY      COMMAND\n12345 ttys012  /bin/claude --session-id " + pinnedSID + "\n"), nil
+	}
+	t.Cleanup(func() { iterm.PSRunner = oldFocusPS })
+
+	oldRunnerOut := iterm.RunnerOutput
+	iterm.RunnerOutput = func(args []string) ([]byte, error) { return []byte("ok\n"), nil }
+	t.Cleanup(func() { iterm.RunnerOutput = oldRunnerOut })
+
+	count, _ := stubITerm(t)
+	if rc := cmdDo([]string{"open-task"}); rc != 0 {
+		t.Errorf("cmdDo when focus succeeds: rc=%d, want 0", rc)
+	}
+	if *count != 0 {
+		t.Errorf("iterm spawn count = %d, want 0 (focus should not spawn)", *count)
+	}
+}
+
+// TestCmdDoLiveSessionDuplicateProcessesWarn covers the duplicate-tab
+// detection path. ps reports two claude processes running the same
+// session UUID; cmdDo should emit a warning to stderr (so the user
+// knows the duplicate exists and that transcript writes may race),
+// then proceed to focus the first match. We assert that focus still
+// succeeds (rc=0, no spawn) and the duplicate count surfaces in the
+// captured stderr.
+func TestCmdDoLiveSessionDuplicateProcessesWarn(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "dup-task")
+
+	const pinnedSID = "abcdef12-3456-4789-8abc-def012345678"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug='dup-task'`,
+		pinnedSID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// App-level psRunner reports TWO claude processes for the same UUID.
+	stubPS(t,
+		"  PID COMMAND\n"+
+			"12345 /bin/claude --session-id "+pinnedSID+"\n"+
+			"67890 /bin/claude --resume "+pinnedSID+"\n",
+	)
+
+	// iterm focus succeeds against the first match.
+	oldFocusPS := iterm.PSRunner
+	iterm.PSRunner = func() ([]byte, error) {
+		return []byte(
+			"  PID TTY      COMMAND\n" +
+				"12345 ttys012  /bin/claude --session-id " + pinnedSID + "\n" +
+				"67890 ttys013  /bin/claude --resume " + pinnedSID + "\n",
+		), nil
+	}
+	t.Cleanup(func() { iterm.PSRunner = oldFocusPS })
+
+	oldRunnerOut := iterm.RunnerOutput
+	iterm.RunnerOutput = func(args []string) ([]byte, error) { return []byte("ok\n"), nil }
+	t.Cleanup(func() { iterm.RunnerOutput = oldRunnerOut })
+
+	stderr := captureStderr(t)
+	count, _ := stubITerm(t)
+	if rc := cmdDo([]string{"dup-task"}); rc != 0 {
+		t.Errorf("cmdDo with duplicates: rc=%d, want 0 (focus should still succeed)", rc)
+	}
+	if *count != 0 {
+		t.Errorf("iterm spawn count = %d, want 0 (focus should not spawn)", *count)
+	}
+	got := stderr()
+	for _, want := range []string{"2 claude processes", pinnedSID, "may race"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warning missing %q\n--- stderr ---\n%s", want, got)
+		}
+	}
+}
+
+// captureStderr redirects os.Stderr through an os.Pipe for the duration
+// of the test and returns a closure that drains and returns whatever
+// was written. The original stderr is restored on Cleanup.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = origStderr
+	})
+	return func() string {
+		_ = w.Close()
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		_ = r.Close()
+		return buf.String()
 	}
 }
 
