@@ -3,6 +3,7 @@ package spawner
 import (
 	"flow/internal/iterm"
 	"flow/internal/terminal"
+	"flow/internal/zellij"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,7 @@ func TestDetectFromEnv(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.termProgram, func(t *testing.T) {
+			t.Setenv("ZELLIJ", "")
 			t.Setenv("TERM_PROGRAM", tc.termProgram)
 			Override = ""
 			if got := Detect(); got != tc.want {
@@ -36,6 +38,7 @@ func TestDetectFromEnv(t *testing.T) {
 // pins the backend regardless of TERM_PROGRAM, so individual tests can
 // pin the dispatcher without relying on env-var mutation order.
 func TestOverrideBeatsEnv(t *testing.T) {
+	t.Setenv("ZELLIJ", "")
 	t.Setenv("TERM_PROGRAM", "iTerm.app")
 	t.Cleanup(func() { Override = "" })
 
@@ -49,13 +52,26 @@ func TestOverrideBeatsEnv(t *testing.T) {
 	}
 }
 
+// TestDetectZellij verifies the ZELLIJ env var beats TERM_PROGRAM.
+// zellij sets ZELLIJ in every shell it spawns, so its presence means
+// the user is inside a zellij session regardless of which terminal
+// hosts it.
+func TestDetectZellij(t *testing.T) {
+	t.Setenv("ZELLIJ", "0")
+	t.Setenv("TERM_PROGRAM", "iTerm.app") // proves ZELLIJ wins
+	Override = ""
+	if got := Detect(); got != BackendZellij {
+		t.Errorf("Detect() with ZELLIJ=0: got %q, want %q", got, BackendZellij)
+	}
+}
+
 // TestSpawnTabRoutesToITerm asserts the iterm Runner is the one called
 // when Detect() resolves to BackendITerm.
 func TestSpawnTabRoutesToITerm(t *testing.T) {
 	Override = BackendITerm
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled := stubBothRunners(t)
+	itermCalled, terminalCalled, zellijCalled := stubAllRunners(t)
 	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
 		t.Fatalf("SpawnTab: %v", err)
 	}
@@ -65,6 +81,9 @@ func TestSpawnTabRoutesToITerm(t *testing.T) {
 	if *terminalCalled {
 		t.Error("did not expect terminal.Runner to be called")
 	}
+	if *zellijCalled {
+		t.Error("did not expect zellij.Runner to be called")
+	}
 }
 
 // TestSpawnTabRoutesToTerminal asserts the terminal Runner is the one
@@ -73,7 +92,7 @@ func TestSpawnTabRoutesToTerminal(t *testing.T) {
 	Override = BackendTerminal
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled := stubBothRunners(t)
+	itermCalled, terminalCalled, zellijCalled := stubAllRunners(t)
 	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
 		t.Fatalf("SpawnTab: %v", err)
 	}
@@ -82,6 +101,30 @@ func TestSpawnTabRoutesToTerminal(t *testing.T) {
 	}
 	if !*terminalCalled {
 		t.Error("expected terminal.Runner to be called")
+	}
+	if *zellijCalled {
+		t.Error("did not expect zellij.Runner to be called")
+	}
+}
+
+// TestSpawnTabRoutesToZellij asserts the zellij Runner is the one
+// called when Detect() resolves to BackendZellij.
+func TestSpawnTabRoutesToZellij(t *testing.T) {
+	Override = BackendZellij
+	t.Cleanup(func() { Override = "" })
+
+	itermCalled, terminalCalled, zellijCalled := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+	if *itermCalled {
+		t.Error("did not expect iterm.Runner to be called")
+	}
+	if *terminalCalled {
+		t.Error("did not expect terminal.Runner to be called")
+	}
+	if !*zellijCalled {
+		t.Error("expected zellij.Runner to be called")
 	}
 }
 
@@ -96,17 +139,17 @@ func TestShellQuoteParity(t *testing.T) {
 	}
 }
 
-// stubBothRunners replaces both backends' Runner vars with no-op stubs
-// that flip a per-runner boolean when called. Restores originals on
-// test cleanup. Returns pointers so the caller can read post-call.
-func stubBothRunners(t *testing.T) (*bool, *bool) {
+// stubAllRunners replaces all three backend Runner vars with no-op
+// stubs that flip a per-runner boolean when called. Restores
+// originals on test cleanup. Returns pointers so callers can read
+// post-call.
+func stubAllRunners(t *testing.T) (*bool, *bool, *bool) {
 	t.Helper()
-	var itermCalled, terminalCalled bool
+	var itermCalled, terminalCalled, zellijCalled bool
 
 	oldITerm := iterm.Runner
 	iterm.Runner = func(args []string) error {
 		itermCalled = true
-		// Sanity-check: every iterm script targets iTerm2.
 		if len(args) >= 2 && !strings.Contains(args[1], "iTerm2") {
 			t.Errorf("iterm script does not target iTerm2: %s", args[1])
 		}
@@ -124,5 +167,15 @@ func stubBothRunners(t *testing.T) (*bool, *bool) {
 	}
 	t.Cleanup(func() { terminal.Runner = oldTerm })
 
-	return &itermCalled, &terminalCalled
+	oldZellij := zellij.Runner
+	zellij.Runner = func(args []string) error {
+		zellijCalled = true
+		if len(args) >= 1 && args[0] != "action" {
+			t.Errorf("zellij argv does not start with 'action': %v", args)
+		}
+		return nil
+	}
+	t.Cleanup(func() { zellij.Runner = oldZellij })
+
+	return &itermCalled, &terminalCalled, &zellijCalled
 }

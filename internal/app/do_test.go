@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
+	"flow/internal/spawner"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,10 @@ import (
 // stubITerm replaces iterm.Runner with a counter + captured-script
 // recorder. Returns the counter pointer and a function that reads the
 // most recent AppleScript argument passed to osascript.
+//
+// It also pins spawner.Override to BackendITerm so the test is not
+// affected by an ambient $ZELLIJ env var (e.g. when the developer runs
+// the test suite from inside a zellij session).
 func stubITerm(t *testing.T) (*int64, func() string) {
 	t.Helper()
 	var count int64
@@ -29,6 +34,13 @@ func stubITerm(t *testing.T) (*int64, func() string) {
 		return nil
 	}
 	t.Cleanup(func() { iterm.Runner = old })
+
+	// Pin the spawner backend so ambient env vars (e.g. ZELLIJ) don't
+	// reroute SpawnTab away from iterm.Runner.
+	oldOverride := spawner.Override
+	spawner.Override = spawner.BackendITerm
+	t.Cleanup(func() { spawner.Override = oldOverride })
+
 	return &count, func() string {
 		mu.Lock()
 		defer mu.Unlock()
@@ -157,6 +169,12 @@ func TestCmdDoFreshSpawnFailureRollsBackSessionID(t *testing.T) {
 	iterm.Runner = func(args []string) error { return errors.New("simulated osascript failure") }
 	t.Cleanup(func() { iterm.Runner = old })
 
+	// Pin the spawner backend so ambient env vars (e.g. ZELLIJ) don't
+	// reroute SpawnTab away from iterm.Runner.
+	oldOverride := spawner.Override
+	spawner.Override = spawner.BackendITerm
+	t.Cleanup(func() { spawner.Override = oldOverride })
+
 	if rc := cmdDo([]string{"fail-task"}); rc != 1 {
 		t.Errorf("cmdDo on spawn failure: got rc=%d, want 1", rc)
 	}
@@ -202,6 +220,12 @@ func TestCmdDoResumeSpawnFailureKeepsSessionID(t *testing.T) {
 	old := iterm.Runner
 	iterm.Runner = func(args []string) error { return errors.New("simulated osascript failure") }
 	t.Cleanup(func() { iterm.Runner = old })
+
+	// Pin the spawner backend so ambient env vars (e.g. ZELLIJ) don't
+	// reroute SpawnTab away from iterm.Runner.
+	oldOverride := spawner.Override
+	spawner.Override = spawner.BackendITerm
+	t.Cleanup(func() { spawner.Override = oldOverride })
 
 	if rc := cmdDo([]string{"resume-fail-task"}); rc != 1 {
 		t.Errorf("cmdDo on resume spawn failure: got rc=%d, want 1", rc)
