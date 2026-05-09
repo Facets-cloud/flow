@@ -7,6 +7,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8] — 2026-05-09
+
+### Added
+
+- **zellij as a first-class spawn backend.** `flow do` now opens new
+  tabs inside the current zellij session when `$ZELLIJ` is set, via
+  `zellij action new-tab` + `zellij action write-chars`. Behavior is
+  unchanged for non-zellij users — selection priority is `$ZELLIJ` →
+  `Apple_Terminal` → `iTerm.app` → iTerm-default. Requires zellij ≥
+  0.40. Embedded skill (`SKILL.md`) wording neutralized from
+  "iTerm tab" to "terminal tab" so it reads correctly across all
+  backends; the Terminal.app Accessibility section stays backend-specific.
+  ([#21](https://github.com/Facets-cloud/flow/pull/21) by
+  [@pa](https://github.com/pa))
+
 ## [0.1.0-alpha.7] — 2026-05-09
 
 ### Removed
@@ -119,6 +134,8 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.6...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.8...HEAD
+[0.1.0-alpha.8]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.8
+[0.1.0-alpha.7]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.6
 [0.1.0-alpha.1]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.1
