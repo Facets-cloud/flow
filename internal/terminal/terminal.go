@@ -13,6 +13,7 @@ package terminal
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -26,6 +27,20 @@ var Runner = func(args []string) error {
 		return fmt.Errorf("osascript failed: %v: %s", err, string(out))
 	}
 	return nil
+}
+
+// RunnerOutput executes osascript and returns stdout. Used by
+// FocusSession when the AppleScript itself reports match/miss via its
+// stdout. Separate var from Runner so SpawnTab tests stay untouched.
+var RunnerOutput = func(args []string) ([]byte, error) {
+	return exec.Command("osascript", args...).Output()
+}
+
+// PSRunner returns the output of `ps -axo pid,tty,command`. Overridable
+// for tests. Includes tty so FocusSession can map a claude PID → tty
+// → Terminal.app tab in one pass.
+var PSRunner = func() ([]byte, error) {
+	return exec.Command("ps", "-axo", "pid,tty,command").Output()
 }
 
 // SpawnTab opens a new Terminal.app tab with the given title, cwd, and
@@ -149,6 +164,101 @@ How to grant it:
 After the grant, future "flow do" invocations from Terminal.app spawn tabs silently with no further prompts.
 
 Underlying osascript error: %w`, err)
+}
+
+// FocusSession tries to focus the Terminal.app tab whose underlying
+// process is `claude` running with `--session-id <sessionID>` or
+// `--resume <sessionID>`. Returns (true, nil) on focus, (false, nil)
+// if no matching tab was found in Terminal.app, and (false, err) only
+// on a backend (ps / osascript) failure.
+//
+// Mechanism: scan `ps -axo pid,tty,command` for a claude process whose
+// argv contains the session UUID, extract its controlling tty, then
+// drive osascript to walk every window/tab and select the one whose
+// `tty` property matches.
+func FocusSession(sessionID string) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+	tty, err := ttyForClaudeSession(sessionID)
+	if err != nil {
+		return false, err
+	}
+	if tty == "" {
+		return false, nil
+	}
+	return focusByTTY(tty)
+}
+
+// claudeSessionRowRe matches a `ps` line that has BOTH a `claude` token
+// and a `--session-id <uuid>` or `--resume <uuid>` flag.
+var claudeSessionRowRe = regexp.MustCompile(
+	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
+)
+
+// ttyForClaudeSession returns the controlling tty (e.g., "/dev/ttys012")
+// of the claude process running with the given session UUID, or "" if
+// no such process is currently running.
+func ttyForClaudeSession(sessionID string) (string, error) {
+	out, err := PSRunner()
+	if err != nil {
+		return "", fmt.Errorf("ps: %w", err)
+	}
+	needle := strings.ToLower(sessionID)
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "claude") {
+			continue
+		}
+		matches := claudeSessionRowRe.FindStringSubmatch(line)
+		if len(matches) < 2 {
+			continue
+		}
+		if strings.ToLower(matches[1]) != needle {
+			continue
+		}
+		// `ps -axo pid,tty,command` columns: pid, tty, command. After
+		// Fields() splits on whitespace, fields[1] is the tty.
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		tty := fields[1]
+		if tty == "??" || tty == "?" || tty == "" {
+			continue
+		}
+		if !strings.HasPrefix(tty, "/dev/") {
+			tty = "/dev/" + tty
+		}
+		return tty, nil
+	}
+	return "", nil
+}
+
+// focusByTTY drives Terminal.app's AppleScript dictionary to find a
+// tab whose `tty` property matches and select it. Terminal.app
+// addresses tabs at the window level (no separate session object
+// like iTerm2). The script writes "ok" on match and "miss" otherwise.
+func focusByTTY(tty string) (bool, error) {
+	safeTTY := escapeAppleScriptString(tty)
+	script := fmt.Sprintf(`tell application "Terminal"
+  activate
+  repeat with w in windows
+    repeat with t in tabs of w
+      if tty of t is "%s" then
+        set frontmost of w to true
+        set selected of t to true
+        return "ok"
+      end if
+    end repeat
+  end repeat
+  return "miss"
+end tell
+`, safeTTY)
+	out, err := RunnerOutput([]string{"-e", script})
+	if err != nil {
+		return false, fmt.Errorf("osascript: %w", err)
+	}
+	return strings.TrimSpace(string(out)) == "ok", nil
 }
 
 // ShellQuote wraps s in single quotes with proper escaping.
