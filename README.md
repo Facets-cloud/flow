@@ -323,6 +323,10 @@ Just the tool we built for ourselves.
 - [Security](SECURITY.md) — how to report issues
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/chart?repos=Facets-cloud/flow&type=date&legend=top-left)](https://www.star-history.com/?repos=Facets-cloud%2Fflow&type=date&legend=top-left)
+
 ## License
 
 [MIT](LICENSE) — © 2026 Facets Cloud
