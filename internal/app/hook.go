@@ -155,7 +155,10 @@ func emitAmbientSkillHint() int {
 	if r, err := flowRoot(); err == nil {
 		root = r
 	}
-	hint := "This Claude session is not bound to a flow task. The user already tracks " +
+	hint := "This Claude session is not bound to a flow task — this hint IS the " +
+		"binding answer. Do NOT re-probe binding with `flow show task` (no arg) " +
+		"until you've actually bound this session via `flow do --here <slug>`; " +
+		"until then it will error and waste a tool call. The user already tracks " +
 		"their work and knowledge in flow — a personal task and session manager that " +
 		"captures work as briefs, logs progress notes, resumes Claude sessions across " +
 		"days, and maintains a central knowledge base of durable facts about them, " +

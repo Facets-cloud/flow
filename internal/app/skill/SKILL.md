@@ -343,7 +343,11 @@ acceptance criteria.
 **Confirmation flow** (both paths):
 - Show the drafted brief.
 - AskUserQuestion: "Brief — Save it / Revise"
-- Save → `flow add task ...` → overwrite stub brief with content.
+- Save → `flow add task ...` → update the brief stub the binary
+  just wrote with the drafted content (use `Edit` with
+  `replace_all: true` after a single `Read`, or `Write` after a
+  single `Read` — both are 2 tool calls; pick whichever feels
+  natural).
 
 **Then, BEFORE calling `flow add task`:**
 
@@ -365,9 +369,16 @@ acceptance criteria.
 run `flow add task` until the user picks "Save it". If they pick
 "Revise", ask what to change, update the draft, and re-confirm.
 
-**After `flow add task` succeeds**, it will print the task slug and the
-absolute path to a stub `brief.md`. Use the `Write` tool to overwrite
-that file with the drafted content. Use this literal template:
+**After `flow add task` succeeds**, it will print the task slug and
+the absolute path to a stub `brief.md`. The flow is **Read once, then
+Edit/Write**: Claude's `Write` and `Edit` tools both require a prior
+`Read` of any existing file before mutating it (this is the harness's
+guard against accidental overwrites). For brand-new tasks the stub
+contents are predictable, so a single `Read` followed by either:
+- `Edit` with `replace_all: true` (replaces the whole stub body), or
+- `Write` (overwrites in full)
+
+…is the right pattern. Use this literal template:
 
 ```markdown
 # <name>
@@ -493,7 +504,8 @@ On "Yes", proceed to §4.4. On "No", stop.
 Similar to §5.2 but shorter. Sections: **What / Why / Where / Scope**.
 No "done when" (projects are ongoing containers, not completable units).
 Confirm the `work_dir`. Draft. Show. Wait for "save it". Run `flow add
-project`. Overwrite stub brief with the drafted content.
+project`, then update the stub `brief.md` with the drafted content
+(Read once, then Edit/Write — same pattern as §5.2).
 
 Do not offer `flow do` on the project itself — you `do` tasks, not
 projects.
@@ -1091,8 +1103,9 @@ same prompt.
 **Draft the brief, show to the user**, then use `AskUserQuestion`
 (header: "Brief", options: "Save it" / "Revise") to confirm. Do not
 run `flow add playbook` until the user picks "Save it". Then run it
-and overwrite the stub `brief.md` with the full content. Use the
-playbook brief template from §7.
+and overwrite the stub `brief.md` with the full content (Read once,
+then Edit/Write — same pattern as §5.2). Use the playbook brief
+template from §7.
 
 After save, use `AskUserQuestion` (header: "Run it now?", options:
 "Run it now" / "Just save the definition") to offer the first run.
@@ -1681,10 +1694,11 @@ instead.
   Why? Where? You can compress the other sections to "TBD" if they
   push back, but `What/Why/Where` are non-negotiable.
 - **Do not overwrite an existing `brief.md` without checking what's
-  there.** `flow add task` writes a stub. You overwrite that stub.
-  But if a brief.md already has real content (e.g., the user edited it
-  between add and your Write call), Read it first, merge thoughtfully,
-  and confirm with the user before writing.
+  there.** `flow add task` writes a stub. You overwrite that stub
+  (Read once, then Edit/Write). If the Read shows real content
+  rather than the expected stub (e.g. the user edited between add
+  and your call), merge thoughtfully and confirm with the user
+  before writing.
 - **Do not forget to offer progress notes.** After a long working
   session, the user will forget to log what they did. At natural
   breakpoints, proactively use `AskUserQuestion` (header:
