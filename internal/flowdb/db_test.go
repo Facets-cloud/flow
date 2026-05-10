@@ -114,7 +114,9 @@ func TestTaskCRUD(t *testing.T) {
 	if got.Slug != "work" || !got.ProjectSlug.Valid || got.ProjectSlug.String != "proj" {
 		t.Errorf("unexpected task: %+v", got)
 	}
-	insertTask(t, db, "float", "Floating", "in-progress", "high", "/tmp/float", nil)
+	// Backlog floating task (no project, no session_id — both NULL is
+	// allowed for backlog under the session-id invariant).
+	insertTask(t, db, "float", "Floating", "backlog", "high", "/tmp/float", nil)
 	floating, err := GetTask(db, "float")
 	if err != nil {
 		t.Fatalf("GetTask floating: %v", err)

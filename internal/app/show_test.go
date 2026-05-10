@@ -126,9 +126,19 @@ func TestCmdShowTaskFloating(t *testing.T) {
 
 func TestCmdShowTaskDefaultsFromEnv(t *testing.T) {
 	root, db := showListEditDB(t)
+	// `flow show task` (no arg) now resolves via reverse-lookup on
+	// $CLAUDE_CODE_SESSION_ID against tasks.session_id. Seed an
+	// in-progress task with a session_id and pin the env var so the
+	// lookup finds it.
+	const sid = "deadbeef-1111-4222-8333-444455556666"
 	insertTask(t, db, "env-task", "E", "backlog", "medium", filepath.Join(root, "x"), nil)
-	os.Setenv("FLOW_TASK", "env-task")
-	t.Cleanup(func() { os.Unsetenv("FLOW_TASK") })
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='env-task'`,
+		sid, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
 	out := captureStdout(t, func() {
 		if rc := cmdShow([]string{"task"}); rc != 0 {
 			t.Errorf("rc=%d", rc)
@@ -141,13 +151,13 @@ func TestCmdShowTaskDefaultsFromEnv(t *testing.T) {
 
 func TestCmdShowTaskMissingDefault(t *testing.T) {
 	_, _ = showListEditDB(t)
-	os.Unsetenv("FLOW_TASK")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	out := captureStdout(t, func() {
 		if rc := cmdShow([]string{"task"}); rc != 1 {
 			t.Errorf("rc=%d, want 1", rc)
 		}
 	})
-	if !strings.Contains(out, "$FLOW_TASK") {
+	if !strings.Contains(out, "CLAUDE_CODE_SESSION_ID") {
 		t.Errorf("missing env hint; out=%q", out)
 	}
 }
@@ -308,9 +318,19 @@ func TestCmdShowProjectHappyPath(t *testing.T) {
 
 func TestCmdShowProjectDefaultsFromEnv(t *testing.T) {
 	root, db := showListEditDB(t)
+	// `flow show project` (no arg) resolves the bound task's
+	// project. Seed a project, a task on that project bound to a
+	// session, then pin $CLAUDE_CODE_SESSION_ID.
+	const sid = "ca11ab1e-1111-4222-8333-444455556666"
 	insertProject(t, db, "envproj", "E", filepath.Join(root, "x"), "medium")
-	os.Setenv("FLOW_PROJECT", "envproj")
-	t.Cleanup(func() { os.Unsetenv("FLOW_PROJECT") })
+	insertTask(t, db, "envproj-task", "T", "backlog", "medium", filepath.Join(root, "x"), "envproj")
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='envproj-task'`,
+		sid, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
 	out := captureStdout(t, func() {
 		if rc := cmdShow([]string{"project"}); rc != 0 {
 			t.Errorf("rc=%d", rc)
@@ -585,9 +605,9 @@ func TestCmdShowPlaybookListsRecentRuns(t *testing.T) {
 	now := flowdb.NowISO()
 	for _, runSlug := range []string{"p--2026-04-30-10-30", "p--2026-04-30-11-00"} {
 		if _, err := db.Exec(
-			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
-			 VALUES (?, ?, 'in-progress', 'playbook_run', 'p', 'medium', ?, ?, ?)`,
-			runSlug, runSlug, wd, now, now,
+			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, session_id, created_at, updated_at)
+			 VALUES (?, ?, 'in-progress', 'playbook_run', 'p', 'medium', ?, ?, ?, ?)`,
+			runSlug, runSlug, wd, fakeSessionID(runSlug), now, now,
 		); err != nil {
 			t.Fatal(err)
 		}

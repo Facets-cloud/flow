@@ -143,16 +143,17 @@ func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
 
 // TestCmdDoFreshSpawnFailureRollsBackSessionID pins the rollback
 // invariant: when a fresh-bootstrap spawn fails (e.g. Terminal.app
-// Accessibility denied), the session_id we pre-allocated must be
-// nilled out so the next `flow do` retries bootstrap fresh. Without
-// this, the DB ends up with a session_id pointing at a non-existent
-// jsonl file, and every subsequent `flow do` runs `claude --resume
-// <uuid>` which fails with "No conversation found" indefinitely.
+// Accessibility denied), BOTH the session_id pre-allocation AND the
+// status flip must be undone so the next `flow do` retries
+// bootstrap fresh. Under the session-id invariant
+// (status='backlog' OR session_id IS NOT NULL), preserving status
+// in-progress while dropping session_id would be illegal — full
+// rollback is the only consistent recovery.
 //
 // Repro of the user-reported bug: spawn-failure → DB has orphan
 // session_id → next flow do takes resume path → claude can't find
-// the jsonl. The fix preserves the status flip (task is in-progress
-// even though spawn failed) but undoes the session_id allocation.
+// the jsonl. The fix rolls everything back so the next attempt is
+// indistinguishable from the first.
 func TestCmdDoFreshSpawnFailureRollsBackSessionID(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "fail-task")
@@ -190,11 +191,10 @@ func TestCmdDoFreshSpawnFailureRollsBackSessionID(t *testing.T) {
 	if task.SessionStarted.Valid {
 		t.Errorf("session_started should be NULL after spawn failure rollback; got %q", task.SessionStarted.String)
 	}
-	// Status flip is preserved — the task is genuinely in-progress
-	// even though spawn failed. The user's next attempt should
-	// resume that intent without re-flipping.
-	if task.Status != "in-progress" {
-		t.Errorf("status after spawn failure: got %q, want in-progress (flip preserved)", task.Status)
+	// Status is rolled back to backlog so the invariant holds and the
+	// next `flow do` re-flips fresh.
+	if task.Status != "backlog" {
+		t.Errorf("status after spawn failure: got %q, want backlog (full rollback)", task.Status)
 	}
 }
 
@@ -310,8 +310,12 @@ func TestCmdDoDoneTaskRefused(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "closed-task")
 
+	// Done implies a session_id (invariant). Pre-seed one before flipping.
 	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET status='done', updated_at=? WHERE slug='closed-task'`, flowdb.NowISO()); err != nil {
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='done', session_id=?, session_started=?, updated_at=? WHERE slug='closed-task'`,
+		fakeSessionID("closed-task"), flowdb.NowISO(), flowdb.NowISO(),
+	); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -557,5 +561,197 @@ func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
 	}
 	if !strings.Contains(script, "flow show playbook tri") {
 		t.Errorf("expected 'flow show playbook tri' in spawn script, got:\n%s", script)
+	}
+}
+
+// ---------- flow do --here ----------
+
+// TestCmdDoHereHappyPath pins the in-session bind contract: with
+// $CLAUDE_CODE_SESSION_ID set and a backlog target task, --here
+// flips status to in-progress and writes the env's session UUID to
+// tasks.session_id without spawning anything.
+func TestCmdDoHereHappyPath(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "here-task")
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+
+	// Spawn must NOT happen — assert via stub (zero spawns).
+	count, _ := stubITerm(t)
+	if rc := cmdDo([]string{"here-task", "--here"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if *count != 0 {
+		t.Errorf("--here should not spawn; got %d spawns", *count)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "here-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != sid {
+		t.Errorf("session_id = %+v, want %s", task.SessionID, sid)
+	}
+	if task.Status != "in-progress" {
+		t.Errorf("status = %q, want in-progress", task.Status)
+	}
+}
+
+// TestCmdDoHereNoEnvVar pins that --here errors when no Claude Code
+// session is in the env (no session UUID to bind).
+func TestCmdDoHereNoEnvVar(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "no-env-task")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if rc := cmdDo([]string{"no-env-task", "--here"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 when CLAUDE_CODE_SESSION_ID unset", rc)
+	}
+	db := openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "no-env-task")
+	if task.SessionID.Valid {
+		t.Errorf("session_id should be NULL after refused --here, got %q", task.SessionID.String)
+	}
+}
+
+// TestCmdDoHereRejectsAlreadyBound pins the wrong-session-id guard:
+// if the target task already has a session_id (even one different
+// from the current $CLAUDE_CODE_SESSION_ID), --here refuses without
+// --force. This prevents silent overwrite of a prior binding.
+func TestCmdDoHereRejectsAlreadyBound(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bound-task")
+
+	const oldSID = "deadbeef-1111-4222-8333-444455556666"
+	const newSID = "f00ba111-2222-4333-8444-555555555555"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='bound-task'`,
+		oldSID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", newSID)
+	if rc := cmdDo([]string{"bound-task", "--here"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 when target already bound to a different session", rc)
+	}
+
+	db = openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "bound-task")
+	if task.SessionID.String != oldSID {
+		t.Errorf("session_id changed without --force: got %q, want %s", task.SessionID.String, oldSID)
+	}
+}
+
+// TestCmdDoHereForceOverwritesBinding pins that --force allows the
+// overwrite of a prior binding. The user has been told this orphans
+// the prior session.
+func TestCmdDoHereForceOverwritesBinding(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "force-task")
+
+	const oldSID = "deadbeef-1111-4222-8333-444455556666"
+	const newSID = "f00ba111-2222-4333-8444-555555555555"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='force-task'`,
+		oldSID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", newSID)
+	if rc := cmdDo([]string{"force-task", "--here", "--force"}); rc != 0 {
+		t.Errorf("rc=%d, want 0 with --force", rc)
+	}
+	db = openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "force-task")
+	if task.SessionID.String != newSID {
+		t.Errorf("session_id after --force: got %q, want %s", task.SessionID.String, newSID)
+	}
+}
+
+// TestCmdDoHereIdempotent pins that re-running --here against a
+// task already bound to THIS session is a no-op success (no error,
+// no overwrite needed).
+func TestCmdDoHereIdempotent(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "idem-task")
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+
+	if rc := cmdDo([]string{"idem-task", "--here"}); rc != 0 {
+		t.Fatalf("first --here rc=%d", rc)
+	}
+	if rc := cmdDo([]string{"idem-task", "--here"}); rc != 0 {
+		t.Errorf("second --here rc=%d, want 0 (idempotent)", rc)
+	}
+}
+
+// TestCmdDoHereRejectsCurrentSessionAlreadyBoundElsewhere pins the
+// no-duplicate-session_id invariant: if THIS session is already
+// bound to another task, --here refuses with a friendly error
+// regardless of --force. The session-id uniqueness is structural;
+// no escape hatch.
+func TestCmdDoHereRejectsCurrentSessionAlreadyBoundElsewhere(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "owner-task")
+	seedTask(t, "intruder-task")
+
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='owner-task'`,
+		sid, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+
+	// Without --force.
+	if rc := cmdDo([]string{"intruder-task", "--here"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 when current session bound elsewhere", rc)
+	}
+	// Even with --force the structural invariant should hold.
+	if rc := cmdDo([]string{"intruder-task", "--here", "--force"}); rc != 1 {
+		t.Errorf("--force rc=%d, want 1 (no override of duplicate-session check)", rc)
+	}
+
+	// owner-task still owns the session.
+	db = openFlowDB(t)
+	owner, _ := flowdb.GetTask(db, "owner-task")
+	if owner.SessionID.String != sid {
+		t.Errorf("owner-task session_id changed: got %q, want %s", owner.SessionID.String, sid)
+	}
+	intruder, _ := flowdb.GetTask(db, "intruder-task")
+	if intruder.SessionID.Valid {
+		t.Errorf("intruder-task should remain unbound; got %q", intruder.SessionID.String)
+	}
+}
+
+// TestCmdDoHereRejectsDoneTask pins that --here on a done task
+// refuses with a friendly pointer at the reopen path. Auto-reopen
+// would silently bypass the user's previous closure intent.
+func TestCmdDoHereRejectsDoneTask(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "done-task")
+	// Close the task with a session_id (invariant-respecting).
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='done', session_id=?, session_started=? WHERE slug='done-task'`,
+		fakeSessionID("done-task"), flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	if rc := cmdDo([]string{"done-task", "--here"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 (--here on done task should refuse)", rc)
 	}
 }
