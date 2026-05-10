@@ -264,10 +264,16 @@ func cmdDo(args []string) int {
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"
 	}
-	// No env vars are injected — the spawned session learns its task
-	// via reverse-lookup on $CLAUDE_CODE_SESSION_ID against
-	// tasks.session_id. The DB is the single source of truth.
-	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, nil); err != nil {
+	// The spawned session learns its task via reverse-lookup on
+	// $CLAUDE_CODE_SESSION_ID against tasks.session_id — the DB is the
+	// single source of truth, so no FLOW_TASK / FLOW_PROJECT injection.
+	// We DO propagate $FLOW_ROOT when set, so the spawned session reads
+	// the same flow.db / kb / briefs the parent process is using.
+	var spawnEnv map[string]string
+	if root := os.Getenv("FLOW_ROOT"); root != "" {
+		spawnEnv = map[string]string{"FLOW_ROOT": root}
+	}
+	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
 		if needsBootstrap {
 			// Spawn failed before claude could write its jsonl. Undo
 			// both the session_id pre-allocation AND the status flip

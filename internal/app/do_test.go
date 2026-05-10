@@ -564,6 +564,30 @@ func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
 	}
 }
 
+// TestCmdDoPropagatesFlowRootEnv pins that a custom $FLOW_ROOT in the
+// parent process is forwarded to the spawned tab's command line, so
+// the in-tab session reads the same DB / KB / briefs as the spawning
+// process. Without this, a user with FLOW_ROOT=/elsewhere would see
+// the parent process write to /elsewhere but the spawned tab fall
+// back to ~/.flow.
+func TestCmdDoPropagatesFlowRootEnv(t *testing.T) {
+	root := setupFlowRoot(t)
+	seedTask(t, "env-prop")
+	t.Setenv("FLOW_ROOT", root)
+	_, getScript := stubITerm(t)
+
+	if rc := cmdDo([]string{"env-prop"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	script := getScript()
+	if !strings.Contains(script, "FLOW_ROOT=") {
+		t.Errorf("spawn script missing FLOW_ROOT propagation; got:\n%s", script)
+	}
+	if !strings.Contains(script, root) {
+		t.Errorf("spawn script missing FLOW_ROOT value %q; got:\n%s", root, script)
+	}
+}
+
 // ---------- flow do --here ----------
 
 // TestCmdDoHereHappyPath pins the in-session bind contract: with
