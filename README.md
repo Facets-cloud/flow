@@ -6,7 +6,43 @@
 > layer that turns every session from a brilliant new hire into the
 > engineer on your team.
 
-<!-- TODO: hero asciinema/GIF — "let's work on auth" → flow do launches new tab → Claude greets with task context. -->
+## See it in action
+
+A four-act demo of how flow compounds context across days and tasks.
+The work is silly on purpose — Star Trek bridge starships — so the
+mechanic is what you watch, not the code.
+
+**Act 1 — Capture the work.** Just talk. flow interviews you for
+what / why / where / done-when, drafts a structured brief, and opens
+a dedicated Claude session for the task in a new tab.
+
+![Act 1 — task intake](docs/demo/01-task-intake.gif)
+
+**Act 2 — Work, then park.** The session has the brief, the project
+context, and the knowledge base loaded. You build until you hit a
+blocker — here, "Kirk needs to review this" — and tell Claude to
+park it. Status flips to `waiting`. Tab can close.
+
+![Act 2 — execution and park](docs/demo/02-task-execution.gif)
+
+**Act 3 — Resume and close.** A day later you say "Kirk signed off."
+Same session resumes with full memory of where it left off. `flow
+done` flips status and triggers the sweep — Claude re-reads the
+whole transcript and writes durable facts (Kirk approved the design,
+the ship class, the conventions used) into the knowledge base.
+
+![Act 3 — approval and close](docs/demo/03-approval-and-close.gif)
+
+**Act 4 — Months later, a new captain.** New task: "Picard's the new
+boss, he wants the starship as an SVG." Brand new session, but it
+already knows the ship, knows the design choices Kirk approved,
+knows the project conventions — because the KB carried it. Claude
+just gets to work.
+
+![Act 4 — Picard's SVG upgrade](docs/demo/04-picard-svg-upgrade.gif)
+
+That fourth session is what flow is really about. Not the first
+session — the fiftieth.
 
 ## Why flow
 
