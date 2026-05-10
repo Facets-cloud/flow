@@ -32,14 +32,6 @@ func cmdTranscript(args []string) int {
 		return 2
 	}
 
-	if ref == "" {
-		ref = os.Getenv("FLOW_TASK")
-	}
-	if ref == "" {
-		fmt.Fprintln(os.Stderr, "error: no task ref given and $FLOW_TASK not set")
-		return 2
-	}
-
 	dbPath, err := flowDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -52,10 +44,28 @@ func cmdTranscript(args []string) int {
 	}
 	defer db.Close()
 
-	task, err := resolveTaskRef(db, ref)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
+	var task *flowdb.Task
+	if ref == "" {
+		bound, lookupErr := currentSessionTask(db)
+		if lookupErr != nil {
+			if isNoBindingErr(lookupErr) {
+				if currentSessionID() == "" {
+					fmt.Fprintln(os.Stderr, "error: no task ref given and not running inside a Claude session ($CLAUDE_CODE_SESSION_ID unset)")
+				} else {
+					fmt.Fprintln(os.Stderr, "error: no task ref given and this Claude session is not bound to a task")
+				}
+				return 2
+			}
+			fmt.Fprintf(os.Stderr, "error: lookup task by session: %v\n", lookupErr)
+			return 1
+		}
+		task = bound
+	} else {
+		task, err = resolveTaskRef(db, ref)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	if !task.SessionID.Valid || task.SessionID.String == "" {

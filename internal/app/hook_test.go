@@ -2,18 +2,20 @@ package app
 
 import (
 	"encoding/json"
+	"flow/internal/flowdb"
 	"strings"
 	"testing"
 )
 
-// TestHookSessionStartNoFlowTaskEmitsAmbientHint pins the contract for
-// ad-hoc sessions (e.g. bare `claude` with no FLOW_TASK): the hook must
-// emit a value-prop framing that names flow, instructs Skill-tool
-// invocation, and explicitly disclaims any "substantive" gate. The
-// skill — not the hook — owns the decision of whether to offer a task,
-// save a KB entry, or stay quiet.
-func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
-	t.Setenv("FLOW_TASK", "")
+// TestHookSessionStartUnboundEmitsAmbientHint pins the contract for
+// ad-hoc sessions (no task carries the current $CLAUDE_CODE_SESSION_ID):
+// the hook must emit a value-prop framing that names flow, instructs
+// Skill-tool invocation, and explicitly disclaims any "substantive"
+// gate. The skill — not the hook — owns the decision of whether to
+// offer a task, save a KB entry, or stay quiet.
+func TestHookSessionStartUnboundEmitsAmbientHint(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	out := captureStdout(t, func() {
 		if rc := cmdHookSessionStart(nil); rc != 0 {
 			t.Fatalf("rc=%d", rc)
@@ -40,7 +42,9 @@ func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 		"AskUserQuestion",
 		"existing flow task",
 		"create a new one",
-		"~/.flow/kb/",
+		// Hint substitutes the actual flowRoot() so paths reflect
+		// $FLOW_ROOT (default ~/.flow). Match the suffix only.
+		"/kb/ holds durable facts",
 		"don't recognize",
 	} {
 		if !strings.Contains(ctx, want) {
@@ -64,8 +68,24 @@ func TestHookSessionStartNoFlowTaskEmitsAmbientHint(t *testing.T) {
 // the injected additionalContext explicitly instructs the session to
 // invoke the flow skill via the Skill tool as its first action, and
 // mentions the task slug so the agent has something anchor-visible.
+// The hook discovers the bound task by reverse-lookup against
+// $CLAUDE_CODE_SESSION_ID (set by Claude Code in every real session)
+// rather than by reading FLOW_TASK.
 func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
-	t.Setenv("FLOW_TASK", "some-slug")
+	setupFlowRoot(t)
+
+	// Seed a task and pin its session_id so the reverse-lookup finds it.
+	seedTask(t, "some-slug")
+	const sid = "deadbeef-1234-4567-8abc-def012345678"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, status='in-progress', session_started=? WHERE slug='some-slug'`,
+		sid, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+
 	out := captureStdout(t, func() {
 		if rc := cmdHookSessionStart(nil); rc != 0 {
 			t.Fatalf("rc=%d", rc)
@@ -103,19 +123,19 @@ func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
 
 // TestHookUserPromptSubmitIsNoOp pins the v0.1.0-alpha.7 contract:
 // the UserPromptSubmit hook is a permanent no-op — exits 0 with no
-// stdout regardless of FLOW_TASK state. Kept around only for forward
+// stdout regardless of session state. Kept around only for forward
 // compatibility with stale settings.json entries on older installs.
 // `flow skill install` actively removes the entry on upgrade.
 func TestHookUserPromptSubmitIsNoOp(t *testing.T) {
-	for _, flowTask := range []string{"", "some-slug"} {
-		t.Setenv("FLOW_TASK", flowTask)
+	for _, sid := range []string{"", "deadbeef-1234-4567-8abc-def012345678"} {
+		t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
 		out := captureStdout(t, func() {
 			if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
-				t.Fatalf("FLOW_TASK=%q: rc=%d", flowTask, rc)
+				t.Fatalf("CLAUDE_CODE_SESSION_ID=%q: rc=%d", sid, rc)
 			}
 		})
 		if strings.TrimSpace(out) != "" {
-			t.Errorf("FLOW_TASK=%q: expected empty stdout, got:\n%s", flowTask, out)
+			t.Errorf("CLAUDE_CODE_SESSION_ID=%q: expected empty stdout, got:\n%s", sid, out)
 		}
 	}
 }

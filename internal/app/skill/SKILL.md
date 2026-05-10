@@ -42,6 +42,13 @@ edits they imply. You never edit `flow.db` directly. You never solve
 problems during task intake — you interview, then write what the user
 said.
 
+> **Paths in this skill.** Every `~/.flow/...` path you see is the
+> *default* layout. The flow root is configurable via `$FLOW_ROOT`;
+> if it's set to something else, substitute that root in every path
+> reference. The authoritative paths are always whatever `flow show
+> task` / `flow show project` print under `brief:`, `updates:`,
+> `kb:`, etc. — read those, don't reconstruct paths from prose.
+
 ## 1a. When invoked explicitly with no intent
 
 If this skill is invoked without a trigger phrase — for example the
@@ -179,16 +186,16 @@ Create
 
 Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
+  flow do --here        <ref> [--force]   (bind THIS Claude session to the task — no new tab)
   flow done             <ref>
-  flow find-session     <marker>       (resolve a Claude session UUID via marker-grep — see §4.16)
 
 Playbook runs
   flow run playbook <slug>          spawn a fresh run session (new task with kind=playbook_run)
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
 Read
-  flow show task    [<ref>]     (defaults to $FLOW_TASK)
-  flow show project [<ref>]     (defaults to $FLOW_PROJECT)
+  flow show task    [<ref>]     (no arg → reverse-lookup via $CLAUDE_CODE_SESSION_ID)
+  flow show project [<ref>]     (no arg → project of the bound task)
   flow show playbook    [<ref>]
   flow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
   flow list tasks    [--status backlog|in-progress|done] [--project <slug>]
@@ -199,7 +206,7 @@ Read
 
 Edit / mutate
   flow edit           <ref>          opens brief.md in $EDITOR, bumps updated_at
-  flow update task    <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+  flow update task    <ref> [--work-dir <path>] [--mkdir]
                             [--status backlog|in-progress|done] [--priority high|medium|low]
                             [--assignee <name>] [--clear-assignee]
                             [--due-date <date>] [--clear-due]
@@ -336,7 +343,11 @@ acceptance criteria.
 **Confirmation flow** (both paths):
 - Show the drafted brief.
 - AskUserQuestion: "Brief — Save it / Revise"
-- Save → `flow add task ...` → overwrite stub brief with content.
+- Save → `flow add task ...` → update the brief stub the binary
+  just wrote with the drafted content (use `Edit` with
+  `replace_all: true` after a single `Read`, or `Write` after a
+  single `Read` — both are 2 tool calls; pick whichever feels
+  natural).
 
 **Then, BEFORE calling `flow add task`:**
 
@@ -358,9 +369,16 @@ acceptance criteria.
 run `flow add task` until the user picks "Save it". If they pick
 "Revise", ask what to change, update the draft, and re-confirm.
 
-**After `flow add task` succeeds**, it will print the task slug and the
-absolute path to a stub `brief.md`. Use the `Write` tool to overwrite
-that file with the drafted content. Use this literal template:
+**After `flow add task` succeeds**, it will print the task slug and
+the absolute path to a stub `brief.md`. The flow is **Read once, then
+Edit/Write**: Claude's `Write` and `Edit` tools both require a prior
+`Read` of any existing file before mutating it (this is the harness's
+guard against accidental overwrites). For brand-new tasks the stub
+contents are predictable, so a single `Read` followed by either:
+- `Edit` with `replace_all: true` (replaces the whole stub body), or
+- `Write` (overwrites in full)
+
+…is the right pattern. Use this literal template:
 
 ```markdown
 # <name>
@@ -418,23 +436,66 @@ questions, just save it" or "just save it" earlier in the same
 turn. Otherwise, ask. Don't second-guess; preserve their right to
 skip by giving them the click, not by pre-deciding for them.
 
-Finally, use `AskUserQuestion` (header: "Open now?", options:
-"Yes, open it" / "No, keep in backlog") to offer `flow do <slug>`.
-If yes, proceed to the §4.4 recipe (which will ask session mode).
-If no, stop.
+Finally, offer how to proceed with the new task. The shape of the
+question depends on whether THIS Claude session is already bound to
+another flow task. Probe with `flow show task` (no arg). If it
+errors with `not bound to a task`, the current session is unbound
+(dispatch); otherwise it already belongs to the task it resolved.
 
-> **Retrospective-capture hint.** If this task is recording work that
-> already happened (in this session or in an existing one the user has
-> open elsewhere) — not future work — the right next step is **§4.16
-> binding**, not `flow do`. `flow do` would spawn a fresh session and
-> lose the conversation context the task is meant to preserve. Quietly
-> mention §4.16 to the user before offering "Open now?" if the framing
-> ("record what we just did", "track this conversation as a task",
-> "register the script I just wrote") makes retrospective intent
-> obvious. Don't add a third option here — leave the binary "Open
-> now? / Keep in backlog" choice intact for the common future-work
-> case; just point at §4.16 in the chat when the signal is clearly
-> retrospective.
+**Unbound session — three options.** Use `AskUserQuestion`
+(header: "Open now?"):
+
+- **Yes, in a new tab** — proceed to the §4.4 recipe
+  (`flow do <slug>`, which spawns a fresh tab and flips the task
+  to in-progress). Pick when the work hasn't started yet.
+- **Continue here (bind this session)** — keep working in this
+  conversation; bind it to the new task so future
+  `flow do <slug>` resumes here. Pick when the work motivating
+  the task has already begun in this session — which is the
+  common case when intake was triggered by §4.14 from the
+  SessionStart hook intercept. Run **`flow do --here <slug>`**
+  immediately (the binary reads `$CLAUDE_CODE_SESSION_ID`, binds,
+  and flips status to in-progress in one shot).
+- **No, keep in backlog** — save and stop. Pick for future work
+  the user won't touch today.
+
+**Status follow-through — the task should not be left in backlog
+after either Yes-path picks.** `flow do` and `flow do --here` both
+flip the task to in-progress as part of the bind. If the work is
+purely retrospective (the task exists to *record* something
+already complete in this session — e.g. "track the script I just
+wrote", "register what we just shipped"), the right next step
+after Continue-here is to immediately offer §4.7 closure
+(`AskUserQuestion`: "Mark done now?") so the task moves
+backlog → in-progress → done in one flow. The task should never
+sit in in-progress for retrospective records — its purpose is
+already fulfilled the moment it's created and bound.
+
+**Bound session — two options ONLY.** Use `AskUserQuestion`
+(header: "Open now?", options: "Yes, open it" / "No, keep in
+backlog"). Do **not** offer "Continue here" / "Bind this session"
+/ "Rebind" / any variant. Reasons:
+
+- A session_id can belong to at most one task (partial unique
+  index). Binding this session to a second task would either
+  orphan the prior task's transcript or violate the index.
+- `flow do --here` REJECTS this case at the binary level even
+  with `--force` — there is no escape hatch. Offering an option
+  the binary will refuse is bad UX.
+- The user's intent is almost always "open the new task in a
+  separate tab" (Yes-new-tab). If they actually want to switch
+  this session's task ownership, that's a different workflow
+  (release the prior binding first) and must be asked
+  explicitly, not slipped in as a third option here.
+
+On "Yes", proceed to §4.4. On "No", stop.
+
+> **Different-tab hint.** "Continue here" only ever applies in
+> dispatch sessions and only ever attaches the *current* session.
+> If the user is creating a task to track work that happened in
+> a *different* Claude session they have open elsewhere, they
+> need to switch to that other tab and run `flow do --here
+> <slug>` there.
 
 ### 4.3 Add a project
 
@@ -443,7 +504,8 @@ If no, stop.
 Similar to §5.2 but shorter. Sections: **What / Why / Where / Scope**.
 No "done when" (projects are ongoing containers, not completable units).
 Confirm the `work_dir`. Draft. Show. Wait for "save it". Run `flow add
-project`. Overwrite stub brief with the drafted content.
+project`, then update the stub `brief.md` with the drafted content
+(Read once, then Edit/Write — same pattern as §5.2).
 
 Do not offer `flow do` on the project itself — you `do` tasks, not
 projects.
@@ -592,7 +654,8 @@ that…", "record that I…", "document that I just…".
    "Revise") to confirm. Do not write silently.
 4. Determine the entity:
    - For a **regular task**, notes go under
-     `~/.flow/tasks/<slug>/updates/`. Slug from `$FLOW_TASK` or asked.
+     `~/.flow/tasks/<slug>/updates/`. Slug from `flow show task` (no
+     arg, reverse-lookup) or asked.
    - For a **playbook run**, notes ALSO go under
      `~/.flow/tasks/<run-slug>/updates/` (runs are tasks).
    - For a **playbook definition**, notes go under
@@ -626,9 +689,9 @@ and let the user clarify. (This matches the §8 "do not mark done
 without confirmation" anti-pattern philosophy — clearing `waiting_on`
 is a state mutation and deserves the same explicit click.)
 
-Do not infer the task slug silently — use `$FLOW_TASK` if set,
-otherwise use `AskUserQuestion` listing in-progress tasks as options
-to disambiguate which task this is for.
+Do not infer the task slug silently — use `flow show task` (no arg)
+to discover the bound task, otherwise use `AskUserQuestion` listing
+in-progress tasks as options to disambiguate which task this is for.
 
 ### 4.7 Mark done
 
@@ -934,7 +997,7 @@ off the bootstrapped task. Concretely, any of these is sufficient
 evidence:
 
 - You've made Edit/Write calls to files in a directory tree that isn't
-  under `$FLOW_TASK`'s `work_dir` and isn't covered by its brief.
+  under the bound task's `work_dir` and isn't covered by its brief.
 - You've spent two or more turns debugging a product, service, or
   repo that the brief doesn't mention.
 - The user has introduced a new, named line of investigation ("while
@@ -975,7 +1038,7 @@ evidence:
 2. **On "Yes, new task":** enter the §5.2 task-intake interview.
    Derive a task name from what you just observed (e.g. "Fix
    rate-limiter bug I stumbled on while reviewing PRs").
-   Use the same project as `$FLOW_PROJECT` only if the new work
+   Use the bound task's project only if the new work
    genuinely belongs there; otherwise leave it floating or attach to
    a different project per the user's answer during intake. After
    the new task is saved, use `AskUserQuestion` (header:
@@ -1040,8 +1103,9 @@ same prompt.
 **Draft the brief, show to the user**, then use `AskUserQuestion`
 (header: "Brief", options: "Save it" / "Revise") to confirm. Do not
 run `flow add playbook` until the user picks "Save it". Then run it
-and overwrite the stub `brief.md` with the full content. Use the
-playbook brief template from §7.
+and overwrite the stub `brief.md` with the full content (Read once,
+then Edit/Write — same pattern as §5.2). Use the playbook brief
+template from §7.
 
 After save, use `AskUserQuestion` (header: "Run it now?", options:
 "Run it now" / "Just save the definition") to offer the first run.
@@ -1193,7 +1257,7 @@ current task binding.
 
 **Triggers (any one is enough):**
 
-- In a **dispatch session** (FLOW_TASK unset):
+- In a **dispatch session** (`flow show task` reports unbound):
   - You've been in active design / brainstorming / debugging
     discussion for ≥ 2 turns about a concrete topic, OR
   - You've made any Edit/Write tool calls, OR
@@ -1202,7 +1266,7 @@ current task binding.
     `superpowers:systematic-debugging`,
     `superpowers:test-driven-development`) — a process-skill invocation
     is itself a substantive-work signal.
-- In a **bound session** (FLOW_TASK set): same triggers as §4.11
+- In a **bound session** (`flow show task` resolves a task): same triggers as §4.11
   (work moved off the bootstrapped task's scope).
 
 **NOT a trigger:**
@@ -1218,10 +1282,18 @@ current task binding.
 2. Run `flow list tasks --status in-progress` and
    `flow list tasks --status backlog --priority high` to see candidates.
 3. Use AskUserQuestion to offer three options:
-   - **Create a new flow task** for this work (run §4.2 minimal intake,
-     then optionally `flow do <new-slug>`).
-   - **Switch to an existing task** (list candidates as options;
-     on selection, spawn `flow do <slug>`).
+   - **Create a new flow task** for this work — run §4.2 intake.
+     §4.2's "Open now?" tail will offer **Continue here (bind this
+     session)** alongside new-tab and backlog (since this is a
+     dispatch session). Continue-here is usually the right pick
+     from this path: substantive work has already started in this
+     conversation, and binding preserves the transcript.
+   - **Switch to an existing task** — list candidates as options. On
+     selection, by default spawn `flow do <slug>` (new tab). Note:
+     if THIS session is already bound to another task, do NOT offer
+     `flow do --here <existing-slug>` as a sub-option — the binary
+     would refuse (session_id uniqueness invariant), and even
+     `--force` doesn't override it.
    - **Proceed ad-hoc** (user accepts no resumability, no context
      accumulation).
 
@@ -1351,68 +1423,59 @@ rule as "tag values are unprefixed strings").
 
 ### 4.16 Bind an in-flight Claude session to a task
 
-**Triggers:** "bind this session to <task>", "track this session under
-<task>", "attach this conversation to <task>", "update <task> with my
-current session id", "this session is for <task>". Also fires when
-the user manually creates a flow task while already deep in an ad-hoc
-Claude session and wants future `flow do <slug>` to resume *this*
-conversation rather than start a new one.
+**Triggers:** "bind this session to <task>", "track this session
+under <task>", "attach this conversation to <task>", "this session is
+for <task>". Also fires when the user manually creates a flow task
+while already deep in an ad-hoc Claude session and wants future
+`flow do <slug>` to resume *this* conversation rather than start a
+new one. The §4.2 "Continue here" option is the most common entry
+point.
 
-**Why this exists:** sessions spawned by `flow do` already have their
-session_id pre-allocated and recorded in flow.db. But sometimes the
-user starts an ad-hoc `claude` session, gets deep into substantive
-work, and only later decides to track it as a flow task. There is no
-public Claude CLI flag that surfaces the current session ID after the
-fact, so we have to discover it via the transcript on disk.
+**Recipe:** if the target task already exists (or you just created
+it via §4.2), run:
 
-**Recipe — three discrete tool calls in order:**
+```
+flow do --here <slug>
+```
 
-1. **Resolve or create the target task slug.** If the task doesn't
-   exist yet, run §4.2 task intake first. Save the slug — call it
-   `<slug>` below.
-2. **Emit a unique marker via Bash** (one tool call, by itself):
-   ```
-   echo "FLOW_BIND_MARKER_<random>"
-   ```
-   Use a marker with at least 12 characters of entropy (e.g.
-   `$RANDOM-$RANDOM-$RANDOM` or a uuidgen). The Bash tool result is
-   what enters the JSONL transcript — you must let this tool call
-   *return* before grepping, since the JSONL doesn't flush mid-call.
-3. **Resolve the session ID and bind**, in a SEPARATE Bash call:
-   ```
-   sid=$(flow find-session "<the-marker-you-emitted>") \
-     && flow update task <slug> --session-id "$sid"
-   ```
-   `flow find-session` scans `~/.claude/projects/*/*.jsonl` for the
-   marker. Exactly one file should contain it (this conversation's).
-   The basename, minus `.jsonl`, is the session UUID — that's what
-   binds back to flow.
+`flow do --here` reads the current session's UUID from
+`$CLAUDE_CODE_SESSION_ID` (Claude Code injects this into every
+session), validates it, and writes it to `tasks.session_id`. Side
+effects: status flips backlog → in-progress (the session-id
+invariant requires it). No terminal spawn happens; the binding is
+the only mutation.
 
-**Failure modes and how to handle them:**
+**Safety properties enforced by the binary** (you don't have to
+police these):
 
-- `flow find-session` reports "no session jsonl contains marker": the
-  JSONL hadn't flushed yet. This shouldn't happen if step 2 was a
-  truly separate tool call, but if it does, emit a fresh marker and
-  retry from step 2.
-- `flow find-session` reports "matches N sessions": your marker
-  wasn't unique enough — pick a longer/more random one and retry
-  from step 2.
-- `flow update task` reports invalid UUID: the basename of the jsonl
-  isn't a v4 UUID. Surface the error to the user — don't try to
-  patch around it.
+- Refuses if `$CLAUDE_CODE_SESSION_ID` is unset (not a Claude Code
+  session) or not a v4 UUID.
+- Refuses if **THIS session** is already bound to a different task.
+  `--force` does NOT override this — session_id uniqueness is
+  structural. The user must release the prior binding first or
+  open the target in a new tab via `flow do <slug>`.
+- Refuses if **the target task** already has a different
+  session_id bound. `--force` overrides this case (and only this
+  case), but the user has been told it orphans the target's
+  prior session.
+- No-op (idempotent) if the target is already bound to this same
+  session.
+- Refuses if the target is `done`. Reopen via
+  `flow update task <slug> --status in-progress` first; the
+  prior session_id is preserved across done, so `--here` becomes
+  unnecessary after reopen.
 
 **Anti-patterns:**
 
-- **Do not run all three steps in one Bash call.** The JSONL flush
-  happens between tool calls, not within one. A single call that
-  echoes then greps will return zero matches.
-- **Do not invent or guess the session UUID.** The marker-grep is
-  the only reliable way; ps-based detection only works for sessions
-  spawned with `--session-id` or `--resume`, which ad-hoc sessions
-  aren't.
+- **Do not invent or guess the session UUID.** The env var is the
+  only authoritative source.
 - **Do not bind without confirming the task slug.** If multiple
   tasks could plausibly own this conversation, AskUserQuestion to
   pick.
+- **Do not run `--here` from a different tab to attach a session
+  in another tab.** The env var is per-process; `--here` always
+  attaches the *current* session. To attach a session in another
+  tab, switch to that tab and run `flow do --here` there.
 
 ## 6. The `work_dir` question — rules
 
@@ -1607,8 +1670,9 @@ instead.
   "What" is one sentence, "Why" is the reason. Neither section is a
   design doc. If you start drafting implementation steps during `flow
   add task`, stop.
-- **Do not silently switch tasks.** If `$FLOW_TASK` is set and the user
-  starts talking about a different one, confirm via `AskUserQuestion`
+- **Do not silently switch tasks.** If `flow show task` resolves a
+  bound task and the user starts talking about a different one,
+  confirm via `AskUserQuestion`
   (header: "Switch task?", options: "Yes, switch to `<other-task>`" /
   "No, stay on `<current-task>`"). Don't assume.
 - **Do not mark tasks done without explicit confirmation.** Even if the
@@ -1630,17 +1694,18 @@ instead.
   Why? Where? You can compress the other sections to "TBD" if they
   push back, but `What/Why/Where` are non-negotiable.
 - **Do not overwrite an existing `brief.md` without checking what's
-  there.** `flow add task` writes a stub. You overwrite that stub.
-  But if a brief.md already has real content (e.g., the user edited it
-  between add and your Write call), Read it first, merge thoughtfully,
-  and confirm with the user before writing.
+  there.** `flow add task` writes a stub. You overwrite that stub
+  (Read once, then Edit/Write). If the Read shows real content
+  rather than the expected stub (e.g. the user edited between add
+  and your call), merge thoughtfully and confirm with the user
+  before writing.
 - **Do not forget to offer progress notes.** After a long working
   session, the user will forget to log what they did. At natural
   breakpoints, proactively use `AskUserQuestion` (header:
   "Save note?", options: "Yes, save a note" / "No, skip it") to
   prompt — never a prose "want me to save a note?" question.
 - **Do not silently continue scope-drifted work under the bootstrapped
-  task.** When the work genuinely moves off `$FLOW_TASK` (new repo,
+  task.** When the work genuinely moves off the bound task (new repo,
   new product, new line of investigation sustained over multiple
   turns — see §5.11 for signals), surface the drift via
   `AskUserQuestion` and offer to branch into a new task. Letting
@@ -1715,7 +1780,7 @@ proposing any plan:
    ```
    flow show project <project-slug>
    ```
-   (or just `flow show project` — it defaults to `$FLOW_PROJECT`).
+   (or just `flow show project` — it defaults to the bound task's project).
    From its output, use `Read` on:
    - The file at its `brief:` path (the project brief — overarching
      context, goals, scope shared across sibling tasks).
@@ -1792,12 +1857,13 @@ mini-commands like `flow priority` / `flow due` / `flow waiting` /
 
 ```
 flow update task <ref>
-    [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+    [--work-dir <path>] [--mkdir]
     [--status backlog|in-progress|done]
     [--priority high|medium|low]
     [--assignee <name>] [--clear-assignee]
     [--due-date <date>]   [--clear-due]
     [--waiting "<who or what>"] [--clear-waiting]
+    [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
 
 flow update project <ref>
     [--priority high|medium|low]
@@ -1805,21 +1871,17 @@ flow update project <ref>
 
 When to use which flag:
 
-- **`--session-id <uuid>`** — the user spawned a Claude session outside
-  `flow do` (e.g. plain `claude` in a terminal) and wants flow to track
-  that session going forward. Most common path is the §4.16
-  binding workflow which discovers the UUID via marker-grep first,
-  then runs this. UUID must be v4 format — claude enforces that on
-  `--session-id`.
 - **`--work-dir <path>`** — the repo moved on disk (renamed parent,
   moved between drives, cloned to a new path). Pass `--mkdir` if the
   new path doesn't exist yet.
 - **`--status <s>`** — primary use case is rolling a `done` task back
   to `in-progress` so `flow do` will reopen it (the do-from-done path
-  is gated). Also handy for backlog → in-progress without spawning a
-  session, or in-progress → backlog to "demote" a task you're not
-  actively working on. Setting status to a value it already has is a
-  no-op.
+  is gated). Also handy for in-progress → backlog to "demote" a task
+  you're not actively working on. Setting backlog → in-progress on a
+  task with NULL session_id errors with a pointer at `flow do` /
+  `flow do --here` — those are the only paths that attach a session,
+  and the session-id invariant requires one for any non-backlog
+  status. Setting status to a value it already has is a no-op.
 - **`--priority <p>`** — change a task or project priority. Same enum
   as creation: high|medium|low.
 - **`--assignee <name>` / `--clear-assignee`** — set or clear the task
@@ -1832,38 +1894,46 @@ When to use which flag:
   `waiting_on` freeform note (see §4.6). Status stays in-progress;
   the note is just there to remind the user.
 
-At least one field-changing flag must be given. The "manual correction"
-flags (`--session-id`, `--work-dir`) are escape hatches — do not run
-them as workarounds for a bug in `flow do`; surface the bug instead.
+There is **no** `--session-id` flag. The session_id is owned by
+`flow do` / `flow do --here`; manual rewriting was a foot-gun
+(silent overwrite of an existing binding) and the lane is gone. Use
+`flow do --here <slug>` from inside the session you want to bind.
 
-## 10. Environment variables flow sets
+At least one field-changing flag must be given. `--work-dir` is an
+escape hatch — do not run it as a workaround for a bug in `flow do`;
+surface the bug instead.
 
-When `flow do <task>` spawns a terminal tab, it attaches these env vars
-to the `claude` process (inline on the command line — they do NOT
-persist in the tab's shell after claude exits):
+## 10. How "what task am I on?" gets answered
 
-- `FLOW_TASK=<task-slug>` — the current task
-- `FLOW_PROJECT=<project-slug>` — the current project, if the task has one
+`tasks.session_id` is the single source of truth. Every Claude Code
+session has `$CLAUDE_CODE_SESSION_ID` in its env (Claude Code injects
+it); flow's commands reverse-lookup this value against
+`tasks.session_id` to find the bound task. Two implications:
 
-Use these as defaults:
+- `flow show task` with no argument resolves the bound task via
+  reverse-lookup. So does `flow show project` (it resolves the bound
+  task's project).
+- When saving a progress note, the "current task" is whatever the
+  reverse-lookup returns. If `flow show task` errors with
+  `not bound to a task`, ask the user which task to attribute it to.
 
-- `flow show task` with no argument reads `$FLOW_TASK`.
-- `flow show project` with no argument reads `$FLOW_PROJECT`.
-- When saving a progress note, assume the current task is `$FLOW_TASK`
-  unless the user says otherwise.
+There is no `FLOW_TASK` or `FLOW_PROJECT` env var to read. `flow do`
+no longer injects them; the DB binding is sufficient.
 
-If you're in a session where these aren't set (e.g. a dispatch session
-the user opened manually), always ask which task/project they mean.
+A session is "bound" when some task carries its session_id (set by
+`flow do <slug>` at spawn time, or by `flow do --here <slug>`
+retroactively). A session is "dispatch / unbound" when no task does
+— `flow show task` errors with a friendly message.
 
 ## 11. When in doubt
 
-Ask. The worst outcome is writing a bad brief or silently mis-attributing
-a progress note. The second-worst outcome is running `flow do` on the
-wrong task. Both are avoided by one clarifying question. The user's time
-budget for a clarifying question is vastly lower than their budget for
-fixing a wrong save after the fact.
+Ask. The worst outcome is writing a bad brief or silently
+mis-attributing a progress note. The second-worst outcome is running
+`flow do` on the wrong task. Both are avoided by one clarifying
+question. The user's time budget for a clarifying question is vastly
+lower than their budget for fixing a wrong save after the fact.
 
-In a dispatch session (FLOW_TASK unset), also re-check §4.14
-(substantive-unrelated-work) on every turn. The skill is responsible
-for ongoing detection; the SessionStart hook is only a one-shot
-trigger.
+In a dispatch session (no task bound to this session), also re-check
+§4.14 (substantive-unrelated-work) on every turn. The skill is
+responsible for ongoing detection; the SessionStart hook is only a
+one-shot trigger.

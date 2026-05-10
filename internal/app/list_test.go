@@ -433,9 +433,9 @@ func TestListTasksDefaultExcludesPlaybookRuns(t *testing.T) {
 	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
 	now := flowdb.NowISO()
 	if _, err := db.Exec(
-		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
-		 VALUES ('pb--2026-04-30-10-30', 'pb run', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
-		wd, now, now,
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, session_id, created_at, updated_at)
+		 VALUES ('pb--2026-04-30-10-30', 'pb run', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?, ?)`,
+		wd, fakeSessionID("pb--2026-04-30-10-30"), now, now,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -462,9 +462,9 @@ func TestListTasksKindOverride(t *testing.T) {
 	}
 	now := flowdb.NowISO()
 	if _, err := db.Exec(
-		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
-		 VALUES ('pb--2026-04-30-10-30', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
-		wd, now, now,
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, session_id, created_at, updated_at)
+		 VALUES ('pb--2026-04-30-10-30', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?, ?)`,
+		wd, fakeSessionID("pb--2026-04-30-10-30"), now, now,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -488,9 +488,9 @@ func TestListTasksKindAll(t *testing.T) {
 	insertTask(t, db, "regular-1", "Regular 1", "in-progress", "high", wd, nil)
 	now := flowdb.NowISO()
 	if _, err := db.Exec(
-		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
-		 VALUES ('pb--run', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?)`,
-		wd, now, now,
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, session_id, created_at, updated_at)
+		 VALUES ('pb--run', 'r', 'in-progress', 'playbook_run', 'pb', 'medium', ?, ?, ?, ?)`,
+		wd, fakeSessionID("pb--run"), now, now,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -517,17 +517,17 @@ func TestCmdListRuns(t *testing.T) {
 	now := flowdb.NowISO()
 	for _, slug := range []string{"p1--2026-04-30-10-30", "p1--2026-04-30-11-00"} {
 		if _, err := db.Exec(
-			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
-			 VALUES (?, ?, 'in-progress', 'playbook_run', 'p1', 'medium', ?, ?, ?)`,
-			slug, slug, wd, now, now,
+			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, session_id, created_at, updated_at)
+			 VALUES (?, ?, 'in-progress', 'playbook_run', 'p1', 'medium', ?, ?, ?, ?)`,
+			slug, slug, wd, fakeSessionID(slug), now, now,
 		); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if _, err := db.Exec(
-		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
-		 VALUES ('p2--2026-04-30-10-30', 'p2-r', 'done', 'playbook_run', 'p2', 'medium', ?, ?, ?)`,
-		wd, now, now,
+		`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, session_id, created_at, updated_at)
+		 VALUES ('p2--2026-04-30-10-30', 'p2-r', 'done', 'playbook_run', 'p2', 'medium', ?, ?, ?, ?)`,
+		wd, fakeSessionID("p2--2026-04-30-10-30"), now, now,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -568,10 +568,14 @@ func TestCmdListRunsByStatus(t *testing.T) {
 		{"p--ip", "in-progress"},
 		{"p--dn", "done"},
 	} {
+		var sid any
+		if r.status != "backlog" {
+			sid = fakeSessionID(r.slug)
+		}
 		if _, err := db.Exec(
-			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, created_at, updated_at)
-			 VALUES (?, ?, ?, 'playbook_run', 'p', 'medium', ?, ?, ?)`,
-			r.slug, r.slug, r.status, wd, now, now,
+			`INSERT INTO tasks (slug, name, status, kind, playbook_slug, priority, work_dir, session_id, created_at, updated_at)
+			 VALUES (?, ?, ?, 'playbook_run', 'p', 'medium', ?, ?, ?, ?)`,
+			r.slug, r.slug, r.status, wd, sid, now, now,
 		); err != nil {
 			t.Fatal(err)
 		}

@@ -4,6 +4,7 @@ package flowdb
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     session_last_resumed  TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
-    archived_at           TEXT
+    archived_at           TEXT,
+    CHECK (status = 'backlog' OR session_id IS NOT NULL)
 );
 
 CREATE TABLE IF NOT EXISTS workdirs (
@@ -90,6 +92,7 @@ const indexesPostMigrate = `
 CREATE INDEX IF NOT EXISTS idx_tasks_kind          ON tasks(kind);
 CREATE INDEX IF NOT EXISTS idx_tasks_playbook_slug ON tasks(playbook_slug);
 CREATE INDEX IF NOT EXISTS idx_playbooks_project   ON playbooks(project_slug);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id) WHERE session_id IS NOT NULL;
 `
 
 // ---------- models ----------
@@ -259,12 +262,162 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
+	// Session-id invariant: any non-backlog task must have a session_id.
+	// Adds a CHECK to the tasks table; old DBs need a table rebuild.
+	// Runs before indexesPostMigrate so the partial unique index lands
+	// on the rebuilt table.
+	if err := migrateTasksSessionInvariant(db); err != nil {
+		return fmt.Errorf("migrate session invariant: %w", err)
+	}
+
 	// Indexes that depend on columns added above. Safe to run after every
 	// migration pass — CREATE INDEX IF NOT EXISTS is idempotent, and by
 	// this point all referenced columns exist.
 	if _, err := db.Exec(indexesPostMigrate); err != nil {
 		return fmt.Errorf("create post-migrate indexes: %w", err)
 	}
+	return nil
+}
+
+// migrateTasksSessionInvariant rebuilds the tasks table to enforce
+// `CHECK (status = 'backlog' OR session_id IS NOT NULL)`. SQLite does
+// not support adding a CHECK constraint to an existing table via
+// ALTER TABLE, so the documented procedure (CREATE new, copy, DROP
+// old, RENAME) is used. Idempotent: probes sqlite_master for the
+// CHECK substring before doing any work, so subsequent calls are
+// no-ops. Existing rows that violate the new constraint are demoted
+// to backlog first (with a stderr summary), since there is no way to
+// invent a session_id for them after the fact.
+func migrateTasksSessionInvariant(db *sql.DB) error {
+	var ddl string
+	if err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`,
+	).Scan(&ddl); err != nil {
+		return fmt.Errorf("inspect tasks ddl: %w", err)
+	}
+	if strings.Contains(ddl, "session_id IS NOT NULL") {
+		return nil
+	}
+
+	type violator struct{ slug, prevStatus string }
+	var vs []violator
+	rows, err := db.Query(
+		`SELECT slug, status FROM tasks WHERE status != 'backlog' AND session_id IS NULL`,
+	)
+	if err != nil {
+		return fmt.Errorf("scan violators: %w", err)
+	}
+	for rows.Next() {
+		var v violator
+		if err := rows.Scan(&v.slug, &v.prevStatus); err != nil {
+			rows.Close()
+			return err
+		}
+		vs = append(vs, v)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	if len(vs) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"flow migration: demoting %d task(s) without session_id back to backlog "+
+				"(only backlog may have NULL session_id under the new invariant):\n",
+			len(vs))
+		for _, v := range vs {
+			fmt.Fprintf(os.Stderr, "  %s (was %s)\n", v.slug, v.prevStatus)
+		}
+		if _, err := db.Exec(
+			`UPDATE tasks SET status='backlog', updated_at=? WHERE status != 'backlog' AND session_id IS NULL`,
+			NowISO(),
+		); err != nil {
+			return fmt.Errorf("demote violators: %w", err)
+		}
+	}
+
+	// SQLite-recommended ALTER-by-rebuild procedure. PRAGMA must be set
+	// outside the transaction.
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable fk: %w", err)
+	}
+	defer func() { _, _ = db.Exec(`PRAGMA foreign_keys = ON`) }()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.Exec(`
+		CREATE TABLE tasks_new (
+			slug                  TEXT PRIMARY KEY,
+			name                  TEXT NOT NULL,
+			project_slug          TEXT REFERENCES projects(slug),
+			status                TEXT NOT NULL DEFAULT 'backlog' CHECK (status IN ('backlog','in-progress','done')),
+			kind                  TEXT NOT NULL DEFAULT 'regular' CHECK (kind IN ('regular','playbook_run')),
+			playbook_slug         TEXT REFERENCES playbooks(slug),
+			priority              TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
+			work_dir              TEXT NOT NULL,
+			waiting_on            TEXT,
+			due_date              TEXT,
+			assignee              TEXT,
+			status_changed_at     TEXT,
+			session_id            TEXT,
+			session_started       TEXT,
+			session_last_resumed  TEXT,
+			created_at            TEXT NOT NULL,
+			updated_at            TEXT NOT NULL,
+			archived_at           TEXT,
+			CHECK (status = 'backlog' OR session_id IS NOT NULL)
+		)`); err != nil {
+		return fmt.Errorf("create tasks_new: %w", err)
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO tasks_new (
+			slug, name, project_slug, status, kind, playbook_slug, priority,
+			work_dir, waiting_on, due_date, assignee, status_changed_at,
+			session_id, session_started, session_last_resumed,
+			created_at, updated_at, archived_at
+		)
+		SELECT
+			slug, name, project_slug, status, kind, playbook_slug, priority,
+			work_dir, waiting_on, due_date, assignee, status_changed_at,
+			session_id, session_started, session_last_resumed,
+			created_at, updated_at, archived_at
+		FROM tasks`); err != nil {
+		return fmt.Errorf("copy rows: %w", err)
+	}
+
+	if _, err := tx.Exec(`DROP TABLE tasks`); err != nil {
+		return fmt.Errorf("drop old tasks: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE tasks_new RENAME TO tasks`); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+
+	// Indexes from schemaDDL that lived on the dropped table.
+	for _, idx := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_slug)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at)`,
+	} {
+		if _, err := tx.Exec(idx); err != nil {
+			return fmt.Errorf("recreate index: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	committed = true
 	return nil
 }
 
@@ -358,6 +511,19 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 
 func GetTask(db *sql.DB, slug string) (*Task, error) {
 	row := db.QueryRow("SELECT "+TaskCols+" FROM tasks WHERE slug = ?", slug)
+	return ScanTask(row)
+}
+
+// TaskBySessionID returns the task bound to the given Claude session
+// UUID, or sql.ErrNoRows if none. The partial unique index on
+// tasks(session_id) WHERE session_id IS NOT NULL guarantees at most
+// one row. Empty sid is treated as "no binding" and returns ErrNoRows
+// without hitting the DB.
+func TaskBySessionID(db *sql.DB, sid string) (*Task, error) {
+	if sid == "" {
+		return nil, sql.ErrNoRows
+	}
+	row := db.QueryRow("SELECT "+TaskCols+" FROM tasks WHERE session_id = ? LIMIT 1", sid)
 	return ScanTask(row)
 }
 

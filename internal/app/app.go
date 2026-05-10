@@ -57,8 +57,6 @@ func Run(args []string) int {
 		return cmdArchive(rest)
 	case "unarchive":
 		return cmdUnarchive(rest)
-	case "find-session":
-		return cmdFindSession(rest)
 	case "workdir":
 		return cmdWorkdir(rest)
 	case "skill":
@@ -104,15 +102,15 @@ Read:
 
 Edit / mutate:
   flow edit        <ref>
-  flow update task    <ref> [--session-id <uuid>] [--work-dir <path>] [--mkdir]
+  flow update task    <ref> [--work-dir <path>] [--mkdir]
                             [--status <s>] [--priority h|m|l]
                             [--assignee <name>] [--clear-assignee]
                             [--due-date <date>] [--clear-due]
                             [--waiting "<who or what>"] [--clear-waiting]
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
   flow update project <ref> [--priority h|m|l]
-  flow do          <ref> [--fresh] [--dangerously-skip-permissions] [--force]   (--force overrides the live-session guard)
-  flow find-session <marker>                                 (echo a unique marker in a separate Bash call first; this scans ~/.claude/projects/*/*.jsonl)
+  flow do        <ref> [--fresh] [--dangerously-skip-permissions] [--force]   (spawn a new tab; --force overrides the live-session guard)
+  flow do --here <ref> [--force]                                              (bind THIS Claude session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>
 

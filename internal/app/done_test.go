@@ -28,14 +28,24 @@ func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 
 func TestCmdDoneHappyPath(t *testing.T) {
 	setupFlowRoot(t)
-	stubClaudeRunner(t, nil) // no session, won't fire — but safe
+	stubClaudeRunner(t, nil)
 	if rc := cmdAdd([]string{"task", "Some Task"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
+	// Session-id invariant: done requires a session_id. Pre-seed one
+	// so the close-out is legal.
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug='some-task'`,
+		fakeSessionID("some-task"), flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
 	if rc := cmdDone([]string{"some-task"}); rc != 0 {
 		t.Fatalf("done rc=%d", rc)
 	}
-	db := openFlowDB(t)
+	db = openFlowDB(t)
 	task, err := flowdb.GetTask(db, "some-task")
 	if err != nil {
 		t.Fatal(err)
@@ -59,14 +69,20 @@ func TestCmdDoneIdempotent(t *testing.T) {
 	if rc := cmdAdd([]string{"task", "Idem"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
+	// Pre-seed a session_id so done is legal under the invariant.
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug='idem'`,
+		fakeSessionID("idem"), flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
 	if rc := cmdDone([]string{"idem"}); rc != 0 {
 		t.Fatalf("first done rc=%d", rc)
 	}
-	// After it's done, findTask still resolves it (exact match returns
-	// archived-aware result). A second done should either succeed (status
-	// already done → UPDATE is a no-op writing same value) or be rejected
-	// cleanly. Our implementation allows re-marking — it's idempotent in
-	// effect.
+	// A second done should be idempotent (status already done, session_id
+	// preserved → UPDATE is a no-op semantically).
 	if rc := cmdDone([]string{"idem"}); rc != 0 {
 		t.Errorf("second done rc=%d, want 0 (idempotent)", rc)
 	}
@@ -78,20 +94,28 @@ func TestCmdDoneNoArgs(t *testing.T) {
 	}
 }
 
-// TestCmdDoneSkipsSweepWhenNoSession verifies that a task with no
-// session_id does not trigger a sweep. Done flips status and returns
-// immediately; the runner is never called.
-func TestCmdDoneSkipsSweepWhenNoSession(t *testing.T) {
+// TestCmdDoneRefusesTaskWithoutSession pins the session-id invariant
+// at the friendly-error layer for `flow done`: a backlog task with
+// no session_id has no transcript to sweep, so done refuses with a
+// pointer to `flow archive`. Replaces the older
+// "skips sweep when no session" test — that path is no longer
+// reachable under the invariant.
+func TestCmdDoneRefusesTaskWithoutSession(t *testing.T) {
 	setupFlowRoot(t)
 	calls := stubClaudeRunner(t, errors.New("should not be called"))
 	if rc := cmdAdd([]string{"task", "No Session Task"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
-	if rc := cmdDone([]string{"no-session-task"}); rc != 0 {
-		t.Fatalf("done rc=%d", rc)
+	if rc := cmdDone([]string{"no-session-task"}); rc != 1 {
+		t.Errorf("done rc=%d, want 1 (sessionless task should be refused)", rc)
 	}
 	if len(*calls) != 0 {
 		t.Errorf("expected 0 sweep calls, got %d", len(*calls))
+	}
+	db := openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "no-session-task")
+	if task.Status != "backlog" {
+		t.Errorf("status = %q, want backlog (refused done should not flip)", task.Status)
 	}
 }
 
@@ -171,7 +195,9 @@ func TestCmdDoneCloseoutSweepIncludesProjectStep(t *testing.T) {
 	for _, want := range []string{
 		"Project update",
 		"\"sp\"",
-		"~/.flow/projects/sp/updates/",
+		// Path is templatized off flowRoot() so the test environment's
+		// tempdir prefix appears here. Match the suffix only.
+		"/projects/sp/updates/",
 	} {
 		if !contains(got, want) {
 			t.Errorf("prompt missing %q", want)
@@ -207,7 +233,7 @@ func TestCmdDoneCloseoutSweepSkipsProjectStepForFloating(t *testing.T) {
 	got := (*calls)[0].prompt
 	for _, unwanted := range []string{
 		"Project update",
-		"~/.flow/projects/",
+		"/projects/",
 	} {
 		if contains(got, unwanted) {
 			t.Errorf("floating-task prompt unexpectedly contains %q", unwanted)

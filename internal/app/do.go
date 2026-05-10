@@ -52,13 +52,28 @@ func cmdDo(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
 		return 2
 	}
-	query := args[0]
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
 	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
-	if err := fs.Parse(args[1:]); err != nil {
+	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
+	// Two-pass parse so the slug positional may appear before OR after
+	// the flags: first absorb any leading flags, then take the next
+	// non-flag as the slug, then absorb any trailing flags.
+	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
+		return 2
+	}
+	query := fs.Arg(0)
+	if err := fs.Parse(fs.Args()[1:]); err != nil {
+		return 2
+	}
+
+	if *here {
+		return cmdDoHere(query, *force)
 	}
 
 	var extraClaudeArgs []string
@@ -249,28 +264,37 @@ func cmdDo(args []string) int {
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"
 	}
-	envVars := map[string]string{"FLOW_TASK": task.Slug}
-	if project != nil {
-		envVars["FLOW_PROJECT"] = project.Slug
+	// The spawned session learns its task via reverse-lookup on
+	// $CLAUDE_CODE_SESSION_ID against tasks.session_id — the DB is the
+	// single source of truth, so no FLOW_TASK / FLOW_PROJECT injection.
+	// We DO propagate $FLOW_ROOT when set, so the spawned session reads
+	// the same flow.db / kb / briefs the parent process is using.
+	var spawnEnv map[string]string
+	if root := os.Getenv("FLOW_ROOT"); root != "" {
+		spawnEnv = map[string]string{"FLOW_ROOT": root}
 	}
-	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, envVars); err != nil {
+	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
 		if needsBootstrap {
 			// Spawn failed before claude could write its jsonl. Undo
-			// the session_id pre-allocation so the next `flow do`
-			// retries bootstrap fresh; otherwise the DB has a
-			// session_id with no backing jsonl and every subsequent
-			// `flow do` runs `claude --resume <uuid>` which fails
-			// with "No conversation found" indefinitely. The status
-			// flip is preserved: the task is genuinely in-progress
-			// even when spawn fails, and the user's next attempt
-			// should resume that intent.
+			// both the session_id pre-allocation AND the status flip
+			// so the next `flow do` retries bootstrap fresh. The
+			// session-id invariant (in-progress requires session_id)
+			// makes "preserve status, drop session_id" illegal —
+			// rolling status back to backlog is the only consistent
+			// recovery. The user's next `flow do` will flip fresh.
 			//
 			// The WHERE clause guards against a concurrent `flow do`
 			// having mutated session_id between commit and now —
-			// only nil it out if it's still the UUID we allocated.
+			// only roll back if we still own the session.
 			if _, undoErr := db.Exec(
-				`UPDATE tasks SET session_id=NULL, session_started=NULL WHERE slug=? AND session_id=?`,
-				task.Slug, sessionID,
+				`UPDATE tasks SET
+					session_id        = NULL,
+					session_started   = NULL,
+					status            = 'backlog',
+					status_changed_at = NULL,
+					updated_at        = ?
+				 WHERE slug=? AND session_id=?`,
+				flowdb.NowISO(), task.Slug, sessionID,
 			); undoErr != nil {
 				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
 			}
@@ -428,4 +452,114 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 		return nil, 1
 	}
 	return t, 0
+}
+
+// cmdDoHere is the `--here` branch of `flow do`. Instead of spawning
+// a new tab with a fresh Claude session, it binds the CURRENT Claude
+// session (discovered via $CLAUDE_CODE_SESSION_ID) to the named task
+// and flips the task to in-progress.
+//
+// Safety:
+//   - Refuses if not running inside a Claude Code session
+//     (CLAUDE_CODE_SESSION_ID unset).
+//   - Refuses if the target task already has a different session_id
+//     bound. The constraint guards against silent overwrites that
+//     would orphan the prior session. --force overrides.
+//   - No-op (idempotent) if the target task is already bound to this
+//     same session.
+//   - Refuses if the target task is `done`. The user should reopen
+//     it explicitly via `flow update task <slug> --status in-progress`
+//     first.
+//
+// The DB write is the only side effect — no terminal spawn, no env
+// var injection. Subsequent `flow do <slug>` from elsewhere will
+// resume this session via `claude --resume`.
+func cmdDoHere(query string, force bool) int {
+	sid := currentSessionID()
+	if sid == "" {
+		fmt.Fprintln(os.Stderr,
+			"error: --here requires running inside a Claude Code session ($CLAUDE_CODE_SESSION_ID is unset)")
+		return 1
+	}
+	if !sessionUUIDRe.MatchString(sid) {
+		fmt.Fprintf(os.Stderr,
+			"error: $CLAUDE_CODE_SESSION_ID is not a valid v4 UUID (got %q)\n", sid)
+		return 1
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := openConcurrentDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	task, rc := findTask(db, query)
+	if rc != 0 {
+		return rc
+	}
+
+	if task.Status == "done" {
+		fmt.Fprintf(os.Stderr,
+			"error: task %q is done; reopen it first via `flow update task %s --status in-progress` (after which --here is unnecessary — the prior session_id is preserved)\n",
+			task.Slug, task.Slug)
+		return 1
+	}
+
+	// Check 1: is THIS session already bound to a different task? Binding
+	// it to the target would either orphan the prior task or violate the
+	// partial unique index on session_id. --force does NOT override this:
+	// a session_id can belong to at most one task by construction, and
+	// the user must explicitly release the prior binding (or open the
+	// target in a new tab) — silent rebinding loses the original
+	// transcript's task association.
+	priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
+	if lookupErr == nil && priorBinding.Slug != task.Slug {
+		fmt.Fprintf(os.Stderr,
+			"error: this Claude session is already bound to task %q. binding it to %q would orphan %q's transcript and is rejected by the session_id uniqueness invariant. --force does not override this.\n"+
+				"  to start work on %q in a separate session: flow do %s\n",
+			priorBinding.Slug, task.Slug, priorBinding.Slug, task.Slug, task.Slug)
+		return 1
+	}
+
+	if task.SessionID.Valid && task.SessionID.String != "" {
+		if task.SessionID.String == sid {
+			// Already bound to this same session — idempotent no-op.
+			fmt.Printf("%s already bound to this session (%s)\n", task.Slug, sid)
+			return 0
+		}
+		if !force {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q is already bound to session %s — pass --force to overwrite (this orphans the prior session)\n",
+				task.Slug, task.SessionID.String)
+			return 1
+		}
+	}
+
+	now := flowdb.NowISO()
+	res, err := db.Exec(
+		`UPDATE tasks SET
+			session_id      = ?,
+			session_started = COALESCE(session_started, ?),
+			status          = 'in-progress',
+			status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+			updated_at      = ?
+		WHERE slug = ?`,
+		sid, now, now, now, task.Slug,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: bind session: %v\n", err)
+		return 1
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		fmt.Fprintf(os.Stderr, "error: task %q not updated\n", task.Slug)
+		return 1
+	}
+	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	return 0
 }

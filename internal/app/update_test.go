@@ -46,35 +46,16 @@ func TestParseDueDate(t *testing.T) {
 	}
 }
 
-func TestCmdUpdateTaskSessionID(t *testing.T) {
+// TestCmdUpdateTaskRejectsSessionIDFlag pins that the legacy
+// --session-id flag is gone — flag.Parse should reject it as
+// undefined. Use `flow do --here` to attach a session to a task
+// instead.
+func TestCmdUpdateTaskRejectsSessionIDFlag(t *testing.T) {
 	setupFlowRoot(t)
-	seedTask(t, "ut-sid")
-
-	const newSID = "11111111-2222-4333-8444-555555555555"
-	if rc := cmdUpdate([]string{"task", "ut-sid", "--session-id", newSID}); rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	db := openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "ut-sid")
-	if task.SessionID.String != newSID {
-		t.Errorf("session_id = %q, want %s", task.SessionID.String, newSID)
-	}
-	if !task.SessionStarted.Valid {
-		t.Error("session_started should be set")
-	}
-}
-
-func TestCmdUpdateTaskRejectsBadUUID(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "ut-bad")
-
-	if rc := cmdUpdate([]string{"task", "ut-bad", "--session-id", "not-a-uuid"}); rc != 2 {
-		t.Errorf("rc=%d, want 2 for invalid uuid", rc)
-	}
-	db := openFlowDB(t)
-	task, _ := flowdb.GetTask(db, "ut-bad")
-	if task.SessionID.Valid {
-		t.Errorf("session_id should remain NULL on invalid input, got %q", task.SessionID.String)
+	seedTask(t, "ut-no-sid-flag")
+	const sid = "11111111-2222-4333-8444-555555555555"
+	if rc := cmdUpdate([]string{"task", "ut-no-sid-flag", "--session-id", sid}); rc != 2 {
+		t.Errorf("rc=%d, want 2 for removed --session-id flag", rc)
 	}
 }
 
@@ -103,20 +84,21 @@ func TestCmdUpdateTaskWorkDirMissingNoMkdir(t *testing.T) {
 	}
 }
 
+// TestCmdUpdateTaskBothFields exercises combining multiple field-
+// changing flags in one call.
 func TestCmdUpdateTaskBothFields(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "ut-both")
 
-	const sid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	newDir := filepath.Join(t.TempDir(), "combo")
 	if rc := cmdUpdate([]string{"task", "ut-both",
-		"--session-id", sid, "--work-dir", newDir, "--mkdir"}); rc != 0 {
+		"--priority", "high", "--work-dir", newDir, "--mkdir"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	db := openFlowDB(t)
 	task, _ := flowdb.GetTask(db, "ut-both")
-	if task.SessionID.String != sid {
-		t.Errorf("session_id = %q, want %s", task.SessionID.String, sid)
+	if task.Priority != "high" {
+		t.Errorf("priority = %q, want high", task.Priority)
 	}
 	if task.WorkDir != newDir {
 		t.Errorf("work_dir = %q, want %q", task.WorkDir, newDir)
@@ -134,8 +116,7 @@ func TestCmdUpdateTaskRequiresFlag(t *testing.T) {
 
 func TestCmdUpdateTaskUnknownTask(t *testing.T) {
 	setupFlowRoot(t)
-	if rc := cmdUpdate([]string{"task", "nope",
-		"--session-id", "11111111-2222-4333-8444-555555555555"}); rc != 1 {
+	if rc := cmdUpdate([]string{"task", "nope", "--priority", "high"}); rc != 1 {
 		t.Errorf("rc=%d, want 1 for unknown task", rc)
 	}
 }
@@ -150,8 +131,14 @@ func TestCmdUpdateUnknownTarget(t *testing.T) {
 func TestCmdUpdateTaskStatusRollback(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "ut-rollback")
+	stubITerm(t)
 
-	// First mark it done via flow done.
+	// Bootstrap via cmdDo so the task acquires a session_id and is
+	// in-progress. flow done now requires a session_id under the
+	// session-id invariant.
+	if rc := cmdDo([]string{"ut-rollback"}); rc != 0 {
+		t.Fatalf("do rc=%d", rc)
+	}
 	if rc := cmdDone([]string{"ut-rollback"}); rc != 0 {
 		t.Fatalf("done rc=%d", rc)
 	}
@@ -161,7 +148,8 @@ func TestCmdUpdateTaskStatusRollback(t *testing.T) {
 		t.Fatalf("precondition: status = %q, want done", task.Status)
 	}
 
-	// Now roll it back to in-progress via update.
+	// Now roll it back to in-progress via update. session_id is still
+	// set (preserved across done) so the invariant holds.
 	if rc := cmdUpdate([]string{"task", "ut-rollback", "--status", "in-progress"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
@@ -171,6 +159,23 @@ func TestCmdUpdateTaskStatusRollback(t *testing.T) {
 	}
 	if !task.StatusChangedAt.Valid {
 		t.Error("status_changed_at should be set after a real status change")
+	}
+}
+
+// TestCmdUpdateTaskStatusRequiresSessionForNonBacklog pins the
+// session-id invariant at the friendly-error layer: setting status
+// to in-progress on a task with NULL session_id fails with a
+// pointer to flow do / flow do --here.
+func TestCmdUpdateTaskStatusRequiresSessionForNonBacklog(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "ut-no-sess")
+	if rc := cmdUpdate([]string{"task", "ut-no-sess", "--status", "in-progress"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 (sessionless → in-progress should error)", rc)
+	}
+	db := openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "ut-no-sess")
+	if task.Status != "backlog" {
+		t.Errorf("status = %q, want backlog (rejected update should not flip)", task.Status)
 	}
 }
 
