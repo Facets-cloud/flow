@@ -435,8 +435,8 @@ errors with `not bound to a task`, the current session is unbound
 (header: "Open now?"):
 
 - **Yes, in a new tab** — proceed to the §4.4 recipe
-  (`flow do <slug>`, which spawns a fresh tab). Pick when the
-  work hasn't started yet.
+  (`flow do <slug>`, which spawns a fresh tab and flips the task
+  to in-progress). Pick when the work hasn't started yet.
 - **Continue here (bind this session)** — keep working in this
   conversation; bind it to the new task so future
   `flow do <slug>` resumes here. Pick when the work motivating
@@ -447,6 +447,18 @@ errors with `not bound to a task`, the current session is unbound
   and flips status to in-progress in one shot).
 - **No, keep in backlog** — save and stop. Pick for future work
   the user won't touch today.
+
+**Status follow-through — the task should not be left in backlog
+after either Yes-path picks.** `flow do` and `flow do --here` both
+flip the task to in-progress as part of the bind. If the work is
+purely retrospective (the task exists to *record* something
+already complete in this session — e.g. "track the script I just
+wrote", "register what we just shipped"), the right next step
+after Continue-here is to immediately offer §4.7 closure
+(`AskUserQuestion`: "Mark done now?") so the task moves
+backlog → in-progress → done in one flow. The task should never
+sit in in-progress for retrospective records — its purpose is
+already fulfilled the moment it's created and bound.
 
 **Bound session — two options ONLY.** Use `AskUserQuestion`
 (header: "Open now?", options: "Yes, open it" / "No, keep in
