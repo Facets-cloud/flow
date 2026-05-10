@@ -912,6 +912,12 @@ sequence at the moment the fact is heard.
 under an `other:` section. Apply the same lazy-load discipline as KB
 files: load them on demand when relevant to the work, not preemptively.
 
+**Past tasks and projects can be referenced too.** `flow list tasks` and
+`flow list projects` default to non-archived active rows; done and
+archived rows need explicit flags: `--status done` for completed work,
+`--include-archived` to include archived rows. `flow show task <slug>`
+and `flow transcript <slug>` work on done/archived tasks too.
+
 ### 4.11 Scope-creep detection (passive — surface via AskUserQuestion)
 
 This is a **passive** workflow like §5.10 — you watch the session as it
