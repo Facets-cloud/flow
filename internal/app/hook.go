@@ -141,8 +141,11 @@ func emitAmbientSkillHint() int {
 		"flow's data before guessing or asking. The KB at ~/.flow/kb/ holds durable " +
 		"facts; the briefs under ~/.flow/projects/<slug>/ and ~/.flow/tasks/<slug>/ " +
 		"hold project and task context. Names and context that are non-obvious from " +
-		"this conversation alone are very likely already documented there. The skill's " +
-		"§4.10 governs how to lazy-load these without reading them eagerly every turn."
+		"this conversation alone are very likely already documented there — and not " +
+		"only in active work: when the reference points at past work, also consult " +
+		"done and archived tasks/projects (which need explicit `--status done` / " +
+		"`--include-archived` flags on the list commands). The skill's §4.10 governs " +
+		"how to lazy-load these without reading them eagerly every turn."
 	return emitSessionStartContext(hint + appendStaleVersionHint())
 }
 
