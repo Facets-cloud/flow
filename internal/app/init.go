@@ -94,35 +94,57 @@ func cmdInit(args []string) int {
 
 	// Install the skill idempotently. Skip if already present; we never
 	// overwrite on init (use `flow skill update` for that).
-	skillPath, err := skillInstallPath()
+	skillPaths, err := skillInstallPaths()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(skillPath), err)
+	for _, skillPath := range skillPaths {
+		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+			if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+				fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(skillPath), err)
+				return 1
+			}
+			if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "error: write %s: %v\n", skillPath, err)
+				return 1
+			}
+			if err := writeSkillVersion(Version); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
+			}
+			fmt.Printf("installed flow skill to %s\n", skillPath)
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
 			return 1
 		}
-		if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", skillPath, err)
-			return 1
-		}
-		if err := writeSkillVersion(Version); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
-		}
-		fmt.Printf("installed flow skill to %s\n", skillPath)
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
-		return 1
 	}
 
-	// Install the SessionStart hook idempotently.
+	// Install the SessionStart hooks idempotently.
 	if added, err := installSessionStartHook(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
 	} else if added {
 		settings, _ := userSettingsPath()
 		fmt.Printf("installed SessionStart hook in %s\n", settings)
+	}
+	if added, err := ensureCodexHooksFeature(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not enable Codex hooks feature: %v\n", err)
+	} else if added {
+		config, _ := codexConfigPath()
+		fmt.Printf("enabled Codex hooks in %s\n", config)
+	}
+	if added, err := installCodexSessionStartHook(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install Codex SessionStart hook: %v\n", err)
+	} else if added {
+		hooks, _ := codexHooksPath()
+		fmt.Printf("installed Codex SessionStart hook in %s\n", hooks)
+	}
+	if removed, err := uninstallUserPromptSubmitHook(); err == nil && removed {
+		settings, _ := userSettingsPath()
+		fmt.Printf("removed stale UserPromptSubmit hook from %s\n", settings)
+	}
+	if removed, err := uninstallCodexUserPromptSubmitHook(); err == nil && removed {
+		hooks, _ := codexHooksPath()
+		fmt.Printf("removed stale UserPromptSubmit hook from %s\n", hooks)
 	}
 
 	fmt.Printf("flow initialized at %s\n", root)

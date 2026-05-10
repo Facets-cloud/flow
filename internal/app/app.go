@@ -75,7 +75,7 @@ func Run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Println(`flow — personal task and Claude session manager
+	fmt.Println(`flow — personal task and Claude/Codex execution-session manager
 
 Setup:
   flow init
@@ -90,12 +90,12 @@ Create:
 Sessions:
   flow do                <ref> [--fresh] [--dangerously-skip-permissions]
   flow done              <ref>
-  flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  flow hook session-start                      (SessionStart hook handler — wire via Claude/Codex hook config)
 
 Read:
   flow show task       [<ref>]
   flow show project    [<ref>]
-  flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
+  flow transcript      [<ref>] [--compact] [--backend claude|codex]   (readable transcript from session jsonl)
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
   flow list tags                                            (every tag in use, with per-tag task counts)
@@ -108,6 +108,7 @@ Edit / mutate:
                             [--due-date <date>] [--clear-due]
                             [--waiting "<who or what>"] [--clear-waiting]
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
+                            [--backend claude|codex]                  (with --session-id)
   flow update project <ref> [--priority h|m|l]
   flow do        <ref> [--fresh] [--dangerously-skip-permissions] [--force]   (spawn a new tab; --force overrides the live-session guard)
   flow do --here <ref> [--force]                                              (bind THIS Claude session to the task; --force overwrites a prior binding)

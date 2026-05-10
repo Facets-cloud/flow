@@ -23,6 +23,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	flowRoot := filepath.Join(tmp, "flow")
 	t.Setenv("FLOW_ROOT", flowRoot)
 	t.Setenv("HOME", tmp)
+	t.Setenv("FLOW_AGENT_BACKEND", "claude")
 
 	// Fake repo that serves as the project's work_dir.
 	repo := filepath.Join(tmp, "code", "budgeting-app")
@@ -235,5 +236,57 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	}
 	if wd == nil {
 		t.Fatal("GetWorkdir returned nil for auto-registered path")
+	}
+}
+
+func TestE2ECodexRoundtripWithHookRegistration(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
+	t.Setenv("HOME", tmp)
+	t.Setenv("FLOW_AGENT_BACKEND", "codex")
+
+	repo := filepath.Join(tmp, "code", "codex-app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldOsa := iterm.Runner
+	iterm.Runner = func(args []string) error { return nil }
+	t.Cleanup(func() { iterm.Runner = oldOsa })
+	oldCodex := codexRunner
+	codexRunner = func(slug, prompt string) error { return nil }
+	t.Cleanup(func() { codexRunner = oldCodex })
+
+	step := func(name string, rc int) {
+		t.Helper()
+		if rc != 0 {
+			t.Fatalf("%s: rc=%d", name, rc)
+		}
+	}
+	step("init", cmdInit(nil))
+	step("add", cmdAdd([]string{"task", "Codex roundtrip", "--slug", "codex-rt", "--work-dir", repo}))
+	step("do fresh", cmdDo([]string{"codex-rt"}))
+
+	transcriptPath := filepath.Join(tmp, "codex-rt.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(sampleCodexSessionJSONL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLOW_TASK", "codex-rt")
+	t.Setenv("FLOW_SESSION_BACKEND", "codex")
+	withStdin(t, `{"session_id":"codex-rt-sid","transcript_path":"`+transcriptPath+`"}`)
+	step("hook", cmdHookSessionStart(nil))
+	step("transcript", cmdTranscript([]string{"codex-rt", "--backend", "codex"}))
+	step("do resume", cmdDo([]string{"codex-rt"}))
+	step("done", cmdDone([]string{"codex-rt", "--backend", "codex"}))
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "codex-rt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "done" {
+		t.Fatalf("status = %q, want done", task.Status)
+	}
+	if _, err := flowdb.GetTaskSession(db, "codex-rt", "codex"); err != nil {
+		t.Fatalf("codex session missing after roundtrip: %v", err)
 	}
 }

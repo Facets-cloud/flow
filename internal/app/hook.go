@@ -4,16 +4,16 @@ import (
 	"encoding/json"
 	"flow/internal/flowdb"
 	"fmt"
+	"io"
 	"os"
 )
 
 // cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
 //
-//   - session-start: wired as a Claude Code SessionStart hook so that
+//   - session-start: wired as a Claude/Codex SessionStart hook so that
 //     every session start (fresh spawn AND resume) re-injects the
-//     "load your task context" instruction. Without it, resumed
-//     sessions never re-read briefs and updates that may have been
-//     edited since the previous session.
+//     "load your task context" instruction for Claude, and registers
+//     Codex-generated session IDs/transcript paths for Codex.
 //
 //   - user-prompt-submit: kept as a permanent no-op for forward
 //     compatibility with stale settings.json entries.
@@ -55,6 +55,18 @@ func cmdHookSessionStart(args []string) int {
 		return 2
 	}
 
+	backend := hookSessionBackend()
+	if backend == backendCodex {
+		slug := os.Getenv("FLOW_TASK")
+		if slug == "" {
+			return 0
+		}
+		if err := registerCodexSessionFromHook(slug); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: codex session registration failed: %v\n", err)
+		}
+		return 0
+	}
+
 	slug := lookupBoundTaskSlug()
 	if slug == "" {
 		return emitAmbientSkillHint()
@@ -90,6 +102,71 @@ func cmdHookSessionStart(args []string) int {
 	)
 
 	return emitSessionStartContext(instructions + appendStaleVersionHint())
+}
+
+func hookSessionBackend() agentBackend {
+	if envBackend := os.Getenv("FLOW_SESSION_BACKEND"); envBackend != "" {
+		if backend, err := parseAgentBackend(envBackend); err == nil {
+			return backend
+		}
+	}
+	return backendClaude
+}
+
+type codexHookInput struct {
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	CWD            string `json:"cwd"`
+	Source         string `json:"source"`
+}
+
+func registerCodexSessionFromHook(slug string) error {
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("read hook input: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	var in codexHookInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil
+	}
+	if in.SessionID == "" {
+		return nil
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		return err
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer db.Close()
+
+	task, err := resolveTaskRef(db, slug)
+	if err != nil {
+		return err
+	}
+	now := flowdb.NowISO()
+	startedAt := any(now)
+	resumedAt := any(nil)
+	if _, err := flowdb.GetTaskSession(db, task.Slug, backendCodex.String()); err == nil {
+		startedAt = nil
+		resumedAt = now
+	}
+	return flowdb.UpsertTaskSession(
+		db,
+		task.Slug,
+		backendCodex.String(),
+		in.SessionID,
+		flowdb.NullIfEmpty(in.TranscriptPath),
+		startedAt,
+		resumedAt,
+		now,
+	)
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart

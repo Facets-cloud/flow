@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // withMarker prefixes the injected text so the receiving session can
@@ -60,6 +61,8 @@ func loadInjectionText(fs *flag.FlagSet, withInstr, withFile string) (string, in
 	return "read instructions at " + abs, 0
 }
 
+var openConcurrentSchemaMu sync.Mutex
+
 // openConcurrentDB opens flow.db with a generous busy_timeout so that two
 // concurrent `flow do` processes (or two goroutines in the tests) will
 // serialize at the SQLite file level rather than failing fast with
@@ -68,11 +71,14 @@ func loadInjectionText(fs *flag.FlagSet, withInstr, withFile string) (string, in
 // OpenDB to keep DDL in one place.
 func openConcurrentDB(path string) (*sql.DB, error) {
 	// Ensure schema exists via the shared OpenDB path.
+	openConcurrentSchemaMu.Lock()
 	pre, err := flowdb.OpenDB(path)
 	if err != nil {
+		openConcurrentSchemaMu.Unlock()
 		return nil, err
 	}
 	pre.Close()
+	openConcurrentSchemaMu.Unlock()
 
 	q := url.Values{}
 	// 30s is enough to cover realistic bootstraps; tests finish in ms.
@@ -103,7 +109,7 @@ func cmdDo(args []string) int {
 	}
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
-	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
+	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass the backend's permission-bypass flag through to the spawned agent")
 	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
@@ -136,10 +142,7 @@ func cmdDo(args []string) int {
 		return cmdDoHere(query, *force)
 	}
 
-	var extraClaudeArgs []string
-	if *dangerSkip {
-		extraClaudeArgs = append(extraClaudeArgs, "--dangerously-skip-permissions")
-	}
+	backend := detectAgentBackend()
 
 	dbPath, err := flowDBPath()
 	if err != nil {
@@ -162,12 +165,19 @@ func cmdDo(args []string) int {
 	// in another claude process (e.g., the user has a tab open for it),
 	// refuse to spawn a duplicate. --force overrides. The check is
 	// best-effort: ps failures fall through silently rather than block.
-	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
+	guardSession := taskSessionFromLegacy(task, backend)
+	if s, err := flowdb.GetTaskSession(db, task.Slug, backend.String()); err == nil {
+		guardSession = s
+	} else if err != sql.ErrNoRows {
+		fmt.Fprintf(os.Stderr, "error: read task session: %v\n", err)
+		return 1
+	}
+	if backend == backendClaude && !*force && !*fresh && guardSession != nil && guardSession.SessionID != "" {
 		if live, err := liveClaudeSessions(); err == nil {
-			if live[strings.ToLower(task.SessionID.String)] {
+			if live[strings.ToLower(guardSession.SessionID)] {
 				fmt.Fprintf(os.Stderr,
 					"error: task %q has a live Claude session (%s) running elsewhere — switch to that tab, or pass --force to open another\n",
-					task.Slug, task.SessionID.String)
+					task.Slug, guardSession.SessionID)
 				return 1
 			}
 		}
@@ -206,33 +216,49 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "--with on done task %q: reopening as in-progress\n", task.Slug)
 	}
 
-	// Decide bootstrap vs resume based on the row we re-read inside the tx.
-	// Fresh bootstrap means: either the task has no session_id, or --fresh
-	// was passed. In both cases we allocate a new UUID here and claim it
-	// in the DB via the status-flip UPDATE below — so the jsonl file claude
-	// writes is identified deterministically by us, not scraped afterwards.
-	var curSessionID sql.NullString
-	if err := tx.QueryRow(`SELECT session_id FROM tasks WHERE slug=?`, task.Slug).Scan(&curSessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
-		return 1
+	curSession, err := flowdb.GetTaskSession(tx, task.Slug, backend.String())
+	selectedLegacySession := false
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(os.Stderr, "error: re-read task session: %v\n", err)
+			return 1
+		}
+		curSession = taskSessionFromLegacy(task, backend)
+		selectedLegacySession = curSession != nil
+	} else if legacy := taskSessionFromLegacy(task, backend); legacy != nil && legacy.SessionID != curSession.SessionID {
+		if !curSession.SessionStarted.Valid || (legacy.SessionStarted.Valid && legacy.SessionStarted.String >= curSession.SessionStarted.String) {
+			curSession = legacy
+			selectedLegacySession = true
+		}
 	}
-	needsBootstrap := !curSessionID.Valid || *fresh
+	needsBootstrap := curSession == nil || curSession.SessionID == "" || *fresh
 	var sessionID string
-	if needsBootstrap {
+	if !needsBootstrap {
+		sessionID = curSession.SessionID
+	} else if backend == backendClaude {
 		id, err := newUUID()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
 			return 1
 		}
 		sessionID = id
-	} else {
-		sessionID = curSessionID.String
 	}
 
 	now := flowdb.NowISO()
 	// 'done' is reachable here only via the --with auto-reopen path above.
 	const statusFilter = "status IN ('backlog','in-progress','done')"
-	if needsBootstrap {
+	if backend == backendClaude && needsBootstrap {
+		if err := flowdb.UpsertTaskSession(tx, task.Slug, backendClaude.String(), sessionID, nil, now, nil, now); err != nil {
+			fmt.Fprintf(os.Stderr, "error: store task session: %v\n", err)
+			return 1
+		}
+	} else if backend == backendClaude && selectedLegacySession {
+		if err := flowdb.UpsertTaskSession(tx, task.Slug, backendClaude.String(), sessionID, nil, nil, nil, now); err != nil {
+			fmt.Fprintf(os.Stderr, "error: store legacy task session: %v\n", err)
+			return 1
+		}
+	}
+	if backend == backendClaude && needsBootstrap {
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
@@ -244,6 +270,12 @@ func cmdDo(args []string) int {
 			return 1
 		}
 	} else {
+		if backend == backendCodex && needsBootstrap {
+			if _, err := tx.Exec(`DELETE FROM task_sessions WHERE task_slug=? AND backend=?`, task.Slug, backend.String()); err != nil {
+				fmt.Fprintf(os.Stderr, "error: clear codex task session: %v\n", err)
+				return 1
+			}
+		}
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
@@ -269,8 +301,8 @@ func cmdDo(args []string) int {
 	}
 	committed = true
 
-	if *fresh && curSessionID.Valid {
-		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
+	if *fresh && curSession != nil && curSession.SessionID != "" {
+		fmt.Printf("--fresh: discarding old %s session %s\n", backend, curSession.SessionID)
 	}
 
 	// Look up project (may be nil).
@@ -323,29 +355,22 @@ func cmdDo(args []string) int {
 		if injectionText != "" {
 			prompt = prompt + "\n\n" + withMarker + "\n" + injectionText
 		}
-		command = fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
+		command = buildFreshAgentCommand(backend, sessionID, prompt, *dangerSkip)
 	} else {
-		// Resume path: the UUID we already have in the DB is what claude
-		// used to write its existing jsonl.
-		command = "claude --resume " + sessionID
-		if injectionText != "" {
-			command += " " + spawner.ShellQuote(withMarker+"\n"+injectionText)
-		}
+		command = buildResumeAgentCommand(backend, sessionID, *dangerSkip, injectionText)
 	}
-	if *dangerSkip {
-		command += " --dangerously-skip-permissions"
+	envVars := map[string]string{
+		"FLOW_TASK":            task.Slug,
+		"FLOW_SESSION_BACKEND": backend.String(),
 	}
-	// The spawned session learns its task via reverse-lookup on
-	// $CLAUDE_CODE_SESSION_ID against tasks.session_id — the DB is the
-	// single source of truth, so no FLOW_TASK / FLOW_PROJECT injection.
-	// We DO propagate $FLOW_ROOT when set, so the spawned session reads
-	// the same flow.db / kb / briefs the parent process is using.
-	var spawnEnv map[string]string
 	if root := os.Getenv("FLOW_ROOT"); root != "" {
-		spawnEnv = map[string]string{"FLOW_ROOT": root}
+		envVars["FLOW_ROOT"] = root
 	}
-	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
-		if needsBootstrap {
+	if project != nil {
+		envVars["FLOW_PROJECT"] = project.Slug
+	}
+	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, envVars); err != nil {
+		if backend == backendClaude && needsBootstrap {
 			// Spawn failed before claude could write its jsonl. Undo
 			// both the session_id pre-allocation AND the status flip
 			// so the next `flow do` retries bootstrap fresh. The
@@ -358,16 +383,22 @@ func cmdDo(args []string) int {
 			// having mutated session_id between commit and now —
 			// only roll back if we still own the session.
 			if _, undoErr := db.Exec(
+				`DELETE FROM task_sessions WHERE task_slug=? AND backend=? AND session_id=?`,
+				task.Slug, backend.String(), sessionID,
+			); undoErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated task session after spawn failure: %v\n", undoErr)
+			}
+			if _, undoErr := db.Exec(
 				`UPDATE tasks SET
-					session_id        = NULL,
-					session_started   = NULL,
-					status            = 'backlog',
-					status_changed_at = NULL,
-					updated_at        = ?
-				 WHERE slug=? AND session_id=?`,
+						session_id        = NULL,
+						session_started   = NULL,
+						status            = 'backlog',
+						status_changed_at = NULL,
+						updated_at        = ?
+					 WHERE slug=? AND session_id=?`,
 				flowdb.NowISO(), task.Slug, sessionID,
 			); undoErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+				fmt.Fprintf(os.Stderr, "warning: rollback legacy session after spawn failure: %v\n", undoErr)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -377,12 +408,18 @@ func cmdDo(args []string) int {
 	// Post-spawn bookkeeping, outside the main tx.
 	now2 := flowdb.NowISO()
 	if !needsBootstrap {
-		if _, err := db.Exec(
-			`UPDATE tasks SET session_last_resumed = ? WHERE slug = ?`,
-			now2, task.Slug,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "error: record resume: %v\n", err)
+		if err := flowdb.TouchTaskSessionResumed(db, task.Slug, backend.String(), now2); err != nil {
+			fmt.Fprintf(os.Stderr, "error: record task session resume: %v\n", err)
 			return 1
+		}
+		if backend == backendClaude {
+			if _, err := db.Exec(
+				`UPDATE tasks SET session_last_resumed = ? WHERE slug = ?`,
+				now2, task.Slug,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "error: record resume: %v\n", err)
+				return 1
+			}
 		}
 	}
 	if _, err := db.Exec(
@@ -393,11 +430,71 @@ func cmdDo(args []string) int {
 	}
 
 	if needsBootstrap {
-		fmt.Printf("Spawned %s (session %s)\n", task.Slug, sessionID)
+		if sessionID == "" {
+			fmt.Printf("Spawned %s (%s session will register via hook)\n", task.Slug, backend)
+		} else {
+			fmt.Printf("Spawned %s (%s session %s)\n", task.Slug, backend, sessionID)
+		}
 	} else {
-		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
+		fmt.Printf("Resumed %s (%s session %s)\n", task.Slug, backend, sessionID)
 	}
 	return 0
+}
+
+func taskSessionFromLegacy(task *flowdb.Task, backend agentBackend) *flowdb.TaskSession {
+	if backend != backendClaude || task == nil || !task.SessionID.Valid || task.SessionID.String == "" {
+		return nil
+	}
+	return &flowdb.TaskSession{
+		TaskSlug:           task.Slug,
+		Backend:            backendClaude.String(),
+		SessionID:          task.SessionID.String,
+		SessionStarted:     task.SessionStarted,
+		SessionLastResumed: task.SessionLastResumed,
+		CreatedAt:          task.CreatedAt,
+		UpdatedAt:          task.UpdatedAt,
+	}
+}
+
+func buildFreshAgentCommand(backend agentBackend, sessionID, prompt string, dangerSkip bool) string {
+	switch backend {
+	case backendCodex:
+		command := "codex"
+		if dangerSkip {
+			command += " --dangerously-bypass-approvals-and-sandbox"
+		}
+		return command + " " + spawner.ShellQuote(prompt)
+	default:
+		command := fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
+		if dangerSkip {
+			command += " --dangerously-skip-permissions"
+		}
+		return command
+	}
+}
+
+func buildResumeAgentCommand(backend agentBackend, sessionID string, dangerSkip bool, injectionText string) string {
+	switch backend {
+	case backendCodex:
+		command := "codex resume"
+		if dangerSkip {
+			command += " --dangerously-bypass-approvals-and-sandbox"
+		}
+		command += " " + sessionID
+		if injectionText != "" {
+			command += " " + spawner.ShellQuote(withMarker+"\n"+injectionText)
+		}
+		return command
+	default:
+		command := "claude --resume " + sessionID
+		if injectionText != "" {
+			command += " " + spawner.ShellQuote(withMarker+"\n"+injectionText)
+		}
+		if dangerSkip {
+			command += " --dangerously-skip-permissions"
+		}
+		return command
+	}
 }
 
 // buildBootstrapPromptForKind dispatches to the right prompt variant
@@ -629,6 +726,10 @@ func cmdDoHere(query string, force bool) int {
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
 		fmt.Fprintf(os.Stderr, "error: task %q not updated\n", task.Slug)
+		return 1
+	}
+	if err := flowdb.UpsertTaskSession(db, task.Slug, backendClaude.String(), sid, nil, now, nil, now); err != nil {
+		fmt.Fprintf(os.Stderr, "error: store task session: %v\n", err)
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)

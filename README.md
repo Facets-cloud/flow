@@ -2,7 +2,7 @@
 
 ![Status](https://img.shields.io/badge/status-alpha-orange) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-> A complete task manager for Claude Code — and the working memory
+> A complete task manager for Claude Code and Codex — and the working memory
 > layer that turns every session from a brilliant new hire into the
 > engineer on your team.
 
@@ -55,8 +55,8 @@ session catching it up.
 flow changes the relationship. It's a complete task manager —
 projects, tasks, structured briefs, progress notes, playbooks for
 recurring work — *and* a working memory layer that injects all of it
-into every Claude session automatically. Capture once, work with
-Claude on it forever.
+into every Claude or Codex execution session automatically. Capture once,
+work with your agent on it forever.
 
 The first session feels normal. By session ten, Claude knows your
 codebase quirks, your team, the customer you keep mentioning, and
@@ -81,7 +81,7 @@ the next one smarter.
                                              │          │
                   flow do <task>             │ scoop    │ sweep
    ┌────────┐  ─────────────────▶  ┌─────────┴──────────┴─────┐
-   │  Task  │                      │      Claude session      │
+   │  Task  │                      │   Claude/Codex session   │
    │  brief │  ◀──── updates ───── │  loads brief + kb +      │
    │ +notes │                      │  notes + repo conventions│
    └────────┘  ─── flow done ───▶  └──────────────────────────┘
@@ -94,7 +94,7 @@ the next one smarter.
   product convention — and appends them to the matching kb file
   on the fly.
 - **Sweep (on `flow done`):** when you close a task, flow spawns
-  a headless Claude pass that re-reads the entire transcript and
+  a headless Claude or Codex pass that re-reads the entire transcript and
   pulls anything kb-worthy that the live scoop missed. The status
   flip is the contract; the sweep is best-effort.
 - **Cross-reference:** `flow transcript <sibling-task>` lets a
@@ -133,10 +133,9 @@ In any Claude Code session, paste this:
 > Install flow from https://github.com/Facets-cloud/flow
 
 Claude reads the repo, downloads the binary, and runs `flow init` —
-which installs the flow skill into `~/.claude/skills/flow/SKILL.md`
-and registers a SessionStart hook so every future Claude session
-loads the skill automatically. Then say **"let's get to work"** and
-follow along.
+which installs the flow skill into both `~/.claude/skills/flow/SKILL.md`
+and `~/.codex/skills/flow/SKILL.md`, then registers SessionStart hooks
+for both agents. Then say **"let's get to work"** and follow along.
 
 <details>
 <summary>Manual install (curl + chmod + flow init)</summary>
@@ -151,17 +150,18 @@ chmod +x /usr/local/bin/flow
 xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
 
 # 2. Initialize. This is required — it creates ~/.flow/, the SQLite
-#    index, the knowledge base, AND installs the Claude skill +
-#    SessionStart hook. Without this step, Claude can't talk to flow.
+#    index, the knowledge base, AND installs the Claude/Codex skills +
+#    SessionStart hooks. Without this step, agents can't talk to flow.
 flow init
 ```
 
-`flow init` is the step that wires flow into Claude Code. It:
+`flow init` is the step that wires flow into Claude Code and Codex. It:
 
 - Creates `~/.flow/` (database, kb, projects, tasks, playbooks)
-- Writes the flow skill to `~/.claude/skills/flow/SKILL.md`
-- Adds a SessionStart hook to `~/.claude/settings.json` so every new
-  Claude Code session auto-loads the skill
+- Writes the flow skill to `~/.claude/skills/flow/SKILL.md` and
+  `~/.codex/skills/flow/SKILL.md`
+- Adds SessionStart hooks to Claude settings and Codex hooks config so
+  new sessions auto-load the skill
 
 The `xattr` step removes Gatekeeper's quarantine attribute so macOS
 doesn't refuse to run the unsigned binary.
@@ -181,19 +181,20 @@ UserPromptSubmit hooks. Check the running version with
 
 ## Quickstart
 
-Just open Claude and say **"let's get to work"**. The skill
+Just open Claude or Codex and say **"let's get to work"**. The skill
 handles the rest.
 
 ## What you get
 
-- **One task, one Claude session, one tab.** `flow do <task>`
+- **One task, one session per backend, one tab.** `flow do <task>`
   spawns a dedicated tab in iTerm2, Warp, stock macOS Terminal, kitty
   (requires `allow_remote_control yes` in `kitty.conf`), or your
   current zellij session (requires zellij ≥ 0.40) — flow picks
   whichever you launched it from. Override with
   `FLOW_TERM=warp|iterm|terminal|zellij|kitty` when you're on a
-  non-standard host. Tomorrow's `flow do <task>` resumes the same
-  conversation.
+  non-standard host. It auto-detects Claude vs Codex, stores those
+  sessions separately, and tomorrow's `flow do <task>` resumes the
+  selected backend's same conversation.
 - **Interview-driven task capture.** No forms. flow asks
   what / why / where / done-when, then writes a structured brief.
 - **A knowledge base that grows.** Five markdown buckets for
@@ -204,25 +205,24 @@ handles the rest.
   you left off, even after a week away.
 - **Playbooks for cadence work.** Weekly reviews, daily triage,
   on-call rotations — define once, run on demand.
-- **A Claude skill that speaks plain English.** "What should I
+- **A Claude/Codex skill that speaks plain English.** "What should I
   work on", "resume auth", "save a note" — the skill turns intent
   into flow commands.
 
 ## How it works under the hood
 
-`flow do <task>` pre-allocates a session UUID, writes it to the
-task row, and spawns a tab in zellij (when `$ZELLIJ` is set), kitty
-(when `$KITTY_WINDOW_ID` is set or `$TERM=xterm-kitty`), the backend
-named in `$FLOW_TERM` (when set), or Warp / iTerm2 / stock
-Terminal.app (auto-detected from `$TERM_PROGRAM`) — chosen in that
-priority order, with iTerm as the historical fallback — running
-`claude --session-id <uuid>` with `FLOW_TASK` / `FLOW_PROJECT` inlined.
-The jsonl file lands at the deterministic path
-`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`, so future
-`flow do` calls run `claude --resume <uuid>` to continue the same
-conversation. A SessionStart hook re-injects the task brief,
-updates, and CLAUDE.md context on every resume; a UserPromptSubmit
-hook keeps the flow skill discoverable in ad-hoc Claude sessions.
+`flow do <task>` detects the invoking agent backend, then spawns a tab
+in zellij (when `$ZELLIJ` is set), kitty (when `$KITTY_WINDOW_ID` is
+set or `$TERM=xterm-kitty`), the backend named in `$FLOW_TERM` (when
+set), or Warp / iTerm2 / stock Terminal.app (auto-detected from
+`$TERM_PROGRAM`) — chosen in that priority order, with iTerm as the
+historical fallback. Claude remains the default: flow pre-allocates a
+UUID, stores it as the task's Claude session, and runs
+`claude --session-id <uuid>` or `claude --resume <uuid>`. Codex fresh
+starts run `codex <bootstrap-prompt>`; Codex's SessionStart hook
+registers the generated session ID and transcript path, and resumes use
+`codex resume <session-id>`. `flow transcript <task> --backend codex`
+or `--backend claude` selects history explicitly when both exist.
 
 The first `flow do` from stock Terminal.app needs macOS Accessibility
 permission for the **app hosting your shell** — not the `flow` binary

@@ -58,6 +58,23 @@ func expectedCommand(event string) string {
 	return ""
 }
 
+func TestEmbeddedSkillDescriptionFitsCodexLimit(t *testing.T) {
+	text := string(embeddedSkill)
+	start := strings.Index(text, "description: |")
+	if start < 0 {
+		t.Fatal("skill frontmatter missing description")
+	}
+	start = strings.Index(text[start:], "\n") + start + 1
+	end := strings.Index(text[start:], "---")
+	if end < 0 {
+		t.Fatal("skill frontmatter not closed")
+	}
+	desc := strings.TrimSpace(text[start : start+end])
+	if len(desc) > 1024 {
+		t.Fatalf("skill description is %d bytes; Codex requires <= 1024", len(desc))
+	}
+}
+
 // withTempHome redirects $HOME to a tempdir for the duration of the test.
 func withTempHome(t *testing.T) string {
 	t.Helper()

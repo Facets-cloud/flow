@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
@@ -397,6 +398,73 @@ func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 	}
 	if strings.Contains(script, "flowde") {
 		t.Errorf("resume spawn should not invoke flowde, got:\n%s", script)
+	}
+}
+
+func TestCmdDoCodexFreshAndResumeUseSeparateSessionStore(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AGENT_BACKEND", "codex")
+	seedTask(t, "codex-task")
+	_, getScript := stubITerm(t)
+
+	db := openFlowDB(t)
+	now := flowdb.NowISO()
+	if err := flowdb.UpsertTaskSession(db, "codex-task", "claude", "claude-sid", nil, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdDo([]string{"codex-task"}); rc != 0 {
+		t.Fatalf("codex fresh rc=%d", rc)
+	}
+	script := getScript()
+	if !strings.Contains(script, " codex ") || strings.Contains(script, "--session-id") {
+		t.Fatalf("fresh codex spawn should run codex without preallocated session id, got:\n%s", script)
+	}
+	task, err := flowdb.GetTask(db, "codex-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionID.Valid {
+		t.Fatalf("codex fresh should not populate legacy tasks.session_id, got %q", task.SessionID.String)
+	}
+	if _, err := flowdb.GetTaskSession(db, "codex-task", "claude"); err != nil {
+		t.Fatalf("codex fresh should preserve claude session: %v", err)
+	}
+
+	if err := flowdb.UpsertTaskSession(db, "codex-task", "codex", "codex-sid", nil, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdDo([]string{"codex-task"}); rc != 0 {
+		t.Fatalf("codex resume rc=%d", rc)
+	}
+	script = getScript()
+	if !strings.Contains(script, " codex resume codex-sid") {
+		t.Fatalf("codex resume should run codex resume, got:\n%s", script)
+	}
+}
+
+func TestCmdDoFreshOnlyResetsSelectedBackend(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AGENT_BACKEND", "codex")
+	seedTask(t, "mixed-task")
+	stubITerm(t)
+
+	db := openFlowDB(t)
+	now := flowdb.NowISO()
+	if err := flowdb.UpsertTaskSession(db, "mixed-task", "claude", "claude-sid", nil, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.UpsertTaskSession(db, "mixed-task", "codex", "old-codex-sid", nil, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdDo([]string{"mixed-task", "--fresh"}); rc != 0 {
+		t.Fatalf("codex --fresh rc=%d", rc)
+	}
+	if _, err := flowdb.GetTaskSession(db, "mixed-task", "codex"); err != sql.ErrNoRows {
+		t.Fatalf("codex --fresh should clear only codex session before hook registration, got err=%v", err)
+	}
+	if s, err := flowdb.GetTaskSession(db, "mixed-task", "claude"); err != nil || s.SessionID != "claude-sid" {
+		t.Fatalf("claude session should survive codex --fresh, got session=%+v err=%v", s, err)
 	}
 }
 
