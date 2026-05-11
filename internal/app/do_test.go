@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
+	"flow/internal/notify"
 	"flow/internal/spawner"
 	"io"
 	"os"
@@ -14,6 +15,23 @@ import (
 	"sync/atomic"
 	"testing"
 )
+
+// stubNotify suppresses real macOS notifications during tests and
+// returns a pointer that increments each time notify.Runner is called.
+// Forces FLOW_NOTIFY="" so the env-var gate doesn't accidentally
+// suppress notifications.
+func stubNotify(t *testing.T) *int {
+	t.Helper()
+	t.Setenv("FLOW_NOTIFY", "")
+	calls := 0
+	oldRunner := notify.Runner
+	notify.Runner = func(name string, args []string) error {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() { notify.Runner = oldRunner })
+	return &calls
+}
 
 // stubITerm replaces iterm.Runner with a counter + captured-script
 // recorder. Returns the counter pointer and a function that reads the
@@ -144,12 +162,16 @@ func TestCmdDoLiveSessionFocusesExistingTab(t *testing.T) {
 	iterm.RunnerOutput = func(args []string) ([]byte, error) { return []byte("ok\n"), nil }
 	t.Cleanup(func() { iterm.RunnerOutput = oldRunnerOut })
 
+	notifyCalls := stubNotify(t)
 	count, _ := stubITerm(t)
 	if rc := cmdDo([]string{"open-task"}); rc != 0 {
 		t.Errorf("cmdDo when focus succeeds: rc=%d, want 0", rc)
 	}
 	if *count != 0 {
 		t.Errorf("iterm spawn count = %d, want 0 (focus should not spawn)", *count)
+	}
+	if *notifyCalls != 1 {
+		t.Errorf("notify.Runner calls = %d; want 1 (focus success should notify)", *notifyCalls)
 	}
 }
 
@@ -195,6 +217,7 @@ func TestCmdDoLiveSessionDuplicateProcessesWarn(t *testing.T) {
 	iterm.RunnerOutput = func(args []string) ([]byte, error) { return []byte("ok\n"), nil }
 	t.Cleanup(func() { iterm.RunnerOutput = oldRunnerOut })
 
+	stubNotify(t)
 	stderr := captureStderr(t)
 	count, _ := stubITerm(t)
 	if rc := cmdDo([]string{"dup-task"}); rc != 0 {

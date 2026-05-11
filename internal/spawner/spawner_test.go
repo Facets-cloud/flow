@@ -3,6 +3,7 @@ package spawner
 import (
 	"flow/internal/iterm"
 	"flow/internal/kitty"
+	"flow/internal/notify"
 	"flow/internal/terminal"
 	"flow/internal/warp"
 	"flow/internal/zellij"
@@ -342,6 +343,67 @@ func stubAllFocusBackends(t *testing.T) (*bool, *bool, *bool) {
 	t.Cleanup(func() { zellij.RunnerOutput = oldZellijRO })
 
 	return &itermCalled, &terminalCalled, &zellijCalled
+}
+
+// TestNotifyFocusedDispatchesForEachBackend confirms spawner.NotifyFocused
+// routes to a backend under every Override value and that the call
+// reaches internal/notify.Runner exactly once with the message body.
+// All three backends delegate to the same notify.MacOS today, so we
+// can't distinguish which one specifically ran from outside —
+// observable behavior is identical. This test pins the dispatch
+// wiring (no panic, no missed case) and the notify hand-off.
+func TestNotifyFocusedDispatchesForEachBackend(t *testing.T) {
+	for _, b := range []Backend{BackendITerm, BackendTerminal, BackendZellij} {
+		t.Run(string(b), func(t *testing.T) {
+			t.Setenv("FLOW_NOTIFY", "")
+			Override = b
+			t.Cleanup(func() { Override = "" })
+
+			calls := 0
+			var gotArgs []string
+			oldRunner := notify.Runner
+			notify.Runner = func(name string, args []string) error {
+				calls++
+				gotArgs = args
+				return nil
+			}
+			t.Cleanup(func() { notify.Runner = oldRunner })
+
+			if err := NotifyFocused("Switched to demo"); err != nil {
+				t.Fatalf("NotifyFocused under %s: %v", b, err)
+			}
+			if calls != 1 {
+				t.Errorf("notify.Runner calls = %d; want 1", calls)
+			}
+			joined := strings.Join(gotArgs, " ")
+			if !strings.Contains(joined, "Switched to demo") {
+				t.Errorf("notify args missing message body: %v", gotArgs)
+			}
+		})
+	}
+}
+
+// TestNotifyFocusedRespectsFlowNotifyOff — when the user opts out via
+// FLOW_NOTIFY=0, no Runner call happens for any backend.
+func TestNotifyFocusedRespectsFlowNotifyOff(t *testing.T) {
+	for _, b := range []Backend{BackendITerm, BackendTerminal, BackendZellij} {
+		t.Run(string(b), func(t *testing.T) {
+			t.Setenv("FLOW_NOTIFY", "0")
+			Override = b
+			t.Cleanup(func() { Override = "" })
+
+			oldRunner := notify.Runner
+			notify.Runner = func(name string, args []string) error {
+				t.Errorf("Runner should not fire when FLOW_NOTIFY=0")
+				return nil
+			}
+			t.Cleanup(func() { notify.Runner = oldRunner })
+
+			if err := NotifyFocused("anything"); err != nil {
+				t.Errorf("NotifyFocused under FLOW_NOTIFY=0 returned %v; want nil", err)
+			}
+		})
+	}
 }
 
 // TestShellQuoteParity makes sure the re-exported helper matches

@@ -120,6 +120,23 @@ func FocusSession(sessionID string) (bool, error) {
 	}
 }
 
+// NotifyFocused posts a macOS notification to tell the user the tab
+// switch happened. Dispatched per backend so a future backend can
+// override (e.g., a Linux-only one could use notify-send) without
+// touching the rest of flow. All current backends delegate to
+// internal/notify.MacOS, which respects FLOW_NOTIFY to skip when
+// notifications are disabled.
+func NotifyFocused(message string) error {
+	switch Detect() {
+	case BackendZellij:
+		return zellij.NotifyFocused(message)
+	case BackendTerminal:
+		return terminal.NotifyFocused(message)
+	default:
+		return iterm.NotifyFocused(message)
+	}
+}
+
 // ShellQuote is re-exported so callers don't need to import the chosen
 // backend just to quote a value before handing it to SpawnTab. All
 // backends quote identically (POSIX single-quote with embedded-quote

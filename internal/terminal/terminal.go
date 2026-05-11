@@ -11,6 +11,7 @@
 package terminal
 
 import (
+	"flow/internal/notify"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -259,6 +260,12 @@ end tell
 		return false, fmt.Errorf("osascript: %w", err)
 	}
 	return strings.TrimSpace(string(out)) == "ok", nil
+}
+
+// NotifyFocused posts a macOS notification announcing the focus
+// switch. Best-effort — see internal/notify.MacOS.
+func NotifyFocused(message string) error {
+	return notify.MacOS("flow", message)
 }
 
 // ShellQuote wraps s in single quotes with proper escaping.
