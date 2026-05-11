@@ -2,6 +2,7 @@ package zellij
 
 import (
 	"errors"
+	"flow/internal/notify"
 	"slices"
 	"strings"
 	"testing"
@@ -314,6 +315,28 @@ func stubRunnerOutput(t *testing.T, fn func([]string) ([]byte, error)) {
 	old := RunnerOutput
 	RunnerOutput = fn
 	t.Cleanup(func() { RunnerOutput = old })
+}
+
+// TestNotifyFocusedDelegatesToNotifyPackage — zellij backend has no
+// native notification path, so it delegates to internal/notify like
+// iterm and terminal.
+func TestNotifyFocusedDelegatesToNotifyPackage(t *testing.T) {
+	t.Setenv("FLOW_NOTIFY", "")
+
+	called := false
+	oldRunner := notify.Runner
+	notify.Runner = func(name string, args []string) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { notify.Runner = oldRunner })
+
+	if err := NotifyFocused("Switched to task-z"); err != nil {
+		t.Fatalf("NotifyFocused: %v", err)
+	}
+	if !called {
+		t.Error("notify.Runner was not invoked")
+	}
 }
 
 // TestShellQuote — same contract as iterm.ShellQuote / terminal.ShellQuote.

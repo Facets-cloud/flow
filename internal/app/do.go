@@ -122,6 +122,9 @@ func cmdDo(args []string) int {
 				}
 				focused, ferr := spawner.FocusSession(task.SessionID.String)
 				if focused {
+					if nerr := spawner.NotifyFocused("Switched to " + task.Slug); nerr != nil {
+						fmt.Fprintf(os.Stderr, "warning: notify attempt failed: %v\n", nerr)
+					}
 					fmt.Printf("Already open: %s — switched to existing tab\n", task.Slug)
 					return 0
 				}

@@ -29,6 +29,7 @@ package zellij
 
 import (
 	"encoding/json"
+	"flow/internal/notify"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -162,6 +163,14 @@ func paneIDForClaudeSession(jsonBytes []byte, sessionID string) (int, bool, erro
 		return p.ID, true, nil
 	}
 	return 0, false, nil
+}
+
+// NotifyFocused posts a macOS notification. zellij itself has no
+// native notification API, so we delegate to the shared macOS notifier
+// exactly like iTerm and Terminal.app. Best-effort — see
+// internal/notify.MacOS.
+func NotifyFocused(message string) error {
+	return notify.MacOS("flow", message)
 }
 
 // ShellQuote wraps s in single quotes with proper escaping. Same
