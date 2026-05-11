@@ -2,6 +2,7 @@ package iterm
 
 import (
 	"errors"
+	"flow/internal/notify"
 	"strings"
 	"testing"
 )
@@ -196,6 +197,40 @@ func TestFocusSessionOsascriptError(t *testing.T) {
 	}
 	if err == nil {
 		t.Error("expected osascript error to be surfaced")
+	}
+}
+
+// TestNotifyFocusedDelegatesToNotifyPackage — NotifyFocused goes
+// through internal/notify (osascript display notification + FLOW_NOTIFY
+// off switch). We assert by stubbing notify.Runner and watching the
+// call land there with "flow" as the title.
+func TestNotifyFocusedDelegatesToNotifyPackage(t *testing.T) {
+	t.Setenv("FLOW_NOTIFY", "")
+
+	called := false
+	var gotName string
+	var gotArgs []string
+	oldRunner := notify.Runner
+	notify.Runner = func(name string, args []string) error {
+		called = true
+		gotName = name
+		gotArgs = args
+		return nil
+	}
+	t.Cleanup(func() { notify.Runner = oldRunner })
+
+	if err := NotifyFocused("Switched to task-x"); err != nil {
+		t.Fatalf("NotifyFocused: %v", err)
+	}
+	if !called {
+		t.Error("notify.Runner was not invoked")
+	}
+	if gotName != "osascript" {
+		t.Errorf("expected osascript invocation; got %q", gotName)
+	}
+	joined := strings.Join(gotArgs, " ")
+	if !strings.Contains(joined, "Switched to task-x") {
+		t.Errorf("notify args missing message body: %v", gotArgs)
 	}
 }
 

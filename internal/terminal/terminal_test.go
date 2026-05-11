@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"errors"
+	"flow/internal/notify"
 	"strings"
 	"testing"
 )
@@ -265,6 +266,31 @@ func TestFocusSessionSkipsNoControllingTTY(t *testing.T) {
 	}
 	if osCalled {
 		t.Error("osascript should not be called when tty is ??")
+	}
+}
+
+// TestNotifyFocusedDelegatesToNotifyPackage — same shape as iterm.
+// Confirms the Terminal.app backend hands off to the shared notify
+// package which runs osascript display notification.
+func TestNotifyFocusedDelegatesToNotifyPackage(t *testing.T) {
+	t.Setenv("FLOW_NOTIFY", "")
+
+	called := false
+	oldRunner := notify.Runner
+	notify.Runner = func(name string, args []string) error {
+		called = true
+		if name != "osascript" {
+			t.Errorf("expected osascript invocation, got %q", name)
+		}
+		return nil
+	}
+	t.Cleanup(func() { notify.Runner = oldRunner })
+
+	if err := NotifyFocused("Switched to task-y"); err != nil {
+		t.Fatalf("NotifyFocused: %v", err)
+	}
+	if !called {
+		t.Error("notify.Runner was not invoked")
 	}
 }
 

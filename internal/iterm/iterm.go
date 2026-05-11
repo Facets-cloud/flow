@@ -2,6 +2,7 @@
 package iterm
 
 import (
+	"flow/internal/notify"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -176,6 +177,14 @@ end tell
 		return false, fmt.Errorf("osascript: %w", err)
 	}
 	return strings.TrimSpace(string(out)) == "ok", nil
+}
+
+// NotifyFocused posts a macOS notification announcing that the user
+// was switched to an existing tab. Best-effort — errors are advisory
+// since focus has already succeeded by the time this is called.
+// Respects the FLOW_NOTIFY env-var off switch (handled inside notify.MacOS).
+func NotifyFocused(message string) error {
+	return notify.MacOS("flow", message)
 }
 
 // ShellQuote wraps s in single quotes with proper escaping.
