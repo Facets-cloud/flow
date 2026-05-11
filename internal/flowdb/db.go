@@ -92,8 +92,13 @@ const indexesPostMigrate = `
 CREATE INDEX IF NOT EXISTS idx_tasks_kind          ON tasks(kind);
 CREATE INDEX IF NOT EXISTS idx_tasks_playbook_slug ON tasks(playbook_slug);
 CREATE INDEX IF NOT EXISTS idx_playbooks_project   ON playbooks(project_slug);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id) WHERE session_id IS NOT NULL;
 `
+
+// (idx_tasks_session_id is a partial UNIQUE index that requires a
+// dedupe pass against existing data — a flat CREATE UNIQUE INDEX
+// would fail on any DB that has two tasks sharing a session_id.
+// migrateTasksSessionIDUnique handles both the dedupe and the index
+// creation as one idempotent step.)
 
 // ---------- models ----------
 
@@ -264,8 +269,6 @@ func runMigrations(db *sql.DB) error {
 
 	// Session-id invariant: any non-backlog task must have a session_id.
 	// Adds a CHECK to the tasks table; old DBs need a table rebuild.
-	// Runs before indexesPostMigrate so the partial unique index lands
-	// on the rebuilt table.
 	if err := migrateTasksSessionInvariant(db); err != nil {
 		return fmt.Errorf("migrate session invariant: %w", err)
 	}
@@ -275,6 +278,127 @@ func runMigrations(db *sql.DB) error {
 	// this point all referenced columns exist.
 	if _, err := db.Exec(indexesPostMigrate); err != nil {
 		return fmt.Errorf("create post-migrate indexes: %w", err)
+	}
+
+	// Session-id uniqueness: dedupe any tasks sharing a session_id, then
+	// create the partial unique index. Runs after the basic indexes
+	// because it has its own dedupe-first contract; a naive
+	// CREATE UNIQUE INDEX in indexesPostMigrate would fail on a DB with
+	// pre-existing duplicates.
+	if err := migrateTasksSessionIDUnique(db); err != nil {
+		return fmt.Errorf("migrate session-id uniqueness: %w", err)
+	}
+	return nil
+}
+
+// migrateTasksSessionIDUnique creates the partial unique index on
+// tasks(session_id) WHERE session_id IS NOT NULL. Older DBs may have
+// two tasks sharing a session_id (the old `flow update task
+// --session-id` flag could silently overwrite a binding without
+// clearing the prior owner; or a user manually edited the row). A
+// flat CREATE UNIQUE INDEX would fail on those DBs, so this function
+// first deduplicates by:
+//
+//  1. Listing every session_id that appears on 2+ tasks.
+//  2. For each such session_id, ordering the carrier tasks by
+//     updated_at DESC, slug ASC. The first row keeps the binding.
+//  3. The remaining rows get session_id=NULL, session_started=NULL,
+//     and status='backlog' (the only state legal for a NULL
+//     session_id under the invariant). A stderr summary explains
+//     which task kept the session and which were demoted.
+//
+// Idempotent: probes sqlite_master for the index first; subsequent
+// calls are no-ops once the index exists.
+func migrateTasksSessionIDUnique(db *sql.DB) error {
+	var existing sql.NullString
+	err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_tasks_session_id'`,
+	).Scan(&existing)
+	if err == nil && existing.Valid {
+		return nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("probe unique index: %w", err)
+	}
+
+	rows, err := db.Query(
+		`SELECT session_id FROM tasks
+		 WHERE session_id IS NOT NULL
+		 GROUP BY session_id
+		 HAVING COUNT(*) > 1
+		 ORDER BY session_id`,
+	)
+	if err != nil {
+		return fmt.Errorf("scan duplicates: %w", err)
+	}
+	var dupedSIDs []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			rows.Close()
+			return err
+		}
+		dupedSIDs = append(dupedSIDs, sid)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	if len(dupedSIDs) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"flow migration: deduplicating %d session_id(s) shared across multiple tasks (only one task may carry a given session_id):\n",
+			len(dupedSIDs))
+		now := NowISO()
+		for _, sid := range dupedSIDs {
+			tRows, err := db.Query(
+				`SELECT slug, status FROM tasks
+				 WHERE session_id = ?
+				 ORDER BY updated_at DESC, slug ASC`,
+				sid,
+			)
+			if err != nil {
+				return fmt.Errorf("scan duplicate group %s: %w", sid, err)
+			}
+			type tRow struct{ slug, status string }
+			var carriers []tRow
+			for tRows.Next() {
+				var t tRow
+				if err := tRows.Scan(&t.slug, &t.status); err != nil {
+					tRows.Close()
+					return err
+				}
+				carriers = append(carriers, t)
+			}
+			if err := tRows.Err(); err != nil {
+				tRows.Close()
+				return err
+			}
+			tRows.Close()
+			if len(carriers) < 2 {
+				continue
+			}
+			winner := carriers[0]
+			fmt.Fprintf(os.Stderr,
+				"  %s: keeping on %s (was %s); demoting to backlog with NULL session_id:\n",
+				sid, winner.slug, winner.status)
+			for _, l := range carriers[1:] {
+				fmt.Fprintf(os.Stderr, "    - %s (was %s)\n", l.slug, l.status)
+				if _, err := db.Exec(
+					`UPDATE tasks SET session_id=NULL, session_started=NULL, status='backlog', updated_at=? WHERE slug=?`,
+					now, l.slug,
+				); err != nil {
+					return fmt.Errorf("demote duplicate %s: %w", l.slug, err)
+				}
+			}
+		}
+	}
+
+	if _, err := db.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id) WHERE session_id IS NOT NULL`,
+	); err != nil {
+		return fmt.Errorf("create unique index: %w", err)
 	}
 	return nil
 }

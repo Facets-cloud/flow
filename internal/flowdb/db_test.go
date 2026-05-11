@@ -423,3 +423,97 @@ func TestMigrationIdempotent(t *testing.T) {
 	}
 	db.Close()
 }
+
+// TestMigrationDeduplicatesSessionIDs simulates Anshul's bug: a DB
+// where two non-archived tasks share the same session_id (could
+// happen via the now-removed `flow update task --session-id` flag,
+// or a manual edit). The naive partial UNIQUE INDEX would fail to
+// create. The migration should dedupe (winner = most recent
+// updated_at) and then succeed at creating the index.
+func TestMigrationDeduplicatesSessionIDs(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "flow.db")
+
+	// Bootstrap a DB and seed two tasks sharing one session_id.
+	// Bypass OpenDB's migration by directly writing to the table
+	// after first open, then reopening to trigger migration.
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drop the unique index that the migration just created so we
+	// can simulate a pre-migration state with duplicates.
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_tasks_session_id`); err != nil {
+		t.Fatal(err)
+	}
+	const sharedSID = "deadbeef-1111-4222-8333-444455556666"
+	now := NowISO()
+	old := "2026-01-01T00:00:00Z"
+	// Two tasks with same session_id; the one with newer updated_at
+	// should win.
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, session_id, session_started, created_at, updated_at)
+		 VALUES ('winner', 'W', 'in-progress', 'medium', '/tmp', ?, ?, ?, ?)`,
+		sharedSID, old, old, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, session_id, session_started, created_at, updated_at)
+		 VALUES ('loser', 'L', 'done', 'medium', '/tmp', ?, ?, ?, ?)`,
+		sharedSID, old, old, old,
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	// Reopen — the migration's dedupe step should fire.
+	db, err = OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("reopen with duplicates failed: %v", err)
+	}
+	defer db.Close()
+
+	// Winner keeps the session_id and stays in-progress.
+	winner, err := GetTask(db, "winner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !winner.SessionID.Valid || winner.SessionID.String != sharedSID {
+		t.Errorf("winner session_id = %+v, want %s", winner.SessionID, sharedSID)
+	}
+	if winner.Status != "in-progress" {
+		t.Errorf("winner status = %q, want in-progress", winner.Status)
+	}
+
+	// Loser gets demoted: NULL session_id, status='backlog'.
+	loser, err := GetTask(db, "loser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loser.SessionID.Valid {
+		t.Errorf("loser session_id should be NULL, got %q", loser.SessionID.String)
+	}
+	if loser.Status != "backlog" {
+		t.Errorf("loser status = %q, want backlog (demoted)", loser.Status)
+	}
+
+	// The unique index should now exist.
+	var idxSQL sql.NullString
+	if err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_tasks_session_id'`,
+	).Scan(&idxSQL); err != nil {
+		t.Fatalf("unique index missing after migration: %v", err)
+	}
+	if !idxSQL.Valid {
+		t.Error("unique index DDL is NULL")
+	}
+
+	// Idempotent: opening again is a no-op.
+	db.Close()
+	db2, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("second reopen failed: %v", err)
+	}
+	db2.Close()
+}
