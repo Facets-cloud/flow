@@ -4,6 +4,7 @@ package flowdb
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -182,8 +183,18 @@ func NullIfEmpty(s string) any {
 
 // OpenDB opens (or creates) the SQLite database at path, ensures the
 // schema is present, and runs idempotent migrations.
+//
+// The connection is opened with busy_timeout(30000) applied via the
+// DSN so every pooled connection inherits it. Without this, concurrent
+// `flow do` invocations can race during the schema-DDL / migration
+// setup here and the loser gets SQLITE_BUSY immediately instead of
+// waiting — surfaces as a flaky `migrate: pragma table_info(...):
+// database is locked` on slow runners.
 func OpenDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	q := url.Values{}
+	q.Set("_pragma", "busy_timeout(30000)")
+	dsn := "file:" + path + "?" + q.Encode()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
