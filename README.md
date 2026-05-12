@@ -218,6 +218,11 @@ conversation. A SessionStart hook re-injects the task brief,
 updates, and CLAUDE.md context on every resume; a UserPromptSubmit
 hook keeps the flow skill discoverable in ad-hoc Claude sessions.
 
+When `flow do <task>` is run for a task whose session is already
+live in another tab, flow focuses that tab instead of spawning a
+duplicate. The source tab prints "Already open: `<slug>` — switched
+to existing tab" as an audit line.
+
 The first `flow do` from stock Terminal.app needs macOS Accessibility
 permission for the **app hosting your shell** — not the `flow` binary
 itself. Terminal.app's AppleScript dictionary has no "make new tab"
