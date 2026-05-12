@@ -226,8 +226,14 @@ hook keeps the flow skill discoverable in ad-hoc Claude sessions.
 
 When `flow do <task>` is run for a task whose session is already
 live in another tab, flow focuses that tab instead of spawning a
-duplicate. The source tab prints "Already open: `<slug>` — switched
-to existing tab" as an audit line.
+duplicate — and posts a macOS notification ("Switched to `<slug>`")
+via `osascript display notification` so you know the switch happened
+even if the source tab is no longer in view. Banner duration follows
+your **Script Editor** entry in System Settings → Notifications
+(default Banners auto-dismisses after a few seconds; set it to
+Alerts to keep notifications sticky). Set `FLOW_NOTIFY=0` (or
+`false` / `off` / `no`) to suppress notifications entirely — the
+tab focus and the source-tab audit print still happen.
 
 The first `flow do` from stock Terminal.app needs macOS Accessibility
 permission for the **app hosting your shell** — not the `flow` binary
