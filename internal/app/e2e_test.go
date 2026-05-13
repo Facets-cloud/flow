@@ -3,6 +3,7 @@ package app
 import (
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
+	"flow/internal/spawner"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,6 +29,14 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
+	// Pin the spawner backend so a kitty/zellij/Terminal.app host does
+	// not route SpawnTab to a real terminal CLI. Without this, running
+	// the test inside kitty (KITTY_WINDOW_ID set) opens a real tab and
+	// types the fixture command into the user's shell.
+	oldOverride := spawner.Override
+	spawner.Override = spawner.BackendITerm
+	t.Cleanup(func() { spawner.Override = oldOverride })
 
 	// Stub osascript for the whole test.
 	oldOsa := iterm.Runner
