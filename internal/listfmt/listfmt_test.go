@@ -102,6 +102,10 @@ func TestVisibleWidth(t *testing.T) {
 		{Red + "hé" + Reset, 2},
 		{"", 0},
 		{"\x1b[31m" + "abc" + "\x1b[0m" + "def", 6},
+		// Wide runes from flow's list output — each counts as 2 cells.
+		{"⚠", 2},
+		{"⚡ due today", 12},
+		{Red + "⚠ stale" + Reset, 8},
 	}
 	for _, c := range cases {
 		if got := visibleWidth(c.s); got != c.want {
@@ -110,9 +114,8 @@ func TestVisibleWidth(t *testing.T) {
 	}
 }
 
-// TestTable_AlignedColumns verifies that tabwriter aligns columns to the
-// widest cell, regardless of input width — the primary value-add over the
-// hand-rolled Sprintf padding we're replacing.
+// TestTable_AlignedColumns verifies that the Table renderer pads columns
+// to the widest visible cell across all rows.
 func TestTable_AlignedColumns(t *testing.T) {
 	tab := &Table{
 		Headers: []string{"A", "B"},
@@ -131,7 +134,7 @@ func TestTable_AlignedColumns(t *testing.T) {
 		t.Fatalf("expected 4 lines, got %d: %q", len(lines), buf.String())
 	}
 	// The "B" column should start at the same column index in every row,
-	// because tabwriter pads the first column to its widest cell.
+	// because the first column is padded to its widest cell.
 	bIdx := -1
 	for i, line := range lines {
 		idx := strings.LastIndexAny(line, "xyzB")

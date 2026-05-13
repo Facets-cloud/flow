@@ -1,7 +1,8 @@
 // Package listfmt is the shared output renderer used by every `flow list`
-// subcommand. It wraps text/tabwriter for table output, adds JSON and TSV
-// emitters, and provides ANSI color helpers that disable themselves when
-// stdout is not a TTY.
+// subcommand. It provides a manually-padded Table renderer that's aware of
+// ANSI escape sequences (so colored cells align against uncolored ones),
+// JSON and TSV emitters, and ANSI color helpers that disable themselves
+// when stdout is not a TTY.
 package listfmt
 
 import (
@@ -11,7 +12,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 )
@@ -19,15 +19,33 @@ import (
 // ansiSGR matches ANSI SGR (Select Graphic Rendition) escape sequences —
 // the family of codes used for color/bold/dim/etc. We strip these to
 // compute the *visible* width of a cell, which is what tabular alignment
-// must care about. Go's text/tabwriter has no built-in way to exempt
-// inline ANSI from its width math (despite what the Escape-character
-// docs suggest for tab-bearing cells), so we render manually.
+// must care about. Cursor/OSC/hyperlink sequences aren't matched — flow
+// doesn't emit them, but if that changes the regex needs to grow.
 var ansiSGR = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-// visibleWidth returns the rune count of s after stripping ANSI SGR
-// escape sequences. This is the width tabular renderers should pad to.
+// wideRunes lists the East Asian Wide / emoji glyphs that flow's list
+// output emits inline. Every common terminal renders these as two cells,
+// but utf8.RuneCountInString counts them as one — so without this lookup
+// every overdue/stale row would push the following column one cell left
+// of the header. Add new wide runes here if list.go starts emitting them.
+var wideRunes = map[rune]bool{
+	'⚠': true, // U+26A0 WARNING SIGN
+	'⚡': true, // U+26A1 HIGH VOLTAGE SIGN
+}
+
+// visibleWidth returns the number of terminal cells s occupies, after
+// stripping ANSI SGR escape sequences. Known wide runes count as 2 cells.
 func visibleWidth(s string) int {
-	return utf8.RuneCountInString(ansiSGR.ReplaceAllString(s, ""))
+	stripped := ansiSGR.ReplaceAllString(s, "")
+	n := 0
+	for _, r := range stripped {
+		if wideRunes[r] {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
 }
 
 // Format selects how a list result is serialized to the output stream.
