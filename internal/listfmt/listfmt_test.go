@@ -86,13 +86,27 @@ func TestPainter_Disabled(t *testing.T) {
 func TestPainter_Enabled(t *testing.T) {
 	p := Painter{Enabled: true}
 	got := p.Wrap("hello", Red)
-	// Wrapped output contains the ANSI code, the text, and the reset, all
-	// bracketed by 0xff markers.
-	if !strings.Contains(got, Red) || !strings.Contains(got, "hello") || !strings.Contains(got, Reset) {
-		t.Errorf("enabled Painter.Wrap missing parts: %q", got)
+	want := Red + "hello" + Reset
+	if got != want {
+		t.Errorf("enabled Painter.Wrap = %q, want %q", got, want)
 	}
-	if !strings.HasPrefix(got, "\xff") || !strings.HasSuffix(got, "\xff") {
-		t.Errorf("enabled Painter.Wrap missing 0xff markers: %q", got)
+}
+
+func TestVisibleWidth(t *testing.T) {
+	cases := []struct {
+		s    string
+		want int
+	}{
+		{"hello", 5},
+		{Red + "hello" + Reset, 5},
+		{Red + "hé" + Reset, 2},
+		{"", 0},
+		{"\x1b[31m" + "abc" + "\x1b[0m" + "def", 6},
+	}
+	for _, c := range cases {
+		if got := visibleWidth(c.s); got != c.want {
+			t.Errorf("visibleWidth(%q) = %d, want %d", c.s, got, c.want)
+		}
 	}
 }
 
@@ -131,25 +145,42 @@ func TestTable_AlignedColumns(t *testing.T) {
 	}
 }
 
-// TestTable_StripsEscape verifies the StripEscape flag is honored — 0xff
-// bytes from Painter.Wrap must not appear in the output stream.
-func TestTable_StripsEscape(t *testing.T) {
+// TestTable_AlignedWithANSI verifies that colored cells align against
+// uncolored cells of the same visible width — the bug that motivated
+// dropping text/tabwriter.
+func TestTable_AlignedWithANSI(t *testing.T) {
 	p := Painter{Enabled: true}
 	tab := &Table{
-		Headers: []string{"name"},
 		Rows: [][]string{
-			{p.Wrap("hello", Red)},
+			{p.Wrap("high", Red), "alpha"},
+			{"med", "beta"},
+			{p.Wrap("low", Dim), "gamma"},
 		},
 	}
 	var buf bytes.Buffer
 	if err := tab.Render(&buf); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if strings.Contains(buf.String(), "\xff") {
-		t.Errorf("output contains 0xff bytes: %q", buf.String())
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d: %q", len(lines), buf.String())
 	}
-	if !strings.Contains(buf.String(), Red) {
-		t.Errorf("output missing ANSI code: %q", buf.String())
+	// The second column should start at the same *visible* offset in
+	// every row. Compute the visible offset of "alpha"/"beta"/"gamma" by
+	// stripping ANSI before locating the marker.
+	offsets := make([]int, 3)
+	markers := []string{"alpha", "beta", "gamma"}
+	for i, ln := range lines {
+		plain := ansiSGR.ReplaceAllString(ln, "")
+		offsets[i] = strings.Index(plain, markers[i])
+		if offsets[i] < 0 {
+			t.Fatalf("line %d: missing marker %q in %q", i, markers[i], ln)
+		}
+	}
+	for i := 1; i < 3; i++ {
+		if offsets[i] != offsets[0] {
+			t.Errorf("line %d column 2 offset = %d, line 0 = %d", i, offsets[i], offsets[0])
+		}
 	}
 }
 
