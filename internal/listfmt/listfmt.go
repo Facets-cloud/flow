@@ -9,11 +9,26 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
-	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 )
+
+// ansiSGR matches ANSI SGR (Select Graphic Rendition) escape sequences —
+// the family of codes used for color/bold/dim/etc. We strip these to
+// compute the *visible* width of a cell, which is what tabular alignment
+// must care about. Go's text/tabwriter has no built-in way to exempt
+// inline ANSI from its width math (despite what the Escape-character
+// docs suggest for tab-bearing cells), so we render manually.
+var ansiSGR = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// visibleWidth returns the rune count of s after stripping ANSI SGR
+// escape sequences. This is the width tabular renderers should pad to.
+func visibleWidth(s string) int {
+	return utf8.RuneCountInString(ansiSGR.ReplaceAllString(s, ""))
+}
 
 // Format selects how a list result is serialized to the output stream.
 type Format int
@@ -74,40 +89,78 @@ type Painter struct {
 	Enabled bool
 }
 
-// Wrap returns text decorated with the given ANSI code. The decoration is
-// bracketed by tabwriter.Escape (0xff) markers so the color bytes are excluded
-// from column-width calculations. The Table renderer strips the markers
-// before emitting output.
+// Wrap returns text decorated with the given ANSI code. When color is
+// disabled or code is empty, the input is returned unchanged.
 func (p Painter) Wrap(text, code string) string {
 	if !p.Enabled || code == "" {
 		return text
 	}
-	return "\xff" + code + "\xff" + text + "\xff" + Reset + "\xff"
+	return code + text + Reset
 }
 
-// Table is a simple column-aligned renderer backed by text/tabwriter.
+// Table is a column-aligned renderer. Columns auto-size to the widest
+// *visible* cell — ANSI escape codes are ignored for width purposes, so a
+// row with colored cells aligns identically to a row of plain text.
 type Table struct {
 	Headers []string
 	Rows    [][]string
+	// ColumnGap is the number of spaces inserted between adjacent columns
+	// after the widest cell. Zero falls back to 2.
+	ColumnGap int
 }
 
-// Render writes the table to w. Columns are tab-separated on input and
-// auto-padded to align on output. tabwriter.StripEscape is set so 0xff
-// markers (used by Painter.Wrap to hide ANSI codes from width math) are
-// removed from the output stream.
+// Render writes the table to w. Trailing whitespace is trimmed from every
+// emitted line so an empty last cell doesn't litter output with spaces.
 func (t *Table) Render(w io.Writer) error {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', tabwriter.StripEscape)
+	gap := t.ColumnGap
+	if gap <= 0 {
+		gap = 2
+	}
+
+	allRows := t.Rows
 	if len(t.Headers) > 0 {
-		if _, err := fmt.Fprintln(tw, strings.Join(t.Headers, "\t")); err != nil {
+		allRows = append([][]string{t.Headers}, t.Rows...)
+	}
+	if len(allRows) == 0 {
+		return nil
+	}
+
+	ncols := 0
+	for _, r := range allRows {
+		if len(r) > ncols {
+			ncols = len(r)
+		}
+	}
+	widths := make([]int, ncols)
+	for _, r := range allRows {
+		for i, cell := range r {
+			if vw := visibleWidth(cell); vw > widths[i] {
+				widths[i] = vw
+			}
+		}
+	}
+
+	for _, r := range allRows {
+		var sb strings.Builder
+		for i := 0; i < ncols; i++ {
+			cell := ""
+			if i < len(r) {
+				cell = r[i]
+			}
+			sb.WriteString(cell)
+			if i < ncols-1 {
+				pad := widths[i] - visibleWidth(cell) + gap
+				if pad > 0 {
+					sb.WriteString(strings.Repeat(" ", pad))
+				}
+			}
+		}
+		line := strings.TrimRight(sb.String(), " ")
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}
-	for _, row := range t.Rows {
-		if _, err := fmt.Fprintln(tw, strings.Join(row, "\t")); err != nil {
-			return err
-		}
-	}
-	return tw.Flush()
+	return nil
 }
 
 // RenderJSON encodes v as indented JSON. Callers should pass a slice of
