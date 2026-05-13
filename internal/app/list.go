@@ -2,9 +2,11 @@ package app
 
 import (
 	"database/sql"
+	"flag"
 	"flow/internal/flowdb"
 	"flow/internal/listfmt"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,12 +15,46 @@ import (
 
 // waitingMaxRunes caps the [waiting: ...] field width in table output so a
 // long blocking note doesn't blow the row past terminal width. JSON/TSV
-// emit the full value.
+// emit the full value. The --no-truncate flag suppresses this cap.
 const waitingMaxRunes = 60
 
 // identMaxRunes caps the slug column in table output. JSON/TSV emit the full
-// slug regardless.
+// slug regardless. The --no-truncate flag suppresses this cap (handy when
+// you want to copy-paste a long slug into `flow do`).
 const identMaxRunes = 40
+
+// listOpts are the format/color/truncation flags every list subcommand shares.
+type listOpts struct {
+	format     *string
+	noColor    *bool
+	noTruncate *bool
+}
+
+// addListFlags registers the common --format / --no-color / --no-truncate
+// flags on fs.
+func addListFlags(fs *flag.FlagSet) listOpts {
+	return listOpts{
+		format:     fs.String("format", "table", "output format: table|json|tsv"),
+		noColor:    fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY"),
+		noTruncate: fs.Bool("no-truncate", false, "do not truncate slug or waiting field in table output"),
+	}
+}
+
+// slugMax returns identMaxRunes when truncation is enabled, 0 (disabled) otherwise.
+func (o listOpts) slugMax() int {
+	if *o.noTruncate {
+		return 0
+	}
+	return identMaxRunes
+}
+
+// waitMax returns waitingMaxRunes when truncation is enabled, 0 otherwise.
+func (o listOpts) waitMax() int {
+	if *o.noTruncate {
+		return 0
+	}
+	return waitingMaxRunes
+}
 
 // cmdList dispatches `flow list tasks|projects|playbooks|runs|tags`.
 func cmdList(args []string) int {
@@ -42,19 +78,11 @@ func cmdList(args []string) int {
 	return 2
 }
 
-// addFormatFlags registers --format and --no-color on fs. The returned
-// closure resolves them at parse time into a Format value and a Painter
-// configured for the appropriate output stream.
-func addFormatFlags(fs interface {
-	String(name, value, usage string) *string
-	Bool(name string, value bool, usage string) *bool
-}) (format *string, noColor *bool) {
-	format = fs.String("format", "table", "output format: table|json|tsv")
-	noColor = fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY")
-	return
-}
+// Color palette. Red is reserved for anomaly signals (overdue / stale).
+// "high" priority is the dominant active state for daily users, so coloring
+// it red turns every row into a wall of red and defeats the signal —
+// keep it bold-uncolored instead.
 
-// statusColor returns the ANSI color code to wrap a status badge in.
 func statusColor(status string) string {
 	switch status {
 	case "in-progress":
@@ -67,11 +95,10 @@ func statusColor(status string) string {
 	return ""
 }
 
-// priorityColor returns the ANSI color code to wrap a priority cell in.
 func priorityColor(pri string) string {
 	switch pri {
 	case "high":
-		return listfmt.Red
+		return listfmt.Bold
 	case "low":
 		return listfmt.Dim
 	}
@@ -84,7 +111,7 @@ func priorityColor(pri string) string {
 func emptyResult(format listfmt.Format, label string, tsvHeaders []string) int {
 	switch format {
 	case listfmt.FormatJSON:
-		fmt.Println("[]")
+		return runJSON(os.Stdout, []any{})
 	case listfmt.FormatTSV:
 		_ = listfmt.RenderTSV(os.Stdout, tsvHeaders, nil)
 	default:
@@ -93,17 +120,13 @@ func emptyResult(format listfmt.Format, label string, tsvHeaders []string) int {
 	return 0
 }
 
-// listTagsCmd prints all distinct tags currently in use across non-archived
-// tasks, with a per-tag task count. Sorted by count descending so the
-// most-used tags appear first. Read this before suggesting new tag
-// names — keeps the user's tag vocabulary consistent.
 func listTagsCmd(args []string) int {
 	fs := flagSet("list tags")
-	format, noColor := addFormatFlags(fs)
+	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	fmtKind, err := listfmt.ParseFormat(*format)
+	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -149,11 +172,11 @@ func listTagsCmd(args []string) int {
 		for i, tc := range tags {
 			rows[i] = []string{tc.Tag, fmt.Sprintf("%d", tc.Count)}
 		}
-		_ = listfmt.RenderTSV(os.Stdout, headers, rows)
+		_ = listfmt.RenderTSV(os.Stdout, tsvHeaders, rows)
 		return 0
 	}
 
-	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *noColor)}
+	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *opts.noColor)}
 	tabRows := make([][]string, len(tags))
 	for i, tc := range tags {
 		tabRows[i] = []string{
@@ -179,12 +202,12 @@ func listTasksCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
 	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
 	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
-	format, noColor := addFormatFlags(fs)
+	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	fmtKind, err := listfmt.ParseFormat(*format)
+	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -235,7 +258,12 @@ func listTasksCmd(args []string) int {
 	}
 
 	headers := []string{"STATUS", "PRI", "SLUG", "PROJECT", "AGE", "DUE", "NOTES"}
-	tsvHeaders := []string{"slug", "status", "priority", "project", "age", "due", "notes", "tags"}
+	tsvHeaders := []string{
+		"slug", "status", "priority", "project",
+		"age_days", "due_in_days", "due_label",
+		"stale", "stale_days", "waiting_on", "assignee", "live",
+		"archived", "tags",
+	}
 	if len(tasks) == 0 {
 		return emptyResult(fmtKind, "tasks", tsvHeaders)
 	}
@@ -265,7 +293,6 @@ func listTasksCmd(args []string) int {
 	for _, t := range tasks {
 		r := taskListRow{
 			Slug:     t.Slug,
-			Name:     t.Name,
 			Status:   t.Status,
 			Priority: t.Priority,
 			Archived: t.ArchivedAt.Valid,
@@ -324,30 +351,34 @@ func listTasksCmd(args []string) int {
 				r.Status,
 				r.Priority,
 				r.Project,
-				ageString(r.AgeDays),
+				intOrEmpty(r.AgeDays),
+				intPtrOrEmpty(r.DueInDays),
 				r.DueLabel,
-				notesString(r),
+				boolStr(r.Stale),
+				intOrEmpty(r.StaleDays),
+				r.WaitingOn,
+				r.Assignee,
+				boolStr(r.Live),
+				boolStr(r.Archived),
 				strings.Join(r.Tags, ","),
 			}
 		}
-		_ = listfmt.RenderTSV(os.Stdout,
-			[]string{"slug", "status", "priority", "project", "age", "due", "notes", "tags"},
-			tsvRows)
+		_ = listfmt.RenderTSV(os.Stdout, tsvHeaders, tsvRows)
 		return 0
 	}
 
 	// Table mode: assemble color-aware cells.
-	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *noColor)}
+	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *opts.noColor)}
 	tableRows := make([][]string, len(rows))
 	for i, r := range rows {
 		tableRows[i] = []string{
 			painter.Wrap("["+statusAbbrev(r.Status)+"]", statusColor(r.Status)),
 			painter.Wrap(priorityShort(r.Priority), priorityColor(r.Priority)),
-			listfmt.Truncate(r.Slug, identMaxRunes),
+			listfmt.Truncate(r.Slug, opts.slugMax()),
 			projectCell(r.Project),
 			ageString(r.AgeDays),
 			painter.Wrap(r.DueLabel, dueColor(r)),
-			notesCell(painter, r),
+			notesCell(painter, r, opts.waitMax()),
 		}
 	}
 	tab := &listfmt.Table{
@@ -372,11 +403,35 @@ func projectCell(slug string) string {
 	return "(" + slug + ")"
 }
 
+// intOrEmpty stringifies n unless it's zero, in which case it returns "" —
+// useful for TSV cells where 0 means "no data" rather than literal zero.
+func intOrEmpty(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func intPtrOrEmpty(p *int) string {
+	if p == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", *p)
+}
+
+// boolStr renders booleans as "true"/"" so empty TSV cells stay visually
+// quiet and don't clutter the grep'able stream.
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return ""
+}
+
 // taskListRow is the row shape that feeds table, JSON, and TSV rendering
 // for `flow list tasks`. Field order matters for JSON output stability.
 type taskListRow struct {
 	Slug      string   `json:"slug"`
-	Name      string   `json:"name"`
 	Status    string   `json:"status"`
 	Priority  string   `json:"priority"`
 	Project   string   `json:"project,omitempty"`
@@ -405,40 +460,17 @@ func dueColor(r taskListRow) string {
 	return ""
 }
 
-// notesString builds the trailing "notes" column for TSV output. Plain
-// text only; the table renderer uses notesCell to apply per-fragment color.
-func notesString(r taskListRow) string {
-	var parts []string
-	if r.Stale {
-		parts = append(parts, fmt.Sprintf("⚠ stale (%dd)", r.StaleDays))
-	}
-	if r.WaitingOn != "" {
-		parts = append(parts, "[waiting: "+listfmt.Truncate(r.WaitingOn, waitingMaxRunes)+"]")
-	}
-	if r.Assignee != "" {
-		parts = append(parts, "[@"+r.Assignee+"]")
-	}
-	if r.Live {
-		parts = append(parts, "[live]")
-	}
-	for _, t := range r.Tags {
-		parts = append(parts, "#"+t)
-	}
-	if r.Archived {
-		parts = append(parts, "(archived)")
-	}
-	return strings.Join(parts, " ")
-}
-
-// notesCell is the color-aware variant of notesString for table output.
-// Each fragment is independently colored so the row reads well at a glance.
-func notesCell(p listfmt.Painter, r taskListRow) string {
+// notesCell builds the trailing NOTES column in table output. Each fragment
+// is colored independently so the row reads well at a glance. waitMax > 0
+// truncates the waiting field; 0 disables truncation (the --no-truncate
+// path).
+func notesCell(p listfmt.Painter, r taskListRow, waitMax int) string {
 	var parts []string
 	if r.Stale {
 		parts = append(parts, p.Wrap(fmt.Sprintf("⚠ stale (%dd)", r.StaleDays), listfmt.Red))
 	}
 	if r.WaitingOn != "" {
-		parts = append(parts, p.Wrap("[waiting: "+listfmt.Truncate(r.WaitingOn, waitingMaxRunes)+"]", listfmt.Yellow))
+		parts = append(parts, p.Wrap("[waiting: "+listfmt.Truncate(r.WaitingOn, waitMax)+"]", listfmt.Yellow))
 	}
 	if r.Assignee != "" {
 		parts = append(parts, p.Wrap("[@"+r.Assignee+"]", listfmt.Blue))
@@ -459,11 +491,11 @@ func listProjectsCmd(args []string) int {
 	fs := flagSet("list projects")
 	status := fs.String("status", "", "active|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived projects")
-	format, noColor := addFormatFlags(fs)
+	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	fmtKind, err := listfmt.ParseFormat(*format)
+	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -523,15 +555,14 @@ func listProjectsCmd(args []string) int {
 	}
 
 	type projectRow struct {
-		Slug      string `json:"slug"`
-		Name      string `json:"name"`
-		Priority  string `json:"priority"`
-		Status    string `json:"status"`
-		Total     int    `json:"total"`
-		InProgress int   `json:"in_progress"`
-		Backlog   int    `json:"backlog"`
-		Done      int    `json:"done"`
-		Archived  bool   `json:"archived,omitempty"`
+		Slug       string `json:"slug"`
+		Priority   string `json:"priority"`
+		Status     string `json:"status"`
+		Total      int    `json:"total"`
+		InProgress int    `json:"in_progress"`
+		Backlog    int    `json:"backlog"`
+		Done       int    `json:"done"`
+		Archived   bool   `json:"archived,omitempty"`
 	}
 
 	rows := make([]projectRow, 0, len(sortedProjects))
@@ -547,7 +578,6 @@ func listProjectsCmd(args []string) int {
 		}
 		rows = append(rows, projectRow{
 			Slug:       p.Slug,
-			Name:       p.Name,
 			Priority:   p.Priority,
 			Status:     statusW,
 			Total:      counts.total,
@@ -570,16 +600,14 @@ func listProjectsCmd(args []string) int {
 				fmt.Sprintf("%d", r.InProgress),
 				fmt.Sprintf("%d", r.Backlog),
 				fmt.Sprintf("%d", r.Done),
-				archivedString(r.Archived),
+				boolStr(r.Archived),
 			}
 		}
-		_ = listfmt.RenderTSV(os.Stdout,
-			[]string{"slug", "priority", "status", "total", "in_progress", "backlog", "done", "archived"},
-			tsvRows)
+		_ = listfmt.RenderTSV(os.Stdout, tsvHeaders, tsvRows)
 		return 0
 	}
 
-	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *noColor)}
+	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *opts.noColor)}
 	tableRows := make([][]string, len(rows))
 	for i, r := range rows {
 		taskLabel := fmt.Sprintf("%d tasks", r.Total)
@@ -613,7 +641,7 @@ func listProjectsCmd(args []string) int {
 		}
 		tableRows[i] = []string{
 			painter.Wrap(priorityShort(r.Priority), priorityColor(r.Priority)),
-			listfmt.Truncate(r.Slug, identMaxRunes),
+			listfmt.Truncate(r.Slug, opts.slugMax()),
 			statusCol,
 			taskLabel,
 			breakdown,
@@ -628,22 +656,15 @@ func listProjectsCmd(args []string) int {
 	return 0
 }
 
-func archivedString(b bool) string {
-	if b {
-		return "archived"
-	}
-	return ""
-}
-
 func listPlaybooksCmd(args []string) int {
 	fs := flagSet("list playbooks")
 	project := fs.String("project", "", "filter by project slug")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
-	format, noColor := addFormatFlags(fs)
+	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	fmtKind, err := listfmt.ParseFormat(*format)
+	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -678,13 +699,12 @@ func listPlaybooksCmd(args []string) int {
 
 	type playbookRow struct {
 		Slug     string `json:"slug"`
-		Name     string `json:"name"`
 		Project  string `json:"project,omitempty"`
 		Archived bool   `json:"archived,omitempty"`
 	}
 	rows := make([]playbookRow, len(pbs))
 	for i, pb := range pbs {
-		r := playbookRow{Slug: pb.Slug, Name: pb.Name, Archived: pb.ArchivedAt.Valid}
+		r := playbookRow{Slug: pb.Slug, Archived: pb.ArchivedAt.Valid}
 		if pb.ProjectSlug.Valid {
 			r.Project = pb.ProjectSlug.String
 		}
@@ -697,13 +717,13 @@ func listPlaybooksCmd(args []string) int {
 	case listfmt.FormatTSV:
 		tsvRows := make([][]string, len(rows))
 		for i, r := range rows {
-			tsvRows[i] = []string{r.Slug, r.Project, archivedString(r.Archived)}
+			tsvRows[i] = []string{r.Slug, r.Project, boolStr(r.Archived)}
 		}
-		_ = listfmt.RenderTSV(os.Stdout, []string{"slug", "project", "archived"}, tsvRows)
+		_ = listfmt.RenderTSV(os.Stdout, tsvHeaders, tsvRows)
 		return 0
 	}
 
-	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *noColor)}
+	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *opts.noColor)}
 	tableRows := make([][]string, len(rows))
 	for i, r := range rows {
 		notes := ""
@@ -711,7 +731,7 @@ func listPlaybooksCmd(args []string) int {
 			notes = painter.Wrap("(archived)", listfmt.Dim)
 		}
 		tableRows[i] = []string{
-			listfmt.Truncate(r.Slug, identMaxRunes),
+			listfmt.Truncate(r.Slug, opts.slugMax()),
 			projectCell(r.Project),
 			notes,
 		}
@@ -728,11 +748,11 @@ func listRunsCmd(args []string) int {
 	fs := flagSet("list runs")
 	status := fs.String("status", "", "backlog|in-progress|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
-	format, noColor := addFormatFlags(fs)
+	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	fmtKind, err := listfmt.ParseFormat(*format)
+	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -792,13 +812,13 @@ func listRunsCmd(args []string) int {
 	case listfmt.FormatTSV:
 		tsvRows := make([][]string, len(rows))
 		for i, r := range rows {
-			tsvRows[i] = []string{r.Slug, r.Status, r.Playbook, archivedString(r.Archived)}
+			tsvRows[i] = []string{r.Slug, r.Status, r.Playbook, boolStr(r.Archived)}
 		}
-		_ = listfmt.RenderTSV(os.Stdout, []string{"slug", "status", "playbook", "archived"}, tsvRows)
+		_ = listfmt.RenderTSV(os.Stdout, tsvHeaders, tsvRows)
 		return 0
 	}
 
-	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *noColor)}
+	painter := listfmt.Painter{Enabled: listfmt.ColorEnabled(os.Stdout, *opts.noColor)}
 	tableRows := make([][]string, len(rows))
 	for i, r := range rows {
 		notes := ""
@@ -807,7 +827,7 @@ func listRunsCmd(args []string) int {
 		}
 		tableRows[i] = []string{
 			painter.Wrap("["+statusAbbrev(r.Status)+"]", statusColor(r.Status)),
-			listfmt.Truncate(r.Slug, identMaxRunes),
+			listfmt.Truncate(r.Slug, opts.slugMax()),
 			projectCell(r.Playbook),
 			notes,
 		}
@@ -821,7 +841,7 @@ func listRunsCmd(args []string) int {
 }
 
 // runJSON is a thin wrapper that reports errors as exit code 1.
-func runJSON(w *os.File, v any) int {
+func runJSON(w io.Writer, v any) int {
 	if err := listfmt.RenderJSON(w, v); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
