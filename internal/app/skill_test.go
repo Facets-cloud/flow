@@ -315,6 +315,233 @@ func TestSkillInstallSkipHook(t *testing.T) {
 	}
 }
 
+// TestSkillTargetsClaudeAlwaysPresent verifies Claude is in the
+// returned target list even when ~/.claude doesn't exist on disk —
+// preserves the legacy behavior where `flow init` always provisions
+// the Claude skill dir.
+func TestSkillTargetsClaudeAlwaysPresent(t *testing.T) {
+	withTempHome(t)
+	targets, err := skillTargets()
+	if err != nil {
+		t.Fatalf("skillTargets: %v", err)
+	}
+	if len(targets) != 1 || targets[0].agent != "claude" {
+		t.Errorf("with empty home, want only claude target; got %+v", targets)
+	}
+}
+
+// TestSkillTargetsDiscoversInstalledAgents seeds ~/.codex, ~/.cursor,
+// ~/.gemini in the tempdir and verifies they all show up alongside
+// Claude.
+func TestSkillTargetsDiscoversInstalledAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets, err := skillTargets()
+	if err != nil {
+		t.Fatalf("skillTargets: %v", err)
+	}
+	gotAgents := make(map[string]string)
+	for _, t := range targets {
+		gotAgents[t.agent] = t.skillPath
+	}
+	for _, want := range []string{"claude", "codex", "cursor", "gemini"} {
+		if _, ok := gotAgents[want]; !ok {
+			t.Errorf("missing %s target; got %+v", want, gotAgents)
+		}
+	}
+	// Spot-check one path shape so future renames stay honest.
+	want := filepath.Join(home, ".codex", "skills", "flow", "SKILL.md")
+	if got := gotAgents["codex"]; got != want {
+		t.Errorf("codex skillPath=%q, want %q", got, want)
+	}
+}
+
+// TestSkillInstallWritesAllAgentTargets verifies `flow skill install`
+// drops SKILL.md into every discovered agent's skills/flow/ dir.
+func TestSkillInstallWritesAllAgentTargets(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+
+	for _, agent := range []string{".claude", ".codex", ".cursor", ".gemini"} {
+		p := filepath.Join(home, agent, "skills", "flow", "SKILL.md")
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Errorf("missing SKILL.md at %s: %v", p, err)
+			continue
+		}
+		if !strings.Contains(string(data), "name: flow") {
+			t.Errorf("SKILL.md at %s missing frontmatter", p)
+		}
+		// VERSION sidecar should be written per agent.
+		if _, err := os.Stat(filepath.Join(filepath.Dir(p), "VERSION")); err != nil {
+			t.Errorf("missing VERSION sidecar for %s: %v", agent, err)
+		}
+	}
+}
+
+// TestSkillInstallSkipsAbsentAgents verifies an agent home dir that
+// doesn't exist gets no install — we MUST NOT eagerly create
+// ~/.<agent>/ for agents the user doesn't have.
+func TestSkillInstallSkipsAbsentAgents(t *testing.T) {
+	home := withTempHome(t)
+	// Only ~/.codex is present; Cursor/Gemini stay absent.
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+
+	// Claude + Codex SHOULD exist.
+	for _, want := range []string{".claude", ".codex"} {
+		if _, err := os.Stat(filepath.Join(home, want, "skills", "flow", "SKILL.md")); err != nil {
+			t.Errorf("expected install for %s; got err=%v", want, err)
+		}
+	}
+	// Cursor + Gemini parents MUST NOT have been auto-created.
+	for _, absent := range []string{".cursor", ".gemini"} {
+		if _, err := os.Stat(filepath.Join(home, absent)); !os.IsNotExist(err) {
+			t.Errorf("install must not create ~/%s; stat err=%v", absent, err)
+		}
+	}
+}
+
+// TestSkillInstallRefusesIfAnyTargetExists pins the safety property:
+// even one existing SKILL.md across any target causes plain `install`
+// (without --force) to abort the whole batch.
+func TestSkillInstallRefusesIfAnyTargetExists(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-create Codex SKILL.md only.
+	codexSkill := filepath.Join(home, ".codex", "skills", "flow", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(codexSkill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexSkill, []byte("preexisting"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc == 0 {
+		t.Errorf("install must fail when any target SKILL.md exists; got rc=0")
+	}
+	// Pre-existing file MUST NOT be modified.
+	got, _ := os.ReadFile(codexSkill)
+	if string(got) != "preexisting" {
+		t.Errorf("refused install must not overwrite existing %s", codexSkill)
+	}
+	// And Claude MUST NOT have been written either (batch-or-nothing).
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")); err == nil {
+		t.Errorf("refused install must not write Claude either; found one")
+	}
+}
+
+// TestSkillUpdateOverwritesAllAgents — `flow skill update` is force=true.
+// Should refresh SKILL.md in every discovered agent.
+func TestSkillUpdateOverwritesAllAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	// Stomp every installed SKILL.md so we can prove update refreshes them.
+	for _, agent := range []string{".claude", ".codex", ".gemini"} {
+		p := filepath.Join(home, agent, "skills", "flow", "SKILL.md")
+		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rc := cmdSkill([]string{"update"}); rc != 0 {
+		t.Fatalf("update rc=%d", rc)
+	}
+
+	for _, agent := range []string{".claude", ".codex", ".gemini"} {
+		got, _ := os.ReadFile(filepath.Join(home, agent, "skills", "flow", "SKILL.md"))
+		if string(got) == "stale" {
+			t.Errorf("update did not refresh %s SKILL.md", agent)
+		}
+	}
+}
+
+// TestSkillUninstallRemovesAllAgents verifies uninstall sweeps the
+// flow/ dir from every agent's skills/ tree.
+func TestSkillUninstallRemovesAllAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	for _, agent := range []string{".claude", ".codex", ".cursor"} {
+		p := filepath.Join(home, agent, "skills", "flow")
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("uninstall should remove %s; stat err=%v", p, err)
+		}
+	}
+}
+
+// TestMaybeAutoUpgradeRefreshesAllAgents — version mismatch should
+// refresh SKILL.md in every installed agent target, not just Claude.
+func TestMaybeAutoUpgradeRefreshesAllAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	withVersion(t, "v1.0.0")
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	// Stomp every SKILL.md so we can detect the refresh.
+	paths := []string{}
+	for _, agent := range []string{".claude", ".codex", ".cursor"} {
+		p := filepath.Join(home, agent, "skills", "flow", "SKILL.md")
+		paths = append(paths, p)
+		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	Version = "v2.0.0"
+	maybeAutoUpgradeSkill()
+
+	for _, p := range paths {
+		got, _ := os.ReadFile(p)
+		if string(got) == "stale" {
+			t.Errorf("auto-upgrade did not refresh %s", p)
+		}
+		v := readVersionAt(filepath.Join(filepath.Dir(p), "VERSION"))
+		if v != "v2.0.0" {
+			t.Errorf("%s VERSION=%q, want v2.0.0", p, v)
+		}
+	}
+}
+
 func TestSkillUnknownSubcommand(t *testing.T) {
 	if rc := cmdSkill([]string{"wat"}); rc != 2 {
 		t.Errorf("unknown subcommand rc=%d, want 2", rc)

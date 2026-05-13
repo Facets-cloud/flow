@@ -27,9 +27,60 @@ const hookMatcher = "startup|resume"
 // hookCommand: changing this string would orphan existing installs.
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
-// skillInstallPath returns the absolute path where the skill should be
-// installed on disk: ~/.claude/skills/flow/SKILL.md.
-func skillInstallPath() (string, error) {
+// skillTarget describes one agent installation destination for the
+// flow skill: an agent name, the agent's home dir under $HOME, and
+// the absolute SKILL.md path inside that dir.
+type skillTarget struct {
+	agent     string // "claude", "codex", "cursor", "gemini"
+	homeDir   string // absolute path to ~/.<agent>
+	skillPath string // absolute path to ~/.<agent>/skills/flow/SKILL.md
+}
+
+// skillTargetCandidates enumerates the agents flow knows how to install
+// to. Order is significant: Claude first (it's the canonical legacy
+// target and always installed); the rest are auto-discovered.
+var skillTargetCandidates = []struct {
+	agent  string
+	subdir string
+}{
+	{"claude", ".claude"},
+	{"codex", ".codex"},
+	{"cursor", ".cursor"},
+	{"gemini", ".gemini"},
+}
+
+// skillTargets returns every install target that should receive
+// SKILL.md right now. Claude is always present (preserves legacy
+// behavior — `flow init` has always created `~/.claude/skills/flow/`
+// even if the user hasn't started Claude yet). Other agents are
+// included only when their parent home dir already exists, so we
+// never pollute `$HOME` for agents the user doesn't have.
+func skillTargets() ([]skillTarget, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("no home dir: %w", err)
+	}
+	var out []skillTarget
+	for _, c := range skillTargetCandidates {
+		homeDir := filepath.Join(home, c.subdir)
+		if c.agent != "claude" {
+			if _, err := os.Stat(homeDir); err != nil {
+				continue
+			}
+		}
+		out = append(out, skillTarget{
+			agent:     c.agent,
+			homeDir:   homeDir,
+			skillPath: filepath.Join(homeDir, "skills", "flow", "SKILL.md"),
+		})
+	}
+	return out, nil
+}
+
+// claudeSkillInstallPath returns the canonical Claude skill path.
+// Kept as a thin helper because the SessionStart hook is Claude-only
+// and a few callers care specifically about the Claude path.
+func claudeSkillInstallPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
@@ -37,43 +88,31 @@ func skillInstallPath() (string, error) {
 	return filepath.Join(home, ".claude", "skills", "flow", "SKILL.md"), nil
 }
 
-// skillVersionPath returns the sidecar file that records which binary
-// version installed the current SKILL.md — used by the auto-upgrade
-// check to decide whether to refresh the skill.
-func skillVersionPath() (string, error) {
-	skill, err := skillInstallPath()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(filepath.Dir(skill), "VERSION"), nil
+// versionPathFor returns the VERSION sidecar path adjacent to the
+// given SKILL.md path: `<dir-of-skill>/VERSION`.
+func versionPathFor(skillPath string) string {
+	return filepath.Join(filepath.Dir(skillPath), "VERSION")
 }
 
-// readSkillVersion returns the recorded version string, or "" if the
-// sidecar file is missing or unreadable.
-func readSkillVersion() string {
-	p, err := skillVersionPath()
-	if err != nil {
-		return ""
-	}
-	b, err := os.ReadFile(p)
+// readVersionAt returns the recorded version string at the given
+// VERSION sidecar path, or "" if the file is missing or unreadable.
+func readVersionAt(versionPath string) string {
+	b, err := os.ReadFile(versionPath)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
 }
 
-// writeSkillVersion records v as the version of the binary that
-// installed the current SKILL.md. Errors are non-fatal — failing to
-// write the sidecar should never block a successful skill install.
-func writeSkillVersion(v string) error {
-	p, err := skillVersionPath()
-	if err != nil {
+// writeVersionAt records v as the installed version at the given
+// VERSION sidecar path. Errors are non-fatal at the call sites —
+// failing to write the sidecar should never block a successful skill
+// install.
+func writeVersionAt(versionPath, v string) error {
+	if err := os.MkdirAll(filepath.Dir(versionPath), 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(p, []byte(v+"\n"), 0o644)
+	return os.WriteFile(versionPath, []byte(v+"\n"), 0o644)
 }
 
 // userSettingsPath returns ~/.claude/settings.json.
@@ -104,28 +143,32 @@ func maybeAutoUpgradeSkill() {
 	if Version == "" || Version == "dev" {
 		return
 	}
-	skillPath, err := skillInstallPath()
+	targets, err := skillTargets()
 	if err != nil {
 		return
 	}
-	if _, err := os.Stat(skillPath); err != nil {
-		// Not installed → user opted out; don't reinstall behind their back.
-		return
+	upgraded := false
+	for _, t := range targets {
+		if _, err := os.Stat(t.skillPath); err != nil {
+			// Not installed for this agent → user opted out; don't
+			// reinstall behind their back.
+			continue
+		}
+		if readVersionAt(versionPathFor(t.skillPath)) == Version {
+			continue
+		}
+		if err := os.WriteFile(t.skillPath, embeddedSkill, 0o644); err != nil {
+			continue
+		}
+		_ = writeVersionAt(versionPathFor(t.skillPath), Version)
+		upgraded = true
 	}
-	if readSkillVersion() == Version {
-		return
+	// SessionStart hook + stale UserPromptSubmit cleanup are Claude-only.
+	if upgraded {
+		_, _ = installSessionStartHook()
+		_, _ = uninstallUserPromptSubmitHook()
+		fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 	}
-	// Version mismatch — refresh skill bytes and the SessionStart hook.
-	if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
-		return
-	}
-	_ = writeSkillVersion(Version)
-	_, _ = installSessionStartHook()
-	// UserPromptSubmit hook was removed in v0.1.0-alpha.7 — the
-	// per-prompt token cost wasn't worth the marginal value. Actively
-	// uninstall any stale entry left behind by older binaries.
-	_, _ = uninstallUserPromptSubmitHook()
-	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
 // cmdSkill dispatches `flow skill install|uninstall|update`.
@@ -156,30 +199,41 @@ func skillInstall(args []string, forceDefault bool) int {
 		return 2
 	}
 
-	dest, err := skillInstallPath()
+	targets, err := skillTargets()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if _, err := os.Stat(dest); err == nil && !*force {
-		fmt.Fprintf(os.Stderr, "error: %s already exists; use --force to overwrite\n", dest)
-		return 1
-	} else if err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", dest, err)
-		return 1
+
+	// Pre-check: if any target already has SKILL.md and the user did
+	// not pass --force, refuse the whole batch. Partial overwrites are
+	// confusing; one of two states is much easier to reason about.
+	if !*force {
+		for _, t := range targets {
+			if _, err := os.Stat(t.skillPath); err == nil {
+				fmt.Fprintf(os.Stderr, "error: %s already exists; use --force to overwrite\n", t.skillPath)
+				return 1
+			} else if !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", t.skillPath, err)
+				return 1
+			}
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(dest), err)
-		return 1
+
+	for _, t := range targets {
+		if err := os.MkdirAll(filepath.Dir(t.skillPath), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(t.skillPath), err)
+			return 1
+		}
+		if err := os.WriteFile(t.skillPath, embeddedSkill, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", t.skillPath, err)
+			return 1
+		}
+		if err := writeVersionAt(versionPathFor(t.skillPath), Version); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not record skill version for %s: %v\n", t.agent, err)
+		}
+		fmt.Printf("installed flow skill to %s\n", t.skillPath)
 	}
-	if err := os.WriteFile(dest, embeddedSkill, 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", dest, err)
-		return 1
-	}
-	if err := writeSkillVersion(Version); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
-	}
-	fmt.Printf("installed flow skill to %s\n", dest)
 
 	if *skipHook {
 		fmt.Println("--skip-hook: leaving ~/.claude/settings.json alone")
@@ -217,20 +271,33 @@ func skillUninstall(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	dest, err := skillInstallPath()
+	// Uninstall iterates the full candidate set, NOT just live targets,
+	// so we still clean up agents whose home dir disappeared between
+	// install and uninstall. We discover by checking the actual skill
+	// dir path on disk for every known agent.
+	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: no home dir: %v\n", err)
 		return 1
 	}
-	skillDir := filepath.Dir(dest)
-	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
-		fmt.Printf("flow skill not installed at %s — nothing to do\n", skillDir)
-	} else {
+	anyRemoved := false
+	for _, c := range skillTargetCandidates {
+		skillDir := filepath.Join(home, c.subdir, "skills", "flow")
+		if _, err := os.Stat(skillDir); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: stat %s: %v\n", skillDir, err)
+			continue
+		}
 		if err := os.RemoveAll(skillDir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: remove %s: %v\n", skillDir, err)
 			return 1
 		}
 		fmt.Printf("uninstalled flow skill from %s\n", skillDir)
+		anyRemoved = true
+	}
+	if !anyRemoved {
+		fmt.Println("flow skill not installed anywhere — nothing to do")
 	}
 
 	if *keepHook {
