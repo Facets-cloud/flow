@@ -88,6 +88,32 @@ func TestSkillInstallWritesFile(t *testing.T) {
 	}
 }
 
+func TestSkillFrontmatterDescriptionFitsCodexLimit(t *testing.T) {
+	got := string(embeddedSkill)
+	const marker = "description: |"
+	start := strings.Index(got, marker)
+	if start == -1 {
+		t.Fatal("skill frontmatter missing description block")
+	}
+	rest := got[start+len(marker):]
+	end := strings.Index(rest, "\n---")
+	if end == -1 {
+		t.Fatal("skill frontmatter missing closing delimiter")
+	}
+
+	var desc strings.Builder
+	for _, line := range strings.Split(rest[:end], "\n") {
+		if line == "" {
+			continue
+		}
+		desc.WriteString(strings.TrimPrefix(line, "  "))
+		desc.WriteByte('\n')
+	}
+	if n := len(strings.TrimSpace(desc.String())); n > 1024 {
+		t.Fatalf("skill description is %d bytes, exceeds Codex limit of 1024", n)
+	}
+}
+
 func TestSkillInstallErrorsOnExisting(t *testing.T) {
 	withTempHome(t)
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
@@ -361,7 +387,9 @@ func TestSkillTargetsDiscoversInstalledAgents(t *testing.T) {
 }
 
 // TestSkillInstallWritesAllAgentTargets verifies `flow skill install`
-// drops SKILL.md into every discovered agent's skills/flow/ dir.
+// drops SKILL.md into every discovered agent's install dir. Gemini's
+// install dir is `~/.agents/skills/flow/` (NOT `~/.gemini/`) because
+// Gemini scans the shared `~/.agents/skills/` root.
 func TestSkillInstallWritesAllAgentTargets(t *testing.T) {
 	home := withTempHome(t)
 	for _, sub := range []string{".codex", ".cursor", ".gemini"} {
@@ -374,11 +402,18 @@ func TestSkillInstallWritesAllAgentTargets(t *testing.T) {
 		t.Fatalf("install rc=%d", rc)
 	}
 
-	for _, agent := range []string{".claude", ".codex", ".cursor", ".gemini"} {
-		p := filepath.Join(home, agent, "skills", "flow", "SKILL.md")
+	// agent -> install subdir under $HOME.
+	wantPaths := map[string]string{
+		"claude": ".claude",
+		"codex":  ".codex",
+		"cursor": ".cursor",
+		"gemini": ".agents", // shared multi-agent skills root
+	}
+	for agent, sub := range wantPaths {
+		p := filepath.Join(home, sub, "skills", "flow", "SKILL.md")
 		data, err := os.ReadFile(p)
 		if err != nil {
-			t.Errorf("missing SKILL.md at %s: %v", p, err)
+			t.Errorf("missing SKILL.md for %s at %s: %v", agent, p, err)
 			continue
 		}
 		if !strings.Contains(string(data), "name: flow") {
@@ -389,11 +424,18 @@ func TestSkillInstallWritesAllAgentTargets(t *testing.T) {
 			t.Errorf("missing VERSION sidecar for %s: %v", agent, err)
 		}
 	}
+
+	// Gemini-specific safety property: no SKILL.md inside ~/.gemini/skills/
+	// even though `~/.gemini/` was created. Double-install would
+	// duplicate-load via Gemini's two scan roots.
+	if _, err := os.Stat(filepath.Join(home, ".gemini", "skills", "flow", "SKILL.md")); err == nil {
+		t.Error("Gemini install must go to ~/.agents/, NOT ~/.gemini/skills/ — both scan roots would double-load")
+	}
 }
 
-// TestSkillInstallSkipsAbsentAgents verifies an agent home dir that
-// doesn't exist gets no install — we MUST NOT eagerly create
-// ~/.<agent>/ for agents the user doesn't have.
+// TestSkillInstallSkipsAbsentAgents verifies an agent presence dir
+// that doesn't exist gets no install — we MUST NOT eagerly create
+// `~/.<agent>/` (or `~/.agents/`) for agents the user doesn't have.
 func TestSkillInstallSkipsAbsentAgents(t *testing.T) {
 	home := withTempHome(t)
 	// Only ~/.codex is present; Cursor/Gemini stay absent.
@@ -411,11 +453,38 @@ func TestSkillInstallSkipsAbsentAgents(t *testing.T) {
 			t.Errorf("expected install for %s; got err=%v", want, err)
 		}
 	}
-	// Cursor + Gemini parents MUST NOT have been auto-created.
-	for _, absent := range []string{".cursor", ".gemini"} {
+	// Cursor presence dir + Gemini presence dir + Gemini install dir
+	// (~/.agents) MUST NOT have been auto-created.
+	for _, absent := range []string{".cursor", ".gemini", ".agents"} {
 		if _, err := os.Stat(filepath.Join(home, absent)); !os.IsNotExist(err) {
 			t.Errorf("install must not create ~/%s; stat err=%v", absent, err)
 		}
+	}
+}
+
+// TestGeminiInstallsToAgentsRoot verifies the Gemini→.agents redirect
+// in isolation: when only ~/.gemini/ exists (no other agents present),
+// the install must land at ~/.agents/skills/flow/SKILL.md, NOT under
+// ~/.gemini/.
+func TestGeminiInstallsToAgentsRoot(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+
+	// Must exist under ~/.agents/skills/flow/.
+	want := filepath.Join(home, ".agents", "skills", "flow", "SKILL.md")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("Gemini install should land at %s; stat err=%v", want, err)
+	}
+	// Must NOT exist under ~/.gemini/skills/flow/.
+	bad := filepath.Join(home, ".gemini", "skills", "flow", "SKILL.md")
+	if _, err := os.Stat(bad); err == nil {
+		t.Errorf("Gemini install must NOT touch %s — would double-load", bad)
 	}
 }
 
@@ -451,7 +520,8 @@ func TestSkillInstallRefusesIfAnyTargetExists(t *testing.T) {
 }
 
 // TestSkillUpdateOverwritesAllAgents — `flow skill update` is force=true.
-// Should refresh SKILL.md in every discovered agent.
+// Should refresh SKILL.md in every discovered agent's install dir
+// (Gemini's is `.agents`, not `.gemini`).
 func TestSkillUpdateOverwritesAllAgents(t *testing.T) {
 	home := withTempHome(t)
 	for _, sub := range []string{".codex", ".gemini"} {
@@ -462,9 +532,10 @@ func TestSkillUpdateOverwritesAllAgents(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
+	installSubdirs := []string{".claude", ".codex", ".agents"}
 	// Stomp every installed SKILL.md so we can prove update refreshes them.
-	for _, agent := range []string{".claude", ".codex", ".gemini"} {
-		p := filepath.Join(home, agent, "skills", "flow", "SKILL.md")
+	for _, sub := range installSubdirs {
+		p := filepath.Join(home, sub, "skills", "flow", "SKILL.md")
 		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -474,10 +545,10 @@ func TestSkillUpdateOverwritesAllAgents(t *testing.T) {
 		t.Fatalf("update rc=%d", rc)
 	}
 
-	for _, agent := range []string{".claude", ".codex", ".gemini"} {
-		got, _ := os.ReadFile(filepath.Join(home, agent, "skills", "flow", "SKILL.md"))
+	for _, sub := range installSubdirs {
+		got, _ := os.ReadFile(filepath.Join(home, sub, "skills", "flow", "SKILL.md"))
 		if string(got) == "stale" {
-			t.Errorf("update did not refresh %s SKILL.md", agent)
+			t.Errorf("update did not refresh %s SKILL.md", sub)
 		}
 	}
 }
@@ -507,9 +578,10 @@ func TestSkillUninstallRemovesAllAgents(t *testing.T) {
 
 // TestMaybeAutoUpgradeRefreshesAllAgents — version mismatch should
 // refresh SKILL.md in every installed agent target, not just Claude.
+// Includes the Gemini→.agents redirect.
 func TestMaybeAutoUpgradeRefreshesAllAgents(t *testing.T) {
 	home := withTempHome(t)
-	for _, sub := range []string{".codex", ".cursor"} {
+	for _, sub := range []string{".codex", ".cursor", ".gemini"} {
 		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -518,10 +590,11 @@ func TestMaybeAutoUpgradeRefreshesAllAgents(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
-	// Stomp every SKILL.md so we can detect the refresh.
+	// Stomp every SKILL.md so we can detect the refresh. Gemini's
+	// install dir is `.agents`, not `.gemini`.
 	paths := []string{}
-	for _, agent := range []string{".claude", ".codex", ".cursor"} {
-		p := filepath.Join(home, agent, "skills", "flow", "SKILL.md")
+	for _, sub := range []string{".claude", ".codex", ".cursor", ".agents"} {
+		p := filepath.Join(home, sub, "skills", "flow", "SKILL.md")
 		paths = append(paths, p)
 		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
 			t.Fatal(err)

@@ -28,50 +28,74 @@ const hookMatcher = "startup|resume"
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
 // skillTarget describes one agent installation destination for the
-// flow skill: an agent name, the agent's home dir under $HOME, and
-// the absolute SKILL.md path inside that dir.
+// flow skill.
+//
+// presenceSubdir and installSubdir intentionally diverge: most agents
+// install into their own `~/.<agent>/skills/`, but some (Gemini)
+// scan the shared `~/.agents/skills/` root in addition to their own
+// dir, so installing to both would double-load the skill.
 type skillTarget struct {
-	agent     string // "claude", "codex", "cursor", "gemini"
-	homeDir   string // absolute path to ~/.<agent>
-	skillPath string // absolute path to ~/.<agent>/skills/flow/SKILL.md
+	agent          string // "claude", "codex", "cursor", "gemini"
+	presenceSubdir string // dir under $HOME that signals "agent is installed"
+	installSubdir  string // dir under $HOME where SKILL.md goes (parent of skills/flow)
 }
 
-// skillTargetCandidates enumerates the agents flow knows how to install
-// to. Order is significant: Claude first (it's the canonical legacy
-// target and always installed); the rest are auto-discovered.
-var skillTargetCandidates = []struct {
-	agent  string
-	subdir string
-}{
-	{"claude", ".claude"},
-	{"codex", ".codex"},
-	{"cursor", ".cursor"},
-	{"gemini", ".gemini"},
+// skillTargetCandidates enumerates the agents flow knows how to
+// install to. Claude is always installed (canonical legacy target —
+// `flow init` has always created `~/.claude/skills/flow/` even if the
+// user hadn't started Claude yet). Other agents are auto-discovered
+// by checking presenceSubdir on disk.
+//
+// Why presence and install dirs differ for Gemini: Gemini CLI scans
+// `~/.agents/skills/` as a shared multi-agent skills root in addition
+// to its per-agent `~/.gemini/skills/`. Writing to both produces a
+// duplicate-load. The shared root is the better target because other
+// tools (plugins, marketplaces) also discover skills there.
+var skillTargetCandidates = []skillTarget{
+	{agent: "claude", presenceSubdir: ".claude", installSubdir: ".claude"},
+	{agent: "codex", presenceSubdir: ".codex", installSubdir: ".codex"},
+	{agent: "cursor", presenceSubdir: ".cursor", installSubdir: ".cursor"},
+	{agent: "gemini", presenceSubdir: ".gemini", installSubdir: ".agents"},
+}
+
+// skillPathFor returns the absolute SKILL.md path for a candidate
+// under the given home dir.
+func (t skillTarget) skillPathUnder(home string) string {
+	return filepath.Join(home, t.installSubdir, "skills", "flow", "SKILL.md")
+}
+
+// presenceDirUnder returns the absolute path checked to decide
+// whether the agent is installed.
+func (t skillTarget) presenceDirUnder(home string) string {
+	return filepath.Join(home, t.presenceSubdir)
+}
+
+// resolvedSkillTarget is a skillTarget after $HOME has been resolved
+// — it carries absolute paths so callers don't need to recompute.
+type resolvedSkillTarget struct {
+	agent     string
+	skillPath string // absolute path to SKILL.md
 }
 
 // skillTargets returns every install target that should receive
-// SKILL.md right now. Claude is always present (preserves legacy
-// behavior — `flow init` has always created `~/.claude/skills/flow/`
-// even if the user hasn't started Claude yet). Other agents are
-// included only when their parent home dir already exists, so we
-// never pollute `$HOME` for agents the user doesn't have.
-func skillTargets() ([]skillTarget, error) {
+// SKILL.md right now. Claude is always present. Other agents are
+// included only when their presence dir exists, so we never pollute
+// `$HOME` for agents the user doesn't have.
+func skillTargets() ([]resolvedSkillTarget, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("no home dir: %w", err)
 	}
-	var out []skillTarget
+	var out []resolvedSkillTarget
 	for _, c := range skillTargetCandidates {
-		homeDir := filepath.Join(home, c.subdir)
 		if c.agent != "claude" {
-			if _, err := os.Stat(homeDir); err != nil {
+			if _, err := os.Stat(c.presenceDirUnder(home)); err != nil {
 				continue
 			}
 		}
-		out = append(out, skillTarget{
+		out = append(out, resolvedSkillTarget{
 			agent:     c.agent,
-			homeDir:   homeDir,
-			skillPath: filepath.Join(homeDir, "skills", "flow", "SKILL.md"),
+			skillPath: c.skillPathUnder(home),
 		})
 	}
 	return out, nil
@@ -282,7 +306,7 @@ func skillUninstall(args []string) int {
 	}
 	anyRemoved := false
 	for _, c := range skillTargetCandidates {
-		skillDir := filepath.Join(home, c.subdir, "skills", "flow")
+		skillDir := filepath.Dir(c.skillPathUnder(home))
 		if _, err := os.Stat(skillDir); os.IsNotExist(err) {
 			continue
 		} else if err != nil {
