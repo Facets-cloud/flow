@@ -185,3 +185,171 @@ func TestCmdRunPlaybookMissing(t *testing.T) {
 		t.Errorf("expected non-zero rc for missing playbook")
 	}
 }
+
+// ---------- flow run playbook --here ----------
+
+// TestCmdRunPlaybookHereHappyPath pins the in-session bind contract
+// for playbook runs: with $CLAUDE_CODE_SESSION_ID set and a valid
+// playbook, --here creates the run-task row, snapshots the brief,
+// binds the current session, and flips status to in-progress —
+// without spawning a tab.
+func TestCmdRunPlaybookHereHappyPath(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	count, _ := stubITerm(t)
+
+	if rc := cmdRun([]string{"playbook", "tri", "--here"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if *count != 0 {
+		t.Errorf("--here should not spawn; got %d spawns", *count)
+	}
+
+	db := openFlowDB(t)
+	var runSlug, status, sessionID string
+	err := db.QueryRow(
+		`SELECT slug, status, COALESCE(session_id,'') FROM tasks WHERE kind='playbook_run' AND playbook_slug='tri'`,
+	).Scan(&runSlug, &status, &sessionID)
+	if err != nil {
+		t.Fatalf("query run task: %v", err)
+	}
+	if sessionID != sid {
+		t.Errorf("session_id = %q, want %s", sessionID, sid)
+	}
+	if status != "in-progress" {
+		t.Errorf("status = %q, want in-progress", status)
+	}
+
+	// Brief snapshot is still produced on the --here path — bootstrap
+	// contract reads tasks/<run-slug>/brief.md, not the live playbook.
+	root, _ := flowRoot()
+	if _, err := os.ReadFile(filepath.Join(root, "tasks", runSlug, "brief.md")); err != nil {
+		t.Errorf("run brief.md missing on --here path: %v", err)
+	}
+}
+
+// TestCmdRunPlaybookHereNoEnvVar pins that --here without a Claude
+// session in env refuses with rc=1 AND does not create a dangling
+// run-task row. Early validation before INSERT is the contract.
+func TestCmdRunPlaybookHereNoEnvVar(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	count, _ := stubITerm(t)
+
+	if rc := cmdRun([]string{"playbook", "p", "--here"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 when CLAUDE_CODE_SESSION_ID unset", rc)
+	}
+	if *count != 0 {
+		t.Errorf("no spawn expected; got %d", *count)
+	}
+
+	db := openFlowDB(t)
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE kind='playbook_run'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("playbook_run rows after refused --here: got %d, want 0 (no dangling row)", n)
+	}
+}
+
+// TestCmdRunPlaybookHereInvalidUUID pins UUID-shape validation. An
+// env var that isn't a v4 UUID is rejected; no dangling row created.
+func TestCmdRunPlaybookHereInvalidUUID(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "not-a-uuid")
+	stubITerm(t)
+
+	if rc := cmdRun([]string{"playbook", "p", "--here"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 when env is not a valid UUID", rc)
+	}
+	db := openFlowDB(t)
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE kind='playbook_run'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("no run row should be created on UUID validation failure; got %d", n)
+	}
+}
+
+// TestCmdRunPlaybookHereRejectsCurrentSessionAlreadyBoundElsewhere
+// pins the session_id uniqueness invariant: if the current session
+// is already bound to another task, --here refuses (and does NOT
+// create a dangling run-task). Mirrors cmdDoHere semantics.
+func TestCmdRunPlaybookHereRejectsCurrentSessionAlreadyBoundElsewhere(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	if rc := cmdAdd([]string{"task", "owner-task"}); rc != 0 {
+		t.Fatal()
+	}
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='owner-task'`,
+		sid, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	stubITerm(t)
+
+	if rc := cmdRun([]string{"playbook", "p", "--here"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 when current session bound elsewhere", rc)
+	}
+
+	db = openFlowDB(t)
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE kind='playbook_run'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("no run row should be created when session bound elsewhere; got %d", n)
+	}
+	var ownerSID string
+	if err := db.QueryRow(`SELECT session_id FROM tasks WHERE slug='owner-task'`).Scan(&ownerSID); err != nil {
+		t.Fatal(err)
+	}
+	if ownerSID != sid {
+		t.Errorf("owner-task session_id changed: got %q, want %s", ownerSID, sid)
+	}
+}
+
+// TestCmdRunPlaybookHereIgnoresDangerSkip pins that
+// --dangerously-skip-permissions is silently dropped on the --here
+// path (no claude process is spawned, so the flag is meaningless).
+// The bind should still succeed.
+func TestCmdRunPlaybookHereIgnoresDangerSkip(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	count, _ := stubITerm(t)
+
+	if rc := cmdRun([]string{"playbook", "p", "--here", "--dangerously-skip-permissions"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if *count != 0 {
+		t.Errorf("--here should not spawn even with --dangerously-skip-permissions; got %d", *count)
+	}
+}

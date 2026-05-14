@@ -122,7 +122,8 @@ Workdirs:
 
 Playbooks:
   flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow run playbook   <slug> [--dangerously-skip-permissions]
+  flow run playbook   <slug> [--dangerously-skip-permissions]   (spawn a new tab)
+  flow run playbook   <slug> --here                              (bind THIS Claude session to the new run; no new tab)
   flow show playbook  <ref>
   flow list playbooks [--project <slug>] [--include-archived]`)
 }
