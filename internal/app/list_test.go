@@ -846,32 +846,53 @@ func TestCmdListTasksEmptyJSON(t *testing.T) {
 	}
 }
 
-func TestCmdListTasksTruncation(t *testing.T) {
+func TestCmdListTasksSlugAlwaysFull(t *testing.T) {
+	// Slugs are emitted in full by default — there's no length cap. The
+	// only field with a default truncation cap is the freeform waiting
+	// note (covered by TestCmdListTasksWaitingTruncation).
 	root, db := showListEditDB(t)
-	longSlug := "very-very-very-very-very-very-long-slug-overrun-cap"
+	longSlug := "very-very-very-very-very-very-long-slug-no-truncation-here"
 	insertTask(t, db, longSlug, "L", "in-progress", "high", filepath.Join(root, "x"), nil)
 
-	// Default table mode truncates to identMaxRunes.
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, longSlug) {
+		t.Errorf("full slug missing in default output; out=%q", out)
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("ellipsis should not appear when slug is the only long field; out=%q", out)
+	}
+}
+
+func TestCmdListTasksWaitingTruncation(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "blocked", "B", "in-progress", "high", filepath.Join(root, "x"), nil)
+	longWait := "alice is reviewing the migration plan and also waiting on bob for the schema change approval"
+	if _, err := db.Exec(`UPDATE tasks SET waiting_on = ? WHERE slug = ?`, longWait, "blocked"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default truncates the waiting field.
 	out := captureStdout(t, func() {
 		if rc := cmdList([]string{"tasks"}); rc != 0 {
 			t.Fatalf("rc=%d", rc)
 		}
 	})
 	if !strings.Contains(out, "…") {
-		t.Errorf("expected ellipsis truncation marker; out=%q", out)
-	}
-	if strings.Contains(out, longSlug) {
-		t.Errorf("full slug should not appear in default table; out=%q", out)
+		t.Errorf("waiting field should be truncated with …; out=%q", out)
 	}
 
-	// --no-truncate emits the full slug, no ellipsis.
+	// --no-truncate emits the full waiting note, no ellipsis.
 	out2 := captureStdout(t, func() {
 		if rc := cmdList([]string{"tasks", "--no-truncate"}); rc != 0 {
 			t.Fatalf("rc=%d", rc)
 		}
 	})
-	if !strings.Contains(out2, longSlug) {
-		t.Errorf("full slug missing under --no-truncate; out=%q", out2)
+	if !strings.Contains(out2, longWait) {
+		t.Errorf("full waiting note missing under --no-truncate; out=%q", out2)
 	}
 	if strings.Contains(out2, "…") {
 		t.Errorf("--no-truncate should not emit ellipsis; out=%q", out2)

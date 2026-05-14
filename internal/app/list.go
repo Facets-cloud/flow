@@ -14,14 +14,9 @@ import (
 )
 
 // waitingMaxRunes caps the [waiting: ...] field width in table output so a
-// long blocking note doesn't blow the row past terminal width. JSON/TSV
-// emit the full value. The --no-truncate flag suppresses this cap.
+// long freeform blocking note doesn't blow the row past terminal width.
+// JSON/TSV emit the full value. The --no-truncate flag suppresses this cap.
 const waitingMaxRunes = 60
-
-// identMaxRunes caps the slug column in table output. JSON/TSV emit the full
-// slug regardless. The --no-truncate flag suppresses this cap (handy when
-// you want to copy-paste a long slug into `flow do`).
-const identMaxRunes = 40
 
 // listOpts are the format/color/truncation flags every list subcommand shares.
 type listOpts struct {
@@ -31,21 +26,14 @@ type listOpts struct {
 }
 
 // addListFlags registers the common --format / --no-color / --no-truncate
-// flags on fs.
+// flags on fs. Slugs are never truncated — only the freeform waiting field
+// has a default cap, which --no-truncate disables.
 func addListFlags(fs *flag.FlagSet) listOpts {
 	return listOpts{
 		format:     fs.String("format", "table", "output format: table|json|tsv"),
 		noColor:    fs.Bool("no-color", false, "disable ANSI color even when stdout is a TTY"),
-		noTruncate: fs.Bool("no-truncate", false, "do not truncate slug or waiting field in table output"),
+		noTruncate: fs.Bool("no-truncate", false, "do not truncate the [waiting: ...] field in table output"),
 	}
-}
-
-// slugMax returns identMaxRunes when truncation is enabled, 0 (disabled) otherwise.
-func (o listOpts) slugMax() int {
-	if *o.noTruncate {
-		return 0
-	}
-	return identMaxRunes
 }
 
 // waitMax returns waitingMaxRunes when truncation is enabled, 0 otherwise.
@@ -257,7 +245,7 @@ func listTasksCmd(args []string) int {
 		return 1
 	}
 
-	headers := []string{"STATUS", "PRI", "SLUG", "PROJECT", "AGE", "DUE", "NOTES"}
+	headers := []string{"STATUS", "PRIORITY", "SLUG", "PROJECT", "AGE", "DUE", "NOTES"}
 	tsvHeaders := []string{
 		"slug", "status", "priority", "project",
 		"age_days", "due_in_days", "due_label",
@@ -374,7 +362,7 @@ func listTasksCmd(args []string) int {
 		tableRows[i] = []string{
 			painter.Wrap("["+statusAbbrev(r.Status)+"]", statusColor(r.Status)),
 			painter.Wrap(priorityShort(r.Priority), priorityColor(r.Priority)),
-			listfmt.Truncate(r.Slug, opts.slugMax()),
+			r.Slug,
 			projectCell(r.Project),
 			ageString(r.AgeDays),
 			painter.Wrap(r.DueLabel, dueColor(r)),
@@ -522,7 +510,7 @@ func listProjectsCmd(args []string) int {
 		return 1
 	}
 
-	headers := []string{"PRI", "SLUG", "STATUS", "TASKS", "BREAKDOWN", "NOTES"}
+	headers := []string{"PRIORITY", "SLUG", "STATUS", "TASKS", "BREAKDOWN", "NOTES"}
 	tsvHeaders := []string{"slug", "priority", "status", "total", "in_progress", "backlog", "done", "archived"}
 	if len(projects) == 0 {
 		return emptyResult(fmtKind, "projects", tsvHeaders)
@@ -641,7 +629,7 @@ func listProjectsCmd(args []string) int {
 		}
 		tableRows[i] = []string{
 			painter.Wrap(priorityShort(r.Priority), priorityColor(r.Priority)),
-			listfmt.Truncate(r.Slug, opts.slugMax()),
+			r.Slug,
 			statusCol,
 			taskLabel,
 			breakdown,
@@ -731,7 +719,7 @@ func listPlaybooksCmd(args []string) int {
 			notes = painter.Wrap("(archived)", listfmt.Dim)
 		}
 		tableRows[i] = []string{
-			listfmt.Truncate(r.Slug, opts.slugMax()),
+			r.Slug,
 			projectCell(r.Project),
 			notes,
 		}
@@ -827,7 +815,7 @@ func listRunsCmd(args []string) int {
 		}
 		tableRows[i] = []string{
 			painter.Wrap("["+statusAbbrev(r.Status)+"]", statusColor(r.Status)),
-			listfmt.Truncate(r.Slug, opts.slugMax()),
+			r.Slug,
 			projectCell(r.Playbook),
 			notes,
 		}
