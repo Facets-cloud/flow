@@ -129,6 +129,10 @@ func cmdInit(args []string) int {
 		fmt.Printf("installed SessionStart hook in %s\n", settings)
 	}
 
+	// Clear any opt-out marker — `flow init` is an explicit setup
+	// signal, so subsequent auto-upgrade should run normally.
+	_ = setSkillUninstallOptOut(false)
+
 	fmt.Printf("flow initialized at %s\n", root)
 	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)
 	return 0

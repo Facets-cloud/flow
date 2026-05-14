@@ -615,6 +615,106 @@ func TestMaybeAutoUpgradeRefreshesAllAgents(t *testing.T) {
 	}
 }
 
+// TestMaybeAutoUpgradeInstallsNewlyDetectedAgent pins Anshul's gap from
+// PR #45: user runs `flow init` with only Claude installed, later
+// installs Codex. The very next `flow` invocation's auto-upgrade pass
+// must drop SKILL.md into the new agent's dir — not wait for the user
+// to manually re-run `flow skill install --force`.
+func TestMaybeAutoUpgradeInstallsNewlyDetectedAgent(t *testing.T) {
+	home := withTempHome(t)
+	withVersion(t, "v1.0.0")
+	// Initial install with only Claude present.
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	codexSkill := filepath.Join(home, ".codex", "skills", "flow", "SKILL.md")
+	if _, err := os.Stat(codexSkill); err == nil {
+		t.Fatalf("precondition: codex skill should not exist yet")
+	}
+	// User installs Codex CLI later.
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Auto-upgrade runs on next `flow` invocation. Version unchanged —
+	// the trigger here is "newly-detected agent", not version drift.
+	maybeAutoUpgradeSkill()
+
+	if _, err := os.Stat(codexSkill); err != nil {
+		t.Fatalf("auto-upgrade should install for newly-detected codex; got err=%v", err)
+	}
+	if v := readVersionAt(filepath.Join(filepath.Dir(codexSkill), "VERSION")); v != "v1.0.0" {
+		t.Errorf("codex VERSION sidecar=%q, want v1.0.0", v)
+	}
+}
+
+// TestMaybeAutoUpgradeRespectsUninstallMarker pins the opt-out
+// contract: after `flow skill uninstall`, auto-upgrade must NOT
+// silently resurrect SKILL.md on the next `flow` invocation. This is
+// the legitimate "user opted out" case that the marker file makes
+// explicit (replacing the old absence-as-opt-out heuristic).
+func TestMaybeAutoUpgradeRespectsUninstallMarker(t *testing.T) {
+	home := withTempHome(t)
+	// Point flowRoot at the temp home so the marker lands in the
+	// sandbox. The existing skill tests don't init flow, so flowRoot
+	// resolves to $HOME/.flow which is already inside the tempdir.
+	withVersion(t, "v1.0.0")
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	if !skillUninstallOptOutSet() {
+		t.Fatal("uninstall must set opt-out marker")
+	}
+	claudeSkill := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+
+	Version = "v2.0.0"
+	maybeAutoUpgradeSkill()
+
+	if _, err := os.Stat(claudeSkill); err == nil {
+		t.Errorf("auto-upgrade resurrected uninstalled skill at %s", claudeSkill)
+	}
+}
+
+// TestSkillInstallClearsUninstallMarker pins the "explicit install =
+// opt back in" contract: running `flow skill install` after a previous
+// uninstall clears the marker, restoring auto-upgrade for future
+// invocations.
+func TestSkillInstallClearsUninstallMarker(t *testing.T) {
+	withTempHome(t)
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	if !skillUninstallOptOutSet() {
+		t.Fatal("precondition: uninstall should have set the marker")
+	}
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("second install rc=%d", rc)
+	}
+	if skillUninstallOptOutSet() {
+		t.Error("install did not clear the uninstall marker")
+	}
+}
+
+// TestSkillUninstallNoopDoesNotSetMarker pins the gating on anyRemoved:
+// `flow skill uninstall` against an empty home is a true no-op and
+// must not leave a marker behind (which would block future
+// auto-installs after the user later runs `flow init`).
+func TestSkillUninstallNoopDoesNotSetMarker(t *testing.T) {
+	withTempHome(t)
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	if skillUninstallOptOutSet() {
+		t.Error("uninstall on empty home should not set opt-out marker")
+	}
+}
+
 func TestSkillUnknownSubcommand(t *testing.T) {
 	if rc := cmdSkill([]string{"wat"}); rc != 2 {
 		t.Errorf("unknown subcommand rc=%d, want 2", rc)

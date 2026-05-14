@@ -148,17 +148,89 @@ func userSettingsPath() (string, error) {
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
 
-// maybeAutoUpgradeSkill checks the recorded skill version against the
-// running binary's version and, if they differ, refreshes the skill +
-// SessionStart hook. Designed to run on every flow invocation so the
-// user gets a self-healing upgrade flow after replacing the binary.
+// skillUninstallOptOutPath returns the marker file under flowRoot
+// that records "user explicitly ran `flow skill uninstall`, do not
+// auto-reinstall on subsequent `flow` invocations". Living under
+// flowRoot (not under any one agent's home) keeps the signal
+// independent of which agents the user has installed today.
+func skillUninstallOptOutPath() (string, error) {
+	root, err := flowRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, ".skill-uninstalled"), nil
+}
+
+// skillUninstallOptOutSet reports whether the opt-out marker exists.
+// Best-effort: any error (including no flowRoot) is treated as
+// "not opted out" so auto-upgrade still runs on a fresh machine
+// where ~/.flow doesn't exist yet.
+func skillUninstallOptOutSet() bool {
+	p, err := skillUninstallOptOutPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
+	return err == nil
+}
+
+// flowEngagementDetected reports whether the user has taken any
+// prior install action: a flow.db exists (from `flow init`) or some
+// target already has SKILL.md on disk. Used to gate auto-install on
+// the very first invocation of a freshly-downloaded binary.
+func flowEngagementDetected(targets []resolvedSkillTarget) bool {
+	if root, err := flowRoot(); err == nil {
+		if _, err := os.Stat(filepath.Join(root, "flow.db")); err == nil {
+			return true
+		}
+	}
+	for _, t := range targets {
+		if _, err := os.Stat(t.skillPath); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// setSkillUninstallOptOut writes (set=true) or removes (set=false)
+// the opt-out marker. Errors are returned but call sites should
+// generally swallow them — the marker is a hint, never a contract.
+func setSkillUninstallOptOut(set bool) error {
+	p, err := skillUninstallOptOutPath()
+	if err != nil {
+		return err
+	}
+	if !set {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte("flow skill uninstall opt-out marker\n"), 0o644)
+}
+
+// maybeAutoUpgradeSkill checks every detected agent target and
+// refreshes its SKILL.md when needed. Designed to run on every flow
+// invocation so the user gets a self-healing install/upgrade flow.
+//
+// "Needed" means either:
+//   - SKILL.md is missing but the agent is present (e.g. user installed
+//     Codex after `flow init` — we want the skill to land without
+//     requiring them to manually re-run `flow skill install --force`).
+//   - SKILL.md exists but VERSION sidecar lags the running binary.
 //
 // The check is intentionally conservative — it does nothing when:
 //   - The binary is a "dev" build (Version == "dev"). Local devs use
 //     `make install` and shouldn't fight an auto-installer.
-//   - The skill isn't installed at all (sentinel: SKILL.md missing).
-//     Treat this as an explicit user opt-out; never re-install.
-//   - The recorded version already matches Version. The common path.
+//   - The user explicitly ran `flow skill uninstall` (marker file at
+//     ~/.flow/.skill-uninstalled). The marker is cleared by
+//     `flow skill install` / `flow init`, so opting back in is a
+//     normal command, not a hidden incantation.
+//   - The recorded version already matches and SKILL.md is present
+//     for every target. The common path.
 //
 // All errors are silent — auto-upgrade is best-effort plumbing, not a
 // command. A user-visible failure here would be far more annoying than
@@ -167,18 +239,33 @@ func maybeAutoUpgradeSkill() {
 	if Version == "" || Version == "dev" {
 		return
 	}
+	if skillUninstallOptOutSet() {
+		return
+	}
 	targets, err := skillTargets()
 	if err != nil {
 		return
 	}
+	// Don't conjure SKILL.md out of thin air on a fresh binary the user
+	// has never touched. Auto-install requires at least one prior
+	// engagement — either `flow init` (flow.db present) or a previous
+	// `flow skill install` (some target's SKILL.md present). Without
+	// this gate, `flow list` on a virgin binary would silently create
+	// ~/.claude/skills/flow/SKILL.md alongside the "not initialized"
+	// error, which is more surprising than helpful.
+	if !flowEngagementDetected(targets) {
+		return
+	}
 	upgraded := false
 	for _, t := range targets {
-		if _, err := os.Stat(t.skillPath); err != nil {
-			// Not installed for this agent → user opted out; don't
-			// reinstall behind their back.
-			continue
+		if _, err := os.Stat(t.skillPath); err == nil {
+			if readVersionAt(versionPathFor(t.skillPath)) == Version {
+				continue
+			}
 		}
-		if readVersionAt(versionPathFor(t.skillPath)) == Version {
+		// Either missing (newly-installed agent) or stale (version
+		// drift). Both want the same action: write the embedded skill.
+		if err := os.MkdirAll(filepath.Dir(t.skillPath), 0o755); err != nil {
 			continue
 		}
 		if err := os.WriteFile(t.skillPath, embeddedSkill, 0o644); err != nil {
@@ -259,6 +346,11 @@ func skillInstall(args []string, forceDefault bool) int {
 		fmt.Printf("installed flow skill to %s\n", t.skillPath)
 	}
 
+	// Explicit install/update is a clear "opt back in" signal — clear
+	// any uninstall marker so maybeAutoUpgradeSkill resumes normal
+	// operation on subsequent runs.
+	_ = setSkillUninstallOptOut(false)
+
 	if *skipHook {
 		fmt.Println("--skip-hook: leaving ~/.claude/settings.json alone")
 		return 0
@@ -322,6 +414,15 @@ func skillUninstall(args []string) int {
 	}
 	if !anyRemoved {
 		fmt.Println("flow skill not installed anywhere — nothing to do")
+	} else {
+		// Drop the opt-out marker so the next `flow` invocation's
+		// auto-upgrade pass doesn't silently reinstall what the user
+		// just removed. Gated on anyRemoved so a no-op uninstall on an
+		// empty home stays a true no-op (no ~/.flow/ created as a side
+		// effect).
+		if err := setSkillUninstallOptOut(true); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not write uninstall marker: %v\n", err)
+		}
 	}
 
 	if *keepHook {
