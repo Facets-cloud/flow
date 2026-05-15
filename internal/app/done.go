@@ -19,6 +19,15 @@ import (
 // $CLAUDE_CODE_SESSION_ID that doesn't match any flow task.
 var claudeRunner = func(slug, prompt string) error {
 	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
+	cmd.Env = append(os.Environ(), "FLOW_TASK="+slug, "FLOW_SESSION_BACKEND=claude")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
+}
+
+var codexRunner = func(slug, prompt string) error {
+	cmd := exec.Command("codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt)
+	cmd.Env = append(os.Environ(), "FLOW_TASK="+slug, "FLOW_SESSION_BACKEND=codex")
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()
@@ -50,6 +59,7 @@ func cmdDone(args []string) int {
 	}
 	query := args[0]
 	fs := flagSet("done")
+	backendFlag := fs.String("backend", "", "session backend to sweep: claude or codex")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -102,13 +112,21 @@ func cmdDone(args []string) int {
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
 
-	if task.SessionID.Valid && task.SessionID.String != "" {
+	backend, session, sessionErr := taskSessionForBackend(db, task, *backendFlag)
+	if sessionErr == nil && session != nil && session.SessionID != "" {
 		fmt.Print("updating kbs, project updates...")
 		projectSlug := ""
 		if task.ProjectSlug.Valid {
 			projectSlug = task.ProjectSlug.String
 		}
-		if err := claudeRunner(task.Slug, buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
+		prompt := buildCloseoutSweepPromptForBackend(task.Slug, projectSlug, backend)
+		var err error
+		if backend == backendCodex {
+			err = codexRunner(task.Slug, prompt)
+		} else {
+			err = claudeRunner(task.Slug, prompt)
+		}
+		if err != nil {
 			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
 		} else {
@@ -137,6 +155,10 @@ func cmdDone(args []string) int {
 // to the LLM — empty or purely-mechanical sessions yield no new
 // entries and no project update.
 func buildCloseoutSweepPrompt(slug, projectSlug string) string {
+	return buildCloseoutSweepPromptForBackend(slug, projectSlug, backendClaude)
+}
+
+func buildCloseoutSweepPromptForBackend(slug, projectSlug string, backend agentBackend) string {
 	// Substitute the real flow root so the headless sweep doesn't get
 	// pointed at ~/.flow when the user has $FLOW_ROOT set elsewhere.
 	root := "~/.flow"
@@ -158,8 +180,8 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 			"%s"+
 			"## Steps\n\n"+
 			"1. Invoke the flow skill via the Skill tool. This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
-			"2. Run: flow transcript %s\n"+
-			"   This prints the conversation transcript from the task's Claude session. Read it carefully end to end.\n\n"+
+			"2. Run: flow transcript %s --backend %s\n"+
+			"   This prints the conversation transcript from the task's %s session. Read it carefully end to end.\n\n"+
 			"3. KB sweep — strict bar, distill the essence.\n\n"+
 			"   For each of these five files, ask: across the WHOLE transcript, is there a durable fact about the user, their org, products, processes, or business that belongs there per §4.10's bucket table AND meets ALL three bars below?\n"+
 			"     - %s/kb/user.md\n"+
@@ -175,7 +197,7 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 			"4. Writing KB entries — INTERPRET the essence; do not transcribe.\n\n"+
 			"   This is the close-out mode of §4.10 and is DIFFERENT from real-time scoop. In real-time scoop you capture what the user just said, mostly verbatim, because it's a single fresh fact. Here you've read the whole conversation — your job is to SYNTHESIZE: pull out the durable insight in compact paraphrase, in your own words, capturing the essence and (where helpful) the why. Avoid quote dumps. One concise dated bullet per insight.\n\n"+
 			"   For each KB file you decide needs an entry, Read it first to check for duplicates (in any form — paraphrase, near-duplicate, superset). If something similar already exists, skip; do not append. Append using the §4.10 entry format: one dated bullet per insight, your own paraphrase capturing the essence, never invent or embellish beyond what the transcript supports.\n\n",
-		slug, mindset, slug, root, root, root, root, root,
+		slug, mindset, slug, backend, backend, root, root, root, root, root,
 	)
 
 	tailNum := "5"

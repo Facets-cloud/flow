@@ -39,12 +39,76 @@ func insertTask(t *testing.T, db *sql.DB, slug, name, status, priority, wd strin
 
 func TestOpenDBCreatesSchema(t *testing.T) {
 	db := openTempDB(t)
-	for _, tbl := range []string{"projects", "tasks", "workdirs"} {
+	for _, tbl := range []string{"projects", "tasks", "task_sessions", "workdirs"} {
 		var name string
 		err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", tbl).Scan(&name)
 		if err != nil {
 			t.Errorf("table %s missing: %v", tbl, err)
 		}
+	}
+}
+
+func TestTaskSessionsCRUDAndMultipleBackends(t *testing.T) {
+	db := openTempDB(t)
+	insertTask(t, db, "dual", "Dual", "in-progress", "medium", "/tmp/dual", nil)
+	now := NowISO()
+	if err := UpsertTaskSession(db, "dual", "claude", "claude-sid", nil, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertTaskSession(db, "dual", "codex", "codex-sid", "/tmp/codex.jsonl", now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	claude, err := GetTaskSession(db, "dual", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claude.SessionID != "claude-sid" {
+		t.Errorf("claude session = %q", claude.SessionID)
+	}
+	codex, err := GetTaskSession(db, "dual", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codex.SessionID != "codex-sid" || !codex.TranscriptPath.Valid || codex.TranscriptPath.String != "/tmp/codex.jsonl" {
+		t.Errorf("codex session = %+v", codex)
+	}
+	sessions, err := ListTaskSessions(db, "dual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("sessions len = %d, want 2", len(sessions))
+	}
+}
+
+func TestMigrationCopiesLegacyTaskSessionIDToClaudeSession(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "flow.db")
+	pre, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := NowISO()
+	if _, err := pre.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, session_id, session_started, created_at, updated_at)
+		 VALUES ('legacy-session', 'Legacy Session', 'in-progress', 'medium', '/tmp', 'legacy-sid', ?, ?, ?)`,
+		now, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	pre.Close()
+
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	session, err := GetTaskSession(db, "legacy-session", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.SessionID != "legacy-sid" {
+		t.Errorf("session id = %q, want legacy-sid", session.SessionID)
 	}
 }
 

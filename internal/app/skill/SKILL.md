@@ -1,24 +1,12 @@
 ---
 name: flow
 description: |
-  Personal task and Claude session manager. CLI binary is `flow` (assumed
-  on PATH) and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the
-  user asks about their work, tasks, or projects in any natural phrasing —
-  including but not limited to: "what's left", "what's remaining",
-  "what's pending", "what do I need to do", "what's on my plate",
-  "what should I work on", "status", "give me a status", "anything
-  urgent", "what's overdue", "what's stale", "show me my work",
-  "how's my week looking", "what did I ship", "what's in progress",
-  "what's next", "what am I working on", "where did I leave off",
-  "start my day", "what should I do", "what should I do today".
-  Also use for task/project management actions: "flow", "add a task",
-  "add a project", "resume work", "pick up where I left off", "save a
-  note", "log progress", "write an update", "note that", "I'm waiting
-  on", "blocked on", "stuck until", "mark done", "archive", "weekly
-  review", "clean up my tasks", or when the user invokes any
-  `flow <subcommand>` directly. Also use whenever the user asks you to
-  bootstrap a new Claude session on a task or tell them about their
-  in-flight work.
+  Personal task and Claude/Codex execution-session manager. Use when the user asks
+  about work, tasks, projects, status, priorities, stale/overdue items, what to do
+  next, or where they left off. Also use for flow actions: add task/project,
+  resume/open work, save a note, log progress, write an update, set waiting/blocker,
+  mark done, archive, weekly review/playbook runs, clean up tasks, direct
+  `flow <subcommand>` requests, or bootstrapping a Claude/Codex task session.
 ---
 
 # flow — task and session manager skill
@@ -26,16 +14,16 @@ description: |
 ## 1. What flow is
 
 `flow` is a small CLI (assumed on `$PATH`) that the user uses to track
-personal work and bootstrap per-task Claude sessions. Metadata (projects,
-tasks, workdirs, session IDs) lives in a single SQLite database at
+personal work and bootstrap per-task Claude or Codex execution sessions.
+Metadata (projects, tasks, workdirs, per-backend session IDs) lives in a single SQLite database at
 `~/.flow/flow.db`. Free-form plan content lives on disk as markdown
 "briefs" at `~/.flow/projects/<slug>/brief.md` and
 `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate as dated
 markdown files under each entity's `updates/` subdirectory. The user runs
-one long-lived Claude session per task in its own terminal tab, resumed via
-`flow do <task>`.
+one long-lived execution session per task/backend in its own terminal tab,
+resumed via `flow do <task>`.
 
-You are speaking inside one of those Claude sessions (or the user's
+You are speaking inside one of those execution sessions (or the user's
 ambient "dispatch" session). Your job is to interpret the user's natural
 language requests and turn them into the exact `flow` commands and file
 edits they imply. You never edit `flow.db` directly. You never solve
@@ -63,7 +51,7 @@ first; let them choose what happens next.
 
 1. In 2–3 sentences, describe what you can do for the user with
    flow under the hood — capture work as briefs, log progress
-   notes, resume Claude sessions across days, track what they're
+   notes, resume Claude or Codex sessions across days, track what they're
    waiting on. Frame it as your capabilities, not commands. The
    user does not need to learn flow's CLI.
 2. Use `AskUserQuestion` (header: "What now?") to offer the main
@@ -92,8 +80,9 @@ an intent, follow the matching recipe instead of re-asking via §1a.
   `~/.flow/tasks/<slug>/workspace/` for floating tasks), a priority, a
   status (`backlog`, `in-progress`, `done`), an optional `project_slug`,
   an optional `waiting_on` freeform note, and a `brief.md`. Tasks also
-  carry a Claude `session_id` once `flow do` has bootstrapped a session
-  for them.
+  carry per-backend execution sessions once `flow do` has bootstrapped
+  them. Claude and Codex sessions are stored separately, so one task can
+  have both without overwriting either.
 - **Playbooks** are reusable, runnable definitions. A playbook has a
   name, slug, work_dir, optional `project_slug`, and a `brief.md` that
   describes what each invocation should do. Each invocation creates a
@@ -148,7 +137,7 @@ basics in this order:
    `AskUserQuestion` (header: "Open it now?", options:
    "Open it now" / "Later, just save") to ask whether to run
    `flow do <slug>`. Briefly explain in the question: a dedicated
-   Claude session gets the brief, updates, and repo conventions
+   execution session gets the brief, updates, and repo conventions
    automatically. If "Open it now", proceed to §4.4. If "Later",
    stop here.
 
@@ -200,7 +189,7 @@ Read
   flow show task    [<ref>]     (no arg → reverse-lookup via $CLAUDE_CODE_SESSION_ID)
   flow show project [<ref>]     (no arg → project of the bound task)
   flow show playbook    [<ref>]
-  flow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
+  flow transcript   [<ref>] [--compact] [--backend claude|codex]    (readable transcript from session jsonl)
   flow list tasks    [--status backlog|in-progress|done] [--project <slug>]
                      [--priority high|medium|low] [--since today|monday|7d|YYYY-MM-DD]
                      [--include-archived]
@@ -560,7 +549,7 @@ its own, it's the start of a two-or-more-step workflow.
        question: "Which session mode for <task-slug>?",
        header: "Session mode",
        options: [
-         { label: "Regular",          description: "Normal Claude session with tool-approval prompts (safer)" },
+         { label: "Regular",          description: "Normal execution session with tool-approval prompts (safer)" },
          { label: "Skip permissions", description: "Pass --dangerously-skip-permissions (faster, no prompts)" }
        ],
        multiSelect: false
@@ -595,7 +584,7 @@ not attempt workarounds; the user will decide what to do next.
 
 #### Special case: live-session guard
 
-`flow do` refuses to spawn when the task's `session_id` is already
+For Claude, `flow do` refuses to spawn when the task's Claude session is already
 running in another Claude process — typically because the user has the
 task's tab open elsewhere and forgot. The error names the running
 session ID and points at `--force`. When you see it:
@@ -1416,8 +1405,8 @@ via `AskUserQuestion`.
    one (typically at `/usr/local/bin/flow`; confirm with
    `which flow` if unsure).
 4. Run `flow skill update` to refresh the embedded skill on disk and
-   re-wire both the SessionStart and UserPromptSubmit hooks in
-   `~/.claude/settings.json`. (The auto-upgrade path runs the same
+   re-wire the SessionStart hooks for Claude and Codex. Stale
+   UserPromptSubmit hooks are removed. (The auto-upgrade path runs the same
    refresh on the next `flow` invocation, but explicit is better and
    surfaces any errors immediately.)
 5. Run `flow --version` again and confirm the version changed. If it
@@ -1806,16 +1795,25 @@ instead.
 
 ## 9. The execution-session bootstrap contract
 
-When `flow do <task>` spawns a Claude session in a new terminal tab, it
-pre-allocates a UUID, writes it to `tasks.session_id` before spawning,
-and passes it to `claude --session-id <uuid>`. This makes the session's
-jsonl file appear at the deterministic path
-`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. There is no
-self-registration step — the DB is authoritative from the moment the
-tab opens.
+When `flow do <task>` spawns an execution session in a new terminal tab,
+it auto-detects the current backend from the invoking environment. Claude
+remains the fallback/default. Codex is selected in Codex sessions or by
+`FLOW_AGENT_BACKEND=codex`; Claude can be forced with
+`FLOW_AGENT_BACKEND=claude`.
 
-Subsequent `flow do <same-task>` calls read that UUID and spawn
-`claude --resume <uuid>` to continue the same conversation.
+Claude behavior is deterministic: flow pre-allocates a UUID, stores it
+as the task's Claude session, mirrors it to legacy `tasks.session_id`,
+and passes it to `claude --session-id <uuid>`. Resumes use
+`claude --resume <uuid>`.
+
+Codex behavior lets Codex generate the session ID: fresh starts run
+`codex <bootstrap-prompt>`, and the Codex `SessionStart` hook registers
+the generated session ID and transcript path back into flow. Resumes use
+`codex resume <session-id>`.
+
+Claude and Codex session records are independent. `--fresh` only resets
+the selected backend's session for that task; it does not erase the
+other backend.
 
 **If you are the execution session spawned by `flow do`:**
 
@@ -1919,11 +1917,13 @@ yours), use:
 flow transcript <sibling-task-slug>
 ```
 
-This outputs a readable conversation transcript from that task's Claude
-session — user messages, assistant messages, tool calls, and results.
-Use `--compact` to omit tool results and thinking blocks for a shorter
-overview. Pipe through `grep` or `head` if the full transcript is too
-long to read at once.
+This outputs a readable conversation transcript from that task's selected
+execution session — user messages, assistant messages, tool calls, and
+results. It defaults to the current backend, or the only backend session
+available for that task. Use `--backend claude` or `--backend codex` when
+both exist. Use `--compact` to omit tool results and thinking blocks for
+a shorter overview. Pipe through `grep` or `head` if the full transcript
+is too long to read at once.
 
 **When to use:** When the brief and updates for a sibling task don't
 give you enough context, or when you need to understand specific

@@ -57,9 +57,20 @@ CREATE TABLE IF NOT EXISTS tasks (
     session_started       TEXT,
     session_last_resumed  TEXT,
     created_at            TEXT NOT NULL,
+	    updated_at            TEXT NOT NULL,
+	    archived_at           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS task_sessions (
+    task_slug             TEXT NOT NULL REFERENCES tasks(slug) ON DELETE CASCADE,
+    backend               TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+    session_id            TEXT NOT NULL,
+    transcript_path       TEXT,
+    session_started       TEXT,
+    session_last_resumed  TEXT,
+    created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
-    archived_at           TEXT,
-    CHECK (status = 'backlog' OR session_id IS NOT NULL)
+    PRIMARY KEY (task_slug, backend)
 );
 
 CREATE TABLE IF NOT EXISTS workdirs (
@@ -136,6 +147,20 @@ type Task struct {
 	ArchivedAt         sql.NullString
 }
 
+// TaskSession stores one execution-session identity per task/backend pair.
+// Legacy tasks.session_id remains as a Claude compatibility mirror, but new
+// code should read/write task_sessions.
+type TaskSession struct {
+	TaskSlug           string
+	Backend            string
+	SessionID          string
+	TranscriptPath     sql.NullString
+	SessionStarted     sql.NullString
+	SessionLastResumed sql.NullString
+	CreatedAt          string
+	UpdatedAt          string
+}
+
 // Workdir mirrors the workdirs convenience registry.
 type Workdir struct {
 	Path        string
@@ -190,6 +215,10 @@ func OpenDB(path string) (*sql.DB, error) {
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("enable foreign_keys: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout = 30000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
 	}
 	if _, err := db.Exec(schemaDDL); err != nil {
 		db.Close()
@@ -267,10 +296,19 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
-	// Session-id invariant: any non-backlog task must have a session_id.
-	// Adds a CHECK to the tasks table; old DBs need a table rebuild.
-	if err := migrateTasksSessionInvariant(db); err != nil {
-		return fmt.Errorf("migrate session invariant: %w", err)
+	if _, err := db.Exec(`
+		INSERT OR IGNORE INTO task_sessions (
+			task_slug, backend, session_id, transcript_path,
+			session_started, session_last_resumed, created_at, updated_at
+		)
+		SELECT
+			slug, 'claude', session_id, NULL,
+			session_started, session_last_resumed,
+			COALESCE(session_started, created_at), updated_at
+		FROM tasks
+		WHERE session_id IS NOT NULL AND session_id != ''
+	`); err != nil {
+		return fmt.Errorf("migrate tasks.session_id to task_sessions: %w", err)
 	}
 
 	// Indexes that depend on columns added above. Safe to run after every
@@ -649,6 +687,85 @@ func TaskBySessionID(db *sql.DB, sid string) (*Task, error) {
 	}
 	row := db.QueryRow("SELECT "+TaskCols+" FROM tasks WHERE session_id = ? LIMIT 1", sid)
 	return ScanTask(row)
+}
+
+type queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+const TaskSessionCols = "task_slug, backend, session_id, transcript_path, session_started, session_last_resumed, created_at, updated_at"
+
+func ScanTaskSession(row interface{ Scan(dest ...any) error }) (*TaskSession, error) {
+	var s TaskSession
+	err := row.Scan(
+		&s.TaskSlug, &s.Backend, &s.SessionID, &s.TranscriptPath,
+		&s.SessionStarted, &s.SessionLastResumed, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func GetTaskSession(db queryer, taskSlug, backend string) (*TaskSession, error) {
+	row := db.QueryRow("SELECT "+TaskSessionCols+" FROM task_sessions WHERE task_slug=? AND backend=?", taskSlug, backend)
+	return ScanTaskSession(row)
+}
+
+func ListTaskSessions(db queryer, taskSlug string) ([]*TaskSession, error) {
+	rows, err := db.Query(
+		"SELECT "+TaskSessionCols+" FROM task_sessions WHERE task_slug=? ORDER BY backend",
+		taskSlug,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list task sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []*TaskSession
+	for rows.Next() {
+		s, err := ScanTaskSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan task session: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func UpsertTaskSession(db execer, taskSlug, backend, sessionID string, transcriptPath any, startedAt any, resumedAt any, now string) error {
+	_, err := db.Exec(`
+		INSERT INTO task_sessions (
+			task_slug, backend, session_id, transcript_path,
+			session_started, session_last_resumed, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(task_slug, backend) DO UPDATE SET
+			session_id = excluded.session_id,
+			transcript_path = COALESCE(excluded.transcript_path, task_sessions.transcript_path),
+			session_started = COALESCE(excluded.session_started, task_sessions.session_started),
+			session_last_resumed = COALESCE(excluded.session_last_resumed, task_sessions.session_last_resumed),
+			updated_at = excluded.updated_at
+	`, taskSlug, backend, sessionID, transcriptPath, startedAt, resumedAt, now, now)
+	if err != nil {
+		return fmt.Errorf("upsert task session: %w", err)
+	}
+	return nil
+}
+
+func TouchTaskSessionResumed(db execer, taskSlug, backend, resumedAt string) error {
+	_, err := db.Exec(
+		`UPDATE task_sessions SET session_last_resumed=?, updated_at=? WHERE task_slug=? AND backend=?`,
+		resumedAt, resumedAt, taskSlug, backend,
+	)
+	if err != nil {
+		return fmt.Errorf("touch task session resumed: %w", err)
+	}
+	return nil
 }
 
 func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"flow/internal/flowdb"
+	"os"
 	"strings"
 	"testing"
 )
@@ -138,6 +139,75 @@ func TestHookUserPromptSubmitIsNoOp(t *testing.T) {
 			t.Errorf("CLAUDE_CODE_SESSION_ID=%q: expected empty stdout, got:\n%s", sid, out)
 		}
 	}
+}
+
+func TestHookSessionStartCodexRegistersSession(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "codex-hook")
+	t.Setenv("FLOW_SESSION_BACKEND", "codex")
+	t.Setenv("FLOW_TASK", "codex-hook")
+	withStdin(t, `{"session_id":"codex-hook-sid","transcript_path":"/tmp/codex-hook.jsonl"}`)
+
+	out := captureStdout(t, func() {
+		if rc := cmdHookSessionStart(nil); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("codex hook should not emit Claude additionalContext, got %q", out)
+	}
+	db := openFlowDB(t)
+	session, err := flowdb.GetTaskSession(db, "codex-hook", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.SessionID != "codex-hook-sid" || !session.TranscriptPath.Valid || session.TranscriptPath.String != "/tmp/codex-hook.jsonl" {
+		t.Fatalf("registered session = %+v", session)
+	}
+}
+
+func TestHookSessionStartCodexMalformedInputDoesNotClobber(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "codex-hook-bad")
+	db := openFlowDB(t)
+	now := flowdb.NowISO()
+	if err := flowdb.UpsertTaskSession(db, "codex-hook-bad", "codex", "keep-sid", "/tmp/keep.jsonl", now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLOW_SESSION_BACKEND", "codex")
+	t.Setenv("FLOW_TASK", "codex-hook-bad")
+	withStdin(t, `{bad json`)
+
+	if rc := cmdHookSessionStart(nil); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	session, err := flowdb.GetTaskSession(db, "codex-hook-bad", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.SessionID != "keep-sid" || session.TranscriptPath.String != "/tmp/keep.jsonl" {
+		t.Fatalf("session was clobbered: %+v", session)
+	}
+}
+
+func withStdin(t *testing.T, input string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = old
+		_ = r.Close()
+	})
 }
 
 // TestBuildBootstrapPromptInvokesSkill pins the same invariant for the

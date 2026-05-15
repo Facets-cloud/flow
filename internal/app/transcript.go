@@ -14,7 +14,7 @@ import (
 )
 
 // cmdTranscript implements `flow transcript <task-slug>`. It reads the
-// task's Claude session jsonl and outputs a human-readable conversation
+// selected backend's session jsonl and outputs a human-readable conversation
 // transcript. This enables cross-task context sharing: one task's
 // execution session can pipe the output into its context to learn what
 // happened in a sibling task's conversation.
@@ -29,6 +29,7 @@ func cmdTranscript(args []string) int {
 
 	fs := flagSet("transcript")
 	compact := fs.Bool("compact", false, "omit tool results and thinking blocks")
+	backendFlag := fs.String("backend", "", "session backend: claude or codex")
 	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
@@ -69,12 +70,13 @@ func cmdTranscript(args []string) int {
 		}
 	}
 
-	if !task.SessionID.Valid || task.SessionID.String == "" {
-		fmt.Fprintf(os.Stderr, "error: task %q has no session — run `flow do %s` first\n", task.Slug, task.Slug)
+	backend, session, err := taskSessionForBackend(db, task, *backendFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 
-	jsonlPath, err := sessionJSONLPath(task)
+	jsonlPath, err := sessionJSONLPathForBackend(task, session, backend)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -85,8 +87,8 @@ func cmdTranscript(args []string) int {
 	// that --here-bound tasks accumulate. NULL/unparseable session_started
 	// → zero cutoff → filter is a no-op (pass everything through).
 	var cutoff time.Time
-	if task.SessionStarted.Valid && task.SessionStarted.String != "" {
-		if ts, perr := time.Parse(time.RFC3339Nano, task.SessionStarted.String); perr == nil {
+	if session.SessionStarted.Valid && session.SessionStarted.String != "" {
+		if ts, perr := time.Parse(time.RFC3339Nano, session.SessionStarted.String); perr == nil {
 			cutoff = ts
 		}
 	}
@@ -94,18 +96,101 @@ func cmdTranscript(args []string) int {
 	return renderTranscript(jsonlPath, *compact, cutoff)
 }
 
+func taskSessionForBackend(db *sql.DB, task *flowdb.Task, explicit string) (agentBackend, *flowdb.TaskSession, error) {
+	if explicit != "" {
+		backend, err := parseAgentBackend(explicit)
+		if err != nil {
+			return "", nil, err
+		}
+		session, err := flowdb.GetTaskSession(db, task.Slug, backend.String())
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				if legacy := taskSessionFromLegacy(task, backend); legacy != nil {
+					return backend, legacy, nil
+				}
+				return "", nil, fmt.Errorf("task %q has no %s session — run `flow do %s` from %s first", task.Slug, backend, task.Slug, backend)
+			}
+			return "", nil, err
+		}
+		return backend, session, nil
+	}
+
+	detected := detectAgentBackend()
+	if envBackend := os.Getenv("FLOW_SESSION_BACKEND"); envBackend != "" {
+		if parsed, err := parseAgentBackend(envBackend); err == nil {
+			detected = parsed
+		}
+	}
+	if session, err := flowdb.GetTaskSession(db, task.Slug, detected.String()); err == nil {
+		return detected, session, nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", nil, err
+	}
+
+	sessions, err := flowdb.ListTaskSessions(db, task.Slug)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(sessions) == 0 {
+		if legacy := taskSessionFromLegacy(task, detected); legacy != nil {
+			return detected, legacy, nil
+		}
+		return "", nil, fmt.Errorf("task %q has no session — run `flow do %s` first", task.Slug, task.Slug)
+	}
+	if len(sessions) == 1 {
+		backend, err := parseAgentBackend(sessions[0].Backend)
+		if err != nil {
+			return "", nil, err
+		}
+		return backend, sessions[0], nil
+	}
+	return "", nil, fmt.Errorf("task %q has multiple sessions; pass --backend claude or --backend codex", task.Slug)
+}
+
 // sessionJSONLPath returns the absolute path to a task's session jsonl file.
 func sessionJSONLPath(task *flowdb.Task) (string, error) {
+	if !task.SessionID.Valid || task.SessionID.String == "" {
+		return "", errors.New("task has no session")
+	}
+	return sessionJSONLPathForBackend(task, taskSessionFromLegacy(task, backendClaude), backendClaude)
+}
+
+func sessionJSONLPathForBackend(task *flowdb.Task, session *flowdb.TaskSession, backend agentBackend) (string, error) {
+	if session == nil || session.SessionID == "" {
+		return "", fmt.Errorf("task %q has no %s session — run `flow do %s` first", task.Slug, backend, task.Slug)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
 	}
-	encoded := EncodeCwdForClaude(task.WorkDir)
-	p := filepath.Join(home, ".claude", "projects", encoded, task.SessionID.String+".jsonl")
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("session file not found: %s", p)
+	if backend == backendClaude {
+		encoded := EncodeCwdForClaude(task.WorkDir)
+		p := filepath.Join(home, ".claude", "projects", encoded, session.SessionID+".jsonl")
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("session file not found: %s", p)
+		}
+		return p, nil
 	}
-	return p, nil
+	if session.TranscriptPath.Valid && session.TranscriptPath.String != "" {
+		if _, err := os.Stat(session.TranscriptPath.String); err == nil {
+			return session.TranscriptPath.String, nil
+		}
+	}
+	codexRoot := filepath.Join(home, ".codex", "sessions")
+	var found string
+	_ = filepath.WalkDir(codexRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || found != "" {
+			return nil
+		}
+		if strings.Contains(filepath.Base(path), session.SessionID) && strings.HasSuffix(path, ".jsonl") {
+			found = path
+		}
+		return nil
+	})
+	if found != "" {
+		return found, nil
+	}
+	return "", fmt.Errorf("session file not found for %s session %s", backend, session.SessionID)
 }
 
 // ---------- jsonl record types ----------
@@ -121,12 +206,13 @@ type jsonlRecord struct {
 	Type      string          `json:"type"`
 	Message   json.RawMessage `json:"message"`
 	Timestamp string          `json:"timestamp"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 // jsonlMessage is the message body inside user/assistant records.
 type jsonlMessage struct {
-	Role    string            `json:"role"`
-	Content json.RawMessage   `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 
 // contentBlock represents one block in the content array.
@@ -134,9 +220,9 @@ type contentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
 	Thinking  string          `json:"thinking"`
-	Name      string          `json:"name"`      // tool_use: tool name
-	ID        string          `json:"id"`        // tool_use: tool_use_id
-	Input     json.RawMessage `json:"input"`     // tool_use: input params
+	Name      string          `json:"name"`        // tool_use: tool name
+	ID        string          `json:"id"`          // tool_use: tool_use_id
+	Input     json.RawMessage `json:"input"`       // tool_use: input params
 	ToolUseID string          `json:"tool_use_id"` // tool_result
 	Content   json.RawMessage `json:"content"`     // tool_result: content (string or array)
 	IsError   bool            `json:"is_error"`    // tool_result
@@ -201,6 +287,10 @@ func renderTranscript(path string, compact bool, cutoff time.Time) int {
 			}
 			first = false
 			renderAssistantRecord(rec.Message, compact)
+		case "response_item":
+			if renderCodexResponseItem(rec.Payload, compact, !first) {
+				first = false
+			}
 		}
 		// Skip permission-mode, file-history-snapshot, attachment, etc.
 	}
@@ -210,6 +300,87 @@ func renderTranscript(path string, compact bool, cutoff time.Time) int {
 		return 1
 	}
 	return 0
+}
+
+type codexResponsePayload struct {
+	Type      string          `json:"type"`
+	Role      string          `json:"role"`
+	Content   json.RawMessage `json:"content"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+	Output    string          `json:"output"`
+}
+
+func renderCodexResponseItem(raw json.RawMessage, compact bool, leadingBlank bool) bool {
+	var payload codexResponsePayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	switch payload.Type {
+	case "message":
+		if payload.Role != "user" && payload.Role != "assistant" {
+			return false
+		}
+		var blocks []contentBlock
+		if err := json.Unmarshal(payload.Content, &blocks); err != nil {
+			return false
+		}
+		rendered := false
+		for _, b := range blocks {
+			text := b.Text
+			if text == "" {
+				text = b.Thinking
+			}
+			if text == "" {
+				continue
+			}
+			if leadingBlank || rendered {
+				fmt.Println()
+			}
+			if payload.Role == "user" {
+				fmt.Println("─── User ───")
+			} else if b.Type == "thinking" {
+				if compact {
+					continue
+				}
+				fmt.Println("─── Thinking ───")
+			} else {
+				fmt.Println("─── Assistant ───")
+			}
+			fmt.Println(text)
+			rendered = true
+			leadingBlank = false
+		}
+		return rendered
+	case "function_call":
+		if payload.Name == "" {
+			return false
+		}
+		if leadingBlank {
+			fmt.Println()
+		}
+		fmt.Printf("─── Tool: %s ───\n", payload.Name)
+		if len(payload.Arguments) > 0 && string(payload.Arguments) != "null" {
+			var argString string
+			if err := json.Unmarshal(payload.Arguments, &argString); err == nil {
+				fmt.Println(argString)
+			} else {
+				fmt.Println(string(payload.Arguments))
+			}
+		}
+		return true
+	case "function_call_output":
+		if compact || payload.Output == "" {
+			return false
+		}
+		if leadingBlank {
+			fmt.Println()
+		}
+		fmt.Println("─── Result ───")
+		fmt.Println(truncate(payload.Output, maxToolResultLen))
+		return true
+	}
+	return false
 }
 
 func renderUserRecord(raw json.RawMessage, compact bool) {

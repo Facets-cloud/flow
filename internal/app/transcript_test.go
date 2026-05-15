@@ -26,6 +26,12 @@ const sampleSessionJSONL = `{"type":"permission-mode","permissionMode":"default"
 {"parentUuid":"u3","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done!"}]},"uuid":"a4","timestamp":"2026-04-12T10:00:06.000Z","sessionId":"test-sid"}
 `
 
+const sampleCodexSessionJSONL = `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Codex hello"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Codex reply"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":\"pwd\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","output":"repo\n"}}
+`
+
 func TestTranscriptRender(t *testing.T) {
 	tmp := t.TempDir()
 	jsonlPath := filepath.Join(tmp, "test-sid.jsonl")
@@ -372,5 +378,71 @@ func TestTranscriptRegularSpawnPassthrough(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("regular-spawn filter dropped %q; output:\n%s", want, out)
 		}
+	}
+}
+
+func TestTranscriptCommandCodexBackendUsesStoredPath(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "codex-transcript")
+	tmp := t.TempDir()
+	jsonlPath := filepath.Join(tmp, "stored-codex.jsonl")
+	if err := os.WriteFile(jsonlPath, []byte(sampleCodexSessionJSONL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db := openFlowDB(t)
+	now := flowdb.NowISO()
+	if err := flowdb.UpsertTaskSession(db, "codex-transcript", "codex", "codex-transcript-sid", jsonlPath, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := cmdTranscript([]string{"codex-transcript", "--backend", "codex"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	for _, want := range []string{"Codex hello", "Codex reply", "─── Tool: shell ───", "repo"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("codex transcript missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestTranscriptBackendFlagSelectsBetweenSessions(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "dual-transcript")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "dual-transcript")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claudeDir := filepath.Join(home, ".claude", "projects", EncodeCwdForClaude(task.WorkDir))
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "claude-sid.jsonl"), []byte(sampleSessionJSONL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	codexPath := filepath.Join(t.TempDir(), "codex.jsonl")
+	if err := os.WriteFile(codexPath, []byte(sampleCodexSessionJSONL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := flowdb.NowISO()
+	if err := flowdb.UpsertTaskSession(db, "dual-transcript", "claude", "claude-sid", nil, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.UpsertTaskSession(db, "dual-transcript", "codex", "codex-sid", codexPath, now, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if rc := cmdTranscript([]string{"dual-transcript", "--backend", "codex"}); rc != 0 {
+			t.Fatalf("codex rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "Codex reply") || strings.Contains(out, "Sure, let me check.") {
+		t.Fatalf("--backend codex selected wrong transcript:\n%s", out)
 	}
 }

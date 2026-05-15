@@ -14,6 +14,7 @@ import (
 // inside the test sandbox.
 func setupFlowRoot(t *testing.T) string {
 	t.Helper()
+	t.Setenv("FLOW_AGENT_BACKEND", "claude")
 	root := initTempFlowRoot(t)
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
