@@ -3,6 +3,7 @@ package flowdb
 import (
 	"database/sql"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -60,6 +61,36 @@ func TestOpenDBIdempotent(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	db2.Close()
+}
+
+// TestOpenDBConcurrentDoesNotBusy pins that two parallel OpenDB calls
+// on the same path don't race during schema setup. Without busy_timeout
+// applied at open time, the loser hits SQLITE_BUSY on `pragma
+// table_info(tasks)` during runMigrations on slow runners — observed
+// as a flaky CI failure on the app-level concurrent-do test.
+func TestOpenDBConcurrentDoesNotBusy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flow.db")
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	wg.Add(n)
+	for i := range n {
+		go func() {
+			defer wg.Done()
+			db, err := OpenDB(path)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			db.Close()
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
+	}
 }
 
 func TestProjectCRUD(t *testing.T) {
