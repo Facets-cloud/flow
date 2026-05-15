@@ -4,14 +4,15 @@ import (
 	"flow/internal/iterm"
 	"flow/internal/kitty"
 	"flow/internal/terminal"
+	"flow/internal/warp"
 	"flow/internal/zellij"
 	"strings"
 	"testing"
 )
 
 // TestDetectFromEnv verifies the TERM_PROGRAM → backend mapping. The
-// Override knob and the kitty / ZELLIJ checks have higher precedence
-// and are checked separately below.
+// Override knob and the ZELLIJ / kitty / FLOW_TERM checks have higher
+// precedence and are checked separately below.
 func TestDetectFromEnv(t *testing.T) {
 	cases := []struct {
 		termProgram string
@@ -19,6 +20,7 @@ func TestDetectFromEnv(t *testing.T) {
 	}{
 		{"iTerm.app", BackendITerm},
 		{"Apple_Terminal", BackendTerminal},
+		{"WarpTerminal", BackendWarp},
 		{"", BackendITerm},
 		{"WezTerm", BackendITerm},
 		{"vscode", BackendITerm},
@@ -28,6 +30,7 @@ func TestDetectFromEnv(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
 			t.Setenv("KITTY_WINDOW_ID", "")
 			t.Setenv("TERM", "")
+			t.Setenv("FLOW_TERM", "")
 			t.Setenv("TERM_PROGRAM", tc.termProgram)
 			Override = ""
 			if got := Detect(); got != tc.want {
@@ -45,32 +48,29 @@ func TestOverrideBeatsEnv(t *testing.T) {
 	t.Setenv("ZELLIJ", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("TERM", "")
+	t.Setenv("FLOW_TERM", "iterm")
 	t.Setenv("TERM_PROGRAM", "iTerm.app")
 	t.Cleanup(func() { Override = "" })
 
-	Override = BackendTerminal
-	if got := Detect(); got != BackendTerminal {
-		t.Errorf("Override=Terminal: got %q, want %q", got, BackendTerminal)
-	}
-	Override = BackendITerm
-	if got := Detect(); got != BackendITerm {
-		t.Errorf("Override=ITerm: got %q, want %q", got, BackendITerm)
-	}
-	Override = BackendKitty
-	if got := Detect(); got != BackendKitty {
-		t.Errorf("Override=Kitty: got %q, want %q", got, BackendKitty)
+	for _, want := range []Backend{
+		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij,
+	} {
+		Override = want
+		if got := Detect(); got != want {
+			t.Errorf("Override=%q: got %q, want %q", want, got, want)
+		}
 	}
 }
 
-// TestDetectZellij verifies the ZELLIJ env var beats TERM_PROGRAM, kitty,
-// and everything else. zellij sets ZELLIJ in every shell it spawns, so
-// its presence means the user is inside a zellij session regardless of
-// which terminal hosts it.
+// TestDetectZellij verifies the ZELLIJ env var beats every other signal.
+// zellij sets ZELLIJ in every shell it spawns, so its presence means the
+// user is inside a zellij session regardless of which terminal hosts it.
 func TestDetectZellij(t *testing.T) {
 	t.Setenv("ZELLIJ", "0")
-	t.Setenv("KITTY_WINDOW_ID", "1") // proves ZELLIJ wins over kitty
-	t.Setenv("TERM", "xterm-kitty")  // ditto
-	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	t.Setenv("KITTY_WINDOW_ID", "1")      // proves ZELLIJ wins over kitty
+	t.Setenv("TERM", "xterm-kitty")       // ditto
+	t.Setenv("FLOW_TERM", "iterm")        // proves ZELLIJ wins over FLOW_TERM
+	t.Setenv("TERM_PROGRAM", "iTerm.app") // proves ZELLIJ wins over TERM_PROGRAM
 	Override = ""
 	if got := Detect(); got != BackendZellij {
 		t.Errorf("Detect() with ZELLIJ=0: got %q, want %q", got, BackendZellij)
@@ -99,6 +99,7 @@ func TestDetectKitty(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
 			t.Setenv("KITTY_WINDOW_ID", tc.kittyWindowID)
 			t.Setenv("TERM", tc.term)
+			t.Setenv("FLOW_TERM", "")
 			t.Setenv("TERM_PROGRAM", tc.termProgram)
 			Override = ""
 			if got := Detect(); got != BackendKitty {
@@ -108,20 +109,80 @@ func TestDetectKitty(t *testing.T) {
 	}
 }
 
+// TestDetectFlowTermOverride — FLOW_TERM with a valid backend value
+// wins over TERM_PROGRAM but loses to ZELLIJ and kitty. Iterates over
+// every valid backend value so we catch regressions where a new
+// backend is added but missed in Detect()'s FLOW_TERM filter.
+func TestDetectFlowTermOverride(t *testing.T) {
+	cases := []struct {
+		flowTerm string
+		want     Backend
+	}{
+		{"iterm", BackendITerm},
+		{"terminal", BackendTerminal},
+		{"zellij", BackendZellij},
+		{"kitty", BackendKitty},
+		{"warp", BackendWarp},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flowTerm, func(t *testing.T) {
+			t.Setenv("ZELLIJ", "")
+			t.Setenv("KITTY_WINDOW_ID", "")
+			t.Setenv("TERM", "")
+			t.Setenv("FLOW_TERM", tc.flowTerm)
+			t.Setenv("TERM_PROGRAM", "Apple_Terminal") // proves FLOW_TERM wins over TERM_PROGRAM
+			Override = ""
+			if got := Detect(); got != tc.want {
+				t.Errorf("Detect() with FLOW_TERM=%q: got %q, want %q",
+					tc.flowTerm, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDetectKittyBeatsFlowTerm — kitty's per-window markers beat
+// FLOW_TERM, matching ZELLIJ's behavior. Rationale: if the user is
+// inside kitty, that's where their workflow lives.
+func TestDetectKittyBeatsFlowTerm(t *testing.T) {
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("KITTY_WINDOW_ID", "42")
+	t.Setenv("TERM", "")
+	t.Setenv("FLOW_TERM", "iterm")
+	t.Setenv("TERM_PROGRAM", "")
+	Override = ""
+	if got := Detect(); got != BackendKitty {
+		t.Errorf("Detect() with KITTY_WINDOW_ID + FLOW_TERM=iterm: got %q, want %q", got, BackendKitty)
+	}
+}
+
+// TestDetectFlowTermInvalidFallsThrough — an unrecognized FLOW_TERM
+// value is silently ignored and TERM_PROGRAM detection takes over.
+func TestDetectFlowTermInvalidFallsThrough(t *testing.T) {
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM", "")
+	t.Setenv("FLOW_TERM", "garbage-not-a-backend")
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	Override = ""
+	if got := Detect(); got != BackendITerm {
+		t.Errorf("Detect() with garbage FLOW_TERM: got %q, want %q", got, BackendITerm)
+	}
+}
+
 // TestSpawnTabRoutesToITerm asserts the iterm Runner is the one called
 // when Detect() resolves to BackendITerm.
 func TestSpawnTabRoutesToITerm(t *testing.T) {
 	Override = BackendITerm
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled, zellijCalled, kittyCalled := stubAllRunners(t)
+	calls := stubAllRunners(t)
 	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
 		t.Fatalf("SpawnTab: %v", err)
 	}
-	if !*itermCalled {
+	if !*calls.iterm {
 		t.Error("expected iterm.Runner to be called")
 	}
-	if *terminalCalled || *zellijCalled || *kittyCalled {
+	if *calls.terminal || *calls.zellij || *calls.kitty || *calls.warp {
 		t.Error("only iterm.Runner should be called")
 	}
 }
@@ -132,14 +193,14 @@ func TestSpawnTabRoutesToTerminal(t *testing.T) {
 	Override = BackendTerminal
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled, zellijCalled, kittyCalled := stubAllRunners(t)
+	calls := stubAllRunners(t)
 	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
 		t.Fatalf("SpawnTab: %v", err)
 	}
-	if !*terminalCalled {
+	if !*calls.terminal {
 		t.Error("expected terminal.Runner to be called")
 	}
-	if *itermCalled || *zellijCalled || *kittyCalled {
+	if *calls.iterm || *calls.zellij || *calls.kitty || *calls.warp {
 		t.Error("only terminal.Runner should be called")
 	}
 }
@@ -150,14 +211,14 @@ func TestSpawnTabRoutesToZellij(t *testing.T) {
 	Override = BackendZellij
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled, zellijCalled, kittyCalled := stubAllRunners(t)
+	calls := stubAllRunners(t)
 	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
 		t.Fatalf("SpawnTab: %v", err)
 	}
-	if !*zellijCalled {
+	if !*calls.zellij {
 		t.Error("expected zellij.Runner to be called")
 	}
-	if *itermCalled || *terminalCalled || *kittyCalled {
+	if *calls.iterm || *calls.terminal || *calls.kitty || *calls.warp {
 		t.Error("only zellij.Runner should be called")
 	}
 }
@@ -168,35 +229,71 @@ func TestSpawnTabRoutesToKitty(t *testing.T) {
 	Override = BackendKitty
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled, zellijCalled, kittyCalled := stubAllRunners(t)
+	calls := stubAllRunners(t)
 	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
 		t.Fatalf("SpawnTab: %v", err)
 	}
-	if !*kittyCalled {
+	if !*calls.kitty {
 		t.Error("expected kitty backend to be called")
 	}
-	if *itermCalled || *terminalCalled || *zellijCalled {
+	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.warp {
 		t.Error("only kitty backend should be called")
 	}
 }
 
+// TestSpawnTabRoutesToWarp asserts the warp Runner is the one called
+// when Detect() resolves to BackendWarp.
+func TestSpawnTabRoutesToWarp(t *testing.T) {
+	Override = BackendWarp
+	t.Cleanup(func() { Override = "" })
+
+	calls := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+	if !*calls.warp {
+		t.Error("expected warp.Runner to be called")
+	}
+	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.kitty {
+		t.Error("only warp backend should be called")
+	}
+}
+
 // TestShellQuoteParity makes sure the re-exported helper matches
-// iterm's implementation. All backends quote identically.
+// every backend's implementation. All backends quote identically.
 func TestShellQuoteParity(t *testing.T) {
-	cases := []string{"plain", "with space", "with'quote", `back\slash`}
+	cases := []string{"plain", "with space", "with'quote", `back\slash`, ""}
 	for _, in := range cases {
-		if got, want := ShellQuote(in), iterm.ShellQuote(in); got != want {
-			t.Errorf("ShellQuote(%q): got %q, want %q", in, got, want)
+		exp := iterm.ShellQuote(in)
+		if got := ShellQuote(in); got != exp {
+			t.Errorf("spawner.ShellQuote(%q) = %q; want %q", in, got, exp)
+		}
+		if got := terminal.ShellQuote(in); got != exp {
+			t.Errorf("terminal.ShellQuote(%q) = %q; want %q", in, got, exp)
+		}
+		if got := zellij.ShellQuote(in); got != exp {
+			t.Errorf("zellij.ShellQuote(%q) = %q; want %q", in, got, exp)
+		}
+		if got := warp.ShellQuote(in); got != exp {
+			t.Errorf("warp.ShellQuote(%q) = %q; want %q", in, got, exp)
 		}
 	}
 }
 
-// stubAllRunners replaces all backend Runner vars with no-op stubs that
-// flip a per-runner boolean when called. Restores originals on test
-// cleanup. Returns pointers so callers can read post-call.
-func stubAllRunners(t *testing.T) (*bool, *bool, *bool, *bool) {
+// runnerFlags bundles per-backend "was called" flags so routing tests
+// can assert on which backend SpawnTab dispatched to without an
+// awkward multi-return-value tuple.
+type runnerFlags struct {
+	iterm, terminal, zellij, kitty, warp *bool
+}
+
+// stubAllRunners replaces every backend's Runner (plus warp's
+// OpenURL/WriteScript and kitty's RunnerOutput) with no-op stubs that
+// flip a per-backend boolean when called. Restores originals on test
+// cleanup.
+func stubAllRunners(t *testing.T) runnerFlags {
 	t.Helper()
-	var itermCalled, terminalCalled, zellijCalled, kittyCalled bool
+	var itermCalled, terminalCalled, zellijCalled, kittyCalled, warpCalled bool
 
 	oldITerm := iterm.Runner
 	iterm.Runner = func(args []string) error {
@@ -248,5 +345,31 @@ func stubAllRunners(t *testing.T) (*bool, *bool, *bool, *bool) {
 	}
 	t.Cleanup(func() { kitty.RunnerOutput = oldKittyRO })
 
-	return &itermCalled, &terminalCalled, &zellijCalled, &kittyCalled
+	oldWarp := warp.Runner
+	warp.Runner = func(args []string) error {
+		warpCalled = true
+		if len(args) >= 2 && !strings.Contains(args[1], `"dev.warp.Warp-Stable"`) {
+			t.Errorf("warp script does not target dev.warp.Warp-Stable: %s", args[1])
+		}
+		return nil
+	}
+	t.Cleanup(func() { warp.Runner = oldWarp })
+
+	// warp also has OpenURL and WriteScript — stub them so the routing
+	// test doesn't actually fire `open` or touch the filesystem.
+	oldOpenURL := warp.OpenURL
+	warp.OpenURL = func(string) error { return nil }
+	t.Cleanup(func() { warp.OpenURL = oldOpenURL })
+
+	oldWriteScript := warp.WriteScript
+	warp.WriteScript = func(string) (string, error) { return "/tmp/flow-warp-stub.sh", nil }
+	t.Cleanup(func() { warp.WriteScript = oldWriteScript })
+
+	return runnerFlags{
+		iterm:    &itermCalled,
+		terminal: &terminalCalled,
+		zellij:   &zellijCalled,
+		kitty:    &kittyCalled,
+		warp:     &warpCalled,
+	}
 }
