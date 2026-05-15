@@ -96,6 +96,47 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	}
 }
 
+// FocusSession tries to focus an existing tab/pane that is already
+// running `claude` with the given session UUID. Returns (true, nil)
+// on focus, (false, nil) if no matching tab was found in the active
+// backend, and (false, err) only on a backend failure.
+//
+// Callers should treat (false, nil) as "fall through" — typically by
+// surfacing the existing "session running elsewhere" error so the
+// user knows to switch manually or pass --force.
+//
+// Backend dispatch mirrors SpawnTab:
+//   - Zellij: list-panes JSON match on pane_command + focus-pane-id
+//   - Terminal.app: pid → tty via ps, then osascript walk
+//   - iTerm2 (default): pid → tty via ps, then osascript walk
+func FocusSession(sessionID string) (bool, error) {
+	switch Detect() {
+	case BackendZellij:
+		return zellij.FocusSession(sessionID)
+	case BackendTerminal:
+		return terminal.FocusSession(sessionID)
+	default:
+		return iterm.FocusSession(sessionID)
+	}
+}
+
+// NotifyFocused posts a macOS notification to tell the user the tab
+// switch happened. Dispatched per backend so a future backend can
+// override (e.g., a Linux-only one could use notify-send) without
+// touching the rest of flow. All current backends delegate to
+// internal/notify.MacOS, which respects FLOW_NOTIFY to skip when
+// notifications are disabled.
+func NotifyFocused(message string) error {
+	switch Detect() {
+	case BackendZellij:
+		return zellij.NotifyFocused(message)
+	case BackendTerminal:
+		return terminal.NotifyFocused(message)
+	default:
+		return iterm.NotifyFocused(message)
+	}
+}
+
 // ShellQuote is re-exported so callers don't need to import the chosen
 // backend just to quote a value before handing it to SpawnTab. All
 // backends quote identically (POSIX single-quote with embedded-quote

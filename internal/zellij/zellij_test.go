@@ -2,6 +2,7 @@ package zellij
 
 import (
 	"errors"
+	"flow/internal/notify"
 	"slices"
 	"strings"
 	"testing"
@@ -123,6 +124,218 @@ func TestSpawnTabFlattensEmbeddedNewlines(t *testing.T) {
 	// Only one newline (the line-submit terminator) should be present.
 	if got := strings.Count(captured[0], "\n"); got != 1 {
 		t.Errorf("write-chars line contains %d newlines; want exactly 1", got)
+	}
+}
+
+// TestFocusSessionEmptyID short-circuits without invoking zellij.
+func TestFocusSessionEmptyID(t *testing.T) {
+	rCalled := false
+	old := RunnerOutput
+	RunnerOutput = func(args []string) ([]byte, error) {
+		rCalled = true
+		return nil, nil
+	}
+	t.Cleanup(func() { RunnerOutput = old })
+
+	focused, err := FocusSession("")
+	if focused || err != nil {
+		t.Errorf("FocusSession(\"\") = (%v, %v); want (false, nil)", focused, err)
+	}
+	if rCalled {
+		t.Error("RunnerOutput should not be called for empty session id")
+	}
+}
+
+// TestFocusSessionMatchesAndFocuses verifies the happy path: list-panes
+// JSON contains a non-plugin pane whose pane_command runs claude with
+// the target UUID, and FocusSession invokes focus-pane-id with the
+// matching pane id.
+func TestFocusSessionMatchesAndFocuses(t *testing.T) {
+	const uuid = "c18a6fe7-7cb0-4875-93d5-6ad1e9785763"
+	const listJSON = `[
+  {"id": 1, "is_plugin": true, "pane_command": null, "title": "tab-bar"},
+  {"id": 2, "is_plugin": false, "pane_command": "/opt/homebrew/bin/fish", "title": "shell"},
+  {"id": 16, "is_plugin": false, "pane_command": "claude --session-id c18a6fe7-7cb0-4875-93d5-6ad1e9785763 You are the execution session", "title": "task-x"}
+]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) {
+		want := []string{"action", "list-panes", "--all", "--json"}
+		for i, w := range want {
+			if i >= len(args) || args[i] != w {
+				t.Errorf("RunnerOutput args = %v; want prefix %v", args, want)
+			}
+		}
+		return []byte(listJSON), nil
+	})
+
+	var focusArgs []string
+	old := Runner
+	Runner = func(args []string) error {
+		focusArgs = args
+		return nil
+	}
+	t.Cleanup(func() { Runner = old })
+
+	focused, err := FocusSession(uuid)
+	if err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !focused {
+		t.Fatal("expected focused=true")
+	}
+	want := []string{"action", "focus-pane-id", "terminal_16"}
+	if !slices.Equal(focusArgs, want) {
+		t.Errorf("focus argv = %v; want %v", focusArgs, want)
+	}
+}
+
+// TestFocusSessionResumeFlag — covers --resume in pane_command.
+func TestFocusSessionResumeFlag(t *testing.T) {
+	const uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	const listJSON = `[
+  {"id": 7, "is_plugin": false, "pane_command": "claude --resume aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}
+]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte(listJSON), nil })
+	var focusArgs []string
+	old := Runner
+	Runner = func(args []string) error { focusArgs = args; return nil }
+	t.Cleanup(func() { Runner = old })
+
+	focused, err := FocusSession(uuid)
+	if err != nil || !focused {
+		t.Fatalf("got (%v, %v); want (true, nil)", focused, err)
+	}
+	want := []string{"action", "focus-pane-id", "terminal_7"}
+	if !slices.Equal(focusArgs, want) {
+		t.Errorf("focus argv = %v; want %v", focusArgs, want)
+	}
+}
+
+// TestFocusSessionUUIDCaseInsensitive — UUID match is case-insensitive.
+func TestFocusSessionUUIDCaseInsensitive(t *testing.T) {
+	const uuid = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+	const listJSON = `[
+  {"id": 9, "is_plugin": false, "pane_command": "claude --session-id aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}
+]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte(listJSON), nil })
+	old := Runner
+	Runner = func(args []string) error { return nil }
+	t.Cleanup(func() { Runner = old })
+
+	focused, err := FocusSession(uuid)
+	if err != nil || !focused {
+		t.Errorf("uppercase UUID should match lowercase pane_command; got (%v, %v)", focused, err)
+	}
+}
+
+// TestFocusSessionNoMatch — list-panes contains no claude with this UUID.
+func TestFocusSessionNoMatch(t *testing.T) {
+	const listJSON = `[
+  {"id": 2, "is_plugin": false, "pane_command": "/opt/homebrew/bin/fish"},
+  {"id": 18, "is_plugin": false, "pane_command": "claude"}
+]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte(listJSON), nil })
+	rCalled := false
+	old := Runner
+	Runner = func(args []string) error { rCalled = true; return nil }
+	t.Cleanup(func() { Runner = old })
+
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	if focused || err != nil {
+		t.Errorf("got (%v, %v); want (false, nil)", focused, err)
+	}
+	if rCalled {
+		t.Error("Runner should not be called when no pane matches")
+	}
+}
+
+// TestFocusSessionSkipsPluginPanes — plugin panes (tab-bar, status-bar)
+// have null pane_command and must not match.
+func TestFocusSessionSkipsPluginPanes(t *testing.T) {
+	const uuid = "11111111-2222-4333-8444-555555555555"
+	// Plugin pane has the UUID in pane_command — pathological but worth
+	// guarding against. is_plugin must filter it out.
+	const listJSON = `[
+  {"id": 2, "is_plugin": true, "pane_command": "claude --session-id 11111111-2222-4333-8444-555555555555"}
+]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte(listJSON), nil })
+	rCalled := false
+	old := Runner
+	Runner = func(args []string) error { rCalled = true; return nil }
+	t.Cleanup(func() { Runner = old })
+
+	focused, err := FocusSession(uuid)
+	if focused || err != nil {
+		t.Errorf("got (%v, %v); want (false, nil) for plugin pane", focused, err)
+	}
+	if rCalled {
+		t.Error("Runner should not be called when only plugin matched")
+	}
+}
+
+// TestFocusSessionListPanesError surfaces zellij CLI errors.
+func TestFocusSessionListPanesError(t *testing.T) {
+	stubRunnerOutput(t, func(args []string) ([]byte, error) {
+		return nil, errors.New("zellij not in a session")
+	})
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	if focused || err == nil {
+		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
+	}
+}
+
+// TestFocusSessionFocusError surfaces focus-pane-id errors as a backend
+// failure (distinct from "no match found").
+func TestFocusSessionFocusError(t *testing.T) {
+	const uuid = "11111111-2222-4333-8444-555555555555"
+	const listJSON = `[
+  {"id": 5, "is_plugin": false, "pane_command": "claude --session-id 11111111-2222-4333-8444-555555555555"}
+]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte(listJSON), nil })
+	old := Runner
+	Runner = func(args []string) error { return errors.New("zellij failed") }
+	t.Cleanup(func() { Runner = old })
+
+	focused, err := FocusSession(uuid)
+	if focused || err == nil {
+		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
+	}
+}
+
+// TestFocusSessionMalformedJSON — protect against zellij output drift.
+func TestFocusSessionMalformedJSON(t *testing.T) {
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte("{not json"), nil })
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	if focused || err == nil {
+		t.Errorf("got (%v, %v); want (false, non-nil) for malformed JSON", focused, err)
+	}
+}
+
+func stubRunnerOutput(t *testing.T, fn func([]string) ([]byte, error)) {
+	t.Helper()
+	old := RunnerOutput
+	RunnerOutput = fn
+	t.Cleanup(func() { RunnerOutput = old })
+}
+
+// TestNotifyFocusedDelegatesToNotifyPackage — zellij backend has no
+// native notification path, so it delegates to internal/notify like
+// iterm and terminal.
+func TestNotifyFocusedDelegatesToNotifyPackage(t *testing.T) {
+	t.Setenv("FLOW_NOTIFY", "")
+
+	called := false
+	oldRunner := notify.Runner
+	notify.Runner = func(name string, args []string) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() { notify.Runner = oldRunner })
+
+	if err := NotifyFocused("Switched to task-z"); err != nil {
+		t.Fatalf("NotifyFocused: %v", err)
+	}
+	if !called {
+		t.Error("notify.Runner was not invoked")
 	}
 }
 

@@ -224,6 +224,17 @@ conversation. A SessionStart hook re-injects the task brief,
 updates, and CLAUDE.md context on every resume; a UserPromptSubmit
 hook keeps the flow skill discoverable in ad-hoc Claude sessions.
 
+When `flow do <task>` is run for a task whose session is already
+live in another tab, flow focuses that tab instead of spawning a
+duplicate — and posts a macOS notification ("Switched to `<slug>`")
+via `osascript display notification` so you know the switch happened
+even if the source tab is no longer in view. Banner duration follows
+your **Script Editor** entry in System Settings → Notifications
+(default Banners auto-dismisses after a few seconds; set it to
+Alerts to keep notifications sticky). Set `FLOW_NOTIFY=0` (or
+`false` / `off` / `no`) to suppress notifications entirely — the
+tab focus and the source-tab audit print still happen.
+
 The first `flow do` from stock Terminal.app needs macOS Accessibility
 permission for the **app hosting your shell** — not the `flow` binary
 itself. Terminal.app's AppleScript dictionary has no "make new tab"

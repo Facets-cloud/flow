@@ -3,6 +3,7 @@ package spawner
 import (
 	"flow/internal/iterm"
 	"flow/internal/kitty"
+	"flow/internal/notify"
 	"flow/internal/terminal"
 	"flow/internal/warp"
 	"flow/internal/zellij"
@@ -256,6 +257,152 @@ func TestSpawnTabRoutesToWarp(t *testing.T) {
 	}
 	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.kitty {
 		t.Error("only warp backend should be called")
+	}
+}
+
+// TestFocusSessionRoutesToITerm — when Detect() resolves to iTerm,
+// FocusSession invokes the iterm backend.
+func TestFocusSessionRoutesToITerm(t *testing.T) {
+	Override = BackendITerm
+	t.Cleanup(func() { Override = "" })
+
+	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*itermCalled {
+		t.Error("expected iterm focus path to be called")
+	}
+	if *terminalCalled || *zellijCalled {
+		t.Error("only iterm focus path should be called")
+	}
+}
+
+// TestFocusSessionRoutesToTerminal — Override=Terminal hits the
+// terminal backend.
+func TestFocusSessionRoutesToTerminal(t *testing.T) {
+	Override = BackendTerminal
+	t.Cleanup(func() { Override = "" })
+
+	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*terminalCalled {
+		t.Error("expected terminal focus path to be called")
+	}
+	if *itermCalled || *zellijCalled {
+		t.Error("only terminal focus path should be called")
+	}
+}
+
+// TestFocusSessionRoutesToZellij — Override=Zellij hits the zellij
+// backend.
+func TestFocusSessionRoutesToZellij(t *testing.T) {
+	Override = BackendZellij
+	t.Cleanup(func() { Override = "" })
+
+	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*zellijCalled {
+		t.Error("expected zellij focus path to be called")
+	}
+	if *itermCalled || *terminalCalled {
+		t.Error("only zellij focus path should be called")
+	}
+}
+
+// stubAllFocusBackends replaces the per-backend PSRunner / RunnerOutput
+// vars with stubs that flip a bool when the backend's FocusSession
+// path runs. Restores originals on cleanup.
+func stubAllFocusBackends(t *testing.T) (*bool, *bool, *bool) {
+	t.Helper()
+	var itermCalled, terminalCalled, zellijCalled bool
+
+	oldITermPS := iterm.PSRunner
+	iterm.PSRunner = func() ([]byte, error) {
+		itermCalled = true
+		return []byte(""), nil // empty ps output -> ttyForClaudeSession returns "" -> (false, nil)
+	}
+	t.Cleanup(func() { iterm.PSRunner = oldITermPS })
+
+	oldTermPS := terminal.PSRunner
+	terminal.PSRunner = func() ([]byte, error) {
+		terminalCalled = true
+		return []byte(""), nil
+	}
+	t.Cleanup(func() { terminal.PSRunner = oldTermPS })
+
+	oldZellijRO := zellij.RunnerOutput
+	zellij.RunnerOutput = func(args []string) ([]byte, error) {
+		zellijCalled = true
+		return []byte("[]"), nil // empty pane list -> (false, nil)
+	}
+	t.Cleanup(func() { zellij.RunnerOutput = oldZellijRO })
+
+	return &itermCalled, &terminalCalled, &zellijCalled
+}
+
+// TestNotifyFocusedDispatchesForEachBackend confirms spawner.NotifyFocused
+// routes to a backend under every Override value and that the call
+// reaches internal/notify.Runner exactly once with the message body.
+// All three backends delegate to the same notify.MacOS today, so we
+// can't distinguish which one specifically ran from outside —
+// observable behavior is identical. This test pins the dispatch
+// wiring (no panic, no missed case) and the notify hand-off.
+func TestNotifyFocusedDispatchesForEachBackend(t *testing.T) {
+	for _, b := range []Backend{BackendITerm, BackendTerminal, BackendZellij} {
+		t.Run(string(b), func(t *testing.T) {
+			t.Setenv("FLOW_NOTIFY", "")
+			Override = b
+			t.Cleanup(func() { Override = "" })
+
+			calls := 0
+			var gotArgs []string
+			oldRunner := notify.Runner
+			notify.Runner = func(name string, args []string) error {
+				calls++
+				gotArgs = args
+				return nil
+			}
+			t.Cleanup(func() { notify.Runner = oldRunner })
+
+			if err := NotifyFocused("Switched to demo"); err != nil {
+				t.Fatalf("NotifyFocused under %s: %v", b, err)
+			}
+			if calls != 1 {
+				t.Errorf("notify.Runner calls = %d; want 1", calls)
+			}
+			joined := strings.Join(gotArgs, " ")
+			if !strings.Contains(joined, "Switched to demo") {
+				t.Errorf("notify args missing message body: %v", gotArgs)
+			}
+		})
+	}
+}
+
+// TestNotifyFocusedRespectsFlowNotifyOff — when the user opts out via
+// FLOW_NOTIFY=0, no Runner call happens for any backend.
+func TestNotifyFocusedRespectsFlowNotifyOff(t *testing.T) {
+	for _, b := range []Backend{BackendITerm, BackendTerminal, BackendZellij} {
+		t.Run(string(b), func(t *testing.T) {
+			t.Setenv("FLOW_NOTIFY", "0")
+			Override = b
+			t.Cleanup(func() { Override = "" })
+
+			oldRunner := notify.Runner
+			notify.Runner = func(name string, args []string) error {
+				t.Errorf("Runner should not fire when FLOW_NOTIFY=0")
+				return nil
+			}
+			t.Cleanup(func() { notify.Runner = oldRunner })
+
+			if err := NotifyFocused("anything"); err != nil {
+				t.Errorf("NotifyFocused under FLOW_NOTIFY=0 returned %v; want nil", err)
+			}
+		})
 	}
 }
 
