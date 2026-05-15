@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"flow/internal/flowdb"
 	"os"
 	"path/filepath"
@@ -745,5 +746,203 @@ func TestListTagsAggregatesValues(t *testing.T) {
 	}
 	if got[1].Tag != "beta" || got[1].Count != 1 {
 		t.Errorf("second should be beta×1, got %+v", got[1])
+	}
+}
+
+// ---------- --format / --no-color / --no-truncate ----------
+
+func TestCmdListTasksFormatJSON(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "demo", "Demo", filepath.Join(root, "repo"), "high")
+	insertTask(t, db, "a-ip", "Alpha IP", "in-progress", "high", filepath.Join(root, "repo"), "demo")
+	insertTask(t, db, "b-bl", "Beta BL", "backlog", "medium", filepath.Join(root, "repo"), nil)
+
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--format", "json"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	var rows []taskListRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nout=%q", err, out)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(rows), rows)
+	}
+	// Expect priority sort: high before medium.
+	if rows[0].Slug != "a-ip" || rows[0].Priority != "high" || rows[0].Status != "in-progress" {
+		t.Errorf("row 0 unexpected: %+v", rows[0])
+	}
+	if rows[1].Slug != "b-bl" || rows[1].Priority != "medium" || rows[1].Status != "backlog" {
+		t.Errorf("row 1 unexpected: %+v", rows[1])
+	}
+	if rows[0].Project != "demo" {
+		t.Errorf("row 0 should carry project=demo, got %q", rows[0].Project)
+	}
+	// Floating task must not carry a project value.
+	if rows[1].Project != "" {
+		t.Errorf("row 1 should be floating, got project=%q", rows[1].Project)
+	}
+}
+
+func TestCmdListTasksFormatTSV(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "only-one", "Only", "in-progress", "high", filepath.Join(root, "x"), nil)
+	if _, err := db.Exec(`UPDATE tasks SET waiting_on = ? WHERE slug = ?`, "Alice", "only-one"); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--format", "tsv"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 lines (header + 1 row), got %d:\n%s", len(lines), out)
+	}
+	header := strings.Split(lines[0], "\t")
+	row := strings.Split(lines[1], "\t")
+	if len(header) != len(row) {
+		t.Errorf("column count mismatch: header=%d, row=%d", len(header), len(row))
+	}
+	// `waiting_on` must be a first-class column (raw value, no [waiting: ...]
+	// prefix and no ellipsis truncation) so scripts can pipe it cleanly.
+	waitIdx := -1
+	for i, h := range header {
+		if h == "waiting_on" {
+			waitIdx = i
+			break
+		}
+	}
+	if waitIdx < 0 {
+		t.Fatalf("waiting_on header missing: %v", header)
+	}
+	if row[waitIdx] != "Alice" {
+		t.Errorf("waiting_on cell = %q, want %q", row[waitIdx], "Alice")
+	}
+}
+
+func TestCmdListTasksFormatBad(t *testing.T) {
+	_, _ = showListEditDB(t)
+	if rc := cmdList([]string{"tasks", "--format", "yaml"}); rc != 2 {
+		t.Errorf("rc=%d, want 2 (usage error)", rc)
+	}
+}
+
+func TestCmdListTasksEmptyJSON(t *testing.T) {
+	_, _ = showListEditDB(t)
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--format", "json"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	var rows []taskListRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("empty-result JSON should parse, got %v\nout=%q", err, out)
+	}
+	if len(rows) != 0 {
+		t.Errorf("expected empty array, got %d rows", len(rows))
+	}
+}
+
+func TestCmdListTasksSlugAlwaysFull(t *testing.T) {
+	// Slugs are emitted in full by default — there's no length cap. The
+	// only field with a default truncation cap is the freeform waiting
+	// note (covered by TestCmdListTasksWaitingTruncation).
+	root, db := showListEditDB(t)
+	longSlug := "very-very-very-very-very-very-long-slug-no-truncation-here"
+	insertTask(t, db, longSlug, "L", "in-progress", "high", filepath.Join(root, "x"), nil)
+
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, longSlug) {
+		t.Errorf("full slug missing in default output; out=%q", out)
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("ellipsis should not appear when slug is the only long field; out=%q", out)
+	}
+}
+
+func TestCmdListTasksWaitingTruncation(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "blocked", "B", "in-progress", "high", filepath.Join(root, "x"), nil)
+	longWait := "alice is reviewing the migration plan and also waiting on bob for the schema change approval"
+	if _, err := db.Exec(`UPDATE tasks SET waiting_on = ? WHERE slug = ?`, longWait, "blocked"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default truncates the waiting field.
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "…") {
+		t.Errorf("waiting field should be truncated with …; out=%q", out)
+	}
+
+	// --no-truncate emits the full waiting note, no ellipsis.
+	out2 := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--no-truncate"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out2, longWait) {
+		t.Errorf("full waiting note missing under --no-truncate; out=%q", out2)
+	}
+	if strings.Contains(out2, "…") {
+		t.Errorf("--no-truncate should not emit ellipsis; out=%q", out2)
+	}
+}
+
+func TestCmdListTasksNoColorPipe(t *testing.T) {
+	// captureStdout uses os.Pipe, which is never a TTY, so color is
+	// already disabled. This test guards the contract: no ANSI escape
+	// byte (0x1b) should ever appear in non-TTY output, even when the
+	// painter is wired in everywhere.
+	root, db := showListEditDB(t)
+	insertTask(t, db, "ip-row", "I", "in-progress", "high", filepath.Join(root, "x"), nil)
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("non-TTY output contains ANSI escape; out=%q", out)
+	}
+}
+
+func TestCmdListProjectsFormatJSON(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertProject(t, db, "p1", "P1", filepath.Join(root, "x"), "high")
+	insertTask(t, db, "p1-ip", "I", "in-progress", "high", filepath.Join(root, "x"), "p1")
+	insertTask(t, db, "p1-bl", "B", "backlog", "medium", filepath.Join(root, "x"), "p1")
+
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"projects", "--format", "json"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("invalid JSON: %v\nout=%q", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 project, got %d", len(rows))
+	}
+	r := rows[0]
+	if r["slug"] != "p1" {
+		t.Errorf("slug = %v, want p1", r["slug"])
+	}
+	if r["in_progress"].(float64) != 1 || r["backlog"].(float64) != 1 {
+		t.Errorf("breakdown wrong: %+v", r)
+	}
+	// `name` field was removed from JSON — confirm absence.
+	if _, ok := r["name"]; ok {
+		t.Errorf("name field should be absent from project JSON: %+v", r)
 	}
 }
