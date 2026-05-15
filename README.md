@@ -356,6 +356,7 @@ Just the tool we built for ourselves.
 
 ## Docs & contributing
 
+- [Dashboard](docs/dashboard.md) — `flow dashboard` TUI reference (panes, project view, search, filters)
 - [Contributing](CONTRIBUTING.md) — bug reports, PRs, dev setup
 - [Changelog](CHANGELOG.md)
 - [Security](SECURITY.md) — how to report issues
