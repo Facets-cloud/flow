@@ -53,3 +53,35 @@ func liveClaudeSessions() (map[string]bool, error) {
 	}
 	return live, nil
 }
+
+// countClaudeProcessesForSession returns the number of currently-running
+// `claude` processes whose argv contains the given session UUID via
+// `--session-id` or `--resume`. Used to detect duplicate-tab states
+// (two tabs running the same session) so `flow do` can warn the user
+// — both processes write to the same session jsonl, so duplicates can
+// race and lose transcript history. ps failures return 0 silently;
+// the caller should not block on this signal.
+func countClaudeProcessesForSession(sessionID string) int {
+	if sessionID == "" {
+		return 0
+	}
+	out, err := psRunner()
+	if err != nil {
+		return 0
+	}
+	needle := strings.ToLower(sessionID)
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "claude") {
+			continue
+		}
+		matches := claudeSessionArgRe.FindAllStringSubmatch(line, -1)
+		for _, m := range matches {
+			if len(m) >= 2 && strings.ToLower(m[1]) == needle {
+				count++
+				break // one match per row is enough; avoid double-counting if argv mentions twice
+			}
+		}
+	}
+	return count
+}
