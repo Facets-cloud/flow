@@ -1,6 +1,11 @@
-# flow
+<p align="center">
+  <img src="assets/flow-logo.svg" alt="flow" width="480">
+</p>
 
-![Status](https://img.shields.io/badge/status-alpha-orange) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+<p align="center">
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status">
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
+</p>
 
 > A complete task manager for Claude Code — and the working memory
 > layer that turns every session from a brilliant new hire into the
