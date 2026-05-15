@@ -80,6 +80,12 @@ var (
 			Foreground(lipgloss.Color("203")).
 			Bold(true)
 
+	// statusStyle is the transient one-line status under the panes
+	// ("reloaded", "opened X", error hints). Red so it stands out;
+	// auto-clears after 10s — see statusMessageTTL.
+	statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("203"))
+
 	// Pane chrome. Title above each box; the box itself uses a rounded
 	// border. Active pane gets a bright border + bright title so the
 	// user can tell which pane ←→ will move them out of.

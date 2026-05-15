@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// statusMessageTTL is how long a transient status line stays on screen
+// before auto-clearing. Status is also dismissed proactively when
+// pane/sub-pane focus changes — see clearStatus.
+const statusMessageTTL = 2 * time.Second
 
 // viewMode is the top-level layout selector. `v` toggles between
 // viewByStatus (the default — working/awaiting/stale/backlog/playbooks
@@ -65,6 +71,7 @@ type Model struct {
 	active    paneKind
 	panes     [numPanes]paneState
 	status    string
+	statusGen int // monotonic counter; statusClearMsg only clears if its gen matches
 	filter    filter
 	searching bool              // search bar focused; keystrokes go to the input
 	search    textinput.Model
@@ -267,6 +274,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			//      task pane).
 			//   2. Otherwise clear any active filter.
 			//   3. Otherwise no-op (q quits).
+			m.clearStatus()
 			if m.view == viewByProject && m.projectTaskFocus {
 				m.projectTaskFocus = false
 				return m, nil
@@ -282,6 +290,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "/":
+			m.clearStatus()
 			m.searching = true
 			m.search.SetValue(m.filter.query)
 			m.search.Focus()
@@ -303,6 +312,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyFilter()
 			return m, nil
 		case "v":
+			m.clearStatus()
 			if m.view == viewByStatus {
 				m.view = viewByProject
 				if m.projectCursor < 0 {
@@ -318,6 +328,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			//   - project view: focus the right task pane.
 			//   - playbooks pane: focus the runs sub-pane.
 			//   - otherwise: cycle to the next pane.
+			m.clearStatus()
 			if m.view == viewByProject && !m.projectTaskFocus {
 				if rows := m.projectTaskList(m.currentProjectSlug()); len(rows) > 0 {
 					m.projectTaskFocus = true
@@ -338,12 +349,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.active = m.nextNonEmptyPane(+1)
 			return m, nil
 		case "tab":
+			m.clearStatus()
 			m.runsFocused = false
 			m.active = m.nextNonEmptyPane(+1)
 			return m, nil
 		case "left", "h":
 			// Context-sensitive: leaving a sub-pane returns focus
 			// instead of cycling away.
+			m.clearStatus()
 			if m.view == viewByProject && m.projectTaskFocus {
 				m.projectTaskFocus = false
 				return m, nil
@@ -355,6 +368,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.active = m.nextNonEmptyPane(-1)
 			return m, nil
 		case "shift+tab":
+			m.clearStatus()
 			m.runsFocused = false
 			m.active = m.nextNonEmptyPane(-1)
 			return m, nil
@@ -421,8 +435,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "r":
 			m.reload()
-			m.status = "reloaded"
-			return m, nil
+			return m, m.setStatus("reloaded")
 		case "enter":
 			// Project view, task pane focused: open the selected task.
 			if m.view == viewByProject && m.projectTaskFocus {
@@ -448,7 +461,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.runCursor < 0 || m.runCursor >= len(pb.Runs) {
 					return m, nil
 				}
-				return m, m.openTaskCmd(pb.Runs[m.runCursor].Task.Slug)
+				run := pb.Runs[m.runCursor]
+				// `flow do` refuses to reopen a task whose status is
+				// `done`. Catch it here so the user sees a clear
+				// inline hint instead of a generic "exit status 1".
+				if run.Task.Status == "done" {
+					return m, m.setStatus(fmt.Sprintf(
+						"%s is done — past run, can't reopen via the dashboard",
+						run.Task.Slug,
+					))
+				}
+				return m, m.openTaskCmd(run.Task.Slug)
 			}
 			slug := m.selectedTaskSlug()
 			if slug == "" {
@@ -459,15 +482,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case execFinishedMsg:
 		m.reload()
+		var msgText string
 		switch {
 		case msg.err != nil && msg.kind == "playbook":
-			m.status = fmt.Sprintf("run playbook %s failed: %v", msg.slug, msg.err)
+			msgText = fmt.Sprintf("run playbook %s failed: %v", msg.slug, msg.err)
 		case msg.err != nil:
-			m.status = fmt.Sprintf("flow do %s: %v", msg.slug, msg.err)
+			msgText = fmt.Sprintf("flow do %s: %v", msg.slug, msg.err)
 		case msg.kind == "playbook":
-			m.status = fmt.Sprintf("started new run of %s", msg.slug)
+			msgText = fmt.Sprintf("started new run of %s", msg.slug)
 		default:
-			m.status = fmt.Sprintf("opened %s", msg.slug)
+			msgText = fmt.Sprintf("opened %s", msg.slug)
+		}
+		return m, m.setStatus(msgText)
+
+	case statusClearMsg:
+		if msg.gen == m.statusGen {
+			m.status = ""
 		}
 		return m, nil
 	}
@@ -582,6 +612,37 @@ type execFinishedMsg struct {
 	err  error
 }
 
+// statusClearMsg fires when a previously-set status line has reached
+// the end of its TTL. The handler only clears when `gen` matches the
+// current m.statusGen — so a stale tick from a long-gone status won't
+// erase a newer message.
+type statusClearMsg struct {
+	gen int
+}
+
+// setStatus updates m.status to msg and returns a tea.Cmd that will
+// clear it after statusMessageTTL. Callers should batch this command
+// with any other cmd they need to dispatch:
+//
+//	return m, tea.Batch(m.setStatus("opened X"), m.openTaskCmd(slug))
+func (m *Model) setStatus(msg string) tea.Cmd {
+	m.status = msg
+	m.statusGen++
+	gen := m.statusGen
+	return tea.Tick(statusMessageTTL, func(time.Time) tea.Msg {
+		return statusClearMsg{gen: gen}
+	})
+}
+
+// clearStatus dismisses any visible status immediately and bumps the
+// generation counter so a pending tick can't blank a future status.
+// Called from every key handler that changes pane/sub-pane focus —
+// once the user has navigated away, the old hint isn't relevant.
+func (m *Model) clearStatus() {
+	m.status = ""
+	m.statusGen++
+}
+
 // openTaskCmd suspends the TUI and runs `flow do <slug>`. flow do
 // spawns or focuses a terminal tab on its own and exits quickly, so
 // the dashboard resumes within a second.
@@ -654,7 +715,7 @@ func (m *Model) View() string {
 
 	b.WriteString("\n")
 	if m.status != "" {
-		b.WriteString("  " + mutedStyle.Render(m.status) + "\n")
+		b.WriteString("  " + statusStyle.Render(m.status) + "\n")
 	}
 	b.WriteString(m.footer())
 	return b.String()
@@ -798,7 +859,7 @@ func (m *Model) viewProjectMode() string {
 
 	b.WriteString("\n")
 	if m.status != "" {
-		b.WriteString("  " + mutedStyle.Render(m.status) + "\n")
+		b.WriteString("  " + statusStyle.Render(m.status) + "\n")
 	}
 	b.WriteString(m.footer())
 	return b.String()
