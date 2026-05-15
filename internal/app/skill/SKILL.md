@@ -186,11 +186,13 @@ Create
 
 Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
+                              [--with "<instruction>" | --with-file <path>]
   flow do --here        <ref> [--force]   (bind THIS Claude session to the task — no new tab)
   flow done             <ref>
 
 Playbook runs
-  flow run playbook <slug>          spawn a fresh run session (new task with kind=playbook_run)
+  flow run playbook <slug> [--with "<instr>" | --with-file <path>]
+                                    spawn a fresh run session (new task with kind=playbook_run)
   flow run playbook <slug> --here   bind THIS Claude session to the new run (no new tab)
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
@@ -635,6 +637,57 @@ Macros for this: do not invent more candidate apps to toggle, do not
 suggest the user reinstall flow, do not attempt to grant Accessibility
 yourself. macOS guards Accessibility deliberately — there is no CLI to
 self-grant it, and Claude cannot bypass that.
+
+#### Surgical instructions: `--with` and `--with-file`
+
+**Triggers:** the user wants to *fire a one-off instruction at a task*
+without opening the tab to type it themselves. Phrasings:
+
+- "tell <task> to <do X>"
+- "nudge <task> to check <Y>"
+- "have <task> verify <Z>"
+- "fire <instruction> at <task>"
+- "ping <task> with <instruction>"
+- "ask <task> whether <Q>"
+
+**Recipe:** add `--with "<instruction>"` to the `flow do` invocation.
+Quote the instruction as a single shell-safe string. The session
+receives it as its first user message, prefixed with
+`[via flow do --with]` so the model knows it's an injected instruction
+rather than typed input.
+
+**Use `--with-file <path>` when:** the instruction is a longer brief
+the user already wrote down (a checklist, a multi-step recipe, a
+one-pager). flow does NOT embed the file contents — it injects
+`read instructions at <abs-path>` and the session uses its Read tool
+to load it. No size limits. Use this whenever the user references a
+file ("the brief in ~/notes/X.md", "the checklist at triage.md").
+
+**The flags are mutually exclusive.** If the user mixes them, ask via
+AskUserQuestion which one they meant.
+
+**`--with` on a `done` task** auto-rolls it back to in-progress and
+proceeds. This is the supported lane for "nudge a parked task" — do
+NOT pre-flip status yourself; just pass `--with` and let `flow do`
+handle the reopen. The binary prints a stderr notice
+(`--with on done task "X": reopening as in-progress`) — relay it
+verbatim.
+
+**`--with` is incompatible with `--here`.** `--here` binds the
+current session with no spawn, so there's no first message to inject;
+the binary rejects the combination with rc=2. If the user wants to
+both bind-here AND act on an instruction, they're already in the
+session — just do the work directly, no `--with` needed.
+
+**Same flags work on `flow run playbook <slug>`** — use them when the
+user wants a one-off instruction layered on top of a fresh playbook
+run (e.g. a scheduled run that today should also "double-check the
+Acme deal status").
+
+**When NOT to use `--with`:** if the user is opening the tab to work
+in it themselves. `--with` is for fire-and-forget nudges, not for
+"open the tab with this prompt pre-typed for me". When the user will
+be at the keyboard, run plain `flow do <slug>`.
 
 ### 4.5 Save a progress note
 

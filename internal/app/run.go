@@ -37,7 +37,18 @@ func cmdRunPlaybook(args []string) int {
 	fs := flagSet("run playbook")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude (ignored when --here is set)")
 	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
+	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
+	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	// Reject misuse before we materialize the run-task row.
+	if _, rc := loadInjectionText(fs, *withInstr, *withFile); rc != 0 {
+		return rc
+	}
+	if (*withInstr != "" || *withFile != "") && *here {
+		fmt.Fprintln(os.Stderr, "error: --with/--with-file cannot be used with --here (no session is spawned to inject into)")
 		return 2
 	}
 
@@ -145,6 +156,12 @@ func cmdRunPlaybook(args []string) int {
 	doArgs := []string{runSlug}
 	if *dangerSkip {
 		doArgs = append(doArgs, "--dangerously-skip-permissions")
+	}
+	if *withInstr != "" {
+		doArgs = append(doArgs, "--with", *withInstr)
+	}
+	if *withFile != "" {
+		doArgs = append(doArgs, "--with-file", *withFile)
 	}
 	return cmdDo(doArgs)
 }

@@ -353,3 +353,45 @@ func TestCmdRunPlaybookHereIgnoresDangerSkip(t *testing.T) {
 		t.Errorf("--here should not spawn even with --dangerously-skip-permissions; got %d", *count)
 	}
 }
+
+func TestCmdRunPlaybookForwardsWith(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri-with", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	_, lastScript := stubITerm(t)
+	if rc := cmdRun([]string{"playbook", "tri-with", "--with", "also check the Acme deal"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	script := lastScript()
+	if !strings.Contains(script, "[via flow do --with]") {
+		t.Errorf("playbook run with --with should carry the marker: %s", script)
+	}
+	if !strings.Contains(script, "also check the Acme deal") {
+		t.Errorf("playbook run with --with should inject the body: %s", script)
+	}
+	if !strings.Contains(script, "playbook `tri-with`") {
+		t.Errorf("playbook bootstrap must remain intact: %s", script)
+	}
+}
+
+func TestCmdRunPlaybookWithEmptyRejectedBeforeRowInsert(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri-empty", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+	stubITerm(t)
+	if rc := cmdRun([]string{"playbook", "tri-empty", "--with", "   "}); rc != 2 {
+		t.Errorf("rc=%d, want 2 for empty --with", rc)
+	}
+	db := openFlowDB(t)
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE kind='playbook_run' AND playbook_slug='tri-empty'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("rejected --with should not insert a run row; got %d rows", n)
+	}
+}

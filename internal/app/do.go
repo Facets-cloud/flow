@@ -3,13 +3,62 @@ package app
 import (
 	"database/sql"
 	"errors"
+	"flag"
 	"flow/internal/flowdb"
 	"flow/internal/spawner"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
+
+// withMarker prefixes the injected text so the receiving session can
+// distinguish a --with instruction from typed user input.
+const withMarker = "[via flow do --with]"
+
+// loadInjectionText resolves --with / --with-file into the text that
+// will be injected as the session's first user message. For
+// --with-file we don't embed the file's contents — we synthesize a
+// "read instructions at <abs-path>" prompt and let the session use its
+// Read tool. That keeps the shell-quoted blob short regardless of file
+// size and lets the receiving model reason about the file directly.
+func loadInjectionText(fs *flag.FlagSet, withInstr, withFile string) (string, int) {
+	passedWith, passedWithFile := false, false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "with":
+			passedWith = true
+		case "with-file":
+			passedWithFile = true
+		}
+	})
+	if !passedWith && !passedWithFile {
+		return "", 0
+	}
+	if passedWith && passedWithFile {
+		fmt.Fprintln(os.Stderr, "error: --with and --with-file are mutually exclusive")
+		return "", 2
+	}
+	if passedWith {
+		text := strings.TrimSpace(withInstr)
+		if text == "" {
+			fmt.Fprintln(os.Stderr, "error: --with instruction is empty")
+			return "", 2
+		}
+		return text, 0
+	}
+	if _, err := os.Stat(withFile); err != nil {
+		fmt.Fprintf(os.Stderr, "error: --with-file: %v\n", err)
+		return "", 1
+	}
+	abs, err := filepath.Abs(withFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: --with-file: %v\n", err)
+		return "", 1
+	}
+	return "read instructions at " + abs, 0
+}
 
 // openConcurrentDB opens flow.db with a generous busy_timeout so that two
 // concurrent `flow do` processes (or two goroutines in the tests) will
@@ -57,6 +106,8 @@ func cmdDo(args []string) int {
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
 	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
+	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
+	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
 	// Two-pass parse so the slug positional may appear before OR after
 	// the flags: first absorb any leading flags, then take the next
 	// non-flag as the slug, then absorb any trailing flags.
@@ -69,6 +120,15 @@ func cmdDo(args []string) int {
 	}
 	query := fs.Arg(0)
 	if err := fs.Parse(fs.Args()[1:]); err != nil {
+		return 2
+	}
+
+	injectionText, rc := loadInjectionText(fs, *withInstr, *withFile)
+	if rc != 0 {
+		return rc
+	}
+	if injectionText != "" && *here {
+		fmt.Fprintln(os.Stderr, "error: --with/--with-file cannot be used with --here (no session is spawned to inject into)")
 		return 2
 	}
 
@@ -137,10 +197,13 @@ func cmdDo(args []string) int {
 		return 1
 	}
 	if curStatus == "done" {
-		fmt.Fprintf(os.Stderr,
-			"error: task %q is done; edit its status back to backlog or in-progress to reopen it\n",
-			task.Slug)
-		return 1
+		if injectionText == "" {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q is done; edit its status back to backlog or in-progress to reopen it\n",
+				task.Slug)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "--with on done task %q: reopening as in-progress\n", task.Slug)
 	}
 
 	// Decide bootstrap vs resume based on the row we re-read inside the tx.
@@ -167,12 +230,14 @@ func cmdDo(args []string) int {
 	}
 
 	now := flowdb.NowISO()
+	// 'done' is reachable here only via the --with auto-reopen path above.
+	const statusFilter = "status IN ('backlog','in-progress','done')"
 	if needsBootstrap {
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			 session_id=?, session_started=?, updated_at=?
-			 WHERE slug=? AND status IN ('backlog','in-progress')`,
+			 WHERE slug=? AND `+statusFilter,
 			now, sessionID, now, now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
@@ -183,7 +248,7 @@ func cmdDo(args []string) int {
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			 updated_at=?
-			 WHERE slug=? AND status IN ('backlog','in-progress')`,
+			 WHERE slug=? AND `+statusFilter,
 			now, now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
@@ -255,11 +320,17 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+		if injectionText != "" {
+			prompt = prompt + "\n\n" + withMarker + "\n" + injectionText
+		}
 		command = fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
 	} else {
 		// Resume path: the UUID we already have in the DB is what claude
 		// used to write its existing jsonl.
 		command = "claude --resume " + sessionID
+		if injectionText != "" {
+			command += " " + spawner.ShellQuote(withMarker+"\n"+injectionText)
+		}
 	}
 	if *dangerSkip {
 		command += " --dangerously-skip-permissions"
