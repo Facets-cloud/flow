@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // cmdTranscript implements `flow transcript <task-slug>`. It reads the
@@ -79,7 +80,18 @@ func cmdTranscript(args []string) int {
 		return 1
 	}
 
-	return renderTranscript(jsonlPath, *compact)
+	// Compute the cutoff from session_started so the transcript output is
+	// scoped to the task's own conversation, not pre-bind dispatch chatter
+	// that --here-bound tasks accumulate. NULL/unparseable session_started
+	// → zero cutoff → filter is a no-op (pass everything through).
+	var cutoff time.Time
+	if task.SessionStarted.Valid && task.SessionStarted.String != "" {
+		if ts, perr := time.Parse(time.RFC3339Nano, task.SessionStarted.String); perr == nil {
+			cutoff = ts
+		}
+	}
+
+	return renderTranscript(jsonlPath, *compact, cutoff)
 }
 
 // sessionJSONLPath returns the absolute path to a task's session jsonl file.
@@ -99,9 +111,16 @@ func sessionJSONLPath(task *flowdb.Task) (string, error) {
 // ---------- jsonl record types ----------
 
 // jsonlRecord is the top-level structure of each line in a Claude session jsonl.
+//
+// Timestamp is parsed when present so the close-out sweep (and any caller
+// passing a cutoff) can scope the transcript to entries on-or-after a
+// specific moment — needed because --here-bound tasks carry pre-bind
+// dispatch chatter in their jsonl, which would otherwise leak into KB
+// distillation.
 type jsonlRecord struct {
-	Type    string          `json:"type"`
-	Message json.RawMessage `json:"message"`
+	Type      string          `json:"type"`
+	Message   json.RawMessage `json:"message"`
+	Timestamp string          `json:"timestamp"`
 }
 
 // jsonlMessage is the message body inside user/assistant records.
@@ -128,7 +147,12 @@ type contentBlock struct {
 const maxToolResultLen = 500
 
 // renderTranscript reads a jsonl file and prints a human-readable transcript.
-func renderTranscript(path string, compact bool) int {
+//
+// cutoff scopes the output to entries with timestamp >= cutoff. Pass the
+// zero time.Time to disable the filter. Entries with a missing or
+// unparseable `timestamp` field are kept regardless of cutoff — silent
+// data loss in a KB-distill input is worse than an over-inclusive sweep.
+func renderTranscript(path string, compact bool, cutoff time.Time) int {
 	f, err := os.Open(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -150,6 +174,18 @@ func renderTranscript(path string, compact bool) int {
 		var rec jsonlRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
 			continue // skip malformed lines
+		}
+
+		// Filter: drop entries strictly before the cutoff. Defensive on
+		// parse failure / missing field — keep the entry rather than
+		// silently dropping it. RFC3339Nano accepts both the jsonl's
+		// fractional-second UTC form ("...T10:00:00.000Z") and the DB's
+		// offset form ("...+05:30") without fractional, so we use it as
+		// a single parser for both sources.
+		if !cutoff.IsZero() && rec.Timestamp != "" {
+			if ts, perr := time.Parse(time.RFC3339Nano, rec.Timestamp); perr == nil && ts.Before(cutoff) {
+				continue
+			}
 		}
 
 		switch rec.Type {

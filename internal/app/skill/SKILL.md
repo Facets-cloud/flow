@@ -191,6 +191,7 @@ Sessions
 
 Playbook runs
   flow run playbook <slug>          spawn a fresh run session (new task with kind=playbook_run)
+  flow run playbook <slug> --here   bind THIS Claude session to the new run (no new tab)
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
 Read
@@ -1122,13 +1123,41 @@ stop.
 
 **Recipe:**
 
-1. Ask session-mode (Regular vs Skip permissions) via AskUserQuestion —
-   reuses the §4.4 pattern. Skip if the user already specified.
-2. Run: `flow run playbook <slug>` (with `--dangerously-skip-permissions`
-   if chosen).
-3. The command creates a kind=playbook_run task, snapshots the brief,
-   and spawns a terminal tab. The new tab will boot the flow skill via its
-   bootstrap prompt and execute against the snapshotted brief.
+1. Probe binding with `flow show task` (no arg). If it errors with
+   `not bound to a task`, this is a dispatch (unbound) session — the
+   in-session bind option is available. If it resolves a task, this
+   session is already bound; only the new-tab path is available.
+
+2. Use AskUserQuestion to pick the run mode. **Unbound session — three
+   options** (header: "Run mode?"):
+
+   - **In this session (bind here)** — runs `flow run playbook <slug> --here`.
+     The new playbook-run task is created, the brief is snapshotted, and THIS
+     conversation is bound to it. No new tab. Pick when the user wants the
+     playbook to execute in the current chat (preserves transcript, no tab
+     switch). Implicitly skips the `--dangerously-skip-permissions` question
+     — there's no claude spawn to forward it to.
+   - **New tab — regular** — runs `flow run playbook <slug>`. Spawns a
+     fresh tab with tool-approval prompts.
+   - **New tab — skip permissions** — runs `flow run playbook <slug>
+     --dangerously-skip-permissions`. Spawns a fresh tab without
+     approval prompts (faster).
+
+   **Bound session — two options** (header: "Run mode?", same options
+   minus "In this session"): the binary refuses `--here` when the
+   current session is already bound (session_id uniqueness invariant;
+   `--force` does not override). Offering it would surface an option
+   the binary will reject — bad UX.
+
+3. Run the chosen invocation. Skip the session-mode question entirely
+   if the user already specified a mode in their request (e.g. "fire X
+   in this session", "run X in a new tab").
+
+4. The command creates a kind=playbook_run task and snapshots the brief
+   in both paths. On the new-tab path it spawns a terminal tab that
+   boots the flow skill. On the `--here` path it binds the current
+   session — your job is to invoke the flow skill yourself and proceed
+   against the snapshotted brief at `~/.flow/tasks/<run-slug>/brief.md`.
 
 **Anti-pattern (per §8):** never auto-fire. Manual trigger only. Even if
 the user mentions a playbook name in passing, do not run it without an

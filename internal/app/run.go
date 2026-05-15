@@ -35,7 +35,8 @@ func cmdRunPlaybook(args []string) int {
 	}
 	slug := args[0]
 	fs := flagSet("run playbook")
-	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
+	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude (ignored when --here is set)")
+	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -56,6 +57,32 @@ func cmdRunPlaybook(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+
+	// --here validation BEFORE the run-task row insert. Mirrors the
+	// pre-write checks in cmdDoHere — failing fast prevents a dangling
+	// backlog playbook_run task when env is wrong or this session is
+	// already owned by another task.
+	if *here {
+		sid := currentSessionID()
+		if sid == "" {
+			fmt.Fprintln(os.Stderr,
+				"error: --here requires running inside a Claude Code session ($CLAUDE_CODE_SESSION_ID is unset)")
+			return 1
+		}
+		if !sessionUUIDRe.MatchString(sid) {
+			fmt.Fprintf(os.Stderr,
+				"error: $CLAUDE_CODE_SESSION_ID is not a valid v4 UUID (got %q)\n", sid)
+			return 1
+		}
+		priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
+		if lookupErr == nil {
+			fmt.Fprintf(os.Stderr,
+				"error: this Claude session is already bound to task %q. binding it to a new playbook run would orphan %q's transcript and is rejected by the session_id uniqueness invariant.\n"+
+					"  to start this playbook run in a separate session: flow run playbook %s\n",
+				priorBinding.Slug, priorBinding.Slug, pb.Slug)
+			return 1
+		}
 	}
 
 	root, err := flowRoot()
@@ -104,10 +131,17 @@ func cmdRunPlaybook(args []string) int {
 		return 1
 	}
 
-	// Close our DB handle so cmdDo can re-open it (cmdDo opens its own).
+	// Close our DB handle so the delegate (cmdDo or cmdDoHere) can
+	// re-open its own connection.
 	db.Close()
 
-	// Delegate to cmdDo to spawn the session.
+	if *here {
+		// In-session bind path: no terminal spawn. dangerSkip is dropped
+		// — there's no claude process to forward the flag to.
+		return cmdDoHere(runSlug, false)
+	}
+
+	// Default path: delegate to cmdDo to spawn the session in a new tab.
 	doArgs := []string{runSlug}
 	if *dangerSkip {
 		doArgs = append(doArgs, "--dangerously-skip-permissions")
