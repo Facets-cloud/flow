@@ -14,14 +14,18 @@ type filter struct {
 	priority string   // "" | "high" | "medium" | "low"
 	assignee string   // "" | exact assignee name
 	tag      string   // "" | exact tag value (single-tag facet for now)
+	project  string   // "" | exact project slug
 }
 
 func (f filter) empty() bool {
-	return f.query == "" && f.priority == "" && f.assignee == "" && f.tag == ""
+	return f.query == "" && f.priority == "" && f.assignee == "" && f.tag == "" && f.project == ""
 }
 
 // matches reports whether row r passes the filter.
 func (f filter) matches(r TaskRow) bool {
+	if f.project != "" && r.ProjectSlug != f.project {
+		return false
+	}
 	if f.priority != "" && r.Task.Priority != f.priority {
 		return false
 	}
@@ -127,6 +131,19 @@ func filterSnapshot(snap *Snapshot, f filter) *Snapshot {
 	out.Awaiting = filterRows(snap.Awaiting, f)
 	out.Stale = filterRows(snap.Stale, f)
 	out.Backlog = filterRows(snap.Backlog, f)
+	// Project filter applies to playbooks too — when narrowed to
+	// "developer-experience", you should only see that project's
+	// playbooks. Other filter axes (priority/assignee/tag) don't have
+	// a meaningful equivalent on playbook rows, so they pass through.
+	if f.project != "" {
+		filtered := make([]PlaybookRow, 0, len(snap.Playbooks))
+		for _, p := range snap.Playbooks {
+			if p.ProjectSlug == f.project {
+				filtered = append(filtered, p)
+			}
+		}
+		out.Playbooks = filtered
+	}
 	return &out
 }
 
@@ -143,6 +160,34 @@ func uniqueAssignees(snap *Snapshot) []string {
 			if r.Task.Assignee.Valid && r.Task.Assignee.String != "" {
 				set[r.Task.Assignee.String] = struct{}{}
 			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// uniqueProjects returns a sorted, deduped list of every project slug
+// present in snap's task rows (and playbooks). Used by the `P`
+// hotkey to cycle through only projects that actually have content.
+func uniqueProjects(snap *Snapshot) []string {
+	if snap == nil {
+		return nil
+	}
+	set := map[string]struct{}{}
+	for _, rows := range [][]TaskRow{snap.Working, snap.Awaiting, snap.Stale, snap.Backlog} {
+		for _, r := range rows {
+			if r.ProjectSlug != "" {
+				set[r.ProjectSlug] = struct{}{}
+			}
+		}
+	}
+	for _, p := range snap.Playbooks {
+		if p.ProjectSlug != "" {
+			set[p.ProjectSlug] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(set))

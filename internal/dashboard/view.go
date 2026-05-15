@@ -11,6 +11,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// viewMode is the top-level layout selector. `v` toggles between
+// viewByStatus (the default — working/awaiting/stale/backlog/playbooks
+// panes) and viewByProject (projects on the left, the selected
+// project's tasks on the right).
+type viewMode int
+
+const (
+	viewByStatus viewMode = iota
+	viewByProject
+)
+
 // paneKind identifies one of the dashboard's sub-panes. Order matches
 // the visual top-to-bottom layout and the cycle order for ←/→.
 type paneKind int
@@ -63,6 +74,16 @@ type Model struct {
 	// opens the selected run, esc returns to the playbook list.
 	runsFocused bool
 	runCursor   int
+
+	// Project view: `v` toggles between status and project layouts.
+	// projectCursor is the row index into uniqueProjects(rawSnap)
+	// when view == viewByProject; projectTaskFocus moves focus to
+	// the right-side task pane (where ↑↓ then navigates the flattened
+	// task list and enter opens the selected task).
+	view              viewMode
+	projectCursor     int
+	projectTaskFocus  bool
+	projectTaskCursor int
 }
 
 func NewModel(loader *Loader, flowBin string) *Model {
@@ -123,6 +144,23 @@ func (m *Model) applyFilter() {
 			m.runCursor = 0
 		} else if m.runCursor >= len(pb.Runs) {
 			m.runCursor = len(pb.Runs) - 1
+		}
+	}
+	// Clamp project-view cursors against the current filtered data.
+	projs := uniqueProjects(m.snap)
+	if m.projectCursor >= len(projs) {
+		m.projectCursor = len(projs) - 1
+	}
+	if m.projectCursor < 0 {
+		m.projectCursor = 0
+	}
+	if m.projectTaskFocus {
+		rows := m.projectTaskList(m.currentProjectSlug())
+		if len(rows) == 0 {
+			m.projectTaskFocus = false
+			m.projectTaskCursor = 0
+		} else if m.projectTaskCursor >= len(rows) {
+			m.projectTaskCursor = len(rows) - 1
 		}
 	}
 }
@@ -225,9 +263,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "esc":
 			// Layered escape:
-			//   1. Exit runs sub-focus first (if inside playbook runs).
+			//   1. Exit a sub-focus first (runs sub-pane or project
+			//      task pane).
 			//   2. Otherwise clear any active filter.
 			//   3. Otherwise no-op (q quits).
+			if m.view == viewByProject && m.projectTaskFocus {
+				m.projectTaskFocus = false
+				return m, nil
+			}
 			if m.runsFocused {
 				m.runsFocused = false
 				return m, nil
@@ -255,11 +298,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filter.tag = cycleString(m.filter.tag, uniqueTags(m.rawSnap))
 			m.applyFilter()
 			return m, nil
+		case "P":
+			m.filter.project = cycleString(m.filter.project, uniqueProjects(m.rawSnap))
+			m.applyFilter()
+			return m, nil
+		case "v":
+			if m.view == viewByStatus {
+				m.view = viewByProject
+				if m.projectCursor < 0 {
+					m.projectCursor = 0
+				}
+			} else {
+				m.view = viewByStatus
+				m.projectTaskFocus = false
+			}
+			return m, nil
 		case "right", "l":
-			// Context-sensitive: if standing on a playbook with runs,
-			// drill into the runs sub-pane instead of cycling. Tab
-			// still cycles unconditionally (so power users have a
-			// guaranteed pane-switch hotkey).
+			// Context-sensitive drills:
+			//   - project view: focus the right task pane.
+			//   - playbooks pane: focus the runs sub-pane.
+			//   - otherwise: cycle to the next pane.
+			if m.view == viewByProject && !m.projectTaskFocus {
+				if rows := m.projectTaskList(m.currentProjectSlug()); len(rows) > 0 {
+					m.projectTaskFocus = true
+					m.projectTaskCursor = 0
+					return m, nil
+				}
+			}
 			if m.active == panePlaybooks && !m.runsFocused {
 				if pb := m.selectedPlaybook(); pb != nil && len(pb.Runs) > 0 {
 					m.runsFocused = true
@@ -277,8 +342,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.active = m.nextNonEmptyPane(+1)
 			return m, nil
 		case "left", "h":
-			// Context-sensitive: leaving the runs sub-pane returns
-			// focus to the playbook list rather than cycling away.
+			// Context-sensitive: leaving a sub-pane returns focus
+			// instead of cycling away.
+			if m.view == viewByProject && m.projectTaskFocus {
+				m.projectTaskFocus = false
+				return m, nil
+			}
 			if m.runsFocused {
 				m.runsFocused = false
 				return m, nil
@@ -290,6 +359,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.active = m.nextNonEmptyPane(-1)
 			return m, nil
 		case "up", "k":
+			if m.view == viewByProject {
+				if m.projectTaskFocus {
+					if m.projectTaskCursor > 0 {
+						m.projectTaskCursor--
+					}
+				} else if m.projectCursor > 0 {
+					m.projectCursor--
+					m.projectTaskCursor = 0
+				}
+				return m, nil
+			}
 			if m.runsFocused {
 				if m.runCursor > 0 {
 					m.runCursor--
@@ -299,6 +379,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveInActive(-1)
 			return m, nil
 		case "down", "j":
+			if m.view == viewByProject {
+				if m.projectTaskFocus {
+					rows := m.projectTaskList(m.currentProjectSlug())
+					if m.projectTaskCursor < len(rows)-1 {
+						m.projectTaskCursor++
+					}
+					return m, nil
+				}
+				projs := uniqueProjects(m.rawSnap)
+				if m.projectCursor < len(projs)-1 {
+					m.projectCursor++
+					m.projectTaskCursor = 0
+				}
+				return m, nil
+			}
 			if m.runsFocused {
 				if pb := m.selectedPlaybook(); pb != nil && m.runCursor < len(pb.Runs)-1 {
 					m.runCursor++
@@ -329,6 +424,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "reloaded"
 			return m, nil
 		case "enter":
+			// Project view, task pane focused: open the selected task.
+			if m.view == viewByProject && m.projectTaskFocus {
+				rows := m.projectTaskList(m.currentProjectSlug())
+				if m.projectTaskCursor < 0 || m.projectTaskCursor >= len(rows) {
+					return m, nil
+				}
+				return m, m.openTaskCmd(rows[m.projectTaskCursor].Task.Slug)
+			}
 			// Playbooks pane:
 			//   - on the playbook list: enter spawns a fresh run
 			//     (`flow run playbook <slug>`).
@@ -506,6 +609,9 @@ func (m *Model) View() string {
 	if m.snap == nil && m.err != nil {
 		return errorStyle.Render("error: "+m.err.Error()) + "\n"
 	}
+	if m.view == viewByProject {
+		return m.viewProjectMode()
+	}
 
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
@@ -652,6 +758,306 @@ func (m *Model) renderLeftColumn(visible []paneKind, width int) string {
 	return s.String()
 }
 
+// viewProjectMode renders the "by project" layout: a list of projects
+// on the left, the selected project's tasks grouped by status on the
+// right. Header/counts/filter/footer are reused from status mode so
+// switching with `v` feels like a layout swap, not a different screen.
+func (m *Model) viewProjectMode() string {
+	var b strings.Builder
+	b.WriteString(m.renderHeader())
+	b.WriteString("\n\n")
+	b.WriteString("  " + m.renderCounts())
+	b.WriteString("\n")
+	if m.showSearchLine() {
+		b.WriteString("  " + m.renderSearchLine())
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	projs := uniqueProjects(m.rawSnap)
+	if len(projs) == 0 {
+		b.WriteString("\n  " + mutedStyle.Render("No projects yet.") + "\n")
+	} else {
+		if m.projectCursor >= len(projs) {
+			m.projectCursor = len(projs) - 1
+		}
+		if m.projectCursor < 0 {
+			m.projectCursor = 0
+		}
+		leftW, rightW := m.columnWidths()
+		leftCol := m.renderProjectsList(projs, leftW)
+		var combined string
+		if rightW > 0 {
+			rightCol := m.renderProjectDetail(projs[m.projectCursor], rightW)
+			combined = lipgloss.JoinHorizontal(lipgloss.Top, leftCol, "  ", rightCol)
+		} else {
+			combined = leftCol
+		}
+		b.WriteString(indentBlock(combined, 2))
+	}
+
+	b.WriteString("\n")
+	if m.status != "" {
+		b.WriteString("  " + mutedStyle.Render(m.status) + "\n")
+	}
+	b.WriteString(m.footer())
+	return b.String()
+}
+
+// renderProjectsList renders the left-column list of projects, one
+// row per project, with task counts and a cursor highlight.
+func (m *Model) renderProjectsList(projs []string, outerWidth int) string {
+	innerWidth := outerWidth - 2
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+	contentH := m.projectViewContentHeight()
+
+	// Pre-compute label width for alignment.
+	maxLabel := 0
+	for _, p := range projs {
+		if len(p) > maxLabel {
+			maxLabel = len(p)
+		}
+	}
+
+	lines := make([]string, 0, len(projs))
+	for i, p := range projs {
+		cursor := "  "
+		if i == m.projectCursor {
+			cursor = cursorStyle.Render("›") + " "
+		}
+		counts := m.projectTaskCounts(p)
+		summary := mutedStyle.Render(fmt.Sprintf("%d tasks", counts.total))
+		lines = append(lines, fmt.Sprintf("%s%s   %s",
+			cursor,
+			padToVisible(slugStyle.Render(p), maxLabel),
+			summary,
+		))
+	}
+	if len(lines) > contentH {
+		lines = lines[:contentH]
+	}
+	for len(lines) < contentH {
+		lines = append(lines, "")
+	}
+	for i, l := range lines {
+		lines[i] = padOrTrim(l, innerWidth)
+	}
+
+	titleStyle := paneActiveTitleStyle
+	borderStyle := paneActiveBorderStyle
+	if m.projectTaskFocus {
+		// Right pane has focus — dim the project list.
+		titleStyle = paneTitleStyle
+		borderStyle = paneBorderStyle
+	}
+	title := titleStyle.Render("projects") +
+		paneCountStyle.Render(fmt.Sprintf("  (%d)", len(projs)))
+	box := borderStyle.Width(innerWidth).Render(strings.Join(lines, "\n"))
+	return title + "\n" + box
+}
+
+// projectViewContentHeight is the inner height shared by the
+// projects pane (left) and the project-detail pane (right) in
+// viewByProject mode. Mirrors paneContentHeight's reserves so the
+// chrome math stays consistent.
+func (m *Model) projectViewContentHeight() int {
+	const (
+		bottomReserve = 3
+		paneChrome    = 3
+	)
+	topReserve := 4
+	if m.showSearchLine() {
+		topReserve = 5
+	}
+	h := m.height
+	if h <= 0 {
+		h = 24
+	}
+	inner := h - topReserve - bottomReserve - paneChrome
+	if inner < 5 {
+		inner = 5
+	}
+	return inner
+}
+
+type projectCounts struct {
+	working, awaiting, stale, backlog, total int
+}
+
+func (m *Model) projectTaskCounts(slug string) projectCounts {
+	if m.snap == nil {
+		return projectCounts{}
+	}
+	var c projectCounts
+	count := func(rows []TaskRow, into *int) {
+		for _, r := range rows {
+			if r.ProjectSlug == slug {
+				*into++
+				c.total++
+			}
+		}
+	}
+	count(m.snap.Working, &c.working)
+	count(m.snap.Awaiting, &c.awaiting)
+	count(m.snap.Stale, &c.stale)
+	count(m.snap.Backlog, &c.backlog)
+	return c
+}
+
+// renderProjectDetail renders the right pane in project view: the
+// selected project's tasks grouped by status (working / awaiting /
+// stale / backlog), inside one bordered box per status section
+// when the section is non-empty.
+func (m *Model) renderProjectDetail(slug string, outerWidth int) string {
+	innerWidth := outerWidth - 2
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+	contentH := m.projectViewContentHeight()
+
+	// Collect tasks for this project from each status bucket.
+	working := projectRowsFor(m.snap.Working, slug)
+	awaiting := projectRowsFor(m.snap.Awaiting, slug)
+	stale := projectRowsFor(m.snap.Stale, slug)
+	backlog := projectRowsFor(m.snap.Backlog, slug)
+
+	// Build the body as sectioned lines. Use single shared column
+	// widths across all of the project's task rows so the columns
+	// stay aligned across status sections.
+	all := append([]TaskRow{}, working...)
+	all = append(all, awaiting...)
+	all = append(all, stale...)
+	all = append(all, backlog...)
+	cw := computeColWidths(all, innerWidth)
+
+	// Track which row index in the flattened list each rendered line
+	// corresponds to — so the cursor highlight lands on the right line.
+	cursorIdx := -1
+	if m.projectTaskFocus {
+		cursorIdx = m.projectTaskCursor
+	}
+	var lines []string
+	flatIdx := 0
+	pushSection := func(name, glyph string, gs lipglossStyle, rows []TaskRow) {
+		if len(rows) == 0 {
+			return
+		}
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, sectionStyle.Render(name)+
+			paneCountStyle.Render(fmt.Sprintf("  (%d)", len(rows))))
+		for _, r := range rows {
+			isCursor := flatIdx == cursorIdx
+			line := m.renderProjectTaskLine(r, gs, glyph, cw, isCursor)
+			lines = append(lines, line)
+			flatIdx++
+		}
+	}
+	pushSection("working", GlyphWorking, workingGlyphStyle, working)
+	pushSection("awaiting", GlyphAwaiting, awaitingGlyphStyle, awaiting)
+	pushSection("stale", GlyphStale, staleGlyphStyle, stale)
+	pushSection("backlog", GlyphBacklog, backlogGlyphStyle, backlog)
+
+	if len(lines) == 0 {
+		lines = []string{mutedStyle.Render("No tasks in this project under the current filter.")}
+	}
+	if len(lines) > contentH {
+		lines = lines[:contentH]
+	}
+	for len(lines) < contentH {
+		lines = append(lines, "")
+	}
+	for i, l := range lines {
+		lines[i] = padOrTrim(l, innerWidth)
+	}
+
+	titleStyle := paneTitleStyle
+	borderStyle := paneBorderStyle
+	if m.projectTaskFocus {
+		titleStyle = paneActiveTitleStyle
+		borderStyle = paneActiveBorderStyle
+	}
+	title := titleStyle.Render(slug)
+	box := borderStyle.Width(innerWidth).Render(strings.Join(lines, "\n"))
+	return title + "\n" + box
+}
+
+// currentProjectSlug returns the project slug under the project-list
+// cursor in viewByProject. "" when there are no projects.
+func (m *Model) currentProjectSlug() string {
+	projs := uniqueProjects(m.rawSnap)
+	if len(projs) == 0 {
+		return ""
+	}
+	c := m.projectCursor
+	if c < 0 {
+		c = 0
+	}
+	if c >= len(projs) {
+		c = len(projs) - 1
+	}
+	return projs[c]
+}
+
+// projectTaskList returns the selected project's tasks in display
+// order (working, awaiting, stale, backlog) for cursor navigation
+// inside the project task pane.
+func (m *Model) projectTaskList(slug string) []TaskRow {
+	if slug == "" || m.snap == nil {
+		return nil
+	}
+	var out []TaskRow
+	out = append(out, projectRowsFor(m.snap.Working, slug)...)
+	out = append(out, projectRowsFor(m.snap.Awaiting, slug)...)
+	out = append(out, projectRowsFor(m.snap.Stale, slug)...)
+	out = append(out, projectRowsFor(m.snap.Backlog, slug)...)
+	return out
+}
+
+func projectRowsFor(rows []TaskRow, slug string) []TaskRow {
+	out := make([]TaskRow, 0)
+	for _, r := range rows {
+		if r.ProjectSlug == slug {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// renderProjectTaskLine renders one task row inside the project-detail
+// pane. Same row format as the status view but without the project
+// prefix (we already know which project — it's the section title).
+func (m *Model) renderProjectTaskLine(r TaskRow, gs lipglossStyle, glyph string, cw colWidths, isCursor bool) string {
+	cursor := "  "
+	if isCursor {
+		cursor = cursorStyle.Render("›") + " "
+	}
+	label := slugStyle.Render(r.Task.Slug)
+	label = padToVisible(label, cw.label)
+
+	pri := priorityStyleFor(r.Task.Priority).Render(priorityShort(r.Task.Priority))
+	reltime := leftPadToVisible(mutedStyle.Render(r.RelTime), cw.relTime)
+
+	var assignee string
+	if cw.assignee > 0 {
+		if r.Task.Assignee.Valid && r.Task.Assignee.String != "" {
+			assignee = padToVisible(mutedStyle.Render("@"+r.Task.Assignee.String), cw.assignee+1)
+		} else {
+			assignee = strings.Repeat(" ", cw.assignee+1)
+		}
+	}
+
+	parts := []string{cursor + gs.Render(glyph) + "  " + label}
+	if assignee != "" {
+		parts = append(parts, assignee)
+	}
+	parts = append(parts, pri, reltime)
+	return strings.Join(parts, "   ")
+}
+
 func (m *Model) renderHeader() string {
 	return titleStyle.Render("flow") + "   " +
 		dateStyle.Render(m.snap.AsOf.Format("2006-01-02 15:04"))
@@ -703,6 +1109,11 @@ func (m *Model) renderFilterChips() string {
 	if m.filter.tag != "" {
 		chips = append(chips, paneCountStyle.Render("[#")+
 			footerKeyStyle.Render(m.filter.tag)+
+			paneCountStyle.Render("]"))
+	}
+	if m.filter.project != "" {
+		chips = append(chips, paneCountStyle.Render("[proj:")+
+			footerKeyStyle.Render(m.filter.project)+
 			paneCountStyle.Render("]"))
 	}
 	chips = append(chips, mutedStyle.Render("(esc clears)"))
@@ -1624,6 +2035,27 @@ func (m *Model) footer() string {
 		}
 		return "  " + footerStyle.Render(strings.Join(parts, " · "))
 	}
+	if m.view == viewByProject {
+		var parts []string
+		if m.projectTaskFocus {
+			parts = []string{
+				footerKeyStyle.Render("↑↓") + " task",
+				footerKeyStyle.Render("enter") + " open",
+				footerKeyStyle.Render("←/esc") + " back",
+				footerKeyStyle.Render("v") + " status view",
+				footerKeyStyle.Render("q") + " quit",
+			}
+		} else {
+			parts = []string{
+				footerKeyStyle.Render("↑↓") + " project",
+				footerKeyStyle.Render("→") + " open tasks",
+				footerKeyStyle.Render("v") + " status view",
+				footerKeyStyle.Render("/") + " search",
+				footerKeyStyle.Render("q") + " quit",
+			}
+		}
+		return "  " + footerStyle.Render(strings.Join(parts, " · "))
+	}
 	if m.runsFocused {
 		parts := []string{
 			footerKeyStyle.Render("↑↓") + " run",
@@ -1648,8 +2080,8 @@ func (m *Model) footer() string {
 		footerKeyStyle.Render("←→") + " pane",
 		footerKeyStyle.Render("enter") + " open",
 		footerKeyStyle.Render("/") + " search",
-		footerKeyStyle.Render("p/a/t") + " filter",
-		footerKeyStyle.Render("esc") + " clear",
+		footerKeyStyle.Render("p/P/a/t") + " filter",
+		footerKeyStyle.Render("v") + " project view",
 		footerKeyStyle.Render("q") + " quit",
 	}
 	return "  " + footerStyle.Render(strings.Join(parts, " · "))
