@@ -79,14 +79,14 @@ the next one smarter.
                                        │   processes · business │
                                        └─────▲──────────▲───────┘
                                              │          │
-                  flow do <task>             │ scoop    │ sweep
-   ┌────────┐  ─────────────────▶  ┌─────────┴──────────┴─────┐
-   │  Task  │                      │      Claude session      │
-   │  brief │  ◀──── updates ───── │  loads brief + kb +      │
-   │ +notes │                      │  notes + repo conventions│
-   └────────┘  ─── flow done ───▶  └──────────────────────────┘
-                                       (auto-sweep transcript
-                                        into kb on done)
+                   flow do <task>             │ scoop    │ sweep
+    ┌────────┐  ─────────────────▶  ┌─────────┴──────────┴─────┐
+    │  Task  │                      │      Claude session      │
+    │  brief │  ◀──── updates ───── │  loads brief + kb +      │
+    │ +notes │                      │  notes + repo conventions│
+    └────────┘  ─── flow done ───▶  └──────────────────────────┘
+                                        (auto-sweep transcript
+                                         into kb on done)
 ```
 
 - **Scoop (live):** during a session the flow skill listens for
@@ -126,7 +126,18 @@ back to the knowledge base on `flow done` like any other task.
 Same compounding mechanic — your weekly review session two months from
 now will know everything every prior weekly review surfaced.
 
-## Install
+## Installation
+
+### Homebrew (Recommended for macOS)
+
+```bash
+brew install --cask Facets-cloud/tap/flow
+flow init
+```
+
+
+
+### via Claude Code
 
 In any Claude Code session, paste this:
 
@@ -138,35 +149,12 @@ and registers a SessionStart hook so every future Claude session
 loads the skill automatically. Then say **"let's get to work"** and
 follow along.
 
-<details>
-<summary>Manual install (curl + chmod + flow init)</summary>
-
-```bash
-# 1. Download the binary for your Mac.
-ARCH=arm64        # Apple Silicon (M1/M2/M3/M4) — use amd64 for Intel.
-
-curl -fsSL -o /usr/local/bin/flow \
-  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
-chmod +x /usr/local/bin/flow
-xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
-
-# 2. Initialize. This is required — it creates ~/.flow/, the SQLite
-#    index, the knowledge base, AND installs the Claude skill +
-#    SessionStart hook. Without this step, Claude can't talk to flow.
-flow init
-```
-
 `flow init` is the step that wires flow into Claude Code. It:
 
 - Creates `~/.flow/` (database, kb, projects, tasks, playbooks)
 - Writes the flow skill to `~/.claude/skills/flow/SKILL.md`
 - Adds a SessionStart hook to `~/.claude/settings.json` so every new
   Claude Code session auto-loads the skill
-
-The `xattr` step removes Gatekeeper's quarantine attribute so macOS
-doesn't refuse to run the unsigned binary.
-
-</details>
 
 ## Upgrade
 
