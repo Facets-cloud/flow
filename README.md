@@ -236,6 +236,35 @@ from iTerm2, "Claude" if Claude Code is the host, etc.; add it via the
 + button if it's not listed). After the grant the spawn is silent.
 iTerm2 doesn't need this — it has a native `create tab` verb.
 
+### One-shot instructions with `--with`
+
+`flow do <task> --with "<instruction>"` resumes (or starts) the task's
+session and injects the instruction as the first user message —
+prefixed with `[via flow do --with]` so the model can tell injected
+input from typed input.
+
+`--with-file <path>` is the same idea for longer instructions: instead
+of embedding the file contents, flow injects `read instructions at
+<absolute path>` and the session uses its Read tool to load the file.
+No size limits. The flags are mutually exclusive, and cannot be
+combined with `--here` (there's no spawned session to inject into).
+
+```bash
+# Nudge a parked task without opening the tab.
+flow do auth --with "check if upstream PR merged and update the brief if so"
+
+# --with on a done task auto-rolls it back to in-progress, so playbooks
+# can fire on previously-closed work.
+flow do auth --with "are we still blocked on the security review?"
+
+# Hand the session a longer brief to follow.
+flow do auth --with-file ~/playbooks/triage-checklist.md
+```
+
+This is the lane scheduled playbooks use to fire instructions at
+existing tasks without manual intervention. `flow run playbook <slug>`
+accepts the same flags for ad-hoc per-run instructions.
+
 ## Your data — local, portable, yours
 
 Everything flow stores lives under `~/.flow/` (override with
