@@ -92,29 +92,33 @@ func cmdInit(args []string) int {
 	}
 	db.Close()
 
-	// Install the skill idempotently. Skip if already present; we never
-	// overwrite on init (use `flow skill update` for that).
-	skillPath, err := skillInstallPath()
+	// Install the skill idempotently for every agent target whose home
+	// dir is present. Skip per-target if SKILL.md already exists — we
+	// never overwrite on init (use `flow skill update` for that).
+	targets, err := skillTargets()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(skillPath), err)
+	for _, t := range targets {
+		if _, err := os.Stat(t.skillPath); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", t.skillPath, err)
 			return 1
 		}
-		if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", skillPath, err)
+		if err := os.MkdirAll(filepath.Dir(t.skillPath), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(t.skillPath), err)
 			return 1
 		}
-		if err := writeSkillVersion(Version); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
+		if err := os.WriteFile(t.skillPath, embeddedSkill, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", t.skillPath, err)
+			return 1
 		}
-		fmt.Printf("installed flow skill to %s\n", skillPath)
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
-		return 1
+		if err := writeVersionAt(versionPathFor(t.skillPath), Version); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not record skill version for %s: %v\n", t.agent, err)
+		}
+		fmt.Printf("installed flow skill to %s\n", t.skillPath)
 	}
 
 	// Install the SessionStart hook idempotently.
@@ -124,6 +128,10 @@ func cmdInit(args []string) int {
 		settings, _ := userSettingsPath()
 		fmt.Printf("installed SessionStart hook in %s\n", settings)
 	}
+
+	// Clear any opt-out marker — `flow init` is an explicit setup
+	// signal, so subsequent auto-upgrade should run normally.
+	_ = setSkillUninstallOptOut(false)
 
 	fmt.Printf("flow initialized at %s\n", root)
 	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)

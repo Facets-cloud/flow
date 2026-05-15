@@ -38,7 +38,7 @@ func TestCmdInitWritesVersionSidecar(t *testing.T) {
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
-	if got := readSkillVersion(); got != "v1.2.3" {
+	if got := readVersionAt(filepath.Join(os.Getenv("HOME"), ".claude", "skills", "flow", "VERSION")); got != "v1.2.3" {
 		t.Errorf("readSkillVersion=%q, want v1.2.3", got)
 	}
 }
@@ -66,7 +66,7 @@ func TestMaybeAutoUpgradeUpgradesOnMismatch(t *testing.T) {
 	if string(got) == "stale" {
 		t.Error("auto-upgrade did not refresh SKILL.md")
 	}
-	if v := readSkillVersion(); v != "v2.0.0" {
+	if v := readVersionAt(filepath.Join(os.Getenv("HOME"), ".claude", "skills", "flow", "VERSION")); v != "v2.0.0" {
 		t.Errorf("VERSION sidecar=%q after upgrade, want v2.0.0", v)
 	}
 }

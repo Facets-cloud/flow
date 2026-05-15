@@ -88,6 +88,32 @@ func TestSkillInstallWritesFile(t *testing.T) {
 	}
 }
 
+func TestSkillFrontmatterDescriptionFitsCodexLimit(t *testing.T) {
+	got := string(embeddedSkill)
+	const marker = "description: |"
+	start := strings.Index(got, marker)
+	if start == -1 {
+		t.Fatal("skill frontmatter missing description block")
+	}
+	rest := got[start+len(marker):]
+	end := strings.Index(rest, "\n---")
+	if end == -1 {
+		t.Fatal("skill frontmatter missing closing delimiter")
+	}
+
+	var desc strings.Builder
+	for _, line := range strings.Split(rest[:end], "\n") {
+		if line == "" {
+			continue
+		}
+		desc.WriteString(strings.TrimPrefix(line, "  "))
+		desc.WriteByte('\n')
+	}
+	if n := len(strings.TrimSpace(desc.String())); n > 1024 {
+		t.Fatalf("skill description is %d bytes, exceeds Codex limit of 1024", n)
+	}
+}
+
 func TestSkillInstallErrorsOnExisting(t *testing.T) {
 	withTempHome(t)
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
@@ -312,6 +338,380 @@ func TestSkillInstallSkipHook(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Errorf("--skip-hook should not create settings.json; stat err=%v", err)
+	}
+}
+
+// TestSkillTargetsClaudeAlwaysPresent verifies Claude is in the
+// returned target list even when ~/.claude doesn't exist on disk —
+// preserves the legacy behavior where `flow init` always provisions
+// the Claude skill dir.
+func TestSkillTargetsClaudeAlwaysPresent(t *testing.T) {
+	withTempHome(t)
+	targets, err := skillTargets()
+	if err != nil {
+		t.Fatalf("skillTargets: %v", err)
+	}
+	if len(targets) != 1 || targets[0].agent != "claude" {
+		t.Errorf("with empty home, want only claude target; got %+v", targets)
+	}
+}
+
+// TestSkillTargetsDiscoversInstalledAgents seeds ~/.codex, ~/.cursor,
+// ~/.gemini in the tempdir and verifies they all show up alongside
+// Claude.
+func TestSkillTargetsDiscoversInstalledAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets, err := skillTargets()
+	if err != nil {
+		t.Fatalf("skillTargets: %v", err)
+	}
+	gotAgents := make(map[string]string)
+	for _, t := range targets {
+		gotAgents[t.agent] = t.skillPath
+	}
+	for _, want := range []string{"claude", "codex", "cursor", "gemini"} {
+		if _, ok := gotAgents[want]; !ok {
+			t.Errorf("missing %s target; got %+v", want, gotAgents)
+		}
+	}
+	// Spot-check one path shape so future renames stay honest.
+	want := filepath.Join(home, ".codex", "skills", "flow", "SKILL.md")
+	if got := gotAgents["codex"]; got != want {
+		t.Errorf("codex skillPath=%q, want %q", got, want)
+	}
+}
+
+// TestSkillInstallWritesAllAgentTargets verifies `flow skill install`
+// drops SKILL.md into every discovered agent's install dir. Gemini's
+// install dir is `~/.agents/skills/flow/` (NOT `~/.gemini/`) because
+// Gemini scans the shared `~/.agents/skills/` root.
+func TestSkillInstallWritesAllAgentTargets(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+
+	// agent -> install subdir under $HOME.
+	wantPaths := map[string]string{
+		"claude": ".claude",
+		"codex":  ".codex",
+		"cursor": ".cursor",
+		"gemini": ".agents", // shared multi-agent skills root
+	}
+	for agent, sub := range wantPaths {
+		p := filepath.Join(home, sub, "skills", "flow", "SKILL.md")
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Errorf("missing SKILL.md for %s at %s: %v", agent, p, err)
+			continue
+		}
+		if !strings.Contains(string(data), "name: flow") {
+			t.Errorf("SKILL.md at %s missing frontmatter", p)
+		}
+		// VERSION sidecar should be written per agent.
+		if _, err := os.Stat(filepath.Join(filepath.Dir(p), "VERSION")); err != nil {
+			t.Errorf("missing VERSION sidecar for %s: %v", agent, err)
+		}
+	}
+
+	// Gemini-specific safety property: no SKILL.md inside ~/.gemini/skills/
+	// even though `~/.gemini/` was created. Double-install would
+	// duplicate-load via Gemini's two scan roots.
+	if _, err := os.Stat(filepath.Join(home, ".gemini", "skills", "flow", "SKILL.md")); err == nil {
+		t.Error("Gemini install must go to ~/.agents/, NOT ~/.gemini/skills/ — both scan roots would double-load")
+	}
+}
+
+// TestSkillInstallSkipsAbsentAgents verifies an agent presence dir
+// that doesn't exist gets no install — we MUST NOT eagerly create
+// `~/.<agent>/` (or `~/.agents/`) for agents the user doesn't have.
+func TestSkillInstallSkipsAbsentAgents(t *testing.T) {
+	home := withTempHome(t)
+	// Only ~/.codex is present; Cursor/Gemini stay absent.
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+
+	// Claude + Codex SHOULD exist.
+	for _, want := range []string{".claude", ".codex"} {
+		if _, err := os.Stat(filepath.Join(home, want, "skills", "flow", "SKILL.md")); err != nil {
+			t.Errorf("expected install for %s; got err=%v", want, err)
+		}
+	}
+	// Cursor presence dir + Gemini presence dir + Gemini install dir
+	// (~/.agents) MUST NOT have been auto-created.
+	for _, absent := range []string{".cursor", ".gemini", ".agents"} {
+		if _, err := os.Stat(filepath.Join(home, absent)); !os.IsNotExist(err) {
+			t.Errorf("install must not create ~/%s; stat err=%v", absent, err)
+		}
+	}
+}
+
+// TestGeminiInstallsToAgentsRoot verifies the Gemini→.agents redirect
+// in isolation: when only ~/.gemini/ exists (no other agents present),
+// the install must land at ~/.agents/skills/flow/SKILL.md, NOT under
+// ~/.gemini/.
+func TestGeminiInstallsToAgentsRoot(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+
+	// Must exist under ~/.agents/skills/flow/.
+	want := filepath.Join(home, ".agents", "skills", "flow", "SKILL.md")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("Gemini install should land at %s; stat err=%v", want, err)
+	}
+	// Must NOT exist under ~/.gemini/skills/flow/.
+	bad := filepath.Join(home, ".gemini", "skills", "flow", "SKILL.md")
+	if _, err := os.Stat(bad); err == nil {
+		t.Errorf("Gemini install must NOT touch %s — would double-load", bad)
+	}
+}
+
+// TestSkillInstallRefusesIfAnyTargetExists pins the safety property:
+// even one existing SKILL.md across any target causes plain `install`
+// (without --force) to abort the whole batch.
+func TestSkillInstallRefusesIfAnyTargetExists(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-create Codex SKILL.md only.
+	codexSkill := filepath.Join(home, ".codex", "skills", "flow", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(codexSkill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexSkill, []byte("preexisting"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdSkill([]string{"install"}); rc == 0 {
+		t.Errorf("install must fail when any target SKILL.md exists; got rc=0")
+	}
+	// Pre-existing file MUST NOT be modified.
+	got, _ := os.ReadFile(codexSkill)
+	if string(got) != "preexisting" {
+		t.Errorf("refused install must not overwrite existing %s", codexSkill)
+	}
+	// And Claude MUST NOT have been written either (batch-or-nothing).
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")); err == nil {
+		t.Errorf("refused install must not write Claude either; found one")
+	}
+}
+
+// TestSkillUpdateOverwritesAllAgents — `flow skill update` is force=true.
+// Should refresh SKILL.md in every discovered agent's install dir
+// (Gemini's is `.agents`, not `.gemini`).
+func TestSkillUpdateOverwritesAllAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	installSubdirs := []string{".claude", ".codex", ".agents"}
+	// Stomp every installed SKILL.md so we can prove update refreshes them.
+	for _, sub := range installSubdirs {
+		p := filepath.Join(home, sub, "skills", "flow", "SKILL.md")
+		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rc := cmdSkill([]string{"update"}); rc != 0 {
+		t.Fatalf("update rc=%d", rc)
+	}
+
+	for _, sub := range installSubdirs {
+		got, _ := os.ReadFile(filepath.Join(home, sub, "skills", "flow", "SKILL.md"))
+		if string(got) == "stale" {
+			t.Errorf("update did not refresh %s SKILL.md", sub)
+		}
+	}
+}
+
+// TestSkillUninstallRemovesAllAgents verifies uninstall sweeps the
+// flow/ dir from every agent's skills/ tree.
+func TestSkillUninstallRemovesAllAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	for _, agent := range []string{".claude", ".codex", ".cursor"} {
+		p := filepath.Join(home, agent, "skills", "flow")
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("uninstall should remove %s; stat err=%v", p, err)
+		}
+	}
+}
+
+// TestMaybeAutoUpgradeRefreshesAllAgents — version mismatch should
+// refresh SKILL.md in every installed agent target, not just Claude.
+// Includes the Gemini→.agents redirect.
+func TestMaybeAutoUpgradeRefreshesAllAgents(t *testing.T) {
+	home := withTempHome(t)
+	for _, sub := range []string{".codex", ".cursor", ".gemini"} {
+		if err := os.MkdirAll(filepath.Join(home, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	withVersion(t, "v1.0.0")
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	// Stomp every SKILL.md so we can detect the refresh. Gemini's
+	// install dir is `.agents`, not `.gemini`.
+	paths := []string{}
+	for _, sub := range []string{".claude", ".codex", ".cursor", ".agents"} {
+		p := filepath.Join(home, sub, "skills", "flow", "SKILL.md")
+		paths = append(paths, p)
+		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	Version = "v2.0.0"
+	maybeAutoUpgradeSkill()
+
+	for _, p := range paths {
+		got, _ := os.ReadFile(p)
+		if string(got) == "stale" {
+			t.Errorf("auto-upgrade did not refresh %s", p)
+		}
+		v := readVersionAt(filepath.Join(filepath.Dir(p), "VERSION"))
+		if v != "v2.0.0" {
+			t.Errorf("%s VERSION=%q, want v2.0.0", p, v)
+		}
+	}
+}
+
+// TestMaybeAutoUpgradeInstallsNewlyDetectedAgent pins Anshul's gap from
+// PR #45: user runs `flow init` with only Claude installed, later
+// installs Codex. The very next `flow` invocation's auto-upgrade pass
+// must drop SKILL.md into the new agent's dir — not wait for the user
+// to manually re-run `flow skill install --force`.
+func TestMaybeAutoUpgradeInstallsNewlyDetectedAgent(t *testing.T) {
+	home := withTempHome(t)
+	withVersion(t, "v1.0.0")
+	// Initial install with only Claude present.
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	codexSkill := filepath.Join(home, ".codex", "skills", "flow", "SKILL.md")
+	if _, err := os.Stat(codexSkill); err == nil {
+		t.Fatalf("precondition: codex skill should not exist yet")
+	}
+	// User installs Codex CLI later.
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Auto-upgrade runs on next `flow` invocation. Version unchanged —
+	// the trigger here is "newly-detected agent", not version drift.
+	maybeAutoUpgradeSkill()
+
+	if _, err := os.Stat(codexSkill); err != nil {
+		t.Fatalf("auto-upgrade should install for newly-detected codex; got err=%v", err)
+	}
+	if v := readVersionAt(filepath.Join(filepath.Dir(codexSkill), "VERSION")); v != "v1.0.0" {
+		t.Errorf("codex VERSION sidecar=%q, want v1.0.0", v)
+	}
+}
+
+// TestMaybeAutoUpgradeRespectsUninstallMarker pins the opt-out
+// contract: after `flow skill uninstall`, auto-upgrade must NOT
+// silently resurrect SKILL.md on the next `flow` invocation. This is
+// the legitimate "user opted out" case that the marker file makes
+// explicit (replacing the old absence-as-opt-out heuristic).
+func TestMaybeAutoUpgradeRespectsUninstallMarker(t *testing.T) {
+	home := withTempHome(t)
+	// Point flowRoot at the temp home so the marker lands in the
+	// sandbox. The existing skill tests don't init flow, so flowRoot
+	// resolves to $HOME/.flow which is already inside the tempdir.
+	withVersion(t, "v1.0.0")
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	if !skillUninstallOptOutSet() {
+		t.Fatal("uninstall must set opt-out marker")
+	}
+	claudeSkill := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
+
+	Version = "v2.0.0"
+	maybeAutoUpgradeSkill()
+
+	if _, err := os.Stat(claudeSkill); err == nil {
+		t.Errorf("auto-upgrade resurrected uninstalled skill at %s", claudeSkill)
+	}
+}
+
+// TestSkillInstallClearsUninstallMarker pins the "explicit install =
+// opt back in" contract: running `flow skill install` after a previous
+// uninstall clears the marker, restoring auto-upgrade for future
+// invocations.
+func TestSkillInstallClearsUninstallMarker(t *testing.T) {
+	withTempHome(t)
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	if !skillUninstallOptOutSet() {
+		t.Fatal("precondition: uninstall should have set the marker")
+	}
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("second install rc=%d", rc)
+	}
+	if skillUninstallOptOutSet() {
+		t.Error("install did not clear the uninstall marker")
+	}
+}
+
+// TestSkillUninstallNoopDoesNotSetMarker pins the gating on anyRemoved:
+// `flow skill uninstall` against an empty home is a true no-op and
+// must not leave a marker behind (which would block future
+// auto-installs after the user later runs `flow init`).
+func TestSkillUninstallNoopDoesNotSetMarker(t *testing.T) {
+	withTempHome(t)
+	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	if skillUninstallOptOutSet() {
+		t.Error("uninstall on empty home should not set opt-out marker")
 	}
 }
 
