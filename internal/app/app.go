@@ -65,6 +65,8 @@ func Run(args []string) int {
 		return cmdTranscript(rest)
 	case "hook":
 		return cmdHook(rest)
+	case "dashboard":
+		return cmdDashboard(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -95,6 +97,7 @@ Sessions:
 Read:
   flow show task       [<ref>]
   flow show project    [<ref>]
+  flow dashboard                                          (read-only TUI: counts, working/awaiting/stale, activity feed)
   flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
