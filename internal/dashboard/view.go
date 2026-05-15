@@ -434,59 +434,29 @@ func (m *Model) paneMaxScrollOffset(p paneKind) int {
 	return n - h
 }
 
-// paneTotalLines is how many rendered lines pane p produces (rows
-// expanded by wrapping). Mirrors len(paneRowStrings) without doing
-// the string work.
+// paneTotalLines is how many rendered lines pane p produces. With
+// labels truncated rather than wrapped, every row is exactly one
+// line — so this equals the row count for every pane.
 func (m *Model) paneTotalLines(p paneKind) int {
-	if p == paneActivity || p == panePlaybooks {
-		// Single-line rows, no wrap.
-		return m.paneRowCount(p)
-	}
-	rows := m.paneTaskRows(p)
-	cw := m.taskColWidths(m.activePaneInnerWidth())
-	total := 0
-	for _, r := range rows {
-		total += rowLineCount(r, cw)
-	}
-	return total
-}
-
-// activePaneInnerWidth is the inner content width inside the left
-// column's pane border. Used by line-count math to match the width
-// the renderer will actually use.
-func (m *Model) activePaneInnerWidth() int {
-	leftW, _ := m.columnWidths()
-	inner := leftW - 2
-	if inner < 20 {
-		inner = 20
-	}
-	return inner
+	return m.paneRowCount(p)
 }
 
 // cursorRowFirstLine returns the rendered-line index of the cursor
-// row's FIRST line in pane p. Used to keep the cursor visible after
-// row-level movement when rows may take multiple lines.
+// row in pane p. Since rows truncate (don't wrap), the cursor's row
+// index equals its line index.
 func (m *Model) cursorRowFirstLine(p paneKind) int {
-	if p == paneActivity || p == panePlaybooks {
-		return m.panes[p].cursor
-	}
-	rows := m.paneTaskRows(p)
-	if len(rows) == 0 {
+	n := m.paneRowCount(p)
+	if n == 0 {
 		return 0
 	}
 	c := m.panes[p].cursor
 	if c < 0 {
-		c = 0
+		return 0
 	}
-	if c >= len(rows) {
-		c = len(rows) - 1
+	if c >= n {
+		return n - 1
 	}
-	cw := m.taskColWidths(m.activePaneInnerWidth())
-	line := 0
-	for i := 0; i < c; i++ {
-		line += rowLineCount(rows[i], cw)
-	}
-	return line
+	return c
 }
 
 // selectedTaskSlug returns the slug of the row the cursor is on in the
@@ -558,6 +528,7 @@ func (m *Model) View() string {
 	} else {
 		leftW, rightW := m.columnWidths()
 		leftCol := m.renderLeftColumn(visiblePanes, leftW)
+		var combined string
 		if rightW > 0 {
 			var rightCol string
 			if m.active == panePlaybooks {
@@ -565,12 +536,14 @@ func (m *Model) View() string {
 			} else {
 				rightCol = m.renderDetailPane(rightW)
 			}
-			b.WriteString("  ")
-			b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftCol, "  ", rightCol))
+			combined = lipgloss.JoinHorizontal(lipgloss.Top, leftCol, "  ", rightCol)
 		} else {
-			b.WriteString("  ")
-			b.WriteString(leftCol)
+			combined = leftCol
 		}
+		// Apply the 2-column left margin to every line of the column
+		// strip, not just the first. Single-prefix would leave pane
+		// borders flush against column 0.
+		b.WriteString(indentBlock(combined, 2))
 	}
 
 	b.WriteString("\n")
@@ -601,7 +574,7 @@ func (m *Model) columnWidths() (left, right int) {
 	}
 
 	natural := m.naturalLeftWidth()
-	maxLeft := total * 65 / 100
+	maxLeft := total * 70 / 100 // cap left at 70% — detail still gets ≥ 30%
 	left = natural
 	if left < minLeft {
 		left = minLeft
@@ -622,18 +595,20 @@ func (m *Model) columnWidths() (left, right int) {
 	return left, right
 }
 
-// naturalLeftWidth returns the ideal outer width for the left column
-// based on the widest row in the raw (unfiltered) data. Adding the
-// row chrome (cursor + glyph + spacing + priority + gaps + reltime)
-// plus the pane border gives a width that fits without truncation.
-// Driven off rawSnap so the layout doesn't shift while the user
-// types a search.
+// naturalLeftWidth returns the ideal outer width for the left column,
+// driven off the raw (unfiltered) data so the layout doesn't shift
+// while the user types a search. Chrome is computed precisely from
+// the actual max assignee + reltime widths so the right-side columns
+// (priority/assignee/reltime) never get clipped — only the label
+// truncates with an ellipsis when the row exceeds budget.
 func (m *Model) naturalLeftWidth() int {
-	const rowChromeMargin = 30 // pane border (2) + row chrome (5) + pri+gap+reltime (~13) + safety
 	if m.rawSnap == nil {
 		return 80
 	}
+	const paneBorder = 2
 	maxLabel := 0
+	maxAssignee := 0
+	maxRelTime := 0
 	for _, rows := range [][]TaskRow{
 		m.rawSnap.Working,
 		m.rawSnap.Awaiting,
@@ -644,12 +619,26 @@ func (m *Model) naturalLeftWidth() int {
 			if n := plainLabelLen(r); n > maxLabel {
 				maxLabel = n
 			}
+			if r.Task.Assignee.Valid {
+				if n := len(r.Task.Assignee.String); n > maxAssignee {
+					maxAssignee = n
+				}
+			}
+			if n := len(r.RelTime); n > maxRelTime {
+				maxRelTime = n
+			}
 		}
 	}
 	if maxLabel == 0 {
-		return 60 // empty data: small default
+		return 60
 	}
-	return maxLabel + rowChromeMargin
+	// chrome = pane border + row chrome + label-pri gap + priority + pri-reltime gap + reltime.
+	chrome := paneBorder + rowLeftChrome + rowMidGap + rowPriWidth + rowRightGap + maxRelTime
+	if maxAssignee > 0 {
+		// `@<name>` plus the gap before the priority column.
+		chrome += maxAssignee + 1 + rowRightGap
+	}
+	return maxLabel + chrome
 }
 
 func (m *Model) renderLeftColumn(visible []paneKind, width int) string {
@@ -1087,7 +1076,7 @@ func (m *Model) renderRunLine(r TaskRow, isCursor bool, cw runColWidths) string 
 		cursor,
 		gs.Render(glyph),
 		slug,
-		mutedStyle.Render(r.RelTime),
+		leftPadToVisible(mutedStyle.Render(r.RelTime), 7),
 	)
 }
 
@@ -1447,18 +1436,6 @@ func plainLabelLen(r TaskRow) int {
 	return len(r.Task.Slug)
 }
 
-// rowLineCount returns how many rendered lines the row will occupy
-// once wrapped to cw.label. Used by scroll math (paneTotalLines,
-// cursorRowFirstLine) to map between row indices and rendered line
-// indices.
-func rowLineCount(r TaskRow, cw colWidths) int {
-	labelLen := plainLabelLen(r)
-	if labelLen <= cw.label || cw.label <= 0 {
-		return 1
-	}
-	return (labelLen + cw.label - 1) / cw.label
-}
-
 func paneGlyph(p paneKind) (lipglossStyle, string) {
 	switch p {
 	case paneWorking:
@@ -1475,10 +1452,11 @@ func paneGlyph(p paneKind) (lipglossStyle, string) {
 
 type lipglossStyle = interface{ Render(strs ...string) string }
 
-// renderRow returns one or more rendered lines for a task row. Labels
-// longer than cw.label wrap onto continuation lines indented under
-// the first line's label column; only the first line carries the
-// priority and reltime.
+// renderRow returns one rendered line for a task row. Labels that
+// exceed cw.label are truncated with an ellipsis so priority,
+// assignee, and reltime always render at full width — those columns
+// are the most useful at a glance and shouldn't get clipped just
+// because a slug is long.
 func (m *Model) renderRow(r TaskRow, glyphStyle lipglossStyle, glyph string, isCursor bool, cw colWidths) []string {
 	cursor := "  "
 	if isCursor {
@@ -1492,15 +1470,18 @@ func (m *Model) renderRow(r TaskRow, glyphStyle lipglossStyle, glyph string, isC
 		slashIdx = len(r.ProjectSlug)
 	}
 
-	chunks := chunkAt(plain, cw.label)
-
 	var matches []int
 	if m.filter.query != "" {
 		matches = fuzzyMatchPositions(m.filter.query, plain)
 	}
 
+	label := styleLabelTruncated(plain, slashIdx, cw.label, matches)
+	label = padToVisible(label, cw.label)
+
 	pri := priorityStyleFor(r.Task.Priority).Render(priorityShort(r.Task.Priority))
-	reltime := padToVisible(mutedStyle.Render(r.RelTime), cw.relTime)
+	// Right-align reltime so "1d ago" and "12d ago" align at the right
+	// edge of the column instead of "1d ago " trailing into a gap.
+	reltime := leftPadToVisible(mutedStyle.Render(r.RelTime), cw.relTime)
 
 	var assignee string
 	if cw.assignee > 0 {
@@ -1511,42 +1492,31 @@ func (m *Model) renderRow(r TaskRow, glyphStyle lipglossStyle, glyph string, isC
 		}
 	}
 
-	indentStr := strings.Repeat(" ", rowLeftChrome)
-	out := make([]string, 0, len(chunks))
-	for i, chunk := range chunks {
-		styledChunk := styleLabelChunk(chunk, i*cw.label, slashIdx, matches)
-		styledChunk = padToVisible(styledChunk, cw.label)
-		if i == 0 {
-			parts := []string{
-				cursor + glyphStyle.Render(glyph) + "  " + styledChunk,
-			}
-			if assignee != "" {
-				parts = append(parts, assignee)
-			}
-			parts = append(parts, pri, reltime)
-			out = append(out, strings.Join(parts, "   "))
-		} else {
-			out = append(out, indentStr+styledChunk)
-		}
+	parts := []string{cursor + glyphStyle.Render(glyph) + "  " + label}
+	if assignee != "" {
+		parts = append(parts, assignee)
 	}
-	return out
+	parts = append(parts, pri, reltime)
+	return []string{strings.Join(parts, "   ")}
 }
 
-// chunkAt slices s into pieces of up to n bytes each. Byte-based is
-// fine for our slugs (ASCII).
-func chunkAt(s string, n int) []string {
-	if n <= 0 || len(s) <= n {
-		return []string{s}
+// styleLabelTruncated styles a label that fits within maxVisible
+// columns. If the underlying plain string is longer, it cuts and
+// appends "…" (1 visible column) so the total visible width is
+// exactly maxVisible. Project/slug colors and search highlights
+// apply to whatever portion of the label remains visible.
+func styleLabelTruncated(plain string, slashIdx, maxVisible int, matchPos []int) string {
+	if maxVisible <= 0 {
+		return ""
 	}
-	out := make([]string, 0, (len(s)+n-1)/n)
-	for len(s) > n {
-		out = append(out, s[:n])
-		s = s[n:]
+	if len(plain) <= maxVisible {
+		return styleLabelChunk(plain, 0, slashIdx, matchPos)
 	}
-	if len(s) > 0 {
-		out = append(out, s)
+	if maxVisible == 1 {
+		return mutedStyle.Render("…")
 	}
-	return out
+	head := plain[:maxVisible-1]
+	return styleLabelChunk(head, 0, slashIdx, matchPos) + mutedStyle.Render("…")
 }
 
 // styleLabelChunk applies project/slug coloring to a wrap-chunk of the
@@ -1608,6 +1578,28 @@ func padToVisible(s string, n int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", n-vl)
+}
+
+// leftPadToVisible right-aligns by prepending spaces. Used for the
+// reltime column so "1d ago" and "12d ago" line up at the column's
+// right edge across rows.
+func leftPadToVisible(s string, n int) string {
+	vl := visibleLen(s)
+	if vl >= n {
+		return s
+	}
+	return strings.Repeat(" ", n-vl) + s
+}
+
+// indentBlock prefixes every line of s with n spaces. Used to push
+// the dashboard's content column off the terminal's left edge while
+// preserving the structure produced by lipgloss.JoinHorizontal.
+func indentBlock(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	pad := strings.Repeat(" ", n)
+	return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
 }
 
 func (m *Model) renderEvent(e Event) string {
