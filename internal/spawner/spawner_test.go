@@ -1,6 +1,7 @@
 package spawner
 
 import (
+	"flow/internal/ghostty"
 	"flow/internal/iterm"
 	"flow/internal/kitty"
 	"flow/internal/terminal"
@@ -21,6 +22,7 @@ func TestDetectFromEnv(t *testing.T) {
 		{"iTerm.app", BackendITerm},
 		{"Apple_Terminal", BackendTerminal},
 		{"WarpTerminal", BackendWarp},
+		{"ghostty", BackendGhostty},
 		{"", BackendITerm},
 		{"WezTerm", BackendITerm},
 		{"vscode", BackendITerm},
@@ -53,7 +55,7 @@ func TestOverrideBeatsEnv(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	for _, want := range []Backend{
-		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij,
+		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij, BackendGhostty,
 	} {
 		Override = want
 		if got := Detect(); got != want {
@@ -123,6 +125,7 @@ func TestDetectFlowTermOverride(t *testing.T) {
 		{"zellij", BackendZellij},
 		{"kitty", BackendKitty},
 		{"warp", BackendWarp},
+		{"ghostty", BackendGhostty},
 	}
 	for _, tc := range cases {
 		t.Run(tc.flowTerm, func(t *testing.T) {
@@ -182,7 +185,7 @@ func TestSpawnTabRoutesToITerm(t *testing.T) {
 	if !*calls.iterm {
 		t.Error("expected iterm.Runner to be called")
 	}
-	if *calls.terminal || *calls.zellij || *calls.kitty || *calls.warp {
+	if *calls.terminal || *calls.zellij || *calls.kitty || *calls.warp || *calls.ghostty {
 		t.Error("only iterm.Runner should be called")
 	}
 }
@@ -200,7 +203,7 @@ func TestSpawnTabRoutesToTerminal(t *testing.T) {
 	if !*calls.terminal {
 		t.Error("expected terminal.Runner to be called")
 	}
-	if *calls.iterm || *calls.zellij || *calls.kitty || *calls.warp {
+	if *calls.iterm || *calls.zellij || *calls.kitty || *calls.warp || *calls.ghostty {
 		t.Error("only terminal.Runner should be called")
 	}
 }
@@ -218,7 +221,7 @@ func TestSpawnTabRoutesToZellij(t *testing.T) {
 	if !*calls.zellij {
 		t.Error("expected zellij.Runner to be called")
 	}
-	if *calls.iterm || *calls.terminal || *calls.kitty || *calls.warp {
+	if *calls.iterm || *calls.terminal || *calls.kitty || *calls.warp || *calls.ghostty {
 		t.Error("only zellij.Runner should be called")
 	}
 }
@@ -236,7 +239,7 @@ func TestSpawnTabRoutesToKitty(t *testing.T) {
 	if !*calls.kitty {
 		t.Error("expected kitty backend to be called")
 	}
-	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.warp {
+	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.warp || *calls.ghostty {
 		t.Error("only kitty backend should be called")
 	}
 }
@@ -254,8 +257,26 @@ func TestSpawnTabRoutesToWarp(t *testing.T) {
 	if !*calls.warp {
 		t.Error("expected warp.Runner to be called")
 	}
-	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.kitty {
+	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.kitty || *calls.ghostty {
 		t.Error("only warp backend should be called")
+	}
+}
+
+// TestSpawnTabRoutesToGhostty asserts the ghostty Runner is the one
+// called when Detect() resolves to BackendGhostty.
+func TestSpawnTabRoutesToGhostty(t *testing.T) {
+	Override = BackendGhostty
+	t.Cleanup(func() { Override = "" })
+
+	calls := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+	if !*calls.ghostty {
+		t.Error("expected ghostty.Runner to be called")
+	}
+	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.kitty || *calls.warp {
+		t.Error("only ghostty backend should be called")
 	}
 }
 
@@ -277,6 +298,9 @@ func TestShellQuoteParity(t *testing.T) {
 		if got := warp.ShellQuote(in); got != exp {
 			t.Errorf("warp.ShellQuote(%q) = %q; want %q", in, got, exp)
 		}
+		if got := ghostty.ShellQuote(in); got != exp {
+			t.Errorf("ghostty.ShellQuote(%q) = %q; want %q", in, got, exp)
+		}
 	}
 }
 
@@ -284,7 +308,7 @@ func TestShellQuoteParity(t *testing.T) {
 // can assert on which backend SpawnTab dispatched to without an
 // awkward multi-return-value tuple.
 type runnerFlags struct {
-	iterm, terminal, zellij, kitty, warp *bool
+	iterm, terminal, zellij, kitty, warp, ghostty *bool
 }
 
 // stubAllRunners replaces every backend's Runner (plus warp's
@@ -293,7 +317,7 @@ type runnerFlags struct {
 // cleanup.
 func stubAllRunners(t *testing.T) runnerFlags {
 	t.Helper()
-	var itermCalled, terminalCalled, zellijCalled, kittyCalled, warpCalled bool
+	var itermCalled, terminalCalled, zellijCalled, kittyCalled, warpCalled, ghosttyCalled bool
 
 	oldITerm := iterm.Runner
 	iterm.Runner = func(args []string) error {
@@ -365,11 +389,22 @@ func stubAllRunners(t *testing.T) runnerFlags {
 	warp.WriteScript = func(string) (string, error) { return "/tmp/flow-warp-stub.sh", nil }
 	t.Cleanup(func() { warp.WriteScript = oldWriteScript })
 
+	oldGhostty := ghostty.Runner
+	ghostty.Runner = func(args []string) error {
+		ghosttyCalled = true
+		if len(args) >= 2 && !strings.Contains(args[1], `"Ghostty"`) {
+			t.Errorf("ghostty script does not target Ghostty: %s", args[1])
+		}
+		return nil
+	}
+	t.Cleanup(func() { ghostty.Runner = oldGhostty })
+
 	return runnerFlags{
 		iterm:    &itermCalled,
 		terminal: &terminalCalled,
 		zellij:   &zellijCalled,
 		kitty:    &kittyCalled,
 		warp:     &warpCalled,
+		ghostty:  &ghosttyCalled,
 	}
 }
