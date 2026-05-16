@@ -101,6 +101,7 @@ Sessions:
   flow do                <ref> [--agent claude|codex] [--fresh] [--dangerously-skip-permissions]
   flow done              <ref>
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  flow hook agent-event --provider claude|codex (forwards lifecycle hooks to the local UI)
 
 Read:
   flow ui serve        [--host 127.0.0.1] [--port 8787] [--bg] (local web Mission Control UI)

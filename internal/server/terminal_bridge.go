@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"flow/internal/agenthooks"
 	"flow/internal/agents"
 	"flow/internal/flowdb"
 	"flow/internal/workdirreg"
@@ -226,7 +227,7 @@ func (h *terminalHub) startSessionLocked(launch terminalLaunch, cols, rows int) 
 	}
 	cmd := exec.Command(bin, launch.Args...)
 	cmd.Dir = launch.WorkDir
-	cmd.Env = append(terminalEnv(h.server.cfg.FlowRoot, h.server.cfg.CommandPath),
+	cmd.Env = append(terminalEnvWithHook(h.server.cfg.FlowRoot, h.server.cfg.CommandPath, h.server.cfg.HookURL),
 		"FLOW_TASK="+launch.Slug,
 		"FLOW_SESSION_PROVIDER="+provider,
 	)
@@ -270,6 +271,14 @@ func terminalEnv(flowRoot, commandPath string) []string {
 		env = setEnvValue(env, "FLOW_ROOT", root)
 	}
 	return prependCommandDirToPath(env, commandPath)
+}
+
+func terminalEnvWithHook(flowRoot, commandPath, hookURL string) []string {
+	env := terminalEnv(flowRoot, commandPath)
+	if hookURL = strings.TrimSpace(hookURL); hookURL != "" {
+		env = setEnvValue(env, "FLOW_HOOK_URL", hookURL)
+	}
+	return env
 }
 
 func setEnvValue(env []string, key, value string) []string {
@@ -465,6 +474,9 @@ func (s *Server) prepareTerminalLaunch(slug string) (terminalLaunch, error) {
 
 	if err := workdirreg.Touch(s.cfg.DB, task.WorkDir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
+	}
+	if _, err := agenthooks.InstallLocal(task.WorkDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: install local agent hooks: %v\n", err)
 	}
 
 	if created {

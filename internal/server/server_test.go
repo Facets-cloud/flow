@@ -812,8 +812,14 @@ func TestStaticActionPayloadForwardsProvider(t *testing.T) {
 	if !strings.Contains(body, "const nativeSessionSnapshot = rawSessionAgent?.terminal?.mode === 'native' || bridgeAgent?.terminal?.mode === 'native'") {
 		t.Fatal("session routes must detect native terminal transcript snapshots")
 	}
+	if !strings.Contains(body, "rawSessionAgent && bridgeAgent") {
+		t.Fatal("session routes must prefer refreshed bridge snapshots for active session status")
+	}
 	if !strings.Contains(body, "mode: nativeSessionSnapshot ? 'native' : (bridgeAgent.terminal?.mode || rawSessionAgent.terminal?.mode)") {
 		t.Fatal("session routes must merge retained bridge snapshots so spawn does not fall back to stale ui-data")
+	}
+	if !strings.Contains(body, "existing.status === agent.status") {
+		t.Fatal("session routes must refresh retained bridge snapshots when status changes without transcript growth")
 	}
 	if !strings.Contains(body, "const completedAgent = doneAgent ? (bridgeTranscriptCount > doneTranscriptCount ? bridgeAgent : doneAgent) : null") {
 		t.Fatal("completed session routes must not let a stale retained bridge agent override the done task snapshot")
@@ -827,6 +833,12 @@ func TestStaticActionPayloadForwardsProvider(t *testing.T) {
 	}
 	if strings.Count(string(tiles), `<Icon name="external-link" size={11}/>Open</button>`) < 3 {
 		t.Fatal("agent session tiles should label attach/navigation actions as Open with a navigation icon")
+	}
+	if !strings.Contains(string(tiles), "permissionWaiting ? 'Awaiting your approval' : 'Awaiting your input'") {
+		t.Fatal("question waits should be labeled as input instead of approval")
+	}
+	if !strings.Contains(string(tiles), "permissionWaiting ? (") || !strings.Contains(string(tiles), "onAction('pause', agent)") {
+		t.Fatal("non-permission waiting tiles should expose pause/open actions instead of approve/deny")
 	}
 	screens, err := staticFS.ReadFile("static/assets/c906f42d-c4d3-4f33-b4a9-aca5e8a18052.js")
 	if err != nil {

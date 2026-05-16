@@ -7,6 +7,7 @@ type Config struct {
 	FlowRoot    string
 	Version     string
 	CommandPath string
+	HookURL     string
 }
 
 type Server struct {

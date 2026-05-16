@@ -697,6 +697,9 @@ func (s *Server) nativeTerminalEnv() map[string]string {
 	} else if root := os.Getenv("FLOW_ROOT"); root != "" {
 		env["FLOW_ROOT"] = root
 	}
+	if hookURL := strings.TrimSpace(s.cfg.HookURL); hookURL != "" {
+		env["FLOW_HOOK_URL"] = hookURL
+	}
 	if path := pathWithCommandDir(os.Getenv("PATH"), s.cfg.CommandPath); path != "" {
 		env["PATH"] = path
 	}

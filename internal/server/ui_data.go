@@ -469,10 +469,16 @@ func (s *Server) uiMonitor(agents []uiAgent) uiMonitor {
 		uiRules = append(uiRules, uiAutomationRule{ID: rule.ID, Source: rule.Source, Kind: rule.Kind, Mode: rule.Mode})
 	}
 	eventByID := map[string]flowdb.MonitorEvent{}
+	hookAttentionURLs := map[string]bool{}
 	uiEvents := make([]uiMonitorEvent, 0, len(events))
 	lastSync := ""
 	for _, event := range events {
 		eventByID[event.ID] = event
+		if event.Source == agentHookMonitorSource && (event.Status == "new" || event.Status == "notified") && agentHookAttentionKind(event.Kind) {
+			if url := nullStringValue(event.URL); url != "" {
+				hookAttentionURLs[url] = true
+			}
+		}
 		if event.LastSeenAt > lastSync {
 			lastSync = event.LastSeenAt
 		}
@@ -502,6 +508,9 @@ func (s *Server) uiMonitor(agents []uiAgent) uiMonitor {
 	unread := 0
 	approvals := 0
 	for _, notification := range agentNotifications {
+		if notification.Level == "approval" && hookAttentionURLs[notification.URL] {
+			continue
+		}
 		if state := agentNotificationStates[notification.ID]; state != "" {
 			if state == "dismissed" {
 				continue
@@ -722,7 +731,8 @@ func (s *Server) uiAgent(tv TaskView, live map[string]bool) uiAgent {
 		sessionID = ""
 		status = "idle"
 	}
-	if !staleOverviewSession && tv.Status == "in-progress" && insights.AskedQuestion {
+	hookWaiting := s.agentHookWaitingFor(tv)
+	if !staleOverviewSession && tv.Status == "in-progress" && hookWaiting != nil {
 		status = "waiting"
 	}
 	branches := []string{}
@@ -805,12 +815,8 @@ func (s *Server) uiAgent(tv TaskView, live map[string]bool) uiAgent {
 	}
 	if tv.WaitingOn != nil {
 		agent.WaitingFor = &uiWaitingFor{Kind: "flow", Cmd: "flow update task " + tv.Slug + " --clear-waiting", Why: *tv.WaitingOn}
-	} else if insights.AskedQuestion {
-		kind := insights.AttentionKind
-		if kind == "" {
-			kind = "agent"
-		}
-		agent.WaitingFor = &uiWaitingFor{Kind: kind, Cmd: "Open session " + tv.Slug, Why: insights.Question}
+	} else if hookWaiting != nil {
+		agent.WaitingFor = hookWaiting
 	}
 	return agent
 }
@@ -821,43 +827,16 @@ func withTaskWorkDir(tv TaskView, workDir string) TaskView {
 }
 
 type taskSessionInsights struct {
-	ActivityAt    string
-	LastAction    string
-	Question      string
-	AttentionKind string
-	AskedQuestion bool
-	TokensUsed    int
-	TokensMax     int
+	ActivityAt string
+	LastAction string
+	TokensUsed int
+	TokensMax  int
 }
 
 func (s *Server) sessionInsightsForTask(tv TaskView, provider string, transcript []uiTranscript) taskSessionInsights {
 	insights := taskSessionInsights{TokensMax: contextWindowForProvider(provider)}
-	if action, question, kind := latestTranscriptAction(transcript); action != "" || kind != "" {
+	if action := latestTranscriptAction(transcript); action != "" {
 		insights.LastAction = action
-		insights.Question = question
-		insights.AttentionKind = kind
-		insights.AskedQuestion = kind != ""
-	}
-	if s.terminals != nil {
-		if terminalText, ok := s.terminals.scrollbackText(tv.Slug, 64*1024); ok {
-			if kind, question := terminalAttentionFromText(terminalText); kind != "" {
-				insights.AttentionKind = kind
-				insights.Question = question
-				insights.AskedQuestion = true
-				switch kind {
-				case "permission":
-					insights.LastAction = "permission requested"
-				case "question":
-					if insights.LastAction == "" {
-						insights.LastAction = "asked: " + truncateText(question, 120)
-					}
-				}
-			} else if strings.TrimSpace(terminalText) != "" {
-				insights.AttentionKind = ""
-				insights.Question = ""
-				insights.AskedQuestion = false
-			}
-		}
 	}
 	if tv.SessionID == nil || strings.TrimSpace(*tv.SessionID) == "" {
 		return insights
@@ -900,7 +879,7 @@ func contextWindowForProvider(provider string) int {
 	}
 }
 
-func latestTranscriptAction(transcript []uiTranscript) (string, string, string) {
+func latestTranscriptAction(transcript []uiTranscript) string {
 	for i := len(transcript) - 1; i >= 0; i-- {
 		entry := transcript[i]
 		switch entry.Type {
@@ -909,220 +888,26 @@ func latestTranscriptAction(transcript []uiTranscript) (string, string, string) 
 			if text == "" {
 				continue
 			}
-			kind, question := attentionFromText(entry.Text)
-			return "assistant: " + truncateText(text, 140), question, kind
+			return "assistant: " + truncateText(text, 140)
 		case "tool_use":
 			label := strings.TrimSpace(entry.Tool)
 			if entry.Input != "" {
 				label = strings.TrimSpace(label + " " + entry.Input)
 			}
 			if label != "" {
-				return "ran " + truncateText(label, 140), "", ""
+				return "ran " + truncateText(label, 140)
 			}
 		case "tool_result":
 			if entry.Summary != "" {
-				if kind, question := attentionFromText(entry.Preview); kind != "" {
-					return "tool result: " + truncateText(entry.Summary, 140), question, kind
-				}
-				return "tool result: " + truncateText(entry.Summary, 140), "", ""
+				return "tool result: " + truncateText(entry.Summary, 140)
 			}
 		case "user":
 			if text := firstLine(entry.Text); text != "" {
-				return "user: " + truncateText(text, 140), "", ""
+				return "user: " + truncateText(text, 140)
 			}
 		}
 	}
-	return "", "", ""
-}
-
-func attentionFromText(text string) (string, string) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return "", ""
-	}
-	lower := strings.ToLower(trimmed)
-	for _, phrase := range terminalPermissionPhrases() {
-		if strings.Contains(lower, phrase) {
-			return "permission", terminalAttentionExcerpt(trimmed, phrase)
-		}
-	}
-	if looksLikeQuestion(trimmed) {
-		return "question", firstLine(trimmed)
-	}
-	return "", ""
-}
-
-type terminalAttentionCandidate struct {
-	idx      int
-	kind     string
-	question string
-}
-
-func terminalPermissionPhrases() []string {
-	return []string{
-		"would you like to run the following command",
-		"do you want to allow",
-		"allow this command",
-		"allow command",
-		"permission required",
-		"requires approval",
-		"needs approval",
-		"approval required",
-		"press enter to confirm",
-	}
-}
-
-func terminalAttentionFromText(text string) (string, string) {
-	trimmed := strings.TrimSpace(stripTerminalANSIEscapes(text))
-	if trimmed == "" {
-		return "", ""
-	}
-	lower := strings.ToLower(trimmed)
-	candidate := terminalAttentionCandidate{idx: -1}
-	for _, phrase := range terminalPermissionPhrases() {
-		if idx := strings.LastIndex(lower, phrase); idx > candidate.idx {
-			candidate = terminalAttentionCandidate{idx: idx, kind: "permission"}
-		}
-	}
-	offset := 0
-	for _, line := range strings.Split(trimmed, "\n") {
-		trimmedLine := strings.TrimSpace(line)
-		if trimmedLine != "" && looksLikeQuestion(trimmedLine) {
-			lineIdx := offset + strings.Index(line, trimmedLine)
-			if lineIdx > candidate.idx {
-				candidate = terminalAttentionCandidate{idx: lineIdx, kind: "question", question: trimmedLine}
-			}
-		}
-		offset += len(line) + 1
-	}
-	if candidate.idx < 0 {
-		return "", ""
-	}
-	if terminalAttentionHasProgressAfter(trimmed[candidate.idx:]) {
-		return "", ""
-	}
-	if candidate.kind == "permission" {
-		return "permission", terminalAttentionExcerptAt(trimmed, candidate.idx)
-	}
-	if candidate.question != "" {
-		return "question", truncateText(candidate.question, 180)
-	}
-	return "", ""
-}
-
-func terminalAttentionHasProgressAfter(text string) bool {
-	lower := strings.ToLower(text)
-	progressPhrases := []string{
-		"\nbash(",
-		"\nread(",
-		"\nedit(",
-		"\nwrite(",
-		"\nran ",
-		"\n\u2022 ran ",
-		"\nok \u2713",
-		"ok \u2713",
-		"\nno matches found",
-		"\nfiles changed",
-		"insertions(+)",
-		"deletions(-)",
-		"\nsaving...",
-		"\nsauteing...",
-		"\nsaut\u00e9ing...",
-		"\nthinking...",
-		"\nerror:",
-		"\nwarning:",
-		"\nuser has answered your questions",
-		"\nuser answered",
-		"\nboth saved",
-		"\nworked for",
-		"\nrecap:",
-		"\npress ctrl-c",
-		"\nresume this session with",
-		"\nwhen you want to start",
-		"\n> ",
-	}
-	for _, phrase := range progressPhrases {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-	return false
-}
-
-var terminalANSIRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
-
-func stripTerminalANSIEscapes(text string) string {
-	if text == "" {
-		return ""
-	}
-	return terminalANSIRe.ReplaceAllString(text, "")
-}
-
-func terminalAttentionExcerptAt(text string, idx int) string {
-	if idx < 0 || idx >= len(text) {
-		return firstLine(text)
-	}
-	lineStart := strings.LastIndex(text[:idx], "\n") + 1
-	lines := strings.Split(text[lineStart:], "\n")
-	end := 3
-	if end > len(lines) {
-		end = len(lines)
-	}
-	return truncateText(strings.Join(nonEmptyTrimmedLines(lines[:end]), " "), 180)
-}
-
-func terminalAttentionExcerpt(text, phrase string) string {
-	lines := strings.Split(text, "\n")
-	lowerPhrase := strings.ToLower(phrase)
-	for i, line := range lines {
-		if strings.Contains(strings.ToLower(line), lowerPhrase) {
-			end := i + 3
-			if end > len(lines) {
-				end = len(lines)
-			}
-			return truncateText(strings.Join(nonEmptyTrimmedLines(lines[i:end]), " "), 180)
-		}
-	}
-	return firstLine(text)
-}
-
-func nonEmptyTrimmedLines(lines []string) []string {
-	out := []string{}
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			out = append(out, line)
-		}
-	}
-	return out
-}
-
-func looksLikeQuestion(text string) bool {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return false
-	}
-	lower := strings.ToLower(trimmed)
-	if strings.Contains(trimmed, "?") {
-		return true
-	}
-	phrases := []string{
-		"would you like",
-		"do you want",
-		"should i",
-		"please confirm",
-		"confirm or",
-		"choose",
-		"select",
-		"waiting for",
-		"press enter to confirm",
-	}
-	for _, phrase := range phrases {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-	return false
+	return ""
 }
 
 func (s *Server) uiPRLinks(taskSlug string) []uiPRLink {

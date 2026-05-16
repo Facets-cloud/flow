@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"flag"
+	"flow/internal/agenthooks"
 	"flow/internal/flowdb"
 	"flow/internal/server"
 	"flow/internal/workdirreg"
@@ -84,6 +85,11 @@ func serveUI(host string, port int) int {
 	if _, err := workdirreg.SyncGitRemotes(db); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: sync workdir remotes: %v\n", err)
 	}
+	if changed, err := agenthooks.InstallKnownWorkdirs(db); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: install local agent hooks for existing workdirs: %v\n", err)
+	} else if changed > 0 {
+		fmt.Fprintf(os.Stderr, "installed local agent hooks in %d existing workdir(s)\n", changed)
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -91,11 +97,16 @@ func serveUI(host string, port int) int {
 		return 1
 	}
 	commandPath := preferredUIFlowBinary(exe)
+	hookHost := host
+	if hookHost == "0.0.0.0" || hookHost == "::" {
+		hookHost = "127.0.0.1"
+	}
 	srv := server.New(server.Config{
 		DB:          db,
 		FlowRoot:    root,
 		Version:     Version,
 		CommandPath: commandPath,
+		HookURL:     "http://" + net.JoinHostPort(hookHost, strconv.Itoa(port)) + "/api/hooks/agent",
 	})
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	fmt.Fprintf(os.Stderr, "flow ui listening on http://%s\n", addr)

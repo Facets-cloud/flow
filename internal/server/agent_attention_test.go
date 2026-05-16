@@ -1,7 +1,10 @@
 package server
 
 import (
+	"encoding/json"
 	"flow/internal/flowdb"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,61 +41,6 @@ func TestSessionTranscriptUsageStats(t *testing.T) {
 	}
 }
 
-func TestAttentionDetectionCatchesPermissionsAndQuestions(t *testing.T) {
-	kind, excerpt := attentionFromText("Would you like to run the following command?\n$ kill 123\n1. Yes, proceed")
-	if kind != "permission" || excerpt == "" {
-		t.Fatalf("permission attention = kind %q excerpt %q", kind, excerpt)
-	}
-	action, question, kind := latestTranscriptAction([]uiTranscript{{Type: "assistant", Text: "Should I proceed with the deploy?"}})
-	if kind != "question" || question == "" || action == "" {
-		t.Fatalf("question action=%q question=%q kind=%q", action, question, kind)
-	}
-}
-
-func TestTerminalAttentionTracksOnlyUnansweredPermission(t *testing.T) {
-	unanswered := "Would you like to run the following command?\n$ kill 38173\n> 1. Yes, proceed (y)\n2. Yes, and don't ask again\nPress enter to confirm or esc to cancel"
-	kind, excerpt := terminalAttentionFromText(unanswered)
-	if kind != "permission" || excerpt == "" {
-		t.Fatalf("unanswered terminal attention = kind %q excerpt %q, want permission", kind, excerpt)
-	}
-
-	answered := unanswered + "\nBash(kill 38173)\n  ok command completed"
-	kind, excerpt = terminalAttentionFromText(answered)
-	if kind != "" || excerpt != "" {
-		t.Fatalf("answered terminal attention = kind %q excerpt %q, want none", kind, excerpt)
-	}
-}
-
-func TestTerminalAttentionClearsAnsweredClaudeQuestion(t *testing.T) {
-	scrollback := "\x1b[38;2;153;153;153mSave both files as drafted above?\x1b[39m\n" +
-		"User has answered your questions: Save both\n" +
-		"Both saved:\n" +
-		"- /Users/vishnukv/.flow/tasks/harness/updates/2026-05-16-phase-1-2-spec.md\n" +
-		"- /Users/vishnukv/.flow/tasks/harness/plan.md\n" +
-		"* Worked for 9m 10s\n" +
-		"* recap: Goal captured. Next: implement phase 1 step 1.\n" +
-		"> "
-	kind, excerpt := terminalAttentionFromText(scrollback)
-	if kind != "" || excerpt != "" {
-		t.Fatalf("answered Claude question attention = kind %q excerpt %q, want none", kind, excerpt)
-	}
-}
-
-func TestTerminalScrollbackClearsStaleTranscriptAttention(t *testing.T) {
-	srv := &Server{}
-	srv.terminals = newTerminalHub(srv)
-	srv.terminals.sessions["commit-local-changes"] = &terminalSession{
-		slug:       "commit-local-changes",
-		scrollback: []byte("Would you like to run the following command?\n$ git add internal/\n1. Yes, proceed\nBash(git add internal/)\n  ok 94 files changed"),
-	}
-	promptTranscript := []uiTranscript{{Type: "assistant", Text: "Would you like to run the following command?\n$ git add internal/\n1. Yes, proceed"}}
-
-	insights := srv.sessionInsightsForTask(TaskView{Slug: "commit-local-changes"}, "claude", promptTranscript)
-	if insights.AskedQuestion || insights.AttentionKind != "" {
-		t.Fatalf("insights = %+v, want stale transcript attention cleared by terminal progress", insights)
-	}
-}
-
 func TestAgentAttentionNotifications(t *testing.T) {
 	notifs := agentAttentionNotifications([]uiAgent{
 		{
@@ -111,6 +59,133 @@ func TestAgentAttentionNotifications(t *testing.T) {
 	if notifs[0].Level != "approval" || notifs[0].Status != "unread" || notifs[0].Source != "agent" {
 		t.Fatalf("notification = %+v, want unread agent approval", notifs[0])
 	}
+}
+
+func TestAgentHookPermissionCreatesWaitingNotification(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+	sessionID := "019e2f71-82f0-76b0-9353-fbc4a662d442"
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='in-progress', session_provider='claude', session_id=?, session_started=? WHERE slug='build-ui'`,
+		sessionID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{DB: db, FlowRoot: root, Version: "test"})
+	payload := map[string]any{
+		"hook_event_name": "PermissionRequest",
+		"session_id":      sessionID,
+		"tool_name":       "Bash",
+		"tool_input": map[string]any{
+			"command": "git status",
+		},
+	}
+	resp, err := srv.ingestAgentHook(agentHookTestRequest("claude"), payload, agentHookTestRaw(t, payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || resp.Task != "build-ui" || resp.Kind != "permission_request" || resp.NotificationID == "" {
+		t.Fatalf("response = %+v", resp)
+	}
+
+	agent, err := srv.agentForTask("build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.Status != "waiting" || agent.WaitingFor == nil || agent.WaitingFor.Kind != "permission" {
+		t.Fatalf("agent = %+v, want waiting for permission", agent)
+	}
+	monitor := srv.uiMonitor([]uiAgent{*agent})
+	if monitor.Unread != 1 || monitor.Approvals != 1 {
+		t.Fatalf("monitor = %+v, want one unread approval", monitor)
+	}
+}
+
+func TestAgentHookPostToolUseClearsWaiting(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+	sessionID := "019e2f71-82f0-76b0-9353-fbc4a662d442"
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='in-progress', session_provider='codex', session_id=?, session_started=? WHERE slug='build-ui'`,
+		sessionID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{DB: db, FlowRoot: root, Version: "test"})
+	permission := map[string]any{
+		"hook_event_name": "PermissionRequest",
+		"session_id":      sessionID,
+		"tool_name":       "Bash",
+	}
+	if _, err := srv.ingestAgentHook(agentHookTestRequest("codex"), permission, agentHookTestRaw(t, permission)); err != nil {
+		t.Fatal(err)
+	}
+	done := map[string]any{
+		"hook_event_name": "PostToolUse",
+		"session_id":      sessionID,
+		"tool_name":       "Bash",
+		"tool_use_id":     "toolu_123",
+	}
+	if _, err := srv.ingestAgentHook(agentHookTestRequest("codex"), done, agentHookTestRaw(t, done)); err != nil {
+		t.Fatal(err)
+	}
+
+	agent, err := srv.agentForTask("build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.WaitingFor != nil || agent.Status == "waiting" {
+		t.Fatalf("agent = %+v, want hook attention cleared", agent)
+	}
+	monitor := srv.uiMonitor([]uiAgent{*agent})
+	if monitor.Approvals != 0 {
+		t.Fatalf("monitor = %+v, want hook approval cleared", monitor)
+	}
+}
+
+func TestAgentHookPreToolAskUserQuestionCreatesWaiting(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+	sessionID := "019e2f71-82f0-76b0-9353-fbc4a662d442"
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='in-progress', session_provider='codex', session_id=?, session_started=? WHERE slug='build-ui'`,
+		sessionID, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Config{DB: db, FlowRoot: root, Version: "test"})
+	payload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      sessionID,
+		"tool_name":       "mcp__functions__request_user_input",
+		"tool_input": map[string]any{
+			"question": "Which branch should I use?",
+		},
+	}
+	if _, err := srv.ingestAgentHook(agentHookTestRequest("codex"), payload, agentHookTestRaw(t, payload)); err != nil {
+		t.Fatal(err)
+	}
+
+	agent, err := srv.agentForTask("build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.Status != "waiting" || agent.WaitingFor == nil || agent.WaitingFor.Kind != "question" {
+		t.Fatalf("agent = %+v, want waiting for question", agent)
+	}
+}
+
+func agentHookTestRequest(provider string) *http.Request {
+	return &http.Request{URL: &url.URL{RawQuery: "provider=" + provider}}
+}
+
+func agentHookTestRaw(t *testing.T, payload map[string]any) string {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func TestAgentAttentionNotificationCanBeDismissed(t *testing.T) {

@@ -1,10 +1,16 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"flow/internal/flowdb"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
+	"time"
 )
 
 // cmdHook dispatches `flow hook <subcommand>`. Main subcommands:
@@ -20,9 +26,13 @@ import (
 //
 //   - codex-run: internal wrapper used by `flow do --agent codex` so the
 //     spawned shell can run Codex and capture the Codex-generated session id.
+//
+//   - agent-event: side-effect hook sink for Claude/Codex lifecycle
+//     events. It forwards hook JSON to the local UI API without
+//     printing stdout or blocking the agent when the UI is unavailable.
 func cmdHook(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit)")
+		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit|agent-event)")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
@@ -33,6 +43,8 @@ func cmdHook(args []string) int {
 		return cmdHookUserPromptSubmit(rest)
 	case "codex-run":
 		return cmdHookCodexRun(rest)
+	case "agent-event":
+		return cmdHookAgentEvent(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown hook subcommand %q\n", sub)
 		return 2
@@ -222,4 +234,80 @@ func cmdHookUserPromptSubmit(args []string) int {
 		return 2
 	}
 	return 0
+}
+
+func cmdHookAgentEvent(args []string) int {
+	fs := flagSet("hook agent-event")
+	provider := fs.String("provider", "", "agent provider (claude|codex)")
+	apiURL := fs.String("url", "", "flow UI hook endpoint")
+	timeout := fs.Duration("timeout", 1500*time.Millisecond, "forward timeout")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		debugAgentHook("read stdin: %v", err)
+		return 0
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = []byte("{}")
+	}
+	if !json.Valid(raw) {
+		debugAgentHook("invalid hook JSON")
+		return 0
+	}
+	endpoint := agentHookEndpoint(*apiURL, *provider)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		debugAgentHook("build request: %v", err)
+		return 0
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: *timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		debugAgentHook("post hook event: %v", err)
+		return 0
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		debugAgentHook("hook endpoint returned %s", resp.Status)
+	}
+	return 0
+}
+
+func agentHookEndpoint(rawURL, provider string) string {
+	endpoint := strings.TrimSpace(rawURL)
+	if endpoint == "" {
+		endpoint = strings.TrimSpace(os.Getenv("FLOW_HOOK_URL"))
+	}
+	if endpoint == "" {
+		base := strings.TrimRight(strings.TrimSpace(os.Getenv("FLOW_UI_URL")), "/")
+		if base != "" {
+			endpoint = base + "/api/hooks/agent"
+		}
+	}
+	if endpoint == "" {
+		endpoint = "http://127.0.0.1:8787/api/hooks/agent"
+	}
+	if strings.TrimSpace(provider) == "" {
+		return endpoint
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	q := u.Query()
+	q.Set("provider", strings.TrimSpace(provider))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func debugAgentHook(format string, args ...any) {
+	if os.Getenv("FLOW_HOOK_DEBUG") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "flow hook agent-event: "+format+"\n", args...)
 }

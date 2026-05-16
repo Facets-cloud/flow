@@ -32,6 +32,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/ui-data", s.handleUIDataJSON)
 	mux.HandleFunc("/api/events", s.handleUIEvents)
 	mux.HandleFunc("/api/actions", s.handleAction)
+	mux.HandleFunc("/api/hooks/agent", s.handleAgentHook)
 	mux.HandleFunc("/api/overview", s.handleOverview)
 	mux.HandleFunc("/api/fs/entries", s.handleFSEntries)
 	mux.HandleFunc("/api/tasks", s.handleTasks)

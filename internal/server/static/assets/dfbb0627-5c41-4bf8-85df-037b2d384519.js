@@ -218,6 +218,8 @@ const AgentTile = ({ agent, onOpen, onAction, big }) => {
   const tick = useContext(ClockCtx);
   const liveSec = agent.status === 'running' ? Math.max(0, agent.last_activity_sec - (tick % 30)) : agent.last_activity_sec + (tick > 0 ? tick : 0);
   const tokens_pct = Math.max(0, Math.min(100, (agent.tokens_used / Math.max(1, agent.tokens_max)) * 100));
+  const waitingKind = agent.waiting_for?.kind || '';
+  const permissionWaiting = agent.status === 'waiting' && waitingKind === 'permission';
   return (
     <div className={`tile ${agent.status}`} onClick={() => onOpen(agent)}>
       <div className="tile-stripe"></div>
@@ -250,7 +252,7 @@ const AgentTile = ({ agent, onOpen, onAction, big }) => {
         )}
         {agent.status === 'waiting' && agent.waiting_for && (
           <div className="tile-wait">
-            <div className="wait-head"><Icon name="hand" size={11}/> Awaiting your approval</div>
+            <div className="wait-head"><Icon name="hand" size={11}/> {permissionWaiting ? 'Awaiting your approval' : 'Awaiting your input'}</div>
             <div className="wait-cmd mono">$ {agent.waiting_for.cmd}</div>
             <div className="wait-why">{agent.waiting_for.why}</div>
           </div>
@@ -274,8 +276,17 @@ const AgentTile = ({ agent, onOpen, onAction, big }) => {
           <div className="tile-actions">
             {agent.status === 'waiting' && (
               <>
-                <button className="btn sm green" onClick={() => onAction('approve', agent)}><Icon name="check" size={11}/>Approve</button>
-                <button className="btn sm danger" onClick={() => onAction('deny', agent)}><Icon name="x" size={11}/>Deny</button>
+                {permissionWaiting ? (
+                  <>
+                    <button className="btn sm green" onClick={() => onAction('approve', agent)}><Icon name="check" size={11}/>Approve</button>
+                    <button className="btn sm danger" onClick={() => onAction('deny', agent)}><Icon name="x" size={11}/>Deny</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn sm" onClick={() => onAction('pause', agent)}><Icon name="pause" size={11}/>Pause</button>
+                    <button className="btn sm primary" onClick={() => onAction('attach', agent)}><Icon name="external-link" size={11}/>Open</button>
+                  </>
+                )}
               </>
             )}
             {agent.status === 'running' && (

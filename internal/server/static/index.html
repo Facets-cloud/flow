@@ -1752,7 +1752,7 @@ const App = () => {
   const rawSessionTranscriptCount = (rawSessionAgent?.transcript || []).length;
   const bridgeTranscriptCount = (bridgeAgent?.transcript || []).length;
   const nativeSessionSnapshot = rawSessionAgent?.terminal?.mode === 'native' || bridgeAgent?.terminal?.mode === 'native';
-  const sessionAgent = rawSessionAgent && bridgeAgent && (nativeSessionSnapshot || bridgeTranscriptCount > rawSessionTranscriptCount)
+  const sessionAgent = rawSessionAgent && bridgeAgent
     ? { ...rawSessionAgent, ...bridgeAgent, terminal: { ...(rawSessionAgent.terminal || {}), ...(bridgeAgent.terminal || {}), mode: nativeSessionSnapshot ? 'native' : (bridgeAgent.terminal?.mode || rawSessionAgent.terminal?.mode) } }
     : rawSessionAgent || (!doneAgent ? bridgeAgent : null);
   const isPlaybook = route.startsWith('playbook/');
@@ -1774,8 +1774,7 @@ const App = () => {
   const completedAgent = doneAgent ? (bridgeTranscriptCount > doneTranscriptCount ? bridgeAgent : doneAgent) : null;
 
   useEffect(() => {
-    if (!isSession || !sessionSlug || (!doneAgent && !nativeSessionSnapshot)) return;
-    if (doneAgent && bridgeAgent && bridgeTranscriptCount >= doneTranscriptCount && bridgeTranscriptCount > 0 && !nativeSessionSnapshot) return;
+    if (!isSession || !sessionSlug) return;
     let cancelled = false;
     const loadBridge = () => {
       fetch(`/api/tasks/${encodeURIComponent(sessionSlug)}/bridge`, { cache: 'no-store' })
@@ -1788,7 +1787,9 @@ const App = () => {
             const nextCount = (agent.transcript || []).length;
             const existingMode = existing?.terminal?.mode;
             const nextMode = agent?.terminal?.mode;
-            if (existing && existingCount >= nextCount && existingMode === nextMode) return prev;
+            const existingWait = existing?.waiting_for ? JSON.stringify(existing.waiting_for) : '';
+            const nextWait = agent?.waiting_for ? JSON.stringify(agent.waiting_for) : '';
+            if (existing && existingCount >= nextCount && existingMode === nextMode && existing.status === agent.status && existingWait === nextWait && existing.last_action === agent.last_action && existing.last_activity_sec === agent.last_activity_sec) return prev;
             return { ...prev, [agent.slug]: agent };
           });
           const doneIdx = DONE_AGENTS.findIndex(a => a.slug === agent.slug);
@@ -1798,9 +1799,9 @@ const App = () => {
         .catch(() => {});
     };
     loadBridge();
-    const timer = nativeSessionSnapshot ? setInterval(loadBridge, 2500) : null;
-    return () => { cancelled = true; if (timer) clearInterval(timer); };
-  }, [isSession, sessionSlug, doneAgent?.slug, doneTranscriptCount, bridgeTranscriptCount, nativeSessionSnapshot]);
+    const timer = setInterval(loadBridge, 2500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [isSession, sessionSlug]);
 
   const navCounts = {
     mc: AGENTS.length,
