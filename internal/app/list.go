@@ -77,6 +77,8 @@ func listTasksCmd(args []string) int {
 	tag := fs.String("tag", "", "only tasks carrying this tag (case-insensitive)")
 	since := fs.String("since", "", "today|monday|7d|YYYY-MM-DD")
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
+	includeDeleted := fs.Bool("include-deleted", false, "include soft-deleted tasks")
+	deletedOnly := fs.Bool("deleted", false, "show only soft-deleted tasks")
 	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
 	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
 	if err := fs.Parse(args); err != nil {
@@ -89,6 +91,11 @@ func listTasksCmd(args []string) int {
 		Priority:        *priority,
 		Tag:             flowdb.NormalizeTag(*tag),
 		IncludeArchived: *includeArchived,
+		IncludeDeleted:  *includeDeleted,
+		DeletedOnly:     *deletedOnly,
+	}
+	if *deletedOnly {
+		filter.IncludeArchived = true
 	}
 	// Default kind is "regular"; "all" disables the kind filter.
 	if *kind != "all" {
@@ -97,7 +104,7 @@ func listTasksCmd(args []string) int {
 	// Hide done tasks by default. Skipped if --status is given (user
 	// explicitly chose a status, including possibly "done") or if
 	// --include-done is set.
-	if *status == "" && !*includeDone {
+	if *status == "" && !*includeDone && !*deletedOnly {
 		filter.ExcludeDone = true
 	}
 	if *since != "" {
@@ -167,6 +174,7 @@ func listTasksCmd(args []string) int {
 		liveTag  string
 		tags     string
 		archived bool
+		deleted  bool
 		done     bool
 	}
 	var rows []row
@@ -184,6 +192,7 @@ func listTasksCmd(args []string) int {
 			statusAb: statusAbbrev(t.Status),
 			pri:      priorityShort(t.Priority),
 			archived: t.ArchivedAt.Valid,
+			deleted:  t.DeletedAt.Valid,
 			done:     t.Status == "done",
 		}
 		if t.ProjectSlug.Valid && t.ProjectSlug.String != "" {
@@ -191,7 +200,7 @@ func listTasksCmd(args []string) int {
 		}
 
 		// Age: days in current status.
-		if !t.ArchivedAt.Valid {
+		if !t.ArchivedAt.Valid && !t.DeletedAt.Valid {
 			if age := daysInStatus(t, now); age > 0 {
 				r.age = fmt.Sprintf("%dd", age)
 			}
@@ -211,7 +220,7 @@ func listTasksCmd(args []string) int {
 			}
 		}
 
-		if t.Status == "in-progress" && !t.ArchivedAt.Valid {
+		if t.Status == "in-progress" && !t.ArchivedAt.Valid && !t.DeletedAt.Valid {
 			if days, ok := taskStaleness(t, root); ok {
 				r.stale = fmt.Sprintf("⚠ stale (%dd)", days)
 			}
@@ -294,6 +303,9 @@ func listTasksCmd(args []string) int {
 		if r.archived {
 			sb.WriteString("  (archived)")
 		}
+		if r.deleted {
+			sb.WriteString("  (deleted)")
+		}
 		fmt.Println(strings.TrimRight(sb.String(), " "))
 	}
 	return 0
@@ -303,12 +315,19 @@ func listProjectsCmd(args []string) int {
 	fs := flagSet("list projects")
 	status := fs.String("status", "", "active|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived projects")
+	includeDeleted := fs.Bool("include-deleted", false, "include soft-deleted projects")
+	deletedOnly := fs.Bool("deleted", false, "show only soft-deleted projects")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	filter := flowdb.ProjectFilter{
 		Status:          *status,
 		IncludeArchived: *includeArchived,
+		IncludeDeleted:  *includeDeleted,
+		DeletedOnly:     *deletedOnly,
+	}
+	if *deletedOnly {
+		filter.IncludeArchived = true
 	}
 	dbPath, err := flowDBPath()
 	if err != nil {
@@ -410,6 +429,9 @@ func listProjectsCmd(args []string) int {
 		if p.ArchivedAt.Valid {
 			arch = "  (archived)"
 		}
+		if p.DeletedAt.Valid {
+			arch += "  (deleted)"
+		}
 		fmt.Printf("  %-6s %-*s   %-7s %s %s%s\n",
 			priorityShort(p.Priority), maxSlug, slug, statusW, label, breakdown, arch)
 	}
@@ -420,6 +442,8 @@ func listPlaybooksCmd(args []string) int {
 	fs := flagSet("list playbooks")
 	project := fs.String("project", "", "filter by project slug")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
+	includeDeleted := fs.Bool("include-deleted", false, "include soft-deleted")
+	deletedOnly := fs.Bool("deleted", false, "show only soft-deleted")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -436,10 +460,16 @@ func listPlaybooksCmd(args []string) int {
 	}
 	defer db.Close()
 
-	pbs, err := flowdb.ListPlaybooks(db, flowdb.PlaybookFilter{
+	filter := flowdb.PlaybookFilter{
 		Project:         *project,
 		IncludeArchived: *includeArchived,
-	})
+		IncludeDeleted:  *includeDeleted,
+		DeletedOnly:     *deletedOnly,
+	}
+	if *deletedOnly {
+		filter.IncludeArchived = true
+	}
+	pbs, err := flowdb.ListPlaybooks(db, filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -457,6 +487,9 @@ func listPlaybooksCmd(args []string) int {
 		if pb.ArchivedAt.Valid {
 			archived = "  (archived)"
 		}
+		if pb.DeletedAt.Valid {
+			archived += "  (deleted)"
+		}
 		fmt.Printf("  %-40s %s%s\n", pb.Slug, proj, archived)
 	}
 	return 0
@@ -466,6 +499,8 @@ func listRunsCmd(args []string) int {
 	fs := flagSet("list runs")
 	status := fs.String("status", "", "backlog|in-progress|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
+	includeDeleted := fs.Bool("include-deleted", false, "include soft-deleted")
+	deletedOnly := fs.Bool("deleted", false, "show only soft-deleted")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -486,12 +521,18 @@ func listRunsCmd(args []string) int {
 	}
 	defer db.Close()
 
-	tasks, err := flowdb.ListTasks(db, flowdb.TaskFilter{
+	filter := flowdb.TaskFilter{
 		Kind:            "playbook_run",
 		PlaybookSlug:    playbookSlug,
 		Status:          *status,
 		IncludeArchived: *includeArchived,
-	})
+		IncludeDeleted:  *includeDeleted,
+		DeletedOnly:     *deletedOnly,
+	}
+	if *deletedOnly {
+		filter.IncludeArchived = true
+	}
+	tasks, err := flowdb.ListTasks(db, filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -504,6 +545,9 @@ func listRunsCmd(args []string) int {
 		archived := ""
 		if tk.ArchivedAt.Valid {
 			archived = "  (archived)"
+		}
+		if tk.DeletedAt.Valid {
+			archived += "  (deleted)"
 		}
 		pbCol := ""
 		if tk.PlaybookSlug.Valid {
@@ -524,7 +568,7 @@ func projectTaskCounts(db *sql.DB, projectSlug string) (taskCounts, error) {
 	var c taskCounts
 	rows, err := db.Query(
 		`SELECT status, COUNT(*) FROM tasks
-		 WHERE project_slug = ? AND archived_at IS NULL
+		 WHERE project_slug = ? AND archived_at IS NULL AND deleted_at IS NULL
 		 GROUP BY status`, projectSlug)
 	if err != nil {
 		return c, err

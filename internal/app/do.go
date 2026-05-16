@@ -3,62 +3,16 @@ package app
 import (
 	"database/sql"
 	"errors"
-	"flag"
+	"flow/internal/agents"
 	"flow/internal/flowdb"
 	"flow/internal/spawner"
+	"flow/internal/workdirreg"
+	"flow/internal/worktree"
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 )
-
-// withMarker prefixes the injected text so the receiving session can
-// distinguish a --with instruction from typed user input.
-const withMarker = "[via flow do --with]"
-
-// loadInjectionText resolves --with / --with-file into the text that
-// will be injected as the session's first user message. For
-// --with-file we don't embed the file's contents — we synthesize a
-// "read instructions at <abs-path>" prompt and let the session use its
-// Read tool. That keeps the shell-quoted blob short regardless of file
-// size and lets the receiving model reason about the file directly.
-func loadInjectionText(fs *flag.FlagSet, withInstr, withFile string) (string, int) {
-	passedWith, passedWithFile := false, false
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "with":
-			passedWith = true
-		case "with-file":
-			passedWithFile = true
-		}
-	})
-	if !passedWith && !passedWithFile {
-		return "", 0
-	}
-	if passedWith && passedWithFile {
-		fmt.Fprintln(os.Stderr, "error: --with and --with-file are mutually exclusive")
-		return "", 2
-	}
-	if passedWith {
-		text := strings.TrimSpace(withInstr)
-		if text == "" {
-			fmt.Fprintln(os.Stderr, "error: --with instruction is empty")
-			return "", 2
-		}
-		return text, 0
-	}
-	if _, err := os.Stat(withFile); err != nil {
-		fmt.Fprintf(os.Stderr, "error: --with-file: %v\n", err)
-		return "", 1
-	}
-	abs, err := filepath.Abs(withFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: --with-file: %v\n", err)
-		return "", 1
-	}
-	return "read instructions at " + abs, 0
-}
 
 // openConcurrentDB opens flow.db with a generous busy_timeout so that two
 // concurrent `flow do` processes (or two goroutines in the tests) will
@@ -93,9 +47,10 @@ func openConcurrentDB(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// cmdDo flips a task to in-progress, bootstraps a Claude session if
-// needed (race-free via atomic UPDATE ... WHERE session_id IS ?), and
-// spawns an iTerm tab to resume it. See spec §6 for the full protocol.
+// cmdDo flips a task to in-progress, bootstraps the selected agent session if
+// needed, and spawns a terminal tab to resume it. Claude sessions are
+// pre-bound with a generated session_id; Codex sessions are captured after
+// launch from Codex's session store.
 func cmdDo(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
@@ -103,42 +58,39 @@ func cmdDo(args []string) int {
 	}
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
-	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
+	agentFlag := fs.String("agent", "", "session agent: claude or codex")
+	codexAgent := fs.Bool("codex", false, "shortcut for --agent codex")
+	claudeAgent := fs.Bool("claude", false, "shortcut for --agent claude")
+	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass low-friction permissions flag through to the selected agent")
 	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
-	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
-	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
+	noWorktree := fs.Bool("no-worktree", false, "spawn the agent in the task's work_dir directly instead of a per-task git worktree")
 	// Two-pass parse so the slug positional may appear before OR after
 	// the flags: first absorb any leading flags, then take the next
 	// non-flag as the slug, then absorb any trailing flags.
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if handled, rc := parseFlagSet(fs, args); handled {
+		return rc
 	}
 	if fs.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
 		return 2
 	}
 	query := fs.Arg(0)
-	if err := fs.Parse(fs.Args()[1:]); err != nil {
-		return 2
-	}
-
-	injectionText, rc := loadInjectionText(fs, *withInstr, *withFile)
-	if rc != 0 {
+	if handled, rc := parseFlagSet(fs, fs.Args()[1:]); handled {
 		return rc
 	}
-	if injectionText != "" && *here {
-		fmt.Fprintln(os.Stderr, "error: --with/--with-file cannot be used with --here (no session is spawned to inject into)")
+	requestedProvider, err := requestedSessionProvider(*agentFlag, *codexAgent, *claudeAgent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
 	}
 
 	if *here {
+		if requestedProvider != "" && requestedProvider != sessionProviderClaude {
+			fmt.Fprintln(os.Stderr, "error: --here can only bind a Claude session; remove --codex/--agent codex")
+			return 2
+		}
 		return cmdDoHere(query, *force)
-	}
-
-	var extraClaudeArgs []string
-	if *dangerSkip {
-		extraClaudeArgs = append(extraClaudeArgs, "--dangerously-skip-permissions")
 	}
 
 	dbPath, err := flowDBPath()
@@ -157,12 +109,26 @@ func cmdDo(args []string) int {
 	if rc != 0 {
 		return rc
 	}
+	provider := task.SessionProvider
+	if provider == "" {
+		provider = sessionProviderClaude
+	}
+	if requestedProvider != "" {
+		provider = requestedProvider
+	}
+	if provider == sessionProviderCodex && !hasSessionID(task.SessionID) && task.SessionStarted.Valid && !*fresh {
+		if captured, err := agents.CaptureCodexSessionForTask(db, task.Slug, task.WorkDir, task.SessionStarted.String); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: capture codex session: %v\n", err)
+		} else if captured != "" {
+			task.SessionID = sql.NullString{String: captured, Valid: true}
+		}
+	}
 
 	// Live-session guard: if this task's session_id is already running
 	// in another claude process (e.g., the user has a tab open for it),
 	// refuse to spawn a duplicate. --force overrides. The check is
 	// best-effort: ps failures fall through silently rather than block.
-	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
+	if provider == sessionProviderClaude && !*force && task.SessionID.Valid && task.SessionID.String != "" {
 		if live, err := liveClaudeSessions(); err == nil {
 			if live[strings.ToLower(task.SessionID.String)] {
 				fmt.Fprintf(os.Stderr,
@@ -197,58 +163,79 @@ func cmdDo(args []string) int {
 		return 1
 	}
 	if curStatus == "done" {
-		if injectionText == "" {
-			fmt.Fprintf(os.Stderr,
-				"error: task %q is done; edit its status back to backlog or in-progress to reopen it\n",
-				task.Slug)
-			return 1
-		}
-		fmt.Fprintf(os.Stderr, "--with on done task %q: reopening as in-progress\n", task.Slug)
+		fmt.Fprintf(os.Stderr,
+			"error: task %q is done; edit its status back to backlog or in-progress to reopen it\n",
+			task.Slug)
+		return 1
 	}
 
 	// Decide bootstrap vs resume based on the row we re-read inside the tx.
-	// Fresh bootstrap means: either the task has no session_id, or --fresh
-	// was passed. In both cases we allocate a new UUID here and claim it
-	// in the DB via the status-flip UPDATE below — so the jsonl file claude
-	// writes is identified deterministically by us, not scraped afterwards.
+	// Fresh bootstrap means: either the task has no session_id, --fresh was
+	// passed, or the requested provider changes. Claude gets a preallocated
+	// UUID; Codex leaves session_id NULL until the capture poller observes the
+	// session JSONL Codex created.
 	var curSessionID sql.NullString
-	if err := tx.QueryRow(`SELECT session_id FROM tasks WHERE slug=?`, task.Slug).Scan(&curSessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
+	var curProvider string
+	if err := tx.QueryRow(`SELECT session_provider, session_id FROM tasks WHERE slug=?`, task.Slug).Scan(&curProvider, &curSessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "error: re-read session: %v\n", err)
 		return 1
 	}
-	needsBootstrap := !curSessionID.Valid || *fresh
+	if curProvider == "" {
+		curProvider = sessionProviderClaude
+	}
+	if requestedProvider == "" {
+		provider = curProvider
+	}
+	if hasSessionID(curSessionID) && curProvider != provider && !*fresh {
+		fmt.Fprintf(os.Stderr,
+			"error: task %q already has a %s session; use --fresh --agent %s to replace it\n",
+			task.Slug, curProvider, provider)
+		return 1
+	}
+	needsBootstrap := !hasSessionID(curSessionID) || *fresh || curProvider != provider
 	var sessionID string
-	if needsBootstrap {
+	if needsBootstrap && provider == sessionProviderClaude {
 		id, err := newUUID()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
 			return 1
 		}
 		sessionID = id
-	} else {
+	} else if hasSessionID(curSessionID) {
 		sessionID = curSessionID.String
 	}
 
 	now := flowdb.NowISO()
-	// 'done' is reachable here only via the --with auto-reopen path above.
-	const statusFilter = "status IN ('backlog','in-progress','done')"
 	if needsBootstrap {
-		if _, err := tx.Exec(
-			`UPDATE tasks SET status='in-progress',
-			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-			 session_id=?, session_started=?, updated_at=?
-			 WHERE slug=? AND `+statusFilter,
-			now, sessionID, now, now, task.Slug,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
-			return 1
+		if provider == sessionProviderClaude {
+			if _, err := tx.Exec(
+				`UPDATE tasks SET status='in-progress',
+				 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+				 session_provider=?, session_id=?, session_started=?, updated_at=?
+				 WHERE slug=? AND status IN ('backlog','in-progress')`,
+				now, provider, sessionID, now, now, task.Slug,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
+				return 1
+			}
+		} else {
+			if _, err := tx.Exec(
+				`UPDATE tasks SET status='in-progress',
+				 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+				 session_provider=?, session_id=NULL, session_started=?, updated_at=?
+				 WHERE slug=? AND status IN ('backlog','in-progress')`,
+				now, provider, now, now, task.Slug,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
+				return 1
+			}
 		}
 	} else {
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			 updated_at=?
-			 WHERE slug=? AND `+statusFilter,
+			 WHERE slug=? AND status IN ('backlog','in-progress')`,
 			now, now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
@@ -290,84 +277,119 @@ func cmdDo(args []string) int {
 		return 1
 	}
 
-	// Spawn the iTerm tab.
-	//
-	// We shell out to `claude` directly (no wrapper). The skill on disk at
-	// ~/.claude/skills/flow/SKILL.md is whatever was last installed via
-	// `flow skill install` / `flow skill update`. To refresh it after
-	// upgrading flow, the user runs `flow skill update` manually.
-	var command string
-	if needsBootstrap {
-		// Fresh bootstrap path: we pre-allocated the session UUID above
-		// and committed it to the DB. Passing --session-id to claude
-		// makes it write its jsonl at the deterministic path
-		// ~/.claude/projects/<encoded-cwd>/<sessionID>.jsonl, so there is
-		// nothing to discover afterwards.
-		playbookSlug := ""
-		isFirstRun := false
-		if task.PlaybookSlug.Valid {
-			playbookSlug = task.PlaybookSlug.String
-			// First run = this is the only non-archived run-task for the
-			// playbook. The current run row was just inserted by
-			// cmdRunPlaybook, so a count of 1 means no prior runs exist.
-			var runCount int
-			if err := db.QueryRow(
-				`SELECT COUNT(*) FROM tasks WHERE playbook_slug = ? AND kind = 'playbook_run' AND archived_at IS NULL`,
-				playbookSlug,
-			).Scan(&runCount); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: count playbook runs: %v\n", err)
+	// Worktree resolution: if the work_dir is inside a git repo, swap the
+	// agent's cwd to a per-task worktree at <repo>/.<agent>/worktrees/<slug>
+	// on branch flow/<slug>. This isolates concurrent task sessions in the
+	// same project from each other's working tree. Non-repo work_dirs (e.g.
+	// auto-created task workspaces) fall through unchanged.
+	if !*noWorktree {
+		wt, wtErr := worktree.Ensure(task.WorkDir, provider, task.Slug)
+		if wtErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: worktree setup failed, using work_dir directly: %v\n", wtErr)
+		} else if wt.IsRepo {
+			cwd = wt.WorktreePath
+			if _, err := db.Exec(
+				`UPDATE tasks SET worktree_path = ?, updated_at = ? WHERE slug = ?`,
+				wt.WorktreePath, flowdb.NowISO(), task.Slug,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: persist worktree_path: %v\n", err)
+			} else {
+				task.WorktreePath = sql.NullString{String: wt.WorktreePath, Valid: true}
 			}
-			isFirstRun = runCount <= 1
+			if wt.Created {
+				fmt.Printf("Created worktree %s on branch %s (from %s)\n", wt.WorktreePath, wt.Branch, wt.BaseBranch)
+			}
 		}
-		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
-		if injectionText != "" {
-			prompt = prompt + "\n\n" + withMarker + "\n" + injectionText
+	}
+
+	// Spawn the terminal tab. Claude is invoked directly; Codex goes through a
+	// tiny flow hook wrapper so flow can capture the Codex-generated session id
+	// after the interactive terminal starts.
+	playbookSlug := ""
+	isFirstRun := false
+	if task.PlaybookSlug.Valid {
+		playbookSlug = task.PlaybookSlug.String
+		var runCount int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE playbook_slug = ? AND kind = 'playbook_run' AND archived_at IS NULL AND deleted_at IS NULL`,
+			playbookSlug,
+		).Scan(&runCount); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: count playbook runs: %v\n", err)
 		}
-		command = fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
-	} else {
-		// Resume path: the UUID we already have in the DB is what claude
-		// used to write its existing jsonl.
-		command = "claude --resume " + sessionID
-		if injectionText != "" {
-			command += " " + spawner.ShellQuote(withMarker+"\n"+injectionText)
-		}
+		isFirstRun = runCount <= 1
+	}
+	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+	permissionMode := task.PermissionMode
+	if permissionMode == "" {
+		permissionMode = "default"
 	}
 	if *dangerSkip {
-		command += " --dangerously-skip-permissions"
+		permissionMode = "bypass"
 	}
-	// The spawned session learns its task via reverse-lookup on
-	// $CLAUDE_CODE_SESSION_ID against tasks.session_id — the DB is the
-	// single source of truth, so no FLOW_TASK / FLOW_PROJECT injection.
-	// We DO propagate $FLOW_ROOT when set, so the spawned session reads
-	// the same flow.db / kb / briefs the parent process is using.
-	var spawnEnv map[string]string
-	if root := os.Getenv("FLOW_ROOT"); root != "" {
-		spawnEnv = map[string]string{"FLOW_ROOT": root}
-	}
-	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
+
+	var command string
+	var codexPromptFile string
+	if provider == sessionProviderClaude {
 		if needsBootstrap {
-			// Spawn failed before claude could write its jsonl. Undo
-			// both the session_id pre-allocation AND the status flip
-			// so the next `flow do` retries bootstrap fresh. The
-			// session-id invariant (in-progress requires session_id)
-			// makes "preserve status, drop session_id" illegal —
-			// rolling status back to backlog is the only consistent
-			// recovery. The user's next `flow do` will flip fresh.
+			command = agentShellCommand("claude", append(append([]string{"--session-id", sessionID}, claudePermissionArgs(permissionMode)...), prompt))
+		} else {
+			command = agentShellCommand("claude", append([]string{"--resume", sessionID}, claudePermissionArgs(permissionMode)...))
+		}
+	} else {
+		mode := codexModeFresh
+		if !needsBootstrap {
+			mode = codexModeResume
+		}
+		command, codexPromptFile, err = buildCodexRunCommand(task.Slug, mode, sessionID, prompt, permissionMode)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: build codex command: %v\n", err)
+			return 1
+		}
+	}
+	// The spawned Claude session learns its task via reverse-lookup on
+	// $CLAUDE_CODE_SESSION_ID. The Codex hook exports FLOW_TASK because Codex
+	// does not expose an equivalent preallocated session id before launch. We
+	// propagate FLOW_ROOT so the spawned session reads the same DB/briefs as
+	// the parent process.
+	spawnEnv := flowSessionEnv(os.Getenv("FLOW_ROOT"))
+	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
+		if codexPromptFile != "" {
+			_ = os.Remove(codexPromptFile)
+		}
+		if needsBootstrap {
+			// Spawn failed before the provider could establish a usable
+			// terminal session. Undo both the session claim and the status
+			// flip so the next `flow do` retries bootstrap fresh.
 			//
 			// The WHERE clause guards against a concurrent `flow do`
 			// having mutated session_id between commit and now —
 			// only roll back if we still own the session.
-			if _, undoErr := db.Exec(
-				`UPDATE tasks SET
-					session_id        = NULL,
-					session_started   = NULL,
-					status            = 'backlog',
-					status_changed_at = NULL,
-					updated_at        = ?
-				 WHERE slug=? AND session_id=?`,
-				flowdb.NowISO(), task.Slug, sessionID,
-			); undoErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+			if provider == sessionProviderClaude {
+				if _, undoErr := db.Exec(
+					`UPDATE tasks SET
+						session_id        = NULL,
+						session_started   = NULL,
+						status            = 'backlog',
+						status_changed_at = NULL,
+						updated_at        = ?
+					 WHERE slug=? AND session_id=?`,
+					flowdb.NowISO(), task.Slug, sessionID,
+				); undoErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+				}
+			} else {
+				if _, undoErr := db.Exec(
+					`UPDATE tasks SET
+						session_id        = NULL,
+						session_started   = NULL,
+						status            = 'backlog',
+						status_changed_at = NULL,
+						updated_at        = ?
+					 WHERE slug=? AND session_provider=? AND session_id IS NULL`,
+					flowdb.NowISO(), task.Slug, sessionProviderCodex,
+				); undoErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: rollback pending codex session after spawn failure: %v\n", undoErr)
+				}
 			}
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -385,17 +407,26 @@ func cmdDo(args []string) int {
 			return 1
 		}
 	}
-	if _, err := db.Exec(
-		`UPDATE workdirs SET last_used_at = ? WHERE path = ?`,
-		now2, task.WorkDir,
-	); err != nil {
+	if err := workdirreg.Touch(db, task.WorkDir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
+	}
+	// Snapshot the cwd we actually spawned into — that's where the agent
+	// will commit. When a worktree was set up above, cwd is the worktree
+	// path; otherwise it equals task.WorkDir.
+	snapTask := *task
+	snapTask.WorkDir = cwd
+	if err := captureTaskGitStartSnapshot(&snapTask, *fresh); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: git start snapshot: %v\n", err)
 	}
 
 	if needsBootstrap {
-		fmt.Printf("Spawned %s (session %s)\n", task.Slug, sessionID)
+		if provider == sessionProviderCodex {
+			fmt.Printf("Spawned %s (codex session pending capture)\n", task.Slug)
+		} else {
+			fmt.Printf("Spawned %s (session %s)\n", task.Slug, sessionID)
+		}
 	} else {
-		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
+		fmt.Printf("Resumed %s (%s session %s)\n", task.Slug, provider, sessionID)
 	}
 	return 0
 }
@@ -409,12 +440,10 @@ func cmdDo(args []string) int {
 // quotes, backticks, or dollar signs — because it gets shell-quoted
 // as a single positional argument to `claude`.
 //
-// The session's UUID is pre-allocated by `flow do` and passed via
-// `claude --session-id <uuid>`, so there is no self-registration step
-// here. The session loads context in order: task brief + task updates,
-// then (if any) project brief + project updates, then CLAUDE.md files
-// in the work_dir. The flow skill enforces this sequence too; the
-// bootstrap prompt is a backup in case the skill isn't auto-activated.
+// The session loads context in order: task brief + task updates, then (if any)
+// project brief + project updates, then repo convention files in the work_dir.
+// The flow skill enforces this sequence too; the bootstrap prompt is a backup
+// in case the skill isn't auto-activated.
 // Kept for callers (and tests) that don't track first-run state. New
 // callers should use buildBootstrapPromptForKindV2 to opt into the
 // first-run variant when relevant.
@@ -438,10 +467,10 @@ func buildBootstrapPromptForKindV2(slug, kind, playbookSlug string, isFirstRun b
 func buildTaskBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
 		"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
+			"1. Load the flow operating manual. If a Skill tool is available, invoke the flow skill via the Skill tool. Otherwise read ~/.codex/skills/flow/SKILL.md or ~/.claude/skills/flow/SKILL.md, whichever exists. This governs workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
 			"2. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files listed under other: are sidecar references — load on demand when relevant, not eagerly.\n"+
 			"3. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief AND every file under updates:. Files under other: are on-demand references.\n"+
-			"4. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
+			"4. Read AGENTS.md and/or CLAUDE.md in your work_dir and any nested convention files under subdirectories you will modify. These override any assumption from the brief.\n"+
 			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
 	)
@@ -455,11 +484,11 @@ func buildTaskBootstrapPrompt(slug string) string {
 func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string, isFirstRun bool) string {
 	base := fmt.Sprintf(
 		"You are running playbook `%s` as run `%s`. Do ALL of the following in order before executing anything:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works.\n"+
+			"1. Load the flow operating manual. If a Skill tool is available, invoke the flow skill via the Skill tool. Otherwise read ~/.codex/skills/flow/SKILL.md or ~/.claude/skills/flow/SKILL.md, whichever exists.\n"+
 			"2. Run: flow show playbook %s. This shows the playbook's definition and recent runs — context only, not your instructions. Note any files listed under other: — they're sidecar references you can Read on demand if relevant; do not eagerly load them.\n"+
 			"3. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files under other: are references for THIS run; load on demand when relevant. The brief is your authoritative instructions for this run — it was snapshotted from the playbook at the moment this run started. Execute against this, not the live playbook brief.\n"+
 			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief and every file under updates:. Files under other: are on-demand references.\n"+
-			"5. Read CLAUDE.md in your work_dir.\n"+
+			"5. Read AGENTS.md and/or CLAUDE.md in your work_dir.\n"+
 			"6. Only then begin executing your brief.\n"+
 			"\n"+
 			"While executing: if the user adjusts the playbook's procedure during this run (e.g. 'let's always do X', 'change the approach for...', 'this step should also...'), pause and ask via AskUserQuestion whether to persist the change to the playbook's live brief.md so future runs benefit. Options: 'Persist to playbook' (Edit playbooks/%s/brief.md), 'Just this run' (no change to live playbook), 'Both — persist + log a note in playbooks/%s/updates/'. The run's own brief.md is a frozen snapshot — never edit it to change future behavior; that's what the live playbook brief is for. See flow skill §4.13 for the full pattern.",
@@ -601,6 +630,9 @@ func cmdDoHere(query string, force bool) int {
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		if task.SessionID.String == sid {
 			// Already bound to this same session — idempotent no-op.
+			if err := captureTaskGitStartSnapshot(task, false); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: git start snapshot: %v\n", err)
+			}
 			fmt.Printf("%s already bound to this session (%s)\n", task.Slug, sid)
 			return 0
 		}
@@ -615,6 +647,7 @@ func cmdDoHere(query string, force bool) int {
 	now := flowdb.NowISO()
 	res, err := db.Exec(
 		`UPDATE tasks SET
+			session_provider = 'claude',
 			session_id      = ?,
 			session_started = COALESCE(session_started, ?),
 			status          = 'in-progress',
@@ -630,6 +663,9 @@ func cmdDoHere(query string, force bool) int {
 	if affected, _ := res.RowsAffected(); affected == 0 {
 		fmt.Fprintf(os.Stderr, "error: task %q not updated\n", task.Slug)
 		return 1
+	}
+	if err := captureTaskGitStartSnapshot(task, force); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: git start snapshot: %v\n", err)
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
 	return 0

@@ -5,8 +5,6 @@ import (
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -55,6 +53,17 @@ func seedTask(t *testing.T, slug string) {
 	t.Helper()
 	if rc := cmdAdd([]string{"task", slug}); rc != 0 {
 		t.Fatalf("seed task rc=%d", rc)
+	}
+}
+
+func TestCmdDoHelpReturnsZero(t *testing.T) {
+	out := captureStdout(t, func() {
+		if rc := cmdDo([]string{"--help"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "Usage of do") {
+		t.Fatalf("help output missing usage:\n%s", out)
 	}
 }
 
@@ -400,6 +409,85 @@ func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 	}
 }
 
+func TestCmdDoCodexFreshUsesInteractiveWrapper(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "codex-fresh")
+
+	_, getScript := stubITerm(t)
+	if rc := cmdDo([]string{"codex-fresh", "--agent", "codex"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "codex-fresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionProvider != "codex" {
+		t.Fatalf("session provider = %q, want codex", task.SessionProvider)
+	}
+	if task.SessionID.Valid {
+		t.Fatalf("fresh codex launch should wait for capture, got session_id=%q", task.SessionID.String)
+	}
+	if task.Status != "in-progress" || !task.SessionStarted.Valid {
+		t.Fatalf("task after codex launch = %+v", task)
+	}
+
+	script := getScript()
+	for _, want := range []string{"hook codex-run", "--task", "codex-fresh", "--mode", "fresh", "--permission-mode", "default"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("codex spawn script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, " claude ") {
+		t.Fatalf("codex spawn script should not invoke claude:\n%s", script)
+	}
+}
+
+func TestCodexCLIArgsUseInteractiveCodex(t *testing.T) {
+	fresh, err := codexCLIArgs(codexModeFresh, "", "bootstrap", "/tmp/work", "/tmp/flow-root", "bypass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) == 0 || fresh[0] == "exec" || testContainsString(fresh, "exec") {
+		t.Fatalf("fresh codex args should use interactive root command, got %#v", fresh)
+	}
+	for _, want := range []string{"--no-alt-screen", "-C", "/tmp/work", "--add-dir", "/tmp/flow-root", "--dangerously-bypass-approvals-and-sandbox", "bootstrap"} {
+		if !testContainsString(fresh, want) {
+			t.Fatalf("fresh args missing %q: %#v", want, fresh)
+		}
+	}
+
+	resume, err := codexCLIArgs(codexModeResume, "abc-session", "", "/tmp/work", "/tmp/flow-root", "auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResume := []string{"resume", "--include-non-interactive", "--no-alt-screen", "-C", "/tmp/work", "--add-dir", "/tmp/flow-root", "--ask-for-approval", "never", "--sandbox", "workspace-write", "abc-session"}
+	if strings.Join(resume, "\x00") != strings.Join(wantResume, "\x00") {
+		t.Fatalf("resume args = %#v, want %#v", resume, wantResume)
+	}
+
+	defaultFresh, err := codexCLIArgs(codexModeFresh, "", "bootstrap", "/tmp/work", "/tmp/flow-root", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDefault := []string{"--add-dir", "/tmp/flow-root", "--ask-for-approval", "on-request", "--sandbox", "workspace-write"}
+	for _, want := range wantDefault {
+		if !testContainsString(defaultFresh, want) {
+			t.Fatalf("default fresh args missing %q: %#v", want, defaultFresh)
+		}
+	}
+}
+
+func testContainsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
 // TestCmdDoConcurrentFreshTasks verifies two concurrent cmdDo calls on a
 // fresh task don't corrupt DB state. The BEGIN IMMEDIATE lock serializes
 // the txs: the winner allocates a UUID and writes it; the loser sees
@@ -587,6 +675,9 @@ func TestCmdDoPropagatesFlowRootEnv(t *testing.T) {
 	}
 	if !strings.Contains(script, root) {
 		t.Errorf("spawn script missing FLOW_ROOT value %q; got:\n%s", root, script)
+	}
+	if !strings.Contains(script, "PATH=") {
+		t.Errorf("spawn script missing PATH propagation for flow binary preference; got:\n%s", script)
 	}
 }
 
@@ -779,203 +870,5 @@ func TestCmdDoHereRejectsDoneTask(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
 	if rc := cmdDo([]string{"done-task", "--here"}); rc != 1 {
 		t.Errorf("rc=%d, want 1 (--here on done task should refuse)", rc)
-	}
-}
-
-func TestCmdDoWithFreshInjectsAfterBootstrap(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-fresh")
-	_, getScript := stubITerm(t)
-
-	if rc := cmdDo([]string{"with-fresh", "--with", "check upstream PR"}); rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	script := getScript()
-	if !strings.Contains(script, "claude --session-id ") {
-		t.Errorf("fresh path should still use --session-id: %s", script)
-	}
-	if !strings.Contains(script, "execution session for flow task with-fresh") {
-		t.Errorf("bootstrap prompt should be intact: %s", script)
-	}
-	if !strings.Contains(script, "[via flow do --with]") {
-		t.Errorf("injected text should carry the marker: %s", script)
-	}
-	if !strings.Contains(script, "check upstream PR") {
-		t.Errorf("injected text body missing: %s", script)
-	}
-	bootstrapIdx := strings.Index(script, "execution session for flow task")
-	markerIdx := strings.Index(script, "[via flow do --with]")
-	if bootstrapIdx == -1 || markerIdx == -1 || markerIdx < bootstrapIdx {
-		t.Errorf("marker must come after bootstrap prompt: %s", script)
-	}
-}
-
-func TestCmdDoWithResumeAppendsPositionalArg(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-resume")
-
-	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET session_id='resume-sid', session_started=? WHERE slug='with-resume'`, flowdb.NowISO()); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-
-	_, getScript := stubITerm(t)
-	if rc := cmdDo([]string{"with-resume", "--with", "ping the user"}); rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	script := getScript()
-	if !strings.Contains(script, "claude --resume resume-sid") {
-		t.Errorf("resume path should still emit --resume: %s", script)
-	}
-	if !strings.Contains(script, "[via flow do --with]") {
-		t.Errorf("resume path should carry the marker: %s", script)
-	}
-	if !strings.Contains(script, "ping the user") {
-		t.Errorf("resume path missing injected body: %s", script)
-	}
-}
-
-func TestCmdDoWithFile(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-file-task")
-
-	dir := t.TempDir()
-	p := filepath.Join(dir, "instr.txt")
-	if err := os.WriteFile(p, []byte("look at the failing tests\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, getScript := stubITerm(t)
-	if rc := cmdDo([]string{"with-file-task", "--with-file", p}); rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	script := getScript()
-	if !strings.Contains(script, "[via flow do --with]") {
-		t.Errorf("with-file should carry the marker: %s", script)
-	}
-	abs, _ := filepath.Abs(p)
-	want := "read instructions at " + abs
-	if !strings.Contains(script, want) {
-		t.Errorf("with-file should inject %q (pointer, not contents); got: %s", want, script)
-	}
-	if strings.Contains(script, "look at the failing tests") {
-		t.Errorf("with-file should not embed the file body: %s", script)
-	}
-}
-
-func TestCmdDoWithMutualExclusivity(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-mutex")
-	dir := t.TempDir()
-	p := filepath.Join(dir, "instr.txt")
-	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	spawns, _ := stubITerm(t)
-	rc := cmdDo([]string{"with-mutex", "--with", "x", "--with-file", p})
-	if rc != 2 {
-		t.Errorf("rc=%d, want 2 for mutex violation", rc)
-	}
-	if atomic.LoadInt64(spawns) != 0 {
-		t.Errorf("mutex violation should not spawn: %d", *spawns)
-	}
-}
-
-func TestCmdDoWithEmptyString(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-empty")
-	spawns, _ := stubITerm(t)
-	rc := cmdDo([]string{"with-empty", "--with", "   "})
-	if rc != 2 {
-		t.Errorf("rc=%d, want 2 for empty --with", rc)
-	}
-	if atomic.LoadInt64(spawns) != 0 {
-		t.Errorf("empty --with should not spawn: %d", *spawns)
-	}
-}
-
-func TestCmdDoWithFileMissing(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-missing")
-	spawns, _ := stubITerm(t)
-	rc := cmdDo([]string{"with-missing", "--with-file", "/no/such/file/here.txt"})
-	if rc != 1 {
-		t.Errorf("rc=%d, want 1 for missing file", rc)
-	}
-	if atomic.LoadInt64(spawns) != 0 {
-		t.Errorf("missing --with-file should not spawn: %d", *spawns)
-	}
-}
-
-func TestCmdDoWithReopensDoneTask(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-done")
-
-	db := openFlowDB(t)
-	if _, err := db.Exec(
-		`UPDATE tasks SET status='done', session_id='done-sid', session_started=?, updated_at=? WHERE slug='with-done'`,
-		flowdb.NowISO(), flowdb.NowISO(),
-	); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-
-	_, getScript := stubITerm(t)
-	if rc := cmdDo([]string{"with-done", "--with", "are we still blocked?"}); rc != 0 {
-		t.Fatalf("rc=%d, want 0 (--with should auto-reopen done)", rc)
-	}
-
-	db = openFlowDB(t)
-	task, err := flowdb.GetTask(db, "with-done")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if task.Status != "in-progress" {
-		t.Errorf("status=%q after --with on done, want in-progress", task.Status)
-	}
-	if task.SessionID.String != "done-sid" {
-		t.Errorf("session_id should be preserved across done->in-progress: got %q", task.SessionID.String)
-	}
-
-	script := getScript()
-	if !strings.Contains(script, "claude --resume done-sid") {
-		t.Errorf("reopen path should resume the existing session: %s", script)
-	}
-	if !strings.Contains(script, "[via flow do --with]") {
-		t.Errorf("reopen path should still inject the instruction: %s", script)
-	}
-}
-
-func TestCmdDoDoneStillRefusedWithoutWith(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "still-done")
-	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET status='done', session_id='still-done-sid', session_started=?, updated_at=? WHERE slug='still-done'`, flowdb.NowISO(), flowdb.NowISO()); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-	spawns, _ := stubITerm(t)
-	if rc := cmdDo([]string{"still-done"}); rc != 1 {
-		t.Errorf("rc=%d, want 1 for done without --with", rc)
-	}
-	if atomic.LoadInt64(spawns) != 0 {
-		t.Errorf("done without --with should not spawn: %d", *spawns)
-	}
-}
-
-func TestCmdDoWithRejectedWithHere(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "with-here")
-	spawns, _ := stubITerm(t)
-	sid := "abcdef12-3456-4789-8abc-def012345678"
-	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
-	rc := cmdDo([]string{"with-here", "--here", "--with", "do the thing"})
-	if rc != 2 {
-		t.Errorf("rc=%d, want 2 for --with + --here", rc)
-	}
-	if atomic.LoadInt64(spawns) != 0 {
-		t.Errorf("--with + --here should not spawn: %d", *spawns)
 	}
 }

@@ -38,6 +38,24 @@ func TestCmdAddPlaybookHappyPath(t *testing.T) {
 	}
 }
 
+func TestCmdAddPlaybookRegistersGitRemote(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	writeFakeGitConfig(t, wd, "git@github.com:facets/playbooks.git")
+
+	if rc := cmdAdd([]string{"playbook", "Remote Playbook", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("cmdAdd rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	got, err := flowdb.GetWorkdir(db, wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.GitRemote.Valid || got.GitRemote.String != "git@github.com:facets/playbooks.git" {
+		t.Fatalf("git remote = %+v", got.GitRemote)
+	}
+}
+
 func TestCmdAddPlaybookRequiresWorkDir(t *testing.T) {
 	setupFlowRoot(t)
 	if rc := cmdAdd([]string{"playbook", "NoWD"}); rc == 0 {

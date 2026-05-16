@@ -29,26 +29,26 @@ func cmdRun(args []string) int {
 }
 
 func cmdRunPlaybook(args []string) int {
+	fs := flagSet("run playbook")
+	agentFlag := fs.String("agent", "", "session agent: claude or codex")
+	codexAgent := fs.Bool("codex", false, "shortcut for --agent codex")
+	claudeAgent := fs.Bool("claude", false, "shortcut for --agent claude")
+	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass low-friction permissions flag through to the selected agent")
+	if leadingHelpArg(args) {
+		fs.Usage()
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: run playbook requires a slug")
 		return 2
 	}
 	slug := args[0]
-	fs := flagSet("run playbook")
-	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude (ignored when --here is set)")
-	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
-	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
-	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
-	if err := fs.Parse(args[1:]); err != nil {
-		return 2
-	}
-
-	// Reject misuse before we materialize the run-task row.
-	if _, rc := loadInjectionText(fs, *withInstr, *withFile); rc != 0 {
+	if handled, rc := parseFlagSet(fs, args[1:]); handled {
 		return rc
 	}
-	if (*withInstr != "" || *withFile != "") && *here {
-		fmt.Fprintln(os.Stderr, "error: --with/--with-file cannot be used with --here (no session is spawned to inject into)")
+	requestedProvider, err := requestedSessionProvider(*agentFlag, *codexAgent, *claudeAgent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
 	}
 
@@ -68,32 +68,6 @@ func cmdRunPlaybook(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
-	}
-
-	// --here validation BEFORE the run-task row insert. Mirrors the
-	// pre-write checks in cmdDoHere — failing fast prevents a dangling
-	// backlog playbook_run task when env is wrong or this session is
-	// already owned by another task.
-	if *here {
-		sid := currentSessionID()
-		if sid == "" {
-			fmt.Fprintln(os.Stderr,
-				"error: --here requires running inside a Claude Code session ($CLAUDE_CODE_SESSION_ID is unset)")
-			return 1
-		}
-		if !sessionUUIDRe.MatchString(sid) {
-			fmt.Fprintf(os.Stderr,
-				"error: $CLAUDE_CODE_SESSION_ID is not a valid v4 UUID (got %q)\n", sid)
-			return 1
-		}
-		priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
-		if lookupErr == nil {
-			fmt.Fprintf(os.Stderr,
-				"error: this Claude session is already bound to task %q. binding it to a new playbook run would orphan %q's transcript and is rejected by the session_id uniqueness invariant.\n"+
-					"  to start this playbook run in a separate session: flow run playbook %s\n",
-				priorBinding.Slug, priorBinding.Slug, pb.Slug)
-			return 1
-		}
 	}
 
 	root, err := flowRoot()
@@ -116,14 +90,19 @@ func cmdRunPlaybook(args []string) int {
 
 	// Insert the run-task row.
 	now := flowdb.NowISO()
+	sessionProvider := requestedProvider
+	if sessionProvider == "" {
+		sessionProvider = sessionProviderClaude
+	}
 	_, err = db.Exec(
-		`INSERT INTO tasks (slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, status_changed_at, created_at, updated_at)
-		 VALUES (?, ?, ?, 'backlog', 'playbook_run', ?, 'medium', ?, ?, ?, ?)`,
+		`INSERT INTO tasks (slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, session_provider, status_changed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, 'backlog', 'playbook_run', ?, 'medium', ?, ?, ?, ?, ?)`,
 		runSlug,
 		fmt.Sprintf("%s run %s", pb.Slug, runSlug),
 		pb.ProjectSlug,
 		pb.Slug,
 		pb.WorkDir,
+		sessionProvider,
 		now, now, now,
 	)
 	if err != nil {
@@ -142,26 +121,16 @@ func cmdRunPlaybook(args []string) int {
 		return 1
 	}
 
-	// Close our DB handle so the delegate (cmdDo or cmdDoHere) can
-	// re-open its own connection.
+	// Close our DB handle so cmdDo can re-open it (cmdDo opens its own).
 	db.Close()
 
-	if *here {
-		// In-session bind path: no terminal spawn. dangerSkip is dropped
-		// — there's no claude process to forward the flag to.
-		return cmdDoHere(runSlug, false)
-	}
-
-	// Default path: delegate to cmdDo to spawn the session in a new tab.
+	// Delegate to cmdDo to spawn the session.
 	doArgs := []string{runSlug}
+	if requestedProvider != "" {
+		doArgs = append(doArgs, "--agent", requestedProvider)
+	}
 	if *dangerSkip {
 		doArgs = append(doArgs, "--dangerously-skip-permissions")
-	}
-	if *withInstr != "" {
-		doArgs = append(doArgs, "--with", *withInstr)
-	}
-	if *withFile != "" {
-		doArgs = append(doArgs, "--with-file", *withFile)
 	}
 	return cmdDo(doArgs)
 }

@@ -19,11 +19,18 @@ func initTempFlowRoot(t *testing.T) string {
 
 	oldRoot := os.Getenv("FLOW_ROOT")
 	oldHome := os.Getenv("HOME")
+	oldCodexHome, hadCodexHome := os.LookupEnv("CODEX_HOME")
 	os.Setenv("FLOW_ROOT", root)
 	os.Setenv("HOME", home)
+	os.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Cleanup(func() {
 		os.Setenv("FLOW_ROOT", oldRoot)
 		os.Setenv("HOME", oldHome)
+		if hadCodexHome {
+			os.Setenv("CODEX_HOME", oldCodexHome)
+		} else {
+			os.Unsetenv("CODEX_HOME")
+		}
 	})
 	return root
 }

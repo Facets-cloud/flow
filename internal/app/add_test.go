@@ -5,6 +5,7 @@ import (
 	"flow/internal/flowdb"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,24 @@ func TestCmdAddProjectHappyPath(t *testing.T) {
 	// workdir auto-registered.
 	if _, err := flowdb.GetWorkdir(db, wd); err != nil {
 		t.Errorf("workdir not auto-registered: %v", err)
+	}
+}
+
+func TestCmdAddProjectRegistersGitRemote(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	writeFakeGitConfig(t, wd, "git@github.com:facets/flow.git")
+
+	if rc := cmdAdd([]string{"project", "Flow UI", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	got, err := flowdb.GetWorkdir(db, wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.GitRemote.Valid || got.GitRemote.String != "git@github.com:facets/flow.git" {
+		t.Fatalf("git remote = %+v", got.GitRemote)
 	}
 }
 
@@ -170,6 +189,65 @@ func TestCmdAddTaskFloating(t *testing.T) {
 	}
 }
 
+func TestCmdAddTaskPermissionMode(t *testing.T) {
+	setupFlowRoot(t)
+
+	rc := cmdAdd([]string{"task", "Bypass task", "--permission-mode", "bypass"})
+	if rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "bypass-task")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.PermissionMode != "bypass" {
+		t.Fatalf("permission mode = %q, want bypass", task.PermissionMode)
+	}
+}
+
+func TestCmdAddTaskSessionProviderCodex(t *testing.T) {
+	setupFlowRoot(t)
+
+	rc := cmdAdd([]string{"task", "Codex task", "--agent", "codex"})
+	if rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "codex-task")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.SessionProvider != "codex" {
+		t.Fatalf("session provider = %q, want codex", task.SessionProvider)
+	}
+	if task.SessionID.Valid {
+		t.Fatalf("new codex task should not have session_id yet: %+v", task.SessionID)
+	}
+}
+
+func TestCmdAddTaskHelpDoesNotCreateTask(t *testing.T) {
+	setupFlowRoot(t)
+
+	out := captureStdout(t, func() {
+		if rc := cmdAdd([]string{"task", "--help"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "Usage of add task") {
+		t.Fatalf("help output missing usage:\n%s", out)
+	}
+
+	db := openFlowDB(t)
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("help should not create tasks, got %d rows", count)
+	}
+}
+
 func TestCmdAddTaskInheritsProjectWorkDir(t *testing.T) {
 	setupFlowRoot(t)
 	wd := t.TempDir()
@@ -211,6 +289,24 @@ func TestCmdAddTaskOverridesProjectWorkDir(t *testing.T) {
 	}
 	if task.WorkDir != overrideWD {
 		t.Errorf("expected override %q, got %q", overrideWD, task.WorkDir)
+	}
+}
+
+func TestCmdAddTaskRegistersExplicitGitRemote(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	writeFakeGitConfig(t, wd, "https://github.com/facets/task-repo.git")
+
+	if rc := cmdAdd([]string{"task", "Remote Task", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	got, err := flowdb.GetWorkdir(db, wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.GitRemote.Valid || got.GitRemote.String != "https://github.com/facets/task-repo.git" {
+		t.Fatalf("git remote = %+v", got.GitRemote)
 	}
 }
 

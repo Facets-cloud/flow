@@ -27,14 +27,40 @@ const hookMatcher = "startup|resume"
 // hookCommand: changing this string would orphan existing installs.
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
-// skillInstallPath returns the absolute path where the skill should be
-// installed on disk: ~/.claude/skills/flow/SKILL.md.
+// skillInstallPath returns the Claude skill installation path. It remains the
+// primary path for version tracking and Claude hooks.
 func skillInstallPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
 	}
 	return filepath.Join(home, ".claude", "skills", "flow", "SKILL.md"), nil
+}
+
+func codexSkillInstallPath() (string, error) {
+	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
+		return filepath.Join(codexHome, "skills", "flow", "SKILL.md"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("no home dir: %w", err)
+	}
+	return filepath.Join(home, ".codex", "skills", "flow", "SKILL.md"), nil
+}
+
+func skillInstallPaths() ([]string, error) {
+	claudePath, err := skillInstallPath()
+	if err != nil {
+		return nil, err
+	}
+	codexPath, err := codexSkillInstallPath()
+	if err != nil {
+		return nil, err
+	}
+	if codexPath == claudePath {
+		return []string{claudePath}, nil
+	}
+	return []string{claudePath, codexPath}, nil
 }
 
 // skillVersionPath returns the sidecar file that records which binary
@@ -104,20 +130,33 @@ func maybeAutoUpgradeSkill() {
 	if Version == "" || Version == "dev" {
 		return
 	}
-	skillPath, err := skillInstallPath()
+	paths, err := skillInstallPaths()
 	if err != nil {
 		return
 	}
-	if _, err := os.Stat(skillPath); err != nil {
-		// Not installed → user opted out; don't reinstall behind their back.
+	installed := false
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			installed = true
+			break
+		}
+	}
+	if !installed {
+		// Not installed anywhere → user opted out; don't reinstall behind
+		// their back.
 		return
 	}
 	if readSkillVersion() == Version {
 		return
 	}
 	// Version mismatch — refresh skill bytes and the SessionStart hook.
-	if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
-		return
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return
+		}
+		if err := os.WriteFile(path, embeddedSkill, 0o644); err != nil {
+			return
+		}
 	}
 	_ = writeSkillVersion(Version)
 	_, _ = installSessionStartHook()
@@ -156,30 +195,34 @@ func skillInstall(args []string, forceDefault bool) int {
 		return 2
 	}
 
-	dest, err := skillInstallPath()
+	dests, err := skillInstallPaths()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if _, err := os.Stat(dest); err == nil && !*force {
-		fmt.Fprintf(os.Stderr, "error: %s already exists; use --force to overwrite\n", dest)
-		return 1
-	} else if err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", dest, err)
-		return 1
+	for _, dest := range dests {
+		if _, err := os.Stat(dest); err == nil && !*force {
+			fmt.Fprintf(os.Stderr, "error: %s already exists; use --force to overwrite\n", dest)
+			return 1
+		} else if err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", dest, err)
+			return 1
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(dest), err)
-		return 1
-	}
-	if err := os.WriteFile(dest, embeddedSkill, 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", dest, err)
-		return 1
+	for _, dest := range dests {
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(dest), err)
+			return 1
+		}
+		if err := os.WriteFile(dest, embeddedSkill, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", dest, err)
+			return 1
+		}
+		fmt.Printf("installed flow skill to %s\n", dest)
 	}
 	if err := writeSkillVersion(Version); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
 	}
-	fmt.Printf("installed flow skill to %s\n", dest)
 
 	if *skipHook {
 		fmt.Println("--skip-hook: leaving ~/.claude/settings.json alone")
@@ -217,20 +260,29 @@ func skillUninstall(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	dest, err := skillInstallPath()
+	dests, err := skillInstallPaths()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	skillDir := filepath.Dir(dest)
-	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
-		fmt.Printf("flow skill not installed at %s — nothing to do\n", skillDir)
-	} else {
+	removedAny := false
+	for _, dest := range dests {
+		skillDir := filepath.Dir(dest)
+		if _, err := os.Stat(skillDir); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillDir, err)
+			return 1
+		}
 		if err := os.RemoveAll(skillDir); err != nil {
 			fmt.Fprintf(os.Stderr, "error: remove %s: %v\n", skillDir, err)
 			return 1
 		}
 		fmt.Printf("uninstalled flow skill from %s\n", skillDir)
+		removedAny = true
+	}
+	if !removedAny {
+		fmt.Println("flow skill not installed — nothing to do")
 	}
 
 	if *keepHook {

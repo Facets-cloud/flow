@@ -15,6 +15,20 @@ func flagSet(name string) *flag.FlagSet {
 	return fs
 }
 
+func leadingHelpArg(args []string) bool {
+	return len(args) > 0 && (args[0] == "-h" || args[0] == "--help")
+}
+
+func parseFlagSet(fs *flag.FlagSet, args []string) (handled bool, rc int) {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return true, 0
+		}
+		return true, 2
+	}
+	return false, 0
+}
+
 // currentSessionID returns this process's Claude Code session UUID,
 // or "" if not running inside a Claude Code session. Reads
 // $CLAUDE_CODE_SESSION_ID, which Claude Code injects into every

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"flow/internal/agents"
 	"flow/internal/flowdb"
 	"fmt"
 	"io"
@@ -50,6 +51,7 @@ func cmdDone(args []string) int {
 	}
 	query := args[0]
 	fs := flagSet("done")
+	noPR := fs.Bool("no-pr", false, "skip the post-done PR push and gh pr create attempt")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -86,6 +88,34 @@ func cmdDone(args []string) int {
 			task.Slug, task.Slug, task.Slug, task.Slug)
 		return 1
 	}
+	if task.SessionProvider == sessionProviderCodex && !hasSessionID(task.SessionID) {
+		if task.SessionStarted.Valid && task.SessionStarted.String != "" {
+			if captured, err := agents.CaptureCodexSessionForTask(db, task.Slug, task.WorkDir, task.SessionStarted.String); err != nil {
+				fmt.Fprintf(os.Stderr,
+					"error: task %q is a Codex session but flow has not captured its session_id yet, so close-out cannot read the transcript or run the KB sweep: %v\n"+
+						"  wait a moment and retry `flow done %s`, or resume it once with `flow do %s` so flow can capture the Codex session.\n",
+					task.Slug, err, task.Slug, task.Slug)
+				return 1
+			} else if captured != "" {
+				task.SessionID.Valid = true
+				task.SessionID.String = captured
+			}
+		}
+		if !hasSessionID(task.SessionID) {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q is a Codex session but flow has no captured session_id, so close-out cannot read the transcript or run the KB sweep.\n"+
+					"  wait a moment and retry `flow done %s`, or resume it once with `flow do %s` so flow can capture the Codex session.\n",
+				task.Slug, task.Slug, task.Slug)
+			return 1
+		}
+	}
+
+	gitSnapshotPath := ""
+	if path, err := writeTaskGitCloseoutSnapshot(task); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: git close-out snapshot failed: %v\n", err)
+	} else {
+		gitSnapshotPath = path
+	}
 
 	now := flowdb.NowISO()
 	res, err := db.Exec(
@@ -101,6 +131,17 @@ func cmdDone(args []string) int {
 		return 1
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
+	if gitSnapshotPath != "" {
+		fmt.Printf("Saved git snapshot %s\n", gitSnapshotPath)
+	}
+
+	if !*noPR {
+		if prURL, err := raiseDonePRForTask(db, task); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: PR creation failed: %v\n", err)
+		} else if prURL != "" {
+			fmt.Printf("Opened PR %s\n", prURL)
+		}
+	}
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		fmt.Print("updating kbs, project updates...")

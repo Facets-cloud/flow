@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS projects (
     work_dir      TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
-    archived_at   TEXT
+    archived_at   TEXT,
+    deleted_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS playbooks (
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS playbooks (
     work_dir      TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
-    archived_at   TEXT
+    archived_at   TEXT,
+    deleted_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -52,14 +54,18 @@ CREATE TABLE IF NOT EXISTS tasks (
     waiting_on            TEXT,
     due_date              TEXT,
     assignee              TEXT,
+    permission_mode       TEXT NOT NULL DEFAULT 'default' CHECK (permission_mode IN ('default','auto','bypass')),
     status_changed_at     TEXT,
+    session_provider      TEXT NOT NULL DEFAULT 'claude' CHECK (session_provider IN ('claude','codex')),
     session_id            TEXT,
     session_started       TEXT,
     session_last_resumed  TEXT,
+    worktree_path         TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
     archived_at           TEXT,
-    CHECK (status = 'backlog' OR session_id IS NOT NULL)
+    deleted_at            TEXT,
+    CHECK (status = 'backlog' OR session_id IS NOT NULL OR (session_provider = 'codex' AND status = 'in-progress'))
 );
 
 CREATE TABLE IF NOT EXISTS workdirs (
@@ -78,10 +84,64 @@ CREATE TABLE IF NOT EXISTS task_tags (
     PRIMARY KEY (task_slug, tag)
 );
 
+CREATE TABLE IF NOT EXISTS monitor_events (
+    id             TEXT PRIMARY KEY,
+    source         TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    source_id      TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    body           TEXT,
+    url            TEXT,
+    severity       TEXT NOT NULL DEFAULT 'medium' CHECK (severity IN ('low','medium','high')),
+    status         TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','notified','approved','ignored','started','done')),
+    first_seen_at  TEXT NOT NULL,
+    last_seen_at   TEXT NOT NULL,
+    raw_json       TEXT,
+    UNIQUE(source, source_id)
+);
+
+CREATE TABLE IF NOT EXISTS monitor_notifications (
+    id          TEXT PRIMARY KEY,
+    event_id    TEXT NOT NULL REFERENCES monitor_events(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    body        TEXT,
+    level       TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('info','approval','warning','success','error')),
+    status      TEXT NOT NULL DEFAULT 'unread' CHECK (status IN ('unread','read','dismissed','actioned')),
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS automation_rules (
+    id          TEXT PRIMARY KEY,
+    source      TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    mode        TEXT NOT NULL CHECK (mode IN ('off','log','notify','approval','auto_task','auto_agent','auto_agent_draft_only','summarize')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE(source, kind)
+);
+
+CREATE TABLE IF NOT EXISTS task_pr_links (
+    task_slug   TEXT NOT NULL REFERENCES tasks(slug) ON DELETE CASCADE,
+    repo        TEXT NOT NULL,
+    pr_number   INTEGER NOT NULL,
+    pr_url      TEXT NOT NULL,
+    state       TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','merged','closed')),
+    merged_at   TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (task_slug, repo, pr_number)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_slug);
 CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
 CREATE INDEX IF NOT EXISTS idx_task_tags_tag    ON task_tags(tag);
+CREATE INDEX IF NOT EXISTS idx_monitor_events_seen ON monitor_events(last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_monitor_events_status ON monitor_events(status);
+CREATE INDEX IF NOT EXISTS idx_monitor_notifications_status ON monitor_notifications(status);
+CREATE INDEX IF NOT EXISTS idx_automation_rules_source_kind ON automation_rules(source, kind);
+CREATE INDEX IF NOT EXISTS idx_task_pr_links_state ON task_pr_links(state);
+CREATE INDEX IF NOT EXISTS idx_task_pr_links_repo_number ON task_pr_links(repo, pr_number);
 `
 
 // indexesPostMigrate are indexes that depend on columns added by
@@ -92,6 +152,9 @@ const indexesPostMigrate = `
 CREATE INDEX IF NOT EXISTS idx_tasks_kind          ON tasks(kind);
 CREATE INDEX IF NOT EXISTS idx_tasks_playbook_slug ON tasks(playbook_slug);
 CREATE INDEX IF NOT EXISTS idx_playbooks_project   ON playbooks(project_slug);
+CREATE INDEX IF NOT EXISTS idx_projects_deleted_at ON projects(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_playbooks_deleted_at ON playbooks(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at);
 `
 
 // (idx_tasks_session_id is a partial UNIQUE index that requires a
@@ -112,6 +175,7 @@ type Project struct {
 	CreatedAt  string
 	UpdatedAt  string
 	ArchivedAt sql.NullString
+	DeletedAt  sql.NullString
 }
 
 // Task mirrors the tasks table. ProjectSlug is nullable for floating tasks.
@@ -127,13 +191,17 @@ type Task struct {
 	WaitingOn          sql.NullString
 	DueDate            sql.NullString
 	Assignee           sql.NullString
+	PermissionMode     string
 	StatusChangedAt    sql.NullString
+	SessionProvider    string
 	SessionID          sql.NullString
 	SessionStarted     sql.NullString
 	SessionLastResumed sql.NullString
+	WorktreePath       sql.NullString
 	CreatedAt          string
 	UpdatedAt          string
 	ArchivedAt         sql.NullString
+	DeletedAt          sql.NullString
 }
 
 // Workdir mirrors the workdirs convenience registry.
@@ -156,6 +224,8 @@ type TaskFilter struct {
 	Tag             string // optional; only tasks carrying this tag (already normalized)
 	Since           string // RFC3339 or "" for no lower bound
 	IncludeArchived bool
+	IncludeDeleted  bool
+	DeletedOnly     bool
 	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
 }
 
@@ -163,6 +233,8 @@ type TaskFilter struct {
 type ProjectFilter struct {
 	Status          string
 	IncludeArchived bool
+	IncludeDeleted  bool
+	DeletedOnly     bool
 }
 
 // ---------- lifecycle ----------
@@ -178,6 +250,36 @@ func NullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// NormalizePermissionMode canonicalizes the task-level agent permission mode.
+// The DB stores a small flow-facing enum; launch code translates it to the
+// current provider-specific CLI flags.
+func NormalizePermissionMode(mode string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "", "default":
+		return "default", nil
+	case "auto":
+		return "auto", nil
+	case "bypass", "bypasspermissions", "dangerously-skip-permissions", "dangerously_skip_permissions":
+		return "bypass", nil
+	default:
+		return "", fmt.Errorf("permission mode must be default|auto|bypass, got %q", mode)
+	}
+}
+
+// NormalizeSessionProvider canonicalizes the agent/provider used for a task
+// session. Claude can accept pre-allocated session ids; Codex sessions are
+// captured after launch from Codex's own session store.
+func NormalizeSessionProvider(provider string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case "", "claude", "claude-code", "claudecode":
+		return "claude", nil
+	case "codex", "codex-cli":
+		return "codex", nil
+	default:
+		return "", fmt.Errorf("session provider must be claude|codex, got %q", provider)
+	}
 }
 
 // OpenDB opens (or creates) the SQLite database at path, ensures the
@@ -267,8 +369,55 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
-	// Session-id invariant: any non-backlog task must have a session_id.
-	// Adds a CHECK to the tasks table; old DBs need a table rebuild.
+	has, err = columnExists(db, "tasks", "permission_mode")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'default' CHECK (permission_mode IN ('default','auto','bypass'))`); err != nil {
+			return fmt.Errorf("add tasks.permission_mode: %w", err)
+		}
+	}
+
+	has, err = columnExists(db, "tasks", "session_provider")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN session_provider TEXT NOT NULL DEFAULT 'claude'`); err != nil {
+			return fmt.Errorf("add tasks.session_provider: %w", err)
+		}
+		// SQLite cannot add the CHECK constraint during ALTER TABLE; fresh
+		// databases get it from schemaDDL and application code validates
+		// writes for migrated databases.
+	}
+
+	has, err = columnExists(db, "tasks", "worktree_path")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN worktree_path TEXT`); err != nil {
+			return fmt.Errorf("add tasks.worktree_path: %w", err)
+		}
+	}
+
+	for _, table := range []string{"projects", "playbooks", "tasks"} {
+		has, err = columnExists(db, table, "deleted_at")
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN deleted_at TEXT`, table)); err != nil {
+				return fmt.Errorf("add %s.deleted_at: %w", table, err)
+			}
+		}
+	}
+
+	// Session-id invariant: any non-backlog Claude task must have a
+	// session_id. Codex owns session-id allocation, so a freshly launched
+	// Codex task may be in-progress while flow captures the id from Codex's
+	// session store. Old DBs need a table rebuild.
 	if err := migrateTasksSessionInvariant(db); err != nil {
 		return fmt.Errorf("migrate session invariant: %w", err)
 	}
@@ -403,15 +552,15 @@ func migrateTasksSessionIDUnique(db *sql.DB) error {
 	return nil
 }
 
-// migrateTasksSessionInvariant rebuilds the tasks table to enforce
-// `CHECK (status = 'backlog' OR session_id IS NOT NULL)`. SQLite does
-// not support adding a CHECK constraint to an existing table via
-// ALTER TABLE, so the documented procedure (CREATE new, copy, DROP
-// old, RENAME) is used. Idempotent: probes sqlite_master for the
-// CHECK substring before doing any work, so subsequent calls are
-// no-ops. Existing rows that violate the new constraint are demoted
-// to backlog first (with a stderr summary), since there is no way to
-// invent a session_id for them after the fact.
+// migrateTasksSessionInvariant rebuilds the tasks table to enforce the
+// session binding invariant. Claude tasks must carry session_id once
+// non-backlog; Codex tasks may briefly be in-progress with no session_id
+// while flow captures the id that Codex generated. SQLite does not support
+// adding a CHECK constraint to an existing table via ALTER TABLE, so the
+// documented procedure (CREATE new, copy, DROP old, RENAME) is used.
+// Existing non-Codex violators are demoted to backlog first (with a stderr
+// summary), since there is no way to invent a session_id for them after the
+// fact.
 func migrateTasksSessionInvariant(db *sql.DB) error {
 	var ddl string
 	if err := db.QueryRow(
@@ -419,14 +568,17 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 	).Scan(&ddl); err != nil {
 		return fmt.Errorf("inspect tasks ddl: %w", err)
 	}
-	if strings.Contains(ddl, "session_id IS NOT NULL") {
+	if strings.Contains(ddl, "session_provider = 'codex' AND status = 'in-progress'") {
 		return nil
 	}
 
 	type violator struct{ slug, prevStatus string }
 	var vs []violator
 	rows, err := db.Query(
-		`SELECT slug, status FROM tasks WHERE status != 'backlog' AND session_id IS NULL`,
+		`SELECT slug, status FROM tasks
+		 WHERE status != 'backlog'
+		   AND session_id IS NULL
+		   AND NOT (session_provider = 'codex' AND status = 'in-progress')`,
 	)
 	if err != nil {
 		return fmt.Errorf("scan violators: %w", err)
@@ -454,7 +606,11 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 			fmt.Fprintf(os.Stderr, "  %s (was %s)\n", v.slug, v.prevStatus)
 		}
 		if _, err := db.Exec(
-			`UPDATE tasks SET status='backlog', updated_at=? WHERE status != 'backlog' AND session_id IS NULL`,
+			`UPDATE tasks
+			 SET status='backlog', updated_at=?
+			 WHERE status != 'backlog'
+			   AND session_id IS NULL
+			   AND NOT (session_provider = 'codex' AND status = 'in-progress')`,
 			NowISO(),
 		); err != nil {
 			return fmt.Errorf("demote violators: %w", err)
@@ -492,14 +648,17 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 			waiting_on            TEXT,
 			due_date              TEXT,
 			assignee              TEXT,
+			permission_mode       TEXT NOT NULL DEFAULT 'default' CHECK (permission_mode IN ('default','auto','bypass')),
 			status_changed_at     TEXT,
+			session_provider      TEXT NOT NULL DEFAULT 'claude' CHECK (session_provider IN ('claude','codex')),
 			session_id            TEXT,
 			session_started       TEXT,
 			session_last_resumed  TEXT,
 			created_at            TEXT NOT NULL,
 			updated_at            TEXT NOT NULL,
 			archived_at           TEXT,
-			CHECK (status = 'backlog' OR session_id IS NOT NULL)
+			deleted_at            TEXT,
+			CHECK (status = 'backlog' OR session_id IS NOT NULL OR (session_provider = 'codex' AND status = 'in-progress'))
 		)`); err != nil {
 		return fmt.Errorf("create tasks_new: %w", err)
 	}
@@ -507,15 +666,15 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 	if _, err := tx.Exec(`
 		INSERT INTO tasks_new (
 			slug, name, project_slug, status, kind, playbook_slug, priority,
-			work_dir, waiting_on, due_date, assignee, status_changed_at,
-			session_id, session_started, session_last_resumed,
-			created_at, updated_at, archived_at
+			work_dir, waiting_on, due_date, assignee, permission_mode, status_changed_at,
+			session_provider, session_id, session_started, session_last_resumed,
+			created_at, updated_at, archived_at, deleted_at
 		)
 		SELECT
 			slug, name, project_slug, status, kind, playbook_slug, priority,
-			work_dir, waiting_on, due_date, assignee, status_changed_at,
-			session_id, session_started, session_last_resumed,
-			created_at, updated_at, archived_at
+			work_dir, waiting_on, due_date, assignee, permission_mode, status_changed_at,
+			COALESCE(NULLIF(session_provider, ''), 'claude'), session_id, session_started, session_last_resumed,
+			created_at, updated_at, archived_at, deleted_at
 		FROM tasks`); err != nil {
 		return fmt.Errorf("copy rows: %w", err)
 	}
@@ -568,11 +727,11 @@ func columnExists(db *sql.DB, table, column string) (bool, error) {
 
 // ---------- project queries ----------
 
-const ProjectCols = "slug, name, status, priority, work_dir, created_at, updated_at, archived_at"
+const ProjectCols = "slug, name, status, priority, work_dir, created_at, updated_at, archived_at, deleted_at"
 
 func ScanProject(row interface{ Scan(dest ...any) error }) (*Project, error) {
 	var p Project
-	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
+	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt, &p.DeletedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -593,6 +752,11 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 	}
 	if !filter.IncludeArchived {
 		where = append(where, "archived_at IS NULL")
+	}
+	if filter.DeletedOnly {
+		where = append(where, "deleted_at IS NOT NULL")
+	} else if !filter.IncludeDeleted {
+		where = append(where, "deleted_at IS NULL")
 	}
 	q := "SELECT " + ProjectCols + " FROM projects"
 	if len(where) > 0 {
@@ -617,15 +781,15 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, permission_mode, status_changed_at, session_provider, session_id, session_started, session_last_resumed, worktree_path, created_at, updated_at, archived_at, deleted_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
 	err := row.Scan(
 		&t.Slug, &t.Name, &t.ProjectSlug, &t.Status, &t.Kind, &t.PlaybookSlug,
 		&t.Priority, &t.WorkDir,
-		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.StatusChangedAt, &t.SessionID,
-		&t.SessionStarted, &t.SessionLastResumed, &t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
+		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.PermissionMode, &t.StatusChangedAt, &t.SessionProvider, &t.SessionID,
+		&t.SessionStarted, &t.SessionLastResumed, &t.WorktreePath, &t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt, &t.DeletedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -647,7 +811,7 @@ func TaskBySessionID(db *sql.DB, sid string) (*Task, error) {
 	if sid == "" {
 		return nil, sql.ErrNoRows
 	}
-	row := db.QueryRow("SELECT "+TaskCols+" FROM tasks WHERE session_id = ? LIMIT 1", sid)
+	row := db.QueryRow("SELECT "+TaskCols+" FROM tasks WHERE session_id = ? AND deleted_at IS NULL LIMIT 1", sid)
 	return ScanTask(row)
 }
 
@@ -686,6 +850,11 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 	}
 	if !filter.IncludeArchived {
 		where = append(where, "archived_at IS NULL")
+	}
+	if filter.DeletedOnly {
+		where = append(where, "deleted_at IS NOT NULL")
+	} else if !filter.IncludeDeleted {
+		where = append(where, "deleted_at IS NULL")
 	}
 	q := "SELECT " + TaskCols + " FROM tasks"
 	if len(where) > 0 {
@@ -772,21 +941,24 @@ type Playbook struct {
 	CreatedAt   string
 	UpdatedAt   string
 	ArchivedAt  sql.NullString
+	DeletedAt   sql.NullString
 }
 
 // PlaybookFilter holds optional filters for ListPlaybooks.
 type PlaybookFilter struct {
 	Project         string
 	IncludeArchived bool
+	IncludeDeleted  bool
+	DeletedOnly     bool
 }
 
 // ---------- playbook queries ----------
 
-const PlaybookCols = "slug, name, project_slug, work_dir, created_at, updated_at, archived_at"
+const PlaybookCols = "slug, name, project_slug, work_dir, created_at, updated_at, archived_at, deleted_at"
 
 func ScanPlaybook(row interface{ Scan(dest ...any) error }) (*Playbook, error) {
 	var p Playbook
-	err := row.Scan(&p.Slug, &p.Name, &p.ProjectSlug, &p.WorkDir, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
+	err := row.Scan(&p.Slug, &p.Name, &p.ProjectSlug, &p.WorkDir, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt, &p.DeletedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -807,6 +979,11 @@ func ListPlaybooks(db *sql.DB, filter PlaybookFilter) ([]*Playbook, error) {
 	}
 	if !filter.IncludeArchived {
 		where = append(where, "archived_at IS NULL")
+	}
+	if filter.DeletedOnly {
+		where = append(where, "deleted_at IS NOT NULL")
+	} else if !filter.IncludeDeleted {
+		where = append(where, "deleted_at IS NULL")
 	}
 	q := "SELECT " + PlaybookCols + " FROM playbooks"
 	if len(where) > 0 {
@@ -931,14 +1108,14 @@ type TagCount struct {
 }
 
 // ListAllTags returns every distinct tag in use, with the number of
-// non-archived tasks that carry it. Sorted by count descending, then
+// non-archived, non-deleted tasks that carry it. Sorted by count descending, then
 // tag ascending — most-used tags first.
 func ListAllTags(db *sql.DB) ([]TagCount, error) {
 	rows, err := db.Query(`
 		SELECT t.tag, COUNT(*) AS n
 		FROM task_tags t
 		JOIN tasks tk ON tk.slug = t.task_slug
-		WHERE tk.archived_at IS NULL
+		WHERE tk.archived_at IS NULL AND tk.deleted_at IS NULL
 		GROUP BY t.tag
 		ORDER BY n DESC, t.tag ASC`)
 	if err != nil {

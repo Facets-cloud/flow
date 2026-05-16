@@ -23,6 +23,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	flowRoot := filepath.Join(tmp, "flow")
 	t.Setenv("FLOW_ROOT", flowRoot)
 	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", filepath.Join(tmp, ".codex"))
 
 	// Fake repo that serves as the project's work_dir.
 	repo := filepath.Join(tmp, "code", "budgeting-app")

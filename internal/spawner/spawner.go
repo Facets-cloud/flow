@@ -4,20 +4,21 @@
 // Selection priority (highest first):
 //
 //	$ZELLIJ set                                    → internal/zellij
-//	$KITTY_WINDOW_ID set or $TERM=xterm-kitty      → internal/kitty
-//	$FLOW_TERM=<valid backend>                     → that backend (user override)
-//	TERM_PROGRAM=WarpTerminal                      → internal/warp
-//	TERM_PROGRAM=Apple_Terminal                    → internal/terminal
-//	TERM_PROGRAM=iTerm.app                         → internal/iterm
-//	anything else (or unset)                       → internal/iterm  (historical default)
+//	$KITTY_WINDOW_ID set or $TERM=xterm-kitty      -> internal/kitty
+//	$FLOW_TERM=<valid backend>                     -> that backend (user override)
+//	WARP_IS_LOCAL_SHELL_SESSION set                -> internal/warp
+//	TERM_PROGRAM=WarpTerminal                      -> internal/warp
+//	TERM_PROGRAM=Apple_Terminal                    -> internal/terminal
+//	TERM_PROGRAM=iTerm.app                         -> internal/iterm
+//	anything else (or unset)                       -> internal/iterm  (historical default)
 //
 // $ZELLIJ and kitty's per-window markers win over $FLOW_TERM because if
 // the user is inside a session-manager terminal, that's where their
-// workflow lives — the host terminal is a substrate detail. $FLOW_TERM
+// workflow lives - the host terminal is a substrate detail. $FLOW_TERM
 // lets users on non-standard hosts (tmux inside Warp, shell-script
 // invocations, Hyper, wezterm, etc.) opt into a specific backend
 // without relying on TERM_PROGRAM. Unknown values silently fall
-// through to TERM_PROGRAM detection.
+// through to Warp/TERM_PROGRAM detection.
 //
 // The Override var lets tests pin the backend deterministically without
 // having to set env vars via t.Setenv.
@@ -65,32 +66,35 @@ func Detect() Backend {
 		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp:
 			return Backend(v)
 		}
-		// Unknown value falls through to TERM_PROGRAM detection.
+	}
+	if os.Getenv("WARP_IS_LOCAL_SHELL_SESSION") != "" {
+		return BackendWarp
 	}
 	switch os.Getenv("TERM_PROGRAM") {
+	case "WarpTerminal":
+		return BackendWarp
 	case "Apple_Terminal":
 		return BackendTerminal
 	case "iTerm.app":
 		return BackendITerm
-	case "WarpTerminal":
-		return BackendWarp
 	default:
 		return BackendITerm
 	}
 }
 
 // SpawnTab opens a tab in the auto-detected backend. The contract
-// matches every backend's SpawnTab.
+// matches iterm.SpawnTab, terminal.SpawnTab, zellij.SpawnTab,
+// kitty.SpawnTab, and warp.SpawnTab.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	switch Detect() {
 	case BackendZellij:
 		return zellij.SpawnTab(title, cwd, command, envVars)
 	case BackendKitty:
 		return kitty.SpawnTab(title, cwd, command, envVars)
-	case BackendTerminal:
-		return terminal.SpawnTab(title, cwd, command, envVars)
 	case BackendWarp:
 		return warp.SpawnTab(title, cwd, command, envVars)
+	case BackendTerminal:
+		return terminal.SpawnTab(title, cwd, command, envVars)
 	default:
 		return iterm.SpawnTab(title, cwd, command, envVars)
 	}

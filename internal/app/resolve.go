@@ -12,9 +12,18 @@ import (
 //
 // All ref resolution is exact match on slug (case-insensitive).
 
+type resolveOptions struct {
+	IncludeArchived bool
+	IncludeDeleted  bool
+}
+
 // ResolveTask resolves a ref to exactly one task by slug.
 // includeArchived controls whether archived rows are eligible.
 func ResolveTask(db *sql.DB, ref string, includeArchived bool) (*flowdb.Task, error) {
+	return ResolveTaskWithOptions(db, ref, resolveOptions{IncludeArchived: includeArchived})
+}
+
+func ResolveTaskWithOptions(db *sql.DB, ref string, opts resolveOptions) (*flowdb.Task, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("empty task ref")
@@ -27,14 +36,21 @@ func ResolveTask(db *sql.DB, ref string, includeArchived bool) (*flowdb.Task, er
 		}
 		return nil, err
 	}
-	if !includeArchived && t.ArchivedAt.Valid {
+	if !opts.IncludeArchived && t.ArchivedAt.Valid {
 		return nil, fmt.Errorf("task %q is archived", ref)
+	}
+	if !opts.IncludeDeleted && t.DeletedAt.Valid {
+		return nil, fmt.Errorf("task %q is deleted", ref)
 	}
 	return t, nil
 }
 
 // ResolveProject resolves a ref to exactly one project by slug.
 func ResolveProject(db *sql.DB, ref string, includeArchived bool) (*flowdb.Project, error) {
+	return ResolveProjectWithOptions(db, ref, resolveOptions{IncludeArchived: includeArchived})
+}
+
+func ResolveProjectWithOptions(db *sql.DB, ref string, opts resolveOptions) (*flowdb.Project, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("empty project ref")
@@ -47,8 +63,11 @@ func ResolveProject(db *sql.DB, ref string, includeArchived bool) (*flowdb.Proje
 		}
 		return nil, err
 	}
-	if !includeArchived && p.ArchivedAt.Valid {
+	if !opts.IncludeArchived && p.ArchivedAt.Valid {
 		return nil, fmt.Errorf("project %q is archived", ref)
+	}
+	if !opts.IncludeDeleted && p.DeletedAt.Valid {
+		return nil, fmt.Errorf("project %q is deleted", ref)
 	}
 	return p, nil
 }
@@ -56,6 +75,10 @@ func ResolveProject(db *sql.DB, ref string, includeArchived bool) (*flowdb.Proje
 // ResolvePlaybook resolves a ref to exactly one playbook by slug.
 // includeArchived controls whether archived rows are eligible.
 func ResolvePlaybook(db *sql.DB, ref string, includeArchived bool) (*flowdb.Playbook, error) {
+	return ResolvePlaybookWithOptions(db, ref, resolveOptions{IncludeArchived: includeArchived})
+}
+
+func ResolvePlaybookWithOptions(db *sql.DB, ref string, opts resolveOptions) (*flowdb.Playbook, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("empty playbook ref")
@@ -68,8 +91,11 @@ func ResolvePlaybook(db *sql.DB, ref string, includeArchived bool) (*flowdb.Play
 		}
 		return nil, err
 	}
-	if !includeArchived && pb.ArchivedAt.Valid {
+	if !opts.IncludeArchived && pb.ArchivedAt.Valid {
 		return nil, fmt.Errorf("playbook %q is archived", ref)
+	}
+	if !opts.IncludeDeleted && pb.DeletedAt.Valid {
+		return nil, fmt.Errorf("playbook %q is deleted", ref)
 	}
 	return pb, nil
 }
@@ -78,31 +104,35 @@ func ResolvePlaybook(db *sql.DB, ref string, includeArchived bool) (*flowdb.Play
 // or playbook. Supports task/, project/, playbook/ prefixes. On bare refs,
 // tries each kind; errors on ambiguity (slug exists in 2+ tables).
 func ResolveTaskProjectOrPlaybook(db *sql.DB, ref string, includeArchived bool) (kind, slug string, err error) {
+	return ResolveTaskProjectOrPlaybookWithOptions(db, ref, resolveOptions{IncludeArchived: includeArchived})
+}
+
+func ResolveTaskProjectOrPlaybookWithOptions(db *sql.DB, ref string, opts resolveOptions) (kind, slug string, err error) {
 	if strings.HasPrefix(ref, "task/") {
-		t, err := ResolveTask(db, strings.TrimPrefix(ref, "task/"), includeArchived)
+		t, err := ResolveTaskWithOptions(db, strings.TrimPrefix(ref, "task/"), opts)
 		if err != nil {
 			return "", "", err
 		}
 		return "task", t.Slug, nil
 	}
 	if strings.HasPrefix(ref, "project/") {
-		p, err := ResolveProject(db, strings.TrimPrefix(ref, "project/"), includeArchived)
+		p, err := ResolveProjectWithOptions(db, strings.TrimPrefix(ref, "project/"), opts)
 		if err != nil {
 			return "", "", err
 		}
 		return "project", p.Slug, nil
 	}
 	if strings.HasPrefix(ref, "playbook/") {
-		pb, err := ResolvePlaybook(db, strings.TrimPrefix(ref, "playbook/"), includeArchived)
+		pb, err := ResolvePlaybookWithOptions(db, strings.TrimPrefix(ref, "playbook/"), opts)
 		if err != nil {
 			return "", "", err
 		}
 		return "playbook", pb.Slug, nil
 	}
 
-	t, tErr := ResolveTask(db, ref, includeArchived)
-	p, pErr := ResolveProject(db, ref, includeArchived)
-	pb, pbErr := ResolvePlaybook(db, ref, includeArchived)
+	t, tErr := ResolveTaskWithOptions(db, ref, opts)
+	p, pErr := ResolveProjectWithOptions(db, ref, opts)
+	pb, pbErr := ResolvePlaybookWithOptions(db, ref, opts)
 
 	matches := []string{}
 	if tErr == nil {

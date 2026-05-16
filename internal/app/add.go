@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/workdirreg"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,18 +44,22 @@ func cmdAdd(args []string) int {
 }
 
 func addProject(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: add project requires a name")
-		return 2
-	}
-	name := args[0]
 	fs := flagSet("add project")
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	workDir := fs.String("work-dir", "", "absolute path to the project's work directory (required)")
 	priority := fs.String("priority", "medium", "high|medium|low")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
-	if err := fs.Parse(args[1:]); err != nil {
+	if leadingHelpArg(args) {
+		fs.Usage()
+		return 0
+	}
+	if len(args) == 0 || args[0] == "" {
+		fmt.Fprintln(os.Stderr, "error: add project requires a name")
 		return 2
+	}
+	name := args[0]
+	if handled, rc := parseFlagSet(fs, args[1:]); handled {
+		return rc
 	}
 
 	if !isValidPriority(*priority) {
@@ -127,7 +132,7 @@ func addProject(args []string) int {
 		}
 	}
 
-	if err := flowdb.UpsertWorkdir(db, abs, "", "", ""); err != nil {
+	if err := workdirreg.Register(db, abs, "", ""); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -138,11 +143,6 @@ func addProject(args []string) int {
 }
 
 func addTask(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: add task requires a name")
-		return 2
-	}
-	name := args[0]
 	fs := flagSet("add task")
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	project := fs.String("project", "", "parent project slug (optional)")
@@ -150,14 +150,40 @@ func addTask(args []string) int {
 	priority := fs.String("priority", "medium", "high|medium|low")
 	dueFlag := fs.String("due", "", "due date (YYYY-MM-DD, today, tomorrow, monday, 3d)")
 	assigneeFlag := fs.String("assignee", "", "optional assignee (default: self)")
+	permissionModeFlag := fs.String("permission-mode", "default", "agent permission mode: default|auto|bypass")
+	agentFlag := fs.String("agent", "", "session agent: claude or codex")
+	codexAgent := fs.Bool("codex", false, "shortcut for --agent codex")
+	claudeAgent := fs.Bool("claude", false, "shortcut for --agent claude")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
-	if err := fs.Parse(args[1:]); err != nil {
+	if leadingHelpArg(args) {
+		fs.Usage()
+		return 0
+	}
+	if len(args) == 0 || args[0] == "" {
+		fmt.Fprintln(os.Stderr, "error: add task requires a name")
 		return 2
+	}
+	name := args[0]
+	if handled, rc := parseFlagSet(fs, args[1:]); handled {
+		return rc
 	}
 
 	if !isValidPriority(*priority) {
 		fmt.Fprintf(os.Stderr, "error: priority must be high|medium|low, got %q\n", *priority)
 		return 2
+	}
+	permissionMode, err := flowdb.NormalizePermissionMode(*permissionModeFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	sessionProvider, err := requestedSessionProvider(*agentFlag, *codexAgent, *claudeAgent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	if sessionProvider == "" {
+		sessionProvider = sessionProviderClaude
 	}
 
 	dbPath, err := flowDBPath()
@@ -252,9 +278,9 @@ func addTask(args []string) int {
 
 	now := flowdb.NowISO()
 	if _, err := db.Exec(
-		`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, due_date, assignee, status_changed_at, created_at, updated_at)
-		 VALUES (?, ?, ?, 'backlog', ?, ?, ?, ?, ?, ?, ?)`,
-		slug, name, projectSlug, *priority, absWorkDir, dueDate, assignee, now, now, now,
+		`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, due_date, assignee, permission_mode, session_provider, status_changed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, 'backlog', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		slug, name, projectSlug, *priority, absWorkDir, dueDate, assignee, permissionMode, sessionProvider, now, now, now,
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "error: insert task: %v\n", err)
 		return 1
@@ -272,7 +298,7 @@ func addTask(args []string) int {
 		}
 	}
 
-	if err := flowdb.UpsertWorkdir(db, absWorkDir, "", "", ""); err != nil {
+	if err := workdirreg.Register(db, absWorkDir, "", ""); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

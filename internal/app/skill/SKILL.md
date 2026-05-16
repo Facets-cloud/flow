@@ -1,24 +1,15 @@
 ---
 name: flow
 description: |
-  Personal task and Claude session manager. CLI binary is `flow` (assumed
-  on PATH) and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the
-  user asks about their work, tasks, or projects in any natural phrasing —
-  including but not limited to: "what's left", "what's remaining",
-  "what's pending", "what do I need to do", "what's on my plate",
-  "what should I work on", "status", "give me a status", "anything
-  urgent", "what's overdue", "what's stale", "show me my work",
-  "how's my week looking", "what did I ship", "what's in progress",
-  "what's next", "what am I working on", "where did I leave off",
-  "start my day", "what should I do", "what should I do today".
-  Also use for task/project management actions: "flow", "add a task",
-  "add a project", "resume work", "pick up where I left off", "save a
-  note", "log progress", "write an update", "note that", "I'm waiting
-  on", "blocked on", "stuck until", "mark done", "archive", "weekly
-  review", "clean up my tasks", or when the user invokes any
-  `flow <subcommand>` directly. Also use whenever the user asks you to
-  bootstrap a new Claude session on a task or tell them about their
-  in-flight work.
+  Personal task, project, playbook, and agent-session manager. CLI binary is
+  `flow` (assumed on PATH) and stores metadata in ~/.flow/flow.db (SQLite).
+  Use this skill when the user asks about their work, tasks, projects,
+  playbooks, in-flight Claude/Codex sessions, or natural phrasing around
+  "what's left", "what's pending", "what should I work on", "status",
+  "start my day", "add a task", "resume work", "pick up where I left off",
+  "save a note", "write an update", "waiting", "blocked", "mark done",
+  "archive", "delete", "restore", "weekly review", "inspect transcripts",
+  or when the user invokes any `flow <subcommand>` directly.
 ---
 
 # flow — task and session manager skill
@@ -26,16 +17,17 @@ description: |
 ## 1. What flow is
 
 `flow` is a small CLI (assumed on `$PATH`) that the user uses to track
-personal work and bootstrap per-task Claude sessions. Metadata (projects,
-tasks, workdirs, session IDs) lives in a single SQLite database at
+personal work and bootstrap per-task agent sessions. Claude is the default
+provider; Codex is supported with `--agent codex` / `--codex`. Metadata (projects,
+tasks, workdirs, provider, session IDs) lives in a single SQLite database at
 `~/.flow/flow.db`. Free-form plan content lives on disk as markdown
 "briefs" at `~/.flow/projects/<slug>/brief.md` and
 `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate as dated
 markdown files under each entity's `updates/` subdirectory. The user runs
-one long-lived Claude session per task in its own terminal tab, resumed via
+one long-lived agent session per task in its own terminal tab, resumed via
 `flow do <task>`.
 
-You are speaking inside one of those Claude sessions (or the user's
+You are speaking inside one of those agent sessions (or the user's
 ambient "dispatch" session). Your job is to interpret the user's natural
 language requests and turn them into the exact `flow` commands and file
 edits they imply. You never edit `flow.db` directly. You never solve
@@ -63,7 +55,7 @@ first; let them choose what happens next.
 
 1. In 2–3 sentences, describe what you can do for the user with
    flow under the hood — capture work as briefs, log progress
-   notes, resume Claude sessions across days, track what they're
+   notes, resume Claude/Codex sessions across days, track what they're
    waiting on. Frame it as your capabilities, not commands. The
    user does not need to learn flow's CLI.
 2. Use `AskUserQuestion` (header: "What now?") to offer the main
@@ -89,11 +81,15 @@ an intent, follow the matching recipe instead of re-asking via §1a.
 - **Tasks** are units of work. Every task has a name, a slug (short,
   user-chosen via `--slug` at creation time), a `work_dir` (mandatory —
   either the project's work_dir, a user-supplied path, or an auto-created
-  `~/.flow/tasks/<slug>/workspace/` for floating tasks), a priority, a
-  status (`backlog`, `in-progress`, `done`), an optional `project_slug`,
-  an optional `waiting_on` freeform note, and a `brief.md`. Tasks also
-  carry a Claude `session_id` once `flow do` has bootstrapped a session
-  for them.
+  `~/.flow/tasks/<slug>/workspace/` for explicitly adhoc tasks), a
+  priority, a status (`backlog`, `in-progress`, `done`), an optional
+  `project_slug`, an optional `waiting_on` freeform note, and a
+  `brief.md`. Tasks also carry a `session_provider` (`claude` or `codex`)
+  and a `session_id` once `flow do` has bootstrapped or captured a session
+  for them. Codex may briefly be `in-progress` with an empty `session_id`
+  while flow captures the id from Codex's session store. New task intake must choose an
+  existing project when the work belongs to one; leave `project_slug`
+  empty only when the user explicitly says it is adhoc/floating.
 - **Playbooks** are reusable, runnable definitions. A playbook has a
   name, slug, work_dir, optional `project_slug`, and a `brief.md` that
   describes what each invocation should do. Each invocation creates a
@@ -103,8 +99,9 @@ an intent, follow the matching recipe instead of re-asking via §1a.
   runs; runs are reproducible.
 - **Workdirs** is a convenience registry of known local repo paths. It
   exists so this skill can match repo intent ("the budgeting app")
-  to a path on disk. It is not the source of truth for any task's
-  work_dir — `tasks.work_dir` is.
+  to a path on disk. It records the local path, nickname, and Git origin
+  remote when the path is a repo. It is not the source of truth for any
+  task's work_dir — `tasks.work_dir` is.
 - **Updates** are dated markdown files under
   `~/.flow/tasks/<slug>/updates/YYYY-MM-DD-<kebab>.md` (and the same under
   `projects/`). They are progress notes. They are written by you (this
@@ -113,8 +110,12 @@ an intent, follow the matching recipe instead of re-asking via §1a.
   deletes them.
 - **Status is 3 values.** `backlog`, `in-progress`, `done`. There is no
   `blocked` state anymore. If the user is waiting on something or
-  someone, set `waiting_on` (see §5.6). If the user has set a task aside
-  permanently, `archive` it.
+  someone, set `waiting_on` (see §5.6).
+- **Archive vs delete.** Archive means "hide from everyday active lists,
+  but keep it as intentional history." Soft-delete means
+  "delete/remove/trash this entity from normal flow views, but keep it
+  recoverable." Use `flow archive` for set-aside history and
+  `flow delete` for delete/remove/trash requests.
 
 ## 3. First-run detection (once per session)
 
@@ -148,13 +149,13 @@ basics in this order:
    `AskUserQuestion` (header: "Open it now?", options:
    "Open it now" / "Later, just save") to ask whether to run
    `flow do <slug>`. Briefly explain in the question: a dedicated
-   Claude session gets the brief, updates, and repo conventions
+   agent session gets the brief, updates, and repo conventions
    automatically. If "Open it now", proceed to §4.4. If "Later",
    stop here.
 
 4. **Mention the knowledge base.** "As we work together, I'll
    automatically note durable facts about you and your org in
-   `~/.flow/kb/`. These notes carry across sessions so future Claude
+   `~/.flow/kb/`. These notes carry across sessions so future agent
    conversations have context without you repeating yourself."
 
 5. **Point to daily use.** "From any session, just say 'what should I
@@ -182,30 +183,28 @@ Create
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
+                           [--agent claude|codex] [--permission-mode default|auto|bypass]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
-  flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
-                              [--with "<instruction>" | --with-file <path>]
+  flow do               <ref> [--agent claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]
   flow do --here        <ref> [--force]   (bind THIS Claude session to the task — no new tab)
   flow done             <ref>
 
 Playbook runs
-  flow run playbook <slug> [--with "<instr>" | --with-file <path>]
-                                    spawn a fresh run session (new task with kind=playbook_run)
-  flow run playbook <slug> --here   bind THIS Claude session to the new run (no new tab)
+  flow run playbook <slug> [--agent claude|codex]  spawn a fresh run session (new task with kind=playbook_run)
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
 Read
-  flow show task    [<ref>]     (no arg → reverse-lookup via $CLAUDE_CODE_SESSION_ID)
-  flow show project [<ref>]     (no arg → project of the bound task)
+  flow show task    [<ref>]     (no arg → $FLOW_TASK, then Claude session reverse-lookup)
+  flow show project [<ref>]     (no arg → project of current/bound task)
   flow show playbook    [<ref>]
   flow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
   flow list tasks    [--status backlog|in-progress|done] [--project <slug>]
                      [--priority high|medium|low] [--since today|monday|7d|YYYY-MM-DD]
-                     [--include-archived]
-  flow list projects [--status active|done] [--include-archived]
-  flow list playbooks   [--project <slug>] [--include-archived]
+                     [--include-archived] [--include-deleted|--deleted]
+  flow list projects [--status active|done] [--include-archived] [--include-deleted|--deleted]
+  flow list playbooks   [--project <slug>] [--include-archived] [--include-deleted|--deleted]
 
 Edit / mutate
   flow edit           <ref>          opens brief.md in $EDITOR, bumps updated_at
@@ -217,13 +216,15 @@ Edit / mutate
   flow update project <ref> [--priority high|medium|low]
   flow archive        <ref>
   flow unarchive      <ref>
-  (flow edit, flow archive, flow unarchive also accept playbook refs)
+  flow delete         <ref>
+  flow restore        <ref>
+  (flow edit, archive, unarchive, delete, and restore also accept playbook refs)
 
 Workdirs
   flow workdir list
-  flow workdir add <path> [--name <nickname>]
+  flow workdir add <path> [--name <nickname>]   (captures origin remote if present)
   flow workdir remove <path>
-  flow workdir scan [<root>] [--add]
+  flow workdir scan [<root>] [--add]            (backfills origin remotes for detected repos)
 ```
 
 All references (`<ref>`) resolve by **exact slug match only**. There is
@@ -321,8 +322,13 @@ question: ..." in the brief and move on.
 2. **Slug** — short, memorable, ASCII. Use AskUserQuestion to suggest 2–3
    candidates derived from the name. User picks one or types a custom
    slug.
-3. **Where?** — work_dir for the task. Use the §6 recipe.
-4. **Priority** — High / Medium / Low via AskUserQuestion. Default Medium.
+3. **Project or adhoc.** Before saving, tie the task to an existing
+   project whenever it naturally belongs to one. If it does not belong to
+   any project, capture that explicitly as adhoc/floating rather than
+   silently omitting `--project`.
+4. **Where?** — work_dir for the task. Use the §6 recipe. If a project is
+   selected, default to that project's `work_dir`.
+5. **Priority** — High / Medium / Low via AskUserQuestion. Default Medium.
 
 **Optional sections (offered, can be deferred):**
 
@@ -360,8 +366,10 @@ acceptance criteria.
   so the user can click one (the "Other" option lets them type a custom
   slug). If the user picks Other and leaves it blank, omit `--slug`.
 - **Project attachment.** Use `AskUserQuestion` with one option per
-  existing project (label = slug, description = project name) plus a
-  "None (floating task)" option. If there are no projects, skip.
+  existing project (label = slug, description = project name) plus an
+  explicit "Adhoc / no project" option. If there are no projects, say
+  that the task will be adhoc unless the user wants to create a project
+  first. Do not silently create floating tasks.
 - **Priority.** Use `AskUserQuestion` with "High", "Medium (Recommended)",
   "Low". Skip if the user already stated priority.
 - **`--mkdir`** if the `work_dir` doesn't exist yet. Use `AskUserQuestion`
@@ -560,7 +568,7 @@ its own, it's the start of a two-or-more-step workflow.
        question: "Which session mode for <task-slug>?",
        header: "Session mode",
        options: [
-         { label: "Regular",          description: "Normal Claude session with tool-approval prompts (safer)" },
+         { label: "Regular",          description: "Normal agent session with tool-approval prompts (safer)" },
          { label: "Skip permissions", description: "Pass --dangerously-skip-permissions (faster, no prompts)" }
        ],
        multiSelect: false
@@ -569,17 +577,27 @@ its own, it's the start of a two-or-more-step workflow.
    ```
 
    If the user already specified a mode in their request (e.g. "do X
-   with skip permissions", "do X normally"), use that — don't re-ask.
+   with skip permissions", "do X normally", "auto mode"), use that —
+   don't re-ask. If they explicitly ask for Codex, append `--agent codex`;
+   otherwise default to the task's stored provider or Claude.
 2. Run: `flow do <user's ref>`. Pass the slug the user gave as one
    positional argument. Resolution is exact slug match. Append
-   `--dangerously-skip-permissions` if the user chose skip-permissions.
+   `--dangerously-skip-permissions` if the user chose skip-permissions;
+   for Codex this maps to Codex's
+   `--dangerously-bypass-approvals-and-sandbox`. Stored task
+   `permission_mode` is provider-neutral: `default` means prompt on
+   request with sandboxing for Codex, `auto` means no approval prompts
+   while keeping Codex sandboxed, and `bypass` disables both Codex
+   approvals and sandboxing.
+   Append `--agent codex` only when the user requested Codex or when
+   creating/running a task already stored with `session_provider=codex`.
 3. If the command errors with "no task matching", ask the user to clarify
    or offer `flow add task` instead.
 4. Pass `--fresh` ONLY if the user explicitly asked for a fresh session
    (e.g. "start over", "fresh session", "--fresh"). Never on your own.
 
-**After `flow do` succeeds** it has already spawned a terminal tab and
-exported the env vars. Your job is done. Report "opened tab: <title>"
+**After `flow do` succeeds** it has already spawned a terminal tab.
+Your job is done. Report "opened tab: <title>"
 and stop. Do NOT:
 
 - Run diagnostic commands like `pgrep`, `ls ~/.claude/projects/...`,
@@ -637,57 +655,6 @@ Macros for this: do not invent more candidate apps to toggle, do not
 suggest the user reinstall flow, do not attempt to grant Accessibility
 yourself. macOS guards Accessibility deliberately — there is no CLI to
 self-grant it, and Claude cannot bypass that.
-
-#### Surgical instructions: `--with` and `--with-file`
-
-**Triggers:** the user wants to *fire a one-off instruction at a task*
-without opening the tab to type it themselves. Phrasings:
-
-- "tell <task> to <do X>"
-- "nudge <task> to check <Y>"
-- "have <task> verify <Z>"
-- "fire <instruction> at <task>"
-- "ping <task> with <instruction>"
-- "ask <task> whether <Q>"
-
-**Recipe:** add `--with "<instruction>"` to the `flow do` invocation.
-Quote the instruction as a single shell-safe string. The session
-receives it as its first user message, prefixed with
-`[via flow do --with]` so the model knows it's an injected instruction
-rather than typed input.
-
-**Use `--with-file <path>` when:** the instruction is a longer brief
-the user already wrote down (a checklist, a multi-step recipe, a
-one-pager). flow does NOT embed the file contents — it injects
-`read instructions at <abs-path>` and the session uses its Read tool
-to load it. No size limits. Use this whenever the user references a
-file ("the brief in ~/notes/X.md", "the checklist at triage.md").
-
-**The flags are mutually exclusive.** If the user mixes them, ask via
-AskUserQuestion which one they meant.
-
-**`--with` on a `done` task** auto-rolls it back to in-progress and
-proceeds. This is the supported lane for "nudge a parked task" — do
-NOT pre-flip status yourself; just pass `--with` and let `flow do`
-handle the reopen. The binary prints a stderr notice
-(`--with on done task "X": reopening as in-progress`) — relay it
-verbatim.
-
-**`--with` is incompatible with `--here`.** `--here` binds the
-current session with no spawn, so there's no first message to inject;
-the binary rejects the combination with rc=2. If the user wants to
-both bind-here AND act on an instruction, they're already in the
-session — just do the work directly, no `--with` needed.
-
-**Same flags work on `flow run playbook <slug>`** — use them when the
-user wants a one-off instruction layered on top of a fresh playbook
-run (e.g. a scheduled run that today should also "double-check the
-Acme deal status").
-
-**When NOT to use `--with`:** if the user is opening the tab to work
-in it themselves. `--with` is for fire-and-forget nudges, not for
-"open the tab with this prompt pre-typed for me". When the user will
-be at the keyboard, run plain `flow do <slug>`.
 
 ### 4.5 Save a progress note
 
@@ -841,13 +808,17 @@ word "done". When a signal fires, proactively offer closure via
   When a playbook is no longer in use, run `flow archive <playbook-slug>`.
   There is no `flow done playbook` command.
 
-### 4.8 Archive / cleanup
+### 4.8 Archive / soft-delete / cleanup
 
 **Triggers:** "archive X", "clean up", "clean up my done tasks", "hide
-finished work".
+finished work", "delete X", "remove X", "trash X", "restore X".
 
 **Recipe:**
 
+- **Archive vs delete choice.** If the user says archive/hide/clean up
+  done work, archive. If the user says delete/remove/trash, use
+  Soft-delete. If intent is ambiguous, ask via `AskUserQuestion`
+  whether they want "Archive it" or "Move to trash".
 - Single task/project: confirm via `AskUserQuestion` (header:
   "Archive?", options: "Yes, archive `<slug>`" / "No, keep it"),
   then on "Yes" run `flow archive <ref>`.
@@ -862,6 +833,20 @@ finished work".
 
 Archive never deletes files on disk — brief.md and updates/ remain. Make
 sure the user knows this so they don't worry about losing notes.
+
+**Soft-delete:**
+- Single task/project/playbook: confirm via `AskUserQuestion` (header:
+  "Delete?", options: "Yes, move to trash" / "No, keep it"), then on
+  "Yes" run `flow delete <ref>`. This sets `deleted_at`; normal lists
+  and the UI hide it, but the row and markdown files remain.
+- Use `task/<slug>`, `project/<slug>`, or `playbook/<slug>` when the
+  same slug may exist in multiple entity types.
+- To inspect deleted work, use `flow list tasks --deleted`,
+  `flow list projects --deleted`, or `flow list playbooks --deleted`.
+  Use `--include-deleted` when you need active and deleted rows together.
+- To undo it, run `flow restore <ref>`. Restore clears `deleted_at` only;
+  it does not unarchive archived work. If the user asks to restore the
+  wrong thing, list `--deleted` rows first and ask them to pick.
 
 **Playbooks:**
 - `flow archive <playbook-slug>` hides the playbook from
@@ -1007,7 +992,8 @@ category of fact. Signals that it's time to Read one:
 Signals it's NOT time to read the KB:
 
 - The user ran a one-shot mutation command (`flow done`, `flow archive`,
-  `flow update task`, etc.) and you're just relaying the result.
+  `flow delete`, `flow restore`, `flow update task`, etc.) and you're
+  just relaying the result.
 - The current task is purely mechanical and self-contained ("run the
   tests", "fix the obvious typo").
 - You already read the relevant file earlier this session and nothing
@@ -1030,10 +1016,12 @@ under an `other:` section. Apply the same lazy-load discipline as KB
 files: load them on demand when relevant to the work, not preemptively.
 
 **Past tasks and projects can be referenced too.** `flow list tasks` and
-`flow list projects` default to non-archived active rows; done and
-archived rows need explicit flags: `--status done` for completed work,
-`--include-archived` to include archived rows. `flow show task <slug>`
-and `flow transcript <slug>` work on done/archived tasks too.
+`flow list projects` default to non-archived, non-deleted active rows;
+done, archived, and deleted rows need explicit flags: `--status done` for
+completed work, `--include-archived` to include archived rows,
+`--deleted` to see only soft-deleted rows, and `--include-deleted` to
+include active plus soft-deleted rows. `flow show task <slug>` and
+`flow transcript <slug>` work on done/archived/deleted tasks too.
 
 ### 4.11 Scope-creep detection (passive — surface via AskUserQuestion)
 
@@ -1176,41 +1164,14 @@ stop.
 
 **Recipe:**
 
-1. Probe binding with `flow show task` (no arg). If it errors with
-   `not bound to a task`, this is a dispatch (unbound) session — the
-   in-session bind option is available. If it resolves a task, this
-   session is already bound; only the new-tab path is available.
-
-2. Use AskUserQuestion to pick the run mode. **Unbound session — three
-   options** (header: "Run mode?"):
-
-   - **In this session (bind here)** — runs `flow run playbook <slug> --here`.
-     The new playbook-run task is created, the brief is snapshotted, and THIS
-     conversation is bound to it. No new tab. Pick when the user wants the
-     playbook to execute in the current chat (preserves transcript, no tab
-     switch). Implicitly skips the `--dangerously-skip-permissions` question
-     — there's no claude spawn to forward it to.
-   - **New tab — regular** — runs `flow run playbook <slug>`. Spawns a
-     fresh tab with tool-approval prompts.
-   - **New tab — skip permissions** — runs `flow run playbook <slug>
-     --dangerously-skip-permissions`. Spawns a fresh tab without
-     approval prompts (faster).
-
-   **Bound session — two options** (header: "Run mode?", same options
-   minus "In this session"): the binary refuses `--here` when the
-   current session is already bound (session_id uniqueness invariant;
-   `--force` does not override). Offering it would surface an option
-   the binary will reject — bad UX.
-
-3. Run the chosen invocation. Skip the session-mode question entirely
-   if the user already specified a mode in their request (e.g. "fire X
-   in this session", "run X in a new tab").
-
-4. The command creates a kind=playbook_run task and snapshots the brief
-   in both paths. On the new-tab path it spawns a terminal tab that
-   boots the flow skill. On the `--here` path it binds the current
-   session — your job is to invoke the flow skill yourself and proceed
-   against the snapshotted brief at `~/.flow/tasks/<run-slug>/brief.md`.
+1. Ask session-mode (Regular vs Skip permissions) via AskUserQuestion —
+   reuses the §4.4 pattern. Skip if the user already specified. If the
+   user asks for Codex, append `--agent codex`.
+2. Run: `flow run playbook <slug>` (with `--dangerously-skip-permissions`
+   if chosen, and `--agent codex` if requested).
+3. The command creates a kind=playbook_run task, snapshots the brief,
+   and spawns a terminal tab. The new tab will boot the flow skill via its
+   bootstrap prompt and execute against the snapshotted brief.
 
 **Anti-pattern (per §8):** never auto-fire. Manual trigger only. Even if
 the user mentions a playbook name in passing, do not run it without an
@@ -1735,7 +1696,8 @@ instead.
   Never put a literal `flow ...` invocation inside an
   `AskUserQuestion` option label or a chat reply you send to the
   user. Describe outcomes ("I'll mark it done", "I'll archive it",
-  "set up", "saved") instead of commands. The skill describes
+  "I'll move it to trash", "I'll restore it", "set up", "saved")
+  instead of commands. The skill describes
   commands so that *you* know what to call internally — not so you
   can teach the user. Exception: error messages from the `flow`
   binary itself may quote commands; relay those verbatim, since the
@@ -1810,12 +1772,15 @@ When `flow do <task>` spawns a Claude session in a new terminal tab, it
 pre-allocates a UUID, writes it to `tasks.session_id` before spawning,
 and passes it to `claude --session-id <uuid>`. This makes the session's
 jsonl file appear at the deterministic path
-`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. There is no
-self-registration step — the DB is authoritative from the moment the
-tab opens.
+`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. For Codex sessions
+(`flow do <task> --agent codex`), Codex owns the session id; flow launches
+interactive `codex`, then captures the generated id from Codex's JSONL
+session store and writes it back to `tasks.session_id`. During that capture
+window a Codex task can be `in-progress` with an empty `session_id`.
 
-Subsequent `flow do <same-task>` calls read that UUID and spawn
-`claude --resume <uuid>` to continue the same conversation.
+Subsequent `flow do <same-task>` calls read `session_provider` and
+`session_id`, then spawn either `claude --resume <uuid>` or
+`codex resume <id>` to continue the same conversation.
 
 **If you are the execution session spawned by `flow do`:**
 
@@ -1873,11 +1838,11 @@ proposing any plan:
 
    Again, skip the project's `kb:` section at bootstrap.
 
-4. **Load repo conventions.** Read `CLAUDE.md` in your `work_dir` (if
-   present), plus any nested `CLAUDE.md` files under subdirectories
-   you plan to modify. These are authoritative for build commands,
-   test commands, style, and gotchas — they override any assumption
-   you might make from the brief.
+4. **Load repo conventions.** Read `AGENTS.md` and/or `CLAUDE.md` in
+   your `work_dir` (if present), plus any nested convention files under
+   subdirectories you plan to modify. These are authoritative for build
+   commands, test commands, style, and gotchas — they override any
+   assumption you might make from the brief.
 
 5. **Only then begin work.** If any brief section is blank or
    unclear, ASK the user before inferring. If the user didn't
@@ -1919,7 +1884,7 @@ yours), use:
 flow transcript <sibling-task-slug>
 ```
 
-This outputs a readable conversation transcript from that task's Claude
+This outputs a readable conversation transcript from that task's agent
 session — user messages, assistant messages, tool calls, and results.
 Use `--compact` to omit tool results and thinking blocks for a shorter
 overview. Pipe through `grep` or `head` if the full transcript is too
@@ -1960,10 +1925,11 @@ When to use which flag:
   to `in-progress` so `flow do` will reopen it (the do-from-done path
   is gated). Also handy for in-progress → backlog to "demote" a task
   you're not actively working on. Setting backlog → in-progress on a
-  task with NULL session_id errors with a pointer at `flow do` /
-  `flow do --here` — those are the only paths that attach a session,
-  and the session-id invariant requires one for any non-backlog
-  status. Setting status to a value it already has is a no-op.
+  Claude task with NULL session_id errors with a pointer at `flow do` /
+  `flow do --here` — those are the paths that attach a Claude session.
+  Codex may briefly have NULL session_id only while flow is capturing the
+  id after a fresh Codex launch. Setting status to a value it already has
+  is a no-op.
 - **`--priority <p>`** — change a task or project priority. Same enum
   as creation: high|medium|low.
 - **`--assignee <name>` / `--clear-assignee`** — set or clear the task
@@ -1977,9 +1943,9 @@ When to use which flag:
   the note is just there to remind the user.
 
 There is **no** `--session-id` flag. The session_id is owned by
-`flow do` / `flow do --here`; manual rewriting was a foot-gun
-(silent overwrite of an existing binding) and the lane is gone. Use
-`flow do --here <slug>` from inside the session you want to bind.
+`flow do`, Codex capture, or `flow do --here`; manual rewriting was a
+foot-gun (silent overwrite of an existing binding) and the lane is gone.
+Use `flow do --here <slug>` from inside the Claude session you want to bind.
 
 At least one field-changing flag must be given. `--work-dir` is an
 escape hatch — do not run it as a workaround for a bug in `flow do`;
@@ -1987,20 +1953,23 @@ surface the bug instead.
 
 ## 10. How "what task am I on?" gets answered
 
-`tasks.session_id` is the single source of truth. Every Claude Code
-session has `$CLAUDE_CODE_SESSION_ID` in its env (Claude Code injects
-it); flow's commands reverse-lookup this value against
-`tasks.session_id` to find the bound task. Two implications:
+`tasks.session_provider` plus `tasks.session_id` is the source of truth.
+Every Claude Code session has `$CLAUDE_CODE_SESSION_ID` in its env (Claude
+Code injects it), and flow reverse-lookups that value against
+`tasks.session_id`. Browser/Codex launches may also set `$FLOW_TASK`, which
+`flow show task` uses as a direct fallback before Claude reverse-lookup.
+Two implications:
 
 - `flow show task` with no argument resolves the bound task via
-  reverse-lookup. So does `flow show project` (it resolves the bound
-  task's project).
+  `$FLOW_TASK` or reverse-lookup. So does `flow show project` (it resolves
+  the current/bound task's project).
 - When saving a progress note, the "current task" is whatever the
   reverse-lookup returns. If `flow show task` errors with
   `not bound to a task`, ask the user which task to attribute it to.
 
-There is no `FLOW_TASK` or `FLOW_PROJECT` env var to read. `flow do`
-no longer injects them; the DB binding is sufficient.
+Do not invent your own task binding. Prefer `flow show task` with no
+argument; it already handles `$FLOW_TASK` when present and Claude
+reverse-lookup when available.
 
 A session is "bound" when some task carries its session_id (set by
 `flow do <slug>` at spawn time, or by `flow do --here <slug>`

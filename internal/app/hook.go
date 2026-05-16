@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-// cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
+// cmdHook dispatches `flow hook <subcommand>`. Main subcommands:
 //
 //   - session-start: wired as a Claude Code SessionStart hook so that
 //     every session start (fresh spawn AND resume) re-injects the
@@ -17,6 +17,9 @@ import (
 //
 //   - user-prompt-submit: kept as a permanent no-op for forward
 //     compatibility with stale settings.json entries.
+//
+//   - codex-run: internal wrapper used by `flow do --agent codex` so the
+//     spawned shell can run Codex and capture the Codex-generated session id.
 func cmdHook(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit)")
@@ -28,6 +31,8 @@ func cmdHook(args []string) int {
 		return cmdHookSessionStart(rest)
 	case "user-prompt-submit":
 		return cmdHookUserPromptSubmit(rest)
+	case "codex-run":
+		return cmdHookCodexRun(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown hook subcommand %q\n", sub)
 		return 2

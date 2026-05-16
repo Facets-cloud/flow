@@ -121,6 +121,28 @@ func TestCmdWorkdirList(t *testing.T) {
 	}
 }
 
+func TestCmdWorkdirListBackfillsGitRemote(t *testing.T) {
+	root := setupArchiveTestEnv(t)
+	db := reopenArchiveTestDB(t, root)
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeFakeGitConfig(t, repo, "git@github.com:facets/backfill.git")
+	if err := flowdb.UpsertWorkdir(db, repo, "repo", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdWorkdir([]string{"list"}); rc != 0 {
+		t.Fatalf("list rc=%d", rc)
+	}
+	got, err := flowdb.GetWorkdir(db, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.GitRemote.Valid || got.GitRemote.String != "git@github.com:facets/backfill.git" {
+		t.Fatalf("git remote = %+v", got.GitRemote)
+	}
+}
+
 func TestCmdWorkdirRemove(t *testing.T) {
 	root := setupArchiveTestEnv(t)
 	db := reopenArchiveTestDB(t, root)

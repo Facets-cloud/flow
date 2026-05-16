@@ -1,0 +1,914 @@
+package server
+
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"flow/internal/agents"
+	"flow/internal/flowdb"
+	"flow/internal/workdirreg"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unicode/utf8"
+
+	"github.com/creack/pty"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+)
+
+const terminalScrollbackBytes = 1024 * 1024 * 1024
+
+var terminalUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		return origin == "" || strings.Contains(origin, r.Host)
+	},
+}
+
+type terminalHub struct {
+	server   *Server
+	mu       sync.Mutex
+	sessions map[string]*terminalSession
+}
+
+type terminalLaunch struct {
+	Slug         string
+	SessionID    string
+	Provider     string
+	WorkDir      string
+	Args         []string
+	Created      bool
+	NeedsCapture bool
+	StartedAt    time.Time
+}
+
+type terminalSession struct {
+	hub       *terminalHub
+	slug      string
+	sessionID string
+	provider  string
+	workDir   string
+	cmd       *exec.Cmd
+	tty       *os.File
+	done      chan struct{}
+
+	mu         sync.Mutex
+	clients    map[*terminalClient]struct{}
+	scrollback []byte
+	closed     bool
+	exitStatus string
+}
+
+type terminalClient struct {
+	conn      *websocket.Conn
+	send      chan terminalWSMessage
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+type terminalWSMessage struct {
+	Type    string `json:"type"`
+	Data    string `json:"data,omitempty"`
+	Cols    int    `json:"cols,omitempty"`
+	Rows    int    `json:"rows,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func newTerminalHub(s *Server) *terminalHub {
+	return &terminalHub{
+		server:   s,
+		sessions: map[string]*terminalSession{},
+	}
+}
+
+func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	if err := validateSlug(slug); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	cols := intQueryDefault(r, "cols", 120)
+	rows := intQueryDefault(r, "rows", 32)
+	conn, err := terminalUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+
+	sess, err := s.terminals.attach(slug, cols, rows)
+	if err != nil {
+		_ = conn.WriteJSON(terminalWSMessage{Type: "error", Message: err.Error()})
+		_ = conn.Close()
+		return
+	}
+
+	client := &terminalClient{conn: conn, send: make(chan terminalWSMessage, 128), done: make(chan struct{})}
+	sess.addClient(client, true)
+
+	go client.writeLoop()
+	client.readLoop(sess)
+	sess.removeClient(client)
+}
+
+func intQueryDefault(r *http.Request, key string, def int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return def
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return def
+	}
+	if value > 500 {
+		return 500
+	}
+	return value
+}
+
+func (h *terminalHub) attach(slug string, cols, rows int) (*terminalSession, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if sess := h.sessions[slug]; sess != nil && sess.running() {
+		_ = sess.resize(cols, rows)
+		return sess, nil
+	}
+	launch, err := h.server.prepareTerminalLaunch(slug)
+	if err != nil {
+		return nil, err
+	}
+	sess, err := h.startSessionLocked(launch, cols, rows)
+	if err != nil {
+		if launch.Created {
+			h.server.rollbackPreparedTerminalLaunch(launch)
+		}
+		return nil, err
+	}
+	h.sessions[slug] = sess
+	return sess, nil
+}
+
+func (h *terminalHub) stop(slug string) {
+	h.mu.Lock()
+	sess := h.sessions[slug]
+	delete(h.sessions, slug)
+	h.mu.Unlock()
+	if sess != nil {
+		sess.terminate()
+	}
+}
+
+func (h *terminalHub) sendInput(slug, data string) error {
+	h.mu.Lock()
+	sess := h.sessions[slug]
+	h.mu.Unlock()
+	if sess == nil || !sess.running() {
+		return fmt.Errorf("terminal session for %s is not running", slug)
+	}
+	return sess.write(data)
+}
+
+func (h *terminalHub) scrollbackText(slug string, limit int) (string, bool) {
+	h.mu.Lock()
+	sess := h.sessions[slug]
+	h.mu.Unlock()
+	if sess == nil {
+		return "", false
+	}
+	sess.mu.Lock()
+	data := append([]byte(nil), sess.scrollback...)
+	sess.mu.Unlock()
+	if len(data) == 0 {
+		return "", true
+	}
+	if limit > 0 && len(data) > limit {
+		data = data[len(data)-limit:]
+	}
+	return string(stripTerminalAltScreenControls(data)), true
+}
+
+func (h *terminalHub) startSessionLocked(launch terminalLaunch, cols, rows int) (*terminalSession, error) {
+	provider := launch.Provider
+	if provider == "" {
+		provider = agents.ProviderClaude
+	}
+	bin := provider
+	if provider == agents.ProviderClaude {
+		bin = "claude"
+	}
+	if err := h.server.ensureProviderAvailable(provider); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(bin, launch.Args...)
+	cmd.Dir = launch.WorkDir
+	cmd.Env = append(terminalEnv(h.server.cfg.FlowRoot, h.server.cfg.CommandPath),
+		"FLOW_TASK="+launch.Slug,
+		"FLOW_SESSION_PROVIDER="+provider,
+	)
+
+	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	if err != nil {
+		return nil, fmt.Errorf("start %s terminal: %w", provider, err)
+	}
+	sess := &terminalSession{
+		hub:       h,
+		slug:      launch.Slug,
+		sessionID: launch.SessionID,
+		provider:  provider,
+		workDir:   launch.WorkDir,
+		cmd:       cmd,
+		tty:       f,
+		done:      make(chan struct{}),
+		clients:   map[*terminalClient]struct{}{},
+	}
+	go sess.readPTY()
+	go sess.wait()
+	if launch.NeedsCapture {
+		go sess.captureCodexSession(launch.StartedAt)
+	}
+	return sess, nil
+}
+
+func terminalEnv(flowRoot, commandPath string) []string {
+	env := os.Environ()
+	env = setEnvValue(env, "TERM", "xterm-256color")
+	env = setEnvValue(env, "COLORTERM", "truecolor")
+	env = setEnvValue(env, "FORCE_COLOR", "1")
+	env = setEnvValue(env, "TERM_PROGRAM", "flow-ui")
+	env = setEnvValue(env, "CLAUDE_CODE_NO_FLICKER", "0")
+	env = setEnvValue(env, "CLAUDE_CODE_DISABLE_MOUSE", "1")
+	env = appendEnvDefault(env, "LANG", "en_US.UTF-8")
+	env = appendEnvDefault(env, "LC_CTYPE", "en_US.UTF-8")
+	if root := strings.TrimSpace(flowRoot); root != "" {
+		env = setEnvValue(env, "FLOW_ROOT", root)
+	} else if root := os.Getenv("FLOW_ROOT"); root != "" {
+		env = setEnvValue(env, "FLOW_ROOT", root)
+	}
+	return prependCommandDirToPath(env, commandPath)
+}
+
+func setEnvValue(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+func appendEnvDefault(env []string, key, value string) []string {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+func prependCommandDirToPath(env []string, commandPath string) []string {
+	commandPath = strings.TrimSpace(commandPath)
+	if commandPath == "" {
+		return env
+	}
+	dir := filepath.Dir(commandPath)
+	if dir == "." || dir == "" {
+		return env
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	current := envValueLocal(env, "PATH")
+	if current == "" {
+		return setEnvValue(env, "PATH", dir)
+	}
+	for _, part := range filepath.SplitList(current) {
+		if part == dir {
+			return env
+		}
+	}
+	return setEnvValue(env, "PATH", dir+string(os.PathListSeparator)+current)
+}
+
+func envValueLocal(env []string, key string) string {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return strings.TrimPrefix(item, prefix)
+		}
+	}
+	return ""
+}
+
+var terminalAltScreenRE = regexp.MustCompile(`\x1b\[\?([0-9;]*)([hl])`)
+
+func stripTerminalAltScreenControls(data []byte) []byte {
+	return terminalAltScreenRE.ReplaceAllFunc(data, func(seq []byte) []byte {
+		match := terminalAltScreenRE.FindSubmatch(seq)
+		if len(match) < 2 {
+			return seq
+		}
+		for _, mode := range strings.Split(string(match[1]), ";") {
+			switch mode {
+			case "47", "1047", "1048", "1049":
+				return nil
+			}
+		}
+		return seq
+	})
+}
+
+func (s *Server) prepareTerminalLaunch(slug string) (terminalLaunch, error) {
+	tx, err := s.cfg.DB.Begin()
+	if err != nil {
+		return terminalLaunch{}, err
+	}
+	defer tx.Rollback()
+
+	task, err := flowdb.ScanTask(tx.QueryRow("SELECT "+flowdb.TaskCols+" FROM tasks WHERE slug = ?", slug))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return terminalLaunch{}, fmt.Errorf("task not found: %s", slug)
+		}
+		return terminalLaunch{}, err
+	}
+	if task.Slug == overviewTaskSlug {
+		flowRoot := strings.TrimSpace(s.cfg.FlowRoot)
+		if flowRoot == "" {
+			return terminalLaunch{}, errors.New("flow root is not configured")
+		}
+		absRoot, err := filepath.Abs(flowRoot)
+		if err != nil {
+			return terminalLaunch{}, err
+		}
+		if err := os.MkdirAll(filepath.Join(absRoot, "tasks", overviewTaskSlug, "updates"), 0o755); err != nil {
+			return terminalLaunch{}, err
+		}
+		now := flowdb.NowISO()
+		if _, err := tx.Exec(
+			`UPDATE tasks SET
+				project_slug = NULL,
+				status = 'backlog',
+				kind = 'regular',
+				playbook_slug = NULL,
+				work_dir = ?,
+				waiting_on = NULL,
+				session_provider = 'claude',
+				session_id = NULL,
+				session_started = NULL,
+				session_last_resumed = NULL,
+				status_changed_at = ?,
+				updated_at = ?
+			 WHERE slug = ?`,
+			absRoot, now, now, task.Slug,
+		); err != nil {
+			return terminalLaunch{}, err
+		}
+		task.ProjectSlug = sql.NullString{}
+		task.Status = "backlog"
+		task.Kind = "regular"
+		task.PlaybookSlug = sql.NullString{}
+		task.WorkDir = absRoot
+		task.WaitingOn = sql.NullString{}
+		task.SessionID = sql.NullString{}
+		task.SessionStarted = sql.NullString{}
+		task.SessionLastResumed = sql.NullString{}
+	}
+	if task.Status == "done" {
+		return terminalLaunch{}, fmt.Errorf("task %s is done; move it back to in-progress before reopening", task.Slug)
+	}
+	if strings.TrimSpace(task.WorkDir) == "" {
+		return terminalLaunch{}, fmt.Errorf("task %s has no work_dir", task.Slug)
+	}
+
+	now := flowdb.NowISO()
+	sessionID := strings.TrimSpace(task.SessionID.String)
+	provider := task.SessionProvider
+	if provider == "" {
+		provider = agents.ProviderClaude
+	}
+	created := false
+	if sessionID == "" {
+		created = true
+		if provider == agents.ProviderCodex {
+			if _, err := tx.Exec(
+				`UPDATE tasks SET
+					status = 'in-progress',
+					status_changed_at = ?,
+					session_provider = 'codex',
+					session_id = NULL,
+					session_started = ?,
+					updated_at = ?
+				 WHERE slug = ?`,
+				now, now, now, task.Slug,
+			); err != nil {
+				return terminalLaunch{}, err
+			}
+		} else {
+			sessionID = uuid.NewString()
+			if _, err := tx.Exec(
+				`UPDATE tasks SET
+					status = 'in-progress',
+					status_changed_at = ?,
+					session_provider = 'claude',
+					session_id = ?,
+					session_started = ?,
+					updated_at = ?
+				 WHERE slug = ?`,
+				now, sessionID, now, now, task.Slug,
+			); err != nil {
+				return terminalLaunch{}, err
+			}
+		}
+	} else {
+		if _, err := tx.Exec(
+			`UPDATE tasks SET
+				status = 'in-progress',
+				session_last_resumed = ?,
+				updated_at = ?
+			 WHERE slug = ?`,
+			now, now, task.Slug,
+		); err != nil {
+			return terminalLaunch{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return terminalLaunch{}, err
+	}
+
+	if err := workdirreg.Touch(s.cfg.DB, task.WorkDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
+	}
+
+	if created {
+		prompt := buildBrowserTerminalBootstrapPrompt(s.cfg.DB, task)
+		if task.Slug == overviewTaskSlug {
+			prompt = overviewInitialPrompt(s.cfg.FlowRoot, task)
+		}
+		args := agentTerminalArgs(provider, true, sessionID, task.WorkDir, s.cfg.FlowRoot, prompt, task.PermissionMode)
+		return terminalLaunch{
+			Slug:         task.Slug,
+			SessionID:    sessionID,
+			Provider:     provider,
+			WorkDir:      task.WorkDir,
+			Args:         args,
+			Created:      created,
+			NeedsCapture: provider == agents.ProviderCodex,
+			StartedAt:    time.Now().Add(-2 * time.Second),
+		}, nil
+	}
+	args := agentTerminalArgs(provider, false, sessionID, task.WorkDir, s.cfg.FlowRoot, "", task.PermissionMode)
+	return terminalLaunch{
+		Slug:      task.Slug,
+		SessionID: sessionID,
+		Provider:  provider,
+		WorkDir:   task.WorkDir,
+		Args:      args,
+		Created:   created,
+	}, nil
+}
+
+func (s *terminalSession) captureCodexSession(started time.Time) {
+	if started.IsZero() {
+		started = time.Now().Add(-2 * time.Second)
+	}
+	ticker := time.NewTicker(750 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(2 * time.Minute)
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-deadline:
+			return
+		case <-ticker.C:
+			captured, err := agents.CaptureCodexSessionForTaskSince(s.hub.server.cfg.DB, s.slug, s.workDir, started)
+			if err != nil || captured == "" {
+				continue
+			}
+			s.mu.Lock()
+			s.sessionID = captured
+			clients := make([]*terminalClient, 0, len(s.clients))
+			for client := range s.clients {
+				clients = append(clients, client)
+			}
+			s.mu.Unlock()
+			for _, client := range clients {
+				client.queue(terminalWSMessage{Type: "status", Message: "connected to codex session " + captured})
+			}
+			return
+		}
+	}
+}
+
+func agentTerminalArgs(provider string, fresh bool, sessionID, workDir, flowRootPath, prompt, permissionMode string) []string {
+	if provider == agents.ProviderCodex {
+		args := []string{"--no-alt-screen", "-C", workDir}
+		args = appendCodexWritableRoot(args, workDir, flowRootPath)
+		args = append(args, codexPermissionArgs(permissionMode)...)
+		if fresh {
+			return append(args, prompt)
+		}
+		resume := []string{"resume", "--include-non-interactive", "--no-alt-screen", "-C", workDir}
+		resume = appendCodexWritableRoot(resume, workDir, flowRootPath)
+		resume = append(resume, codexPermissionArgs(permissionMode)...)
+		return append(resume, sessionID)
+	}
+	if fresh {
+		args := []string{"--session-id", sessionID}
+		args = append(args, claudePermissionArgs(permissionMode)...)
+		return append(args, prompt)
+	}
+	args := []string{"--resume", sessionID}
+	return append(args, claudePermissionArgs(permissionMode)...)
+}
+
+func appendCodexWritableRoot(args []string, workDir, flowRootPath string) []string {
+	flowRootPath = strings.TrimSpace(flowRootPath)
+	if flowRootPath == "" {
+		return args
+	}
+	cleanWorkDir := strings.TrimSpace(workDir)
+	if cleanWorkDir != "" {
+		if abs, err := filepath.Abs(cleanWorkDir); err == nil {
+			cleanWorkDir = abs
+		}
+	}
+	if abs, err := filepath.Abs(flowRootPath); err == nil {
+		flowRootPath = abs
+	}
+	if cleanWorkDir == flowRootPath {
+		return args
+	}
+	return append(args, "--add-dir", flowRootPath)
+}
+
+func claudePermissionArgs(mode string) []string {
+	switch strings.TrimSpace(mode) {
+	case "auto":
+		return []string{"--permission-mode", "auto"}
+	case "bypass":
+		return []string{"--dangerously-skip-permissions"}
+	default:
+		return nil
+	}
+}
+
+func codexPermissionArgs(mode string) []string {
+	switch strings.TrimSpace(mode) {
+	case "auto":
+		return []string{"--ask-for-approval", "never", "--sandbox", "workspace-write"}
+	case "bypass":
+		return []string{"--dangerously-bypass-approvals-and-sandbox"}
+	default:
+		return []string{"--ask-for-approval", "on-request", "--sandbox", "workspace-write"}
+	}
+}
+
+func overviewInitialPrompt(root string, task *flowdb.Task) string {
+	body, err := os.ReadFile(filepath.Join(root, "tasks", task.Slug, "brief.md"))
+	if err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(string(body))
+	const marker = "Latest user request:"
+	if idx := strings.LastIndex(text, marker); idx >= 0 {
+		return strings.TrimSpace(text[idx+len(marker):])
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "#") {
+		text = strings.TrimSpace(strings.Join(lines[1:], "\n"))
+	}
+	return text
+}
+
+func (s *Server) rollbackPreparedTerminalLaunch(launch terminalLaunch) {
+	if launch.Slug == "" {
+		return
+	}
+	if launch.Provider == agents.ProviderCodex && launch.SessionID == "" {
+		if _, err := s.cfg.DB.Exec(
+			`UPDATE tasks SET
+				session_id = NULL,
+				session_started = NULL,
+				status = 'backlog',
+				status_changed_at = NULL,
+				updated_at = ?
+			 WHERE slug = ? AND session_provider = 'codex' AND session_id IS NULL`,
+			flowdb.NowISO(), launch.Slug,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: rollback browser codex terminal session: %v\n", err)
+		}
+		return
+	}
+	if launch.SessionID == "" {
+		return
+	}
+	if _, err := s.cfg.DB.Exec(
+		`UPDATE tasks SET
+			session_id = NULL,
+			session_started = NULL,
+			status = 'backlog',
+			status_changed_at = NULL,
+			updated_at = ?
+		 WHERE slug = ? AND session_id = ?`,
+		flowdb.NowISO(), launch.Slug, launch.SessionID,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: rollback browser terminal session: %v\n", err)
+	}
+}
+
+func buildBrowserTerminalBootstrapPrompt(db *sql.DB, task *flowdb.Task) string {
+	if task.Kind != "playbook_run" {
+		return fmt.Sprintf(
+			"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
+				"1. Load the flow operating manual. If a Skill tool is available, invoke the flow skill via the Skill tool. Otherwise read ~/.codex/skills/flow/SKILL.md or ~/.claude/skills/flow/SKILL.md, whichever exists. This governs workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
+				"2. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files listed under other: are sidecar references; load on demand when relevant, not eagerly.\n"+
+				"3. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief AND every file under updates:. Files under other: are on-demand references.\n"+
+				"4. Read AGENTS.md and/or CLAUDE.md in your work_dir and any nested convention files under subdirectories you will modify. These override any assumption from the brief.\n"+
+				"5. Only then begin work. If any brief section is blank or unclear, ASK; do not infer.",
+			task.Slug,
+		)
+	}
+	playbookSlug := ""
+	if task.PlaybookSlug.Valid {
+		playbookSlug = task.PlaybookSlug.String
+	}
+	isFirstRun := false
+	if playbookSlug != "" {
+		var runCount int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE playbook_slug = ? AND kind = 'playbook_run' AND archived_at IS NULL AND deleted_at IS NULL`,
+			playbookSlug,
+		).Scan(&runCount); err == nil {
+			isFirstRun = runCount <= 1
+		}
+	}
+	prompt := fmt.Sprintf(
+		"You are running playbook %s as run %s. Do ALL of the following in order before executing anything:\n"+
+			"1. Load the flow operating manual. If a Skill tool is available, invoke the flow skill via the Skill tool. Otherwise read ~/.codex/skills/flow/SKILL.md or ~/.claude/skills/flow/SKILL.md, whichever exists.\n"+
+			"2. Run: flow show playbook %s. This shows the playbook definition and recent runs as context only, not your instructions.\n"+
+			"3. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. The brief is your authoritative snapshot for this run.\n"+
+			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief and every file under updates:.\n"+
+			"5. Read AGENTS.md and/or CLAUDE.md in your work_dir.\n"+
+			"6. Only then begin executing your brief.",
+		playbookSlug, task.Slug, playbookSlug,
+	)
+	if isFirstRun {
+		prompt += "\n\nThis is the first run of this playbook. Be proactive about asking whether scripts, decision rules, and edge cases discovered during the run should be captured back into the live playbook for future runs."
+	}
+	return prompt
+}
+
+func (s *terminalSession) running() bool {
+	select {
+	case <-s.done:
+		return false
+	default:
+		return true
+	}
+}
+
+func (s *terminalSession) addClient(client *terminalClient, replay bool) {
+	s.mu.Lock()
+	s.clients[client] = struct{}{}
+	scrollback := append([]byte(nil), s.scrollback...)
+	status := s.exitStatus
+	closed := s.closed
+	provider := s.provider
+	sessionID := s.sessionID
+	s.mu.Unlock()
+
+	if provider == "" {
+		provider = agents.ProviderClaude
+	}
+	message := "connected to " + provider
+	if sessionID != "" {
+		message += " session " + sessionID
+	} else {
+		message += " session pending capture"
+	}
+	client.queue(terminalWSMessage{Type: "status", Message: message})
+	if replay && len(scrollback) > 0 {
+		scrollback = stripTerminalAltScreenControls(scrollback)
+		if len(scrollback) > 0 {
+			client.queue(terminalWSMessage{Type: "output", Data: string(scrollback)})
+		}
+	}
+	if closed {
+		client.queue(terminalWSMessage{Type: "status", Message: status})
+	}
+}
+
+func (s *terminalSession) removeClient(client *terminalClient) {
+	s.mu.Lock()
+	delete(s.clients, client)
+	s.mu.Unlock()
+	client.close()
+}
+
+func (s *terminalSession) readPTY() {
+	buf := make([]byte, 8192)
+	pending := []byte{}
+	for {
+		n, err := s.tty.Read(buf)
+		if n > 0 {
+			data := append(pending, buf[:n]...)
+			ready, rest := completeUTF8Prefix(data)
+			pending = rest
+			if len(ready) > 0 {
+				ready = stripTerminalAltScreenControls(ready)
+				if len(ready) > 0 {
+					s.appendScrollback(ready)
+					s.broadcast(terminalWSMessage{Type: "output", Data: string(ready)})
+				}
+			}
+		}
+		if err != nil {
+			if len(pending) > 0 {
+				ready := bytes.ToValidUTF8(pending, []byte("\uFFFD"))
+				ready = stripTerminalAltScreenControls(ready)
+				if len(ready) > 0 {
+					s.appendScrollback(ready)
+					s.broadcast(terminalWSMessage{Type: "output", Data: string(ready)})
+				}
+			}
+			return
+		}
+	}
+}
+
+func completeUTF8Prefix(data []byte) ([]byte, []byte) {
+	if utf8.Valid(data) {
+		return data, nil
+	}
+	for tailLen := 1; tailLen <= 3 && tailLen <= len(data); tailLen++ {
+		head := data[:len(data)-tailLen]
+		tail := data[len(data)-tailLen:]
+		if utf8.Valid(head) && !utf8.FullRune(tail) {
+			return head, append([]byte(nil), tail...)
+		}
+	}
+	return bytes.ToValidUTF8(data, []byte("\uFFFD")), nil
+}
+
+func (s *terminalSession) wait() {
+	err := s.cmd.Wait()
+	provider := s.provider
+	if provider == "" {
+		provider = agents.ProviderClaude
+	}
+	status := provider + " terminal exited"
+	if err != nil {
+		status = provider + " terminal exited: " + err.Error()
+	}
+	_ = s.tty.Close()
+	s.mu.Lock()
+	if !s.closed {
+		s.closed = true
+		s.exitStatus = status
+		close(s.done)
+	}
+	clients := make([]*terminalClient, 0, len(s.clients))
+	for client := range s.clients {
+		clients = append(clients, client)
+	}
+	s.mu.Unlock()
+	for _, client := range clients {
+		client.queue(terminalWSMessage{Type: "status", Message: status})
+	}
+	s.hub.mu.Lock()
+	if s.hub.sessions[s.slug] == s {
+		delete(s.hub.sessions, s.slug)
+	}
+	s.hub.mu.Unlock()
+}
+
+func (s *terminalSession) terminate() {
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Signal(syscall.SIGTERM)
+	}
+	if s.tty != nil {
+		_ = s.tty.Close()
+	}
+}
+
+func (s *terminalSession) appendScrollback(data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scrollback = append(s.scrollback, data...)
+	if len(s.scrollback) > terminalScrollbackBytes {
+		s.scrollback = append([]byte(nil), s.scrollback[len(s.scrollback)-terminalScrollbackBytes:]...)
+	}
+}
+
+func (s *terminalSession) broadcast(msg terminalWSMessage) {
+	s.mu.Lock()
+	clients := make([]*terminalClient, 0, len(s.clients))
+	for client := range s.clients {
+		clients = append(clients, client)
+	}
+	s.mu.Unlock()
+	for _, client := range clients {
+		client.queue(msg)
+	}
+}
+
+func (s *terminalSession) write(data string) error {
+	if data == "" {
+		return nil
+	}
+	_, err := s.tty.Write([]byte(data))
+	return err
+}
+
+func (s *terminalSession) resize(cols, rows int) error {
+	if cols <= 0 || rows <= 0 {
+		return nil
+	}
+	if cols > 500 {
+		cols = 500
+	}
+	if rows > 500 {
+		rows = 500
+	}
+	return pty.Setsize(s.tty, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+}
+
+func (c *terminalClient) readLoop(sess *terminalSession) {
+	defer c.conn.Close()
+	c.conn.SetReadLimit(64 * 1024)
+	_ = c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	})
+	for {
+		var msg terminalWSMessage
+		if err := c.conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		switch msg.Type {
+		case "input":
+			_ = sess.write(msg.Data)
+		case "resize":
+			_ = sess.resize(msg.Cols, msg.Rows)
+		}
+	}
+}
+
+func (c *terminalClient) writeLoop() {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case msg, ok := <-c.send:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(msg)
+			if err != nil {
+				continue
+			}
+			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				return
+			}
+		case <-ticker.C:
+			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (c *terminalClient) queue(msg terminalWSMessage) {
+	select {
+	case c.send <- msg:
+	case <-c.done:
+	default:
+	}
+}
+
+func (c *terminalClient) close() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		_ = c.conn.Close()
+	})
+}

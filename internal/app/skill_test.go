@@ -63,8 +63,17 @@ func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	oldHome := os.Getenv("HOME")
+	oldCodexHome, hadCodexHome := os.LookupEnv("CODEX_HOME")
 	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", oldHome) })
+	os.Setenv("CODEX_HOME", filepath.Join(dir, ".codex"))
+	t.Cleanup(func() {
+		os.Setenv("HOME", oldHome)
+		if hadCodexHome {
+			os.Setenv("CODEX_HOME", oldCodexHome)
+		} else {
+			os.Unsetenv("CODEX_HOME")
+		}
+	})
 	return dir
 }
 
@@ -85,6 +94,14 @@ func TestSkillInstallWritesFile(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "---") {
 		t.Errorf("installed skill missing YAML frontmatter delimiters")
+	}
+	codexPath := filepath.Join(home, ".codex", "skills", "flow", "SKILL.md")
+	codexData, err := os.ReadFile(codexPath)
+	if err != nil {
+		t.Fatalf("read codex skill: %v", err)
+	}
+	if !strings.Contains(string(codexData), "name: flow") {
+		t.Errorf("installed codex skill missing frontmatter 'name: flow'")
 	}
 }
 
@@ -147,6 +164,10 @@ func TestSkillUninstallRemovesDir(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("skill dir still present after uninstall: %v", err)
+	}
+	codexDir := filepath.Join(home, ".codex", "skills", "flow")
+	if _, err := os.Stat(codexDir); !os.IsNotExist(err) {
+		t.Errorf("codex skill dir still present after uninstall: %v", err)
 	}
 }
 
@@ -345,6 +366,24 @@ func TestSkillMentionsPlaybooks(t *testing.T) {
 		"snapshot",
 		"Do not propose scheduling during playbook intake",
 		"the bootstrapped task\" includes playbook-run tasks",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing %q", want)
+		}
+	}
+}
+
+func TestSkillMentionsSoftDelete(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"delete/remove/trash",
+		"flow delete <ref>",
+		"flow restore <ref>",
+		"--include-deleted",
+		"--deleted",
+		"Soft-delete",
+		"Archive vs delete",
+		"wrong thing",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("skill missing %q", want)

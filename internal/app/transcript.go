@@ -5,16 +5,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"flow/internal/agents"
 	"flow/internal/flowdb"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // cmdTranscript implements `flow transcript <task-slug>`. It reads the
-// task's Claude session jsonl and outputs a human-readable conversation
+// task's agent session jsonl and outputs a human-readable conversation
 // transcript. This enables cross-task context sharing: one task's
 // execution session can pipe the output into its context to learn what
 // happened in a sibling task's conversation.
@@ -46,6 +46,9 @@ func cmdTranscript(args []string) int {
 	defer db.Close()
 
 	var task *flowdb.Task
+	if ref == "" {
+		ref = os.Getenv("FLOW_TASK")
+	}
 	if ref == "" {
 		bound, lookupErr := currentSessionTask(db)
 		if lookupErr != nil {
@@ -80,22 +83,18 @@ func cmdTranscript(args []string) int {
 		return 1
 	}
 
-	// Compute the cutoff from session_started so the transcript output is
-	// scoped to the task's own conversation, not pre-bind dispatch chatter
-	// that --here-bound tasks accumulate. NULL/unparseable session_started
-	// → zero cutoff → filter is a no-op (pass everything through).
-	var cutoff time.Time
-	if task.SessionStarted.Valid && task.SessionStarted.String != "" {
-		if ts, perr := time.Parse(time.RFC3339Nano, task.SessionStarted.String); perr == nil {
-			cutoff = ts
-		}
-	}
-
-	return renderTranscript(jsonlPath, *compact, cutoff)
+	return renderTranscript(jsonlPath, *compact)
 }
 
 // sessionJSONLPath returns the absolute path to a task's session jsonl file.
 func sessionJSONLPath(task *flowdb.Task) (string, error) {
+	if task.SessionProvider == sessionProviderCodex {
+		p, err := agents.FindCodexSessionPathByID(task.SessionID.String)
+		if err != nil {
+			return "", fmt.Errorf("codex session file not found for %s: %w", task.SessionID.String, err)
+		}
+		return p, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
@@ -111,16 +110,9 @@ func sessionJSONLPath(task *flowdb.Task) (string, error) {
 // ---------- jsonl record types ----------
 
 // jsonlRecord is the top-level structure of each line in a Claude session jsonl.
-//
-// Timestamp is parsed when present so the close-out sweep (and any caller
-// passing a cutoff) can scope the transcript to entries on-or-after a
-// specific moment — needed because --here-bound tasks carry pre-bind
-// dispatch chatter in their jsonl, which would otherwise leak into KB
-// distillation.
 type jsonlRecord struct {
-	Type      string          `json:"type"`
-	Message   json.RawMessage `json:"message"`
-	Timestamp string          `json:"timestamp"`
+	Type    string          `json:"type"`
+	Message json.RawMessage `json:"message"`
 }
 
 // jsonlMessage is the message body inside user/assistant records.
@@ -147,12 +139,7 @@ type contentBlock struct {
 const maxToolResultLen = 500
 
 // renderTranscript reads a jsonl file and prints a human-readable transcript.
-//
-// cutoff scopes the output to entries with timestamp >= cutoff. Pass the
-// zero time.Time to disable the filter. Entries with a missing or
-// unparseable `timestamp` field are kept regardless of cutoff — silent
-// data loss in a KB-distill input is worse than an over-inclusive sweep.
-func renderTranscript(path string, compact bool, cutoff time.Time) int {
+func renderTranscript(path string, compact bool) int {
 	f, err := os.Open(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -176,16 +163,8 @@ func renderTranscript(path string, compact bool, cutoff time.Time) int {
 			continue // skip malformed lines
 		}
 
-		// Filter: drop entries strictly before the cutoff. Defensive on
-		// parse failure / missing field — keep the entry rather than
-		// silently dropping it. RFC3339Nano accepts both the jsonl's
-		// fractional-second UTC form ("...T10:00:00.000Z") and the DB's
-		// offset form ("...+05:30") without fractional, so we use it as
-		// a single parser for both sources.
-		if !cutoff.IsZero() && rec.Timestamp != "" {
-			if ts, perr := time.Parse(time.RFC3339Nano, rec.Timestamp); perr == nil && ts.Before(cutoff) {
-				continue
-			}
+		if renderCodexRecord(line, compact, &first) {
+			continue
 		}
 
 		switch rec.Type {
@@ -210,6 +189,135 @@ func renderTranscript(path string, compact bool, cutoff time.Time) int {
 		return 1
 	}
 	return 0
+}
+
+// ---------- Codex JSONL rendering ----------
+
+type codexRecord struct {
+	Type      string          `json:"type"`
+	Role      string          `json:"role"`
+	Content   json.RawMessage `json:"content"`
+	Payload   json.RawMessage `json:"payload"`
+	Name      string          `json:"name"`
+	Arguments string          `json:"arguments"`
+	CallID    string          `json:"call_id"`
+	Output    json.RawMessage `json:"output"`
+	Action    struct {
+		Command []string `json:"command"`
+	} `json:"action"`
+}
+
+type codexContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func renderCodexRecord(line []byte, compact bool, first *bool) bool {
+	var rec codexRecord
+	if err := json.Unmarshal(line, &rec); err != nil {
+		return false
+	}
+	switch rec.Type {
+	case "response_item":
+		var payload codexRecord
+		if err := json.Unmarshal(rec.Payload, &payload); err != nil {
+			return false
+		}
+		return renderCodexPayload(payload, compact, first)
+	case "message", "function_call", "function_call_output", "local_shell_call":
+		return renderCodexPayload(rec, compact, first)
+	default:
+		return false
+	}
+}
+
+func renderCodexPayload(rec codexRecord, compact bool, first *bool) bool {
+	switch rec.Type {
+	case "message":
+		return renderCodexMessage(rec.Role, rec.Content, first)
+	case "function_call":
+		if compact {
+			return true
+		}
+		body := rec.Name
+		if rec.Arguments != "" {
+			body += "\n" + truncate(rec.Arguments, maxToolResultLen)
+		}
+		printTranscriptSection(first, "Tool: "+rec.Name, body)
+		return true
+	case "function_call_output":
+		if compact {
+			return true
+		}
+		printTranscriptSection(first, "Tool result", truncate(rawJSONAsString(rec.Output), maxToolResultLen))
+		return true
+	case "local_shell_call":
+		if compact {
+			return true
+		}
+		printTranscriptSection(first, "Tool: local_shell", strings.Join(rec.Action.Command, " "))
+		return true
+	default:
+		return false
+	}
+}
+
+func renderCodexMessage(role string, raw json.RawMessage, first *bool) bool {
+	var blocks []codexContentBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return false
+		}
+		printTranscriptSection(first, transcriptRoleTitle(role), text)
+		return true
+	}
+	var rendered bool
+	for _, block := range blocks {
+		if block.Text == "" {
+			continue
+		}
+		switch block.Type {
+		case "input_text", "output_text", "text":
+			printTranscriptSection(first, transcriptRoleTitle(role), block.Text)
+			rendered = true
+		}
+	}
+	return rendered
+}
+
+func transcriptRoleTitle(role string) string {
+	switch role {
+	case "user":
+		return "User"
+	case "assistant":
+		return "Assistant"
+	default:
+		if role == "" {
+			return "Message"
+		}
+		return strings.ToUpper(role[:1]) + role[1:]
+	}
+}
+
+func printTranscriptSection(first *bool, title, body string) {
+	if !*first {
+		fmt.Println()
+	}
+	*first = false
+	fmt.Printf("─── %s ───\n", title)
+	fmt.Println(body)
+}
+
+func rawJSONAsString(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	if len(raw) == 0 {
+		return ""
+	}
+	return string(raw)
 }
 
 func renderUserRecord(raw json.RawMessage, compact bool) {

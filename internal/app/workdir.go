@@ -1,14 +1,13 @@
 package app
 
 import (
-	"bufio"
 	"database/sql"
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/workdirreg"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -70,6 +69,10 @@ func cmdWorkdirList(args []string) int {
 		return rc
 	}
 	defer db.Close()
+
+	if _, err := workdirreg.SyncGitRemotes(db); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: sync workdir remotes: %v\n", err)
+	}
 
 	list, err := flowdb.ListWorkdirs(db)
 	if err != nil {
@@ -177,15 +180,13 @@ func cmdWorkdirAdd(args []string) int {
 		return 1
 	}
 
-	remote := detectGitRemote(abs)
-
 	db, rc := openFlowDBForWorkdir()
 	if rc != 0 {
 		return rc
 	}
 	defer db.Close()
 
-	if err := flowdb.UpsertWorkdir(db, abs, name, description, remote); err != nil {
+	if err := workdirreg.Register(db, abs, name, description); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -354,10 +355,15 @@ func cmdWorkdirScan(args []string) int {
 
 		if add {
 			if known {
+				if remote != "" {
+					if err := flowdb.UpsertWorkdir(db, path, "", "", remote); err != nil {
+						fmt.Fprintf(os.Stderr, "warning: update remote %s: %v\n", path, err)
+					}
+				}
 				continue
 			}
 			name := filepath.Base(path)
-			if err := flowdb.UpsertWorkdir(db, path, name, "", remote); err != nil {
+			if err := workdirreg.Register(db, path, name, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: upsert %s: %v\n", path, err)
 				continue
 			}
@@ -420,71 +426,6 @@ func scanForGitRepos(root string, maxDepth int) ([]string, error) {
 	return found, nil
 }
 
-// gitRemoteRE matches the url = <value> line under the origin section of a
-// .git/config. The whole [remote "origin"] block lookup is done manually
-// below; this regex only pulls the URL value out of a given line.
-var gitRemoteURLRE = regexp.MustCompile(`^\s*url\s*=\s*(.+?)\s*$`)
-
-// detectGitRemote reads <path>/.git/config (if present) and extracts the
-// origin remote URL. Returns "" on any error or if the section isn't
-// present. Handles `.git` being either a directory (normal repo) or a
-// file (git worktree — we follow the gitdir pointer).
 func detectGitRemote(path string) string {
-	configPath := resolveGitConfigPath(path)
-	if configPath == "" {
-		return ""
-	}
-	f, err := os.Open(configPath)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	inOrigin := false
-	for scanner.Scan() {
-		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			// Section header.
-			inOrigin = (trimmed == `[remote "origin"]`)
-			continue
-		}
-		if !inOrigin {
-			continue
-		}
-		if m := gitRemoteURLRE.FindStringSubmatch(line); m != nil {
-			return m[1]
-		}
-	}
-	return ""
-}
-
-// resolveGitConfigPath returns the absolute path to the git config for a
-// repo rooted at path, or "" if none exists. Handles both the common case
-// (.git is a directory) and the git-worktree case (.git is a file with
-// `gitdir: <path>`).
-func resolveGitConfigPath(path string) string {
-	gitPath := filepath.Join(path, ".git")
-	info, err := os.Stat(gitPath)
-	if err != nil {
-		return ""
-	}
-	if info.IsDir() {
-		return filepath.Join(gitPath, "config")
-	}
-	// Worktree: .git is a file of the form "gitdir: <relative-or-absolute>".
-	data, err := os.ReadFile(gitPath)
-	if err != nil {
-		return ""
-	}
-	line := strings.TrimSpace(string(data))
-	if !strings.HasPrefix(line, "gitdir:") {
-		return ""
-	}
-	target := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(path, target)
-	}
-	return filepath.Join(target, "config")
+	return workdirreg.DetectGitRemote(path)
 }

@@ -47,6 +47,12 @@ func Run(args []string) int {
 		return cmdDone(rest)
 	case "show":
 		return cmdShow(rest)
+	case "ui":
+		return cmdUI(rest)
+	case "monitor":
+		return cmdMonitor(rest)
+	case "serve":
+		return cmdUIServe(rest)
 	case "list":
 		return cmdList(rest)
 	case "edit":
@@ -57,6 +63,10 @@ func Run(args []string) int {
 		return cmdArchive(rest)
 	case "unarchive":
 		return cmdUnarchive(rest)
+	case "delete":
+		return cmdDelete(rest)
+	case "restore":
+		return cmdRestore(rest)
 	case "workdir":
 		return cmdWorkdir(rest)
 	case "skill":
@@ -75,7 +85,7 @@ func Run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Println(`flow — personal task and Claude session manager
+	fmt.Println(`flow — personal task and agent session manager
 
 Setup:
   flow init
@@ -85,19 +95,21 @@ Setup:
 
 Create:
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
-  flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>]
+  flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>] [--agent claude|codex] [--permission-mode default|auto|bypass]
 
 Sessions:
-  flow do                <ref> [--fresh] [--dangerously-skip-permissions]
+  flow do                <ref> [--agent claude|codex] [--fresh] [--dangerously-skip-permissions]
   flow done              <ref>
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
 Read:
+  flow ui serve        [--host 127.0.0.1] [--port 8787] [--bg] (local web Mission Control UI)
+  flow monitor poll    [--source all|github|slack] [--once] [--interval 60s] [--json]
   flow show task       [<ref>]
   flow show project    [<ref>]
   flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
-  flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
-  flow list projects [--status ...] [--include-archived]
+  flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived] [--include-deleted|--deleted]
+  flow list projects [--status ...] [--include-archived] [--include-deleted|--deleted]
   flow list tags                                            (every tag in use, with per-tag task counts)
 
 Edit / mutate:
@@ -109,10 +121,12 @@ Edit / mutate:
                             [--waiting "<who or what>"] [--clear-waiting]
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
   flow update project <ref> [--priority h|m|l]
-  flow do        <ref> [--fresh] [--dangerously-skip-permissions] [--force]   (spawn a new tab; --force overrides the live-session guard)
+  flow do        <ref> [--agent claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]   (spawn a new tab; --force overrides the live-session guard)
   flow do --here <ref> [--force]                                              (bind THIS Claude session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>
+  flow delete    <ref>   (soft-delete; hides from normal lists/UI)
+  flow restore   <ref>   (restore a soft-deleted task/project/playbook)
 
 Workdirs:
   flow workdir list
@@ -122,8 +136,7 @@ Workdirs:
 
 Playbooks:
   flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow run playbook   <slug> [--dangerously-skip-permissions]   (spawn a new tab)
-  flow run playbook   <slug> --here                              (bind THIS Claude session to the new run; no new tab)
+  flow run playbook   <slug> [--agent claude|codex] [--dangerously-skip-permissions]
   flow show playbook  <ref>
-  flow list playbooks [--project <slug>] [--include-archived]`)
+  flow list playbooks [--project <slug>] [--include-archived] [--include-deleted|--deleted]`)
 }

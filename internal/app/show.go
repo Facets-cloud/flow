@@ -55,6 +55,9 @@ func showTaskCmd(args []string) int {
 
 	var t *flowdb.Task
 	if ref == "" {
+		ref = os.Getenv("FLOW_TASK")
+	}
+	if ref == "" {
 		// No explicit ref: reverse-lookup via the current Claude session.
 		bound, lookupErr := currentSessionTask(db)
 		if lookupErr != nil {
@@ -70,7 +73,8 @@ func showTaskCmd(args []string) int {
 			return 1
 		}
 		t = bound
-	} else {
+	}
+	if t == nil {
 		t, err = resolveTaskRef(db, ref)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -112,6 +116,20 @@ func showProjectCmd(args []string) int {
 	}
 	defer db.Close()
 
+	if ref == "" {
+		if taskRef := os.Getenv("FLOW_TASK"); taskRef != "" {
+			bound, err := resolveTaskRef(db, taskRef)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			if !bound.ProjectSlug.Valid || bound.ProjectSlug.String == "" {
+				fmt.Fprintf(os.Stderr, "error: bound task %q is floating (no project)\n", bound.Slug)
+				return 1
+			}
+			ref = bound.ProjectSlug.String
+		}
+	}
 	if ref == "" {
 		// Reverse-lookup: find the task bound to this session, then its project.
 		bound, lookupErr := currentSessionTask(db)
@@ -176,7 +194,7 @@ func showPlaybookCmd(args []string) int {
 	}
 	defer db.Close()
 
-	pb, err := ResolvePlaybook(db, ref, true) // include archived for show
+	pb, err := ResolvePlaybookWithOptions(db, ref, resolveOptions{IncludeArchived: true, IncludeDeleted: true})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -194,14 +212,14 @@ func showPlaybookCmd(args []string) int {
 // ---------- resolution helpers ----------
 
 // resolveTaskRef resolves a ref to a task. Includes archived rows so
-// `show task` can display them.
+// `show task` can display archived/deleted rows.
 func resolveTaskRef(db *sql.DB, query string) (*flowdb.Task, error) {
-	return ResolveTask(db, query, true)
+	return ResolveTaskWithOptions(db, query, resolveOptions{IncludeArchived: true, IncludeDeleted: true})
 }
 
-// resolveProjectRef resolves a ref to a project. Includes archived rows.
+// resolveProjectRef resolves a ref to a project. Includes archived/deleted rows.
 func resolveProjectRef(db *sql.DB, query string) (*flowdb.Project, error) {
-	return ResolveProject(db, query, true)
+	return ResolveProjectWithOptions(db, query, resolveOptions{IncludeArchived: true, IncludeDeleted: true})
 }
 
 // ---------- pretty printers ----------
@@ -211,6 +229,9 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	archivedMarker := ""
 	if t.ArchivedAt.Valid {
 		archivedMarker = "  (archived)"
+	}
+	if t.DeletedAt.Valid {
+		archivedMarker += "  (deleted)"
 	}
 	fmt.Printf("slug:          %s%s\n", t.Slug, archivedMarker)
 	fmt.Printf("name:          %s\n", t.Name)
@@ -297,11 +318,17 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		slast = t.SessionLastResumed.String
 	}
 	fmt.Printf("session_last_resumed:  %s\n", slast)
+	if t.WorktreePath.Valid && t.WorktreePath.String != "" {
+		fmt.Printf("worktree:      %s  [branch flow/%s]\n", t.WorktreePath.String, t.Slug)
+	}
 
 	fmt.Printf("created:       %s\n", t.CreatedAt)
 	fmt.Printf("updated:       %s\n", t.UpdatedAt)
 	if t.ArchivedAt.Valid {
 		fmt.Printf("archived:      %s\n", t.ArchivedAt.String)
+	}
+	if t.DeletedAt.Valid {
+		fmt.Printf("deleted:       %s\n", t.DeletedAt.String)
 	}
 	briefPath := filepath.Join(root, "tasks", t.Slug, "brief.md")
 	fmt.Printf("brief:         %s\n", briefPath)
@@ -355,6 +382,9 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 	if p.ArchivedAt.Valid {
 		archivedMarker = "  (archived)"
 	}
+	if p.DeletedAt.Valid {
+		archivedMarker += "  (deleted)"
+	}
 	fmt.Printf("slug:        %s%s\n", p.Slug, archivedMarker)
 	fmt.Printf("name:        %s\n", p.Name)
 	fmt.Printf("status:      %s\n", p.Status)
@@ -379,6 +409,9 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 	fmt.Printf("updated:     %s\n", p.UpdatedAt)
 	if p.ArchivedAt.Valid {
 		fmt.Printf("archived:    %s\n", p.ArchivedAt.String)
+	}
+	if p.DeletedAt.Valid {
+		fmt.Printf("deleted:     %s\n", p.DeletedAt.String)
 	}
 	briefPath := filepath.Join(root, "projects", p.Slug, "brief.md")
 	fmt.Printf("brief:       %s\n", briefPath)
@@ -446,6 +479,9 @@ func printPlaybookMetadata(db *sql.DB, pb *flowdb.Playbook, root string) {
 	if pb.ArchivedAt.Valid {
 		archivedMarker = "  (archived)"
 	}
+	if pb.DeletedAt.Valid {
+		archivedMarker += "  (deleted)"
+	}
 	fmt.Printf("slug:        %s%s\n", pb.Slug, archivedMarker)
 	fmt.Printf("name:        %s\n", pb.Name)
 	if pb.ProjectSlug.Valid {
@@ -473,6 +509,9 @@ func printPlaybookMetadata(db *sql.DB, pb *flowdb.Playbook, root string) {
 	fmt.Printf("updated:     %s\n", pb.UpdatedAt)
 	if pb.ArchivedAt.Valid {
 		fmt.Printf("archived:    %s\n", pb.ArchivedAt.String)
+	}
+	if pb.DeletedAt.Valid {
+		fmt.Printf("deleted:     %s\n", pb.DeletedAt.String)
 	}
 
 	pbDir := filepath.Join(root, "playbooks", pb.Slug)

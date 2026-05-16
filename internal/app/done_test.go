@@ -3,7 +3,10 @@ package app
 import (
 	"errors"
 	"flow/internal/flowdb"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 // stubClaudeRunner replaces claudeRunner with a capturing stub that returns
@@ -116,6 +119,91 @@ func TestCmdDoneRefusesTaskWithoutSession(t *testing.T) {
 	task, _ := flowdb.GetTask(db, "no-session-task")
 	if task.Status != "backlog" {
 		t.Errorf("status = %q, want backlog (refused done should not flip)", task.Status)
+	}
+}
+
+func TestCmdDoneCapturesPendingCodexSessionBeforeSweep(t *testing.T) {
+	setupFlowRoot(t)
+	calls := stubClaudeRunner(t, nil)
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	workDir := t.TempDir()
+
+	if rc := cmdAdd([]string{"task", "Codex Close", "--work-dir", workDir, "--agent", "codex"}); rc != 0 {
+		t.Fatalf("add rc=%d", rc)
+	}
+	started := time.Now().Add(-1 * time.Minute).UTC()
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='in-progress', session_provider='codex', session_id=NULL, session_started=? WHERE slug='codex-close'`,
+		started.Format(time.RFC3339),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	sessionID := "55555555-5555-4555-8555-555555555555"
+	sessionDir := filepath.Join(codexHome, "sessions", "2026", "05", "15")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jsonl := `{"type":"session_meta","payload":{"id":"` + sessionID + `","cwd":"` + workDir + `","timestamp":"` + time.Now().UTC().Format(time.RFC3339) + `"}}` + "\n" +
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"flow task codex-close"}]}}` + "\n"
+	if err := os.WriteFile(filepath.Join(sessionDir, sessionID+".jsonl"), []byte(jsonl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdDone([]string{"codex-close"}); rc != 0 {
+		t.Fatalf("done rc=%d, want 0", rc)
+	}
+	db = openFlowDB(t)
+	task, err := flowdb.GetTask(db, "codex-close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "done" {
+		t.Fatalf("status = %q, want done", task.Status)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != sessionID {
+		t.Fatalf("session_id = %+v, want %s", task.SessionID, sessionID)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("expected 1 sweep call, got %d", len(*calls))
+	}
+	if !contains((*calls)[0].prompt, "flow transcript codex-close") {
+		t.Fatalf("sweep prompt should read codex transcript, got:\n%s", (*calls)[0].prompt)
+	}
+}
+
+func TestCmdDoneRefusesPendingCodexSessionWithoutCapture(t *testing.T) {
+	setupFlowRoot(t)
+	calls := stubClaudeRunner(t, errors.New("should not be called"))
+	workDir := t.TempDir()
+	if rc := cmdAdd([]string{"task", "Codex Missing Capture", "--work-dir", workDir, "--agent", "codex"}); rc != 0 {
+		t.Fatalf("add rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='in-progress', session_provider='codex', session_id=NULL, session_started=? WHERE slug='codex-missing-capture'`,
+		time.Now().Add(-1*time.Minute).UTC().Format(time.RFC3339),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	if rc := cmdDone([]string{"codex-missing-capture"}); rc != 1 {
+		t.Fatalf("done rc=%d, want 1", rc)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("expected no sweep calls, got %d", len(*calls))
+	}
+	db = openFlowDB(t)
+	task, err := flowdb.GetTask(db, "codex-missing-capture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "in-progress" {
+		t.Fatalf("status = %q, want in-progress", task.Status)
 	}
 }
 

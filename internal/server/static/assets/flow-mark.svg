@@ -1,0 +1,12 @@
+<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="flow">
+  <defs>
+    <linearGradient id="flow-mark-gradient" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#645df6"/>
+      <stop offset="1" stop-color="#8b87f8"/>
+    </linearGradient>
+  </defs>
+  <rect width="36" height="36" rx="8" fill="url(#flow-mark-gradient)"/>
+  <path d="M9 23 Q14 23 14 18 Q14 13 19 13 Q24 13 24 18 Q24 23 27 23" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="9" cy="23" r="2" fill="#fff"/>
+  <circle cx="27" cy="23" r="2" fill="#fff"/>
+</svg>

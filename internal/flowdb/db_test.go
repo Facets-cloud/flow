@@ -81,11 +81,15 @@ func TestListProjectsFilters(t *testing.T) {
 	db := openTempDB(t)
 	insertProject(t, db, "alpha", "Alpha", "/tmp/alpha", "high")
 	insertProject(t, db, "beta", "Beta", "/tmp/beta", "medium")
+	insertProject(t, db, "deleted", "Deleted", "/tmp/deleted", "low")
 	if _, err := db.Exec(`UPDATE projects SET status='done' WHERE slug='beta'`); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if _, err := db.Exec(`UPDATE projects SET archived_at=? WHERE slug='alpha'`, NowISO()); err != nil {
 		t.Fatalf("archive: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE projects SET deleted_at=? WHERE slug='deleted'`, NowISO()); err != nil {
+		t.Fatalf("delete: %v", err)
 	}
 	got, err := ListProjects(db, ProjectFilter{})
 	if err != nil {
@@ -100,6 +104,13 @@ func TestListProjectsFilters(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("include archived: got %d", len(got))
+	}
+	got, err = ListProjects(db, ProjectFilter{DeletedOnly: true})
+	if err != nil {
+		t.Fatalf("list deleted: %v", err)
+	}
+	if len(got) != 1 || got[0].Slug != "deleted" {
+		t.Errorf("deleted only: got %v", got)
 	}
 }
 
@@ -123,6 +134,34 @@ func TestTaskCRUD(t *testing.T) {
 	}
 	if floating.ProjectSlug.Valid {
 		t.Errorf("expected null project_slug")
+	}
+}
+
+func TestCodexInProgressCanHavePendingSessionID(t *testing.T) {
+	db := openTempDB(t)
+	now := NowISO()
+	wd := t.TempDir()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, session_provider, created_at, updated_at)
+		 VALUES ('codex-pending', 'Codex Pending', 'in-progress', 'medium', ?, 'codex', ?, ?)`,
+		wd, now, now,
+	); err != nil {
+		t.Fatalf("codex in-progress without session_id should be allowed: %v", err)
+	}
+	task, err := GetTask(db, "codex-pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionProvider != "codex" || task.SessionID.Valid {
+		t.Fatalf("codex pending task = %+v", task)
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, session_provider, created_at, updated_at)
+		 VALUES ('claude-pending', 'Claude Pending', 'in-progress', 'medium', ?, 'claude', ?, ?)`,
+		wd, now, now,
+	); err == nil {
+		t.Fatal("claude in-progress without session_id should violate the invariant")
 	}
 }
 
@@ -247,14 +286,31 @@ func TestOpenDBOnPreMigrationDB(t *testing.T) {
 	if kind != "regular" {
 		t.Errorf("legacy row kind: got %q, want regular", kind)
 	}
+	var permissionMode string
+	if err := db.QueryRow(`SELECT permission_mode FROM tasks WHERE slug='legacy'`).Scan(&permissionMode); err != nil {
+		t.Fatalf("read legacy row permission mode after migration: %v", err)
+	}
+	if permissionMode != "default" {
+		t.Errorf("legacy row permission mode: got %q, want default", permissionMode)
+	}
 
 	// Verify the new playbooks table is queryable.
 	if _, err := db.Exec(`SELECT slug FROM playbooks LIMIT 1`); err != nil {
 		t.Errorf("playbooks table not created: %v", err)
 	}
 
+	for _, table := range []string{"projects", "tasks", "playbooks"} {
+		has, err := columnExists(db, table, "deleted_at")
+		if err != nil {
+			t.Fatalf("columnExists(%s.deleted_at): %v", table, err)
+		}
+		if !has {
+			t.Fatalf("%s.deleted_at missing after migration", table)
+		}
+	}
+
 	// Verify the new indexes exist.
-	for _, idx := range []string{"idx_tasks_kind", "idx_tasks_playbook_slug", "idx_playbooks_project"} {
+	for _, idx := range []string{"idx_tasks_kind", "idx_tasks_playbook_slug", "idx_playbooks_project", "idx_projects_deleted_at", "idx_playbooks_deleted_at", "idx_tasks_deleted_at"} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&name)
 		if err != nil {

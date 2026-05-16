@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // sampleSessionJSONL is a minimal but representative session jsonl for
@@ -38,7 +37,7 @@ func TestTranscriptRender(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	rc := renderTranscript(jsonlPath, false, time.Time{})
+	rc := renderTranscript(jsonlPath, false)
 
 	w.Close()
 	os.Stdout = old
@@ -97,7 +96,7 @@ func TestTranscriptCompact(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	rc := renderTranscript(jsonlPath, true, time.Time{})
+	rc := renderTranscript(jsonlPath, true)
 
 	w.Close()
 	os.Stdout = old
@@ -130,10 +129,62 @@ func TestTranscriptCompact(t *testing.T) {
 	}
 }
 
+func TestTranscriptRenderCodexJSONL(t *testing.T) {
+	tmp := t.TempDir()
+	jsonlPath := filepath.Join(tmp, "codex.jsonl")
+	body := strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"55555555-5555-4555-8555-555555555555","cwd":"/tmp/work","timestamp":"2026-05-15T10:00:00Z"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Run the tests"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will run them now."}]}}`,
+		`{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":\"go test ./...\"}"}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","output":"ok"}}`,
+		`{"type":"response_item","payload":{"type":"local_shell_call","action":{"command":["go","test","./..."]}}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(jsonlPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	rc := renderTranscript(jsonlPath, false)
+
+	w.Close()
+	os.Stdout = old
+
+	if rc != 0 {
+		t.Fatalf("renderTranscript returned %d, want 0", rc)
+	}
+	buf := make([]byte, 64*1024)
+	n, _ := r.Read(buf)
+	out := string(buf[:n])
+	for _, want := range []string{
+		"─── User ───",
+		"Run the tests",
+		"─── Assistant ───",
+		"I will run them now.",
+		"─── Tool: shell ───",
+		"go test ./...",
+		"─── Tool result ───",
+		"ok",
+		"─── Tool: local_shell ───",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("codex transcript missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "session_meta") {
+		t.Fatalf("session_meta leaked into codex transcript:\n%s", out)
+	}
+}
+
 func TestTranscriptCmdNoSession(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
 	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", filepath.Join(tmp, ".codex"))
 
 	oldOsa := iterm.Runner
 	iterm.Runner = func(args []string) error { return nil }
@@ -152,6 +203,7 @@ func TestTranscriptCmdWithSession(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
 	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", filepath.Join(tmp, ".codex"))
 
 	oldOsa := iterm.Runner
 	iterm.Runner = func(args []string) error { return nil }
@@ -186,191 +238,5 @@ func TestTranscriptCmdWithSession(t *testing.T) {
 	rc := cmdTranscript([]string{"tx-test"})
 	if rc != 0 {
 		t.Errorf("transcript with session: rc=%d, want 0", rc)
-	}
-}
-
-// ---------- timestamp cutoff filter ----------
-
-// preBindJSONL has two user messages: one before session_started (pre-bind
-// chatter from the dispatch session) and one after. The filter should drop
-// the pre-bind entry but keep the post-bind one.
-const preBindJSONL = `{"type":"user","message":{"role":"user","content":"PRE-BIND chatter"},"uuid":"u0","timestamp":"2026-05-14T10:00:00.000Z","sessionId":"sid"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"PRE-BIND reply"}]},"uuid":"a0","timestamp":"2026-05-14T10:00:01.000Z","sessionId":"sid"}
-{"type":"user","message":{"role":"user","content":"POST-BIND request"},"uuid":"u1","timestamp":"2026-05-14T11:00:00.000Z","sessionId":"sid"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"POST-BIND reply"}]},"uuid":"a1","timestamp":"2026-05-14T11:00:01.000Z","sessionId":"sid"}
-`
-
-// TestTranscriptFiltersByCutoff pins the --here close-out sweep contract:
-// entries with timestamp < cutoff are dropped. Entries at-or-after are kept.
-func TestTranscriptFiltersByCutoff(t *testing.T) {
-	tmp := t.TempDir()
-	jsonlPath := filepath.Join(tmp, "sid.jsonl")
-	if err := os.WriteFile(jsonlPath, []byte(preBindJSONL), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cutoff, _ := time.Parse(time.RFC3339Nano, "2026-05-14T10:30:00.000Z")
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	rc := renderTranscript(jsonlPath, false, cutoff)
-	w.Close()
-	os.Stdout = old
-	if rc != 0 {
-		t.Fatalf("rc=%d, want 0", rc)
-	}
-	buf := make([]byte, 64*1024)
-	n, _ := r.Read(buf)
-	out := string(buf[:n])
-
-	if strings.Contains(out, "PRE-BIND") {
-		t.Errorf("pre-bind content leaked through filter:\n%s", out)
-	}
-	if !strings.Contains(out, "POST-BIND request") {
-		t.Errorf("post-bind user message dropped:\n%s", out)
-	}
-	if !strings.Contains(out, "POST-BIND reply") {
-		t.Errorf("post-bind assistant message dropped:\n%s", out)
-	}
-}
-
-// TestTranscriptZeroCutoffNoFilter pins the no-op case: when cutoff is
-// the zero time.Time, the filter is bypassed and all entries pass.
-// This is what cmdTranscript should hand to renderTranscript when
-// task.session_started is NULL/empty.
-func TestTranscriptZeroCutoffNoFilter(t *testing.T) {
-	tmp := t.TempDir()
-	jsonlPath := filepath.Join(tmp, "sid.jsonl")
-	if err := os.WriteFile(jsonlPath, []byte(preBindJSONL), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	rc := renderTranscript(jsonlPath, false, time.Time{})
-	w.Close()
-	os.Stdout = old
-	if rc != 0 {
-		t.Fatalf("rc=%d, want 0", rc)
-	}
-	buf := make([]byte, 64*1024)
-	n, _ := r.Read(buf)
-	out := string(buf[:n])
-
-	if !strings.Contains(out, "PRE-BIND chatter") {
-		t.Errorf("zero cutoff should pass everything; pre-bind missing:\n%s", out)
-	}
-	if !strings.Contains(out, "POST-BIND request") {
-		t.Errorf("zero cutoff should pass everything; post-bind missing:\n%s", out)
-	}
-}
-
-// TestTranscriptKeepsEntriesWithMissingTimestamp pins the defensive
-// behavior: an entry without a `timestamp` field is KEPT regardless of
-// cutoff. The user explicitly asked: don't silently lose data.
-func TestTranscriptKeepsEntriesWithMissingTimestamp(t *testing.T) {
-	tmp := t.TempDir()
-	jsonlPath := filepath.Join(tmp, "sid.jsonl")
-	const j = `{"type":"user","message":{"role":"user","content":"NO TIMESTAMP entry"},"uuid":"u0","sessionId":"sid"}
-{"type":"user","message":{"role":"user","content":"BEFORE cutoff"},"uuid":"u1","timestamp":"2026-05-14T09:00:00.000Z","sessionId":"sid"}
-{"type":"user","message":{"role":"user","content":"AFTER cutoff"},"uuid":"u2","timestamp":"2026-05-14T11:00:00.000Z","sessionId":"sid"}
-`
-	if err := os.WriteFile(jsonlPath, []byte(j), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cutoff, _ := time.Parse(time.RFC3339Nano, "2026-05-14T10:00:00.000Z")
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	rc := renderTranscript(jsonlPath, false, cutoff)
-	w.Close()
-	os.Stdout = old
-	if rc != 0 {
-		t.Fatalf("rc=%d, want 0", rc)
-	}
-	buf := make([]byte, 64*1024)
-	n, _ := r.Read(buf)
-	out := string(buf[:n])
-
-	if !strings.Contains(out, "NO TIMESTAMP entry") {
-		t.Errorf("entry without timestamp dropped (should be kept defensively):\n%s", out)
-	}
-	if strings.Contains(out, "BEFORE cutoff") {
-		t.Errorf("entry with timestamp < cutoff was kept:\n%s", out)
-	}
-	if !strings.Contains(out, "AFTER cutoff") {
-		t.Errorf("entry with timestamp >= cutoff was dropped:\n%s", out)
-	}
-}
-
-// TestTranscriptKeepsEntriesWithUnparseableTimestamp pins the second
-// defensive case: an entry whose `timestamp` field is present but not
-// a valid RFC3339[Nano] is KEPT. Better over-inclusive than silently
-// lossy.
-func TestTranscriptKeepsEntriesWithUnparseableTimestamp(t *testing.T) {
-	tmp := t.TempDir()
-	jsonlPath := filepath.Join(tmp, "sid.jsonl")
-	const j = `{"type":"user","message":{"role":"user","content":"BAD TIMESTAMP entry"},"uuid":"u0","timestamp":"not-a-date","sessionId":"sid"}
-`
-	if err := os.WriteFile(jsonlPath, []byte(j), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cutoff, _ := time.Parse(time.RFC3339Nano, "2026-05-14T10:00:00.000Z")
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	rc := renderTranscript(jsonlPath, false, cutoff)
-	w.Close()
-	os.Stdout = old
-	if rc != 0 {
-		t.Fatalf("rc=%d, want 0", rc)
-	}
-	buf := make([]byte, 64*1024)
-	n, _ := r.Read(buf)
-	out := string(buf[:n])
-
-	if !strings.Contains(out, "BAD TIMESTAMP entry") {
-		t.Errorf("entry with unparseable timestamp dropped (should be kept defensively):\n%s", out)
-	}
-}
-
-// TestTranscriptRegularSpawnPassthrough pins the no-op property for
-// non-`--here` tasks: their session_started ≈ first jsonl message
-// (the binary pre-allocates the UUID before spawning the tab, so the
-// first message arrives strictly after session_started). The filter
-// should pass all entries through.
-func TestTranscriptRegularSpawnPassthrough(t *testing.T) {
-	tmp := t.TempDir()
-	jsonlPath := filepath.Join(tmp, "sid.jsonl")
-	if err := os.WriteFile(jsonlPath, []byte(sampleSessionJSONL), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// session_started slightly BEFORE the first jsonl entry (which is
-	// the normal `flow do` ordering).
-	cutoff, _ := time.Parse(time.RFC3339Nano, "2026-04-12T09:59:00.000Z")
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	rc := renderTranscript(jsonlPath, false, cutoff)
-	w.Close()
-	os.Stdout = old
-	if rc != 0 {
-		t.Fatalf("rc=%d, want 0", rc)
-	}
-	buf := make([]byte, 64*1024)
-	n, _ := r.Read(buf)
-	out := string(buf[:n])
-
-	// All the same checks as TestTranscriptRender should pass — filter
-	// is a no-op when session_started precedes everything.
-	for _, want := range []string{"Hello, can you help me?", "Sure, let me check.", "Done!"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("regular-spawn filter dropped %q; output:\n%s", want, out)
-		}
 	}
 }
