@@ -34,14 +34,21 @@ func cmdUpdate(args []string) int {
 // UUID, lowercase hex, with the version/variant bits enforced.
 var sessionUUIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// cmdUpdateTask implements `flow update task <ref> [--session-id <uuid>]
-// [--work-dir <path>] [--mkdir] [--status <s>] [--assignee <name>]
-// [--due-date <date>]`. At least one field-changing flag must be given.
+// cmdUpdateTask implements `flow update task <ref> [--work-dir <path>]
+// [--mkdir] [--status <s>] [--assignee <name>] [--due-date <date>]
+// [--waiting ...] [--tag ...]`. At least one field-changing flag
+// must be given.
 //
-// The command is the manual escape hatch for fields that don't have a
-// dedicated friendly setter. Status accepts any of backlog|in-progress|
-// done — including reverse transitions like done → in-progress, which
-// is the documented way to reopen a closed task.
+// Status accepts any of backlog|in-progress|done. The session_id
+// invariant (only backlog may have NULL session_id) is enforced
+// here: setting --status to a non-backlog value on a task without a
+// session_id errors with a pointer to `flow do` / `flow do --here`,
+// which are the supported paths to attach a session.
+//
+// There is no --session-id flag here: that lane was removed in
+// favor of `flow do --here` (in-session bind via
+// $CLAUDE_CODE_SESSION_ID), which prevents wrong-session attachment
+// by construction.
 func cmdUpdateTask(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "error: update task requires a task ref")
@@ -49,7 +56,6 @@ func cmdUpdateTask(args []string) int {
 	}
 	ref := args[0]
 	fs := flagSet("update task")
-	sessionID := fs.String("session-id", "", "new Claude session UUID (v4 format)")
 	workDir := fs.String("work-dir", "", "new absolute work directory")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
 	status := fs.String("status", "", "new status: backlog|in-progress|done")
@@ -68,18 +74,12 @@ func cmdUpdateTask(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
-	anyField := *sessionID != "" || *workDir != "" || *status != "" || *priority != "" ||
+	anyField := *workDir != "" || *status != "" || *priority != "" ||
 		*assignee != "" || *clearAssignee || *dueDate != "" || *clearDue ||
 		*waiting != "" || *clearWaiting ||
 		len(addTags) > 0 || len(removeTags) > 0 || *clearTags
 	if !anyField {
-		fmt.Fprintln(os.Stderr, "error: give at least one of --session-id, --work-dir, --status, --priority, --assignee, --clear-assignee, --due-date, --clear-due, --waiting, --clear-waiting, --tag, --remove-tag, --clear-tags")
-		return 2
-	}
-
-	if *sessionID != "" && !sessionUUIDRe.MatchString(*sessionID) {
-		fmt.Fprintf(os.Stderr,
-			"error: --session-id must be a lowercase v4 UUID (got %q)\n", *sessionID)
+		fmt.Fprintln(os.Stderr, "error: give at least one of --work-dir, --status, --priority, --assignee, --clear-assignee, --due-date, --clear-due, --waiting, --clear-waiting, --tag, --remove-tag, --clear-tags")
 		return 2
 	}
 
@@ -155,16 +155,6 @@ func cmdUpdateTask(args []string) int {
 	}
 
 	now := flowdb.NowISO()
-	if *sessionID != "" {
-		if _, err := db.Exec(
-			`UPDATE tasks SET session_id=?, session_started=?, updated_at=? WHERE slug=?`,
-			*sessionID, now, now, task.Slug,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "error: update session_id: %v\n", err)
-			return 1
-		}
-		fmt.Printf("session_id → %s\n", *sessionID)
-	}
 	if absWorkDir != "" {
 		if _, err := db.Exec(
 			`UPDATE tasks SET work_dir=?, updated_at=? WHERE slug=?`,
@@ -176,6 +166,19 @@ func cmdUpdateTask(args []string) int {
 		fmt.Printf("work_dir → %s\n", absWorkDir)
 	}
 	if *status != "" {
+		// Session-id invariant: any non-backlog status requires a
+		// session_id. Enforced at the DB level via CHECK, but we error
+		// here with a friendly pointer instead of letting the user see
+		// a raw constraint violation.
+		if *status != "backlog" && (!task.SessionID.Valid || task.SessionID.String == "") {
+			fmt.Fprintf(os.Stderr,
+				"error: cannot set status to %q without a session_id.\n"+
+					"  to start work on this task, run one of:\n"+
+					"    flow do %s          (spawns a new Claude session in a new tab)\n"+
+					"    flow do --here %s   (binds this Claude session to the task)\n",
+				*status, task.Slug, task.Slug)
+			return 1
+		}
 		if _, err := db.Exec(
 			`UPDATE tasks SET status=?,
 			 status_changed_at = CASE WHEN status != ? THEN ? ELSE status_changed_at END,

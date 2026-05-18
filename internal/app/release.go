@@ -62,13 +62,9 @@ func LatestRelease() string {
 }
 
 func versionCachePath() string {
-	root := os.Getenv("FLOW_ROOT")
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		root = filepath.Join(home, ".flow")
+	root, err := flowRoot()
+	if err != nil {
+		return ""
 	}
 	return filepath.Join(root, ".version-cache.json")
 }

@@ -7,6 +7,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`flow do --with` / `--with-file`.** Inject a one-shot instruction
+  as the resumed/started session's first user message (prefixed with
+  `[via flow do --with]` so the model can distinguish injected from
+  typed input). `--with-file <path>` points the session at a file
+  (`read instructions at <abs-path>`) instead of embedding contents —
+  no size limits. `--with` on a `done` task auto-rolls it back to
+  in-progress. Rejected in combination with `--here` (no spawned
+  session to inject into). `flow run playbook <slug>` accepts the same
+  flags. The lane for nudging parked tasks and feeding ad-hoc
+  instructions to scheduled playbook runs without opening the tab. (#25)
+- **Warp as a first-class spawn backend.** `flow do` opens new tabs
+  in Warp when invoked from a Warp shell (`TERM_PROGRAM=WarpTerminal`).
+  Uses `warp://action/new_tab` to open the tab and osascript to
+  keystroke a self-deleting bootstrap script, since Warp has no
+  AppleScript dictionary or command-running CLI. Requires macOS
+  Accessibility for Warp.
+- **`FLOW_TERM` env override.** Set `FLOW_TERM=warp|iterm|terminal|zellij`
+  to force a specific spawn backend regardless of `$TERM_PROGRAM`.
+  `$ZELLIJ` still wins; unrecognized values fall through to
+  `$TERM_PROGRAM` detection.
+
 ## [0.1.0-alpha.8] — 2026-05-09
 
 ### Added

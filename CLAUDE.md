@@ -56,8 +56,16 @@ flow/
 │   ├── flowdb/                      # SQLite data layer
 │   │   ├── db.go                    # schema, models, CRUD queries
 │   │   └── db_test.go
-│   └── iterm/                       # iTerm2 tab spawning
-│       └── iterm.go
+│   ├── iterm/                       # iTerm2 tab spawning
+│   │   └── iterm.go
+│   ├── terminal/                    # macOS Terminal.app tab spawning
+│   │   └── terminal.go
+│   ├── warp/                        # Warp tab spawning (warp:// URI + osascript keystroke)
+│   │   └── warp.go
+│   ├── zellij/                      # zellij tab spawning
+│   │   └── zellij.go
+│   └── spawner/                     # backend selection + dispatch
+│       └── spawner.go
 ├── Makefile
 ├── README.md
 ├── CLAUDE.md
@@ -68,9 +76,13 @@ flow/
 
 ## Package responsibilities
 
-- **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `flowdb` and `iterm`.
+- **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `flowdb` and `spawner`.
 - **`internal/flowdb`** — schema DDL, model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, migrations. All DB access via `database/sql` + `modernc.org/sqlite`.
-- **`internal/iterm`** — osascript-based iTerm2 tab spawning. Exposes `iterm.Runner` var for test mocking.
+- **`internal/spawner`** — picks a terminal backend at runtime (`$ZELLIJ` > `$FLOW_TERM` > `$TERM_PROGRAM` > historical iTerm default) and forwards `SpawnTab` to it. Exposes `Override` for test pinning.
+- **`internal/iterm`** — osascript-based iTerm2 tab spawning. Exposes `iterm.Runner` for test mocking.
+- **`internal/terminal`** — osascript-based macOS Terminal.app tab spawning. Requires Accessibility for the cmd-T keystroke via System Events.
+- **`internal/warp`** — Warp tab spawning via `warp://action/new_tab` URI + osascript keystroke of a self-deleting per-spawn shell script. Exposes `warp.Runner`, `warp.OpenURL`, `warp.WriteScript` for test mocking. Requires Accessibility (same gate as Terminal.app).
+- **`internal/zellij`** — zellij CLI–based tab spawning. Active when `$ZELLIJ` is set in the environment.
 
 ## Conventions
 

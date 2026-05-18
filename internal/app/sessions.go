@@ -24,10 +24,10 @@ var claudeSessionArgRe = regexp.MustCompile(
 // running on this host, as detected by scanning the process list for
 // `claude` invocations with `--session-id` or `--resume` flags.
 //
-// Sessions started without a UUID flag (bare `claude`) are not detectable
-// via this method — there is no public Claude CLI flag that exposes the
-// session ID to argv after the fact. For those, use the marker-grep
-// technique implemented by `flow find-session`.
+// Sessions started without a UUID flag (bare `claude`) are not
+// detectable via this method. For attaching such an in-flight session
+// to a flow task, use `flow do --here <slug>` from inside that
+// session — it reads $CLAUDE_CODE_SESSION_ID directly.
 //
 // All UUIDs are lowercased for comparison consistency.
 func liveClaudeSessions() (map[string]bool, error) {

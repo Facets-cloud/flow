@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"flow/internal/flowdb"
 	"fmt"
 	"os"
 )
@@ -14,12 +15,8 @@ import (
 //     sessions never re-read briefs and updates that may have been
 //     edited since the previous session.
 //
-//   - user-prompt-submit: wired as a UserPromptSubmit hook. Fires on
-//     every user prompt; in ad-hoc sessions (FLOW_TASK unset) it
-//     reminds Claude to invoke the flow skill before responding so the
-//     §4.14 substantive-work check actually runs. In bound sessions
-//     (FLOW_TASK set) it no-ops; the SessionStart context already
-//     covers the bound case.
+//   - user-prompt-submit: kept as a permanent no-op for forward
+//     compatibility with stale settings.json entries.
 func cmdHook(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit)")
@@ -41,23 +38,24 @@ func cmdHook(args []string) int {
 // Wired via ~/.claude/settings.json with a matcher of "startup|resume"
 // so it fires for both fresh spawns and `claude --resume`.
 //
-// Two modes:
-//   - $FLOW_TASK set (spawned by `flow do`): emit the full task-context
-//     reload instructions. On a fresh spawn this is redundant with the
-//     bootstrap prompt but harmless; on a resume it's the only way to
-//     force the agent to re-read potentially-updated briefs and updates.
-//   - $FLOW_TASK unset (ad-hoc session, e.g. bare `claude`): emit a
-//     short hint that the flow skill is installed and should be used
-//     when the request touches task / project / session management.
-//     Without this, Claude Code may not auto-invoke the skill on the
-//     user's first message.
+// Two modes, branching on whether this session is bound to a flow
+// task. The binding is discovered via reverse-lookup on the
+// $CLAUDE_CODE_SESSION_ID env var (Claude Code injects this into
+// every session) against tasks.session_id:
+//   - Bound (a task carries this session_id): emit the full
+//     task-context reload instructions. On a fresh spawn this is
+//     redundant with the bootstrap prompt but harmless; on a resume
+//     it's the only way to force the agent to re-read potentially-
+//     updated briefs and updates.
+//   - Unbound (no task carries it, or env var missing): emit the
+//     ambient skill hint so Claude knows the flow skill is available.
 func cmdHookSessionStart(args []string) int {
 	fs := flagSet("hook session-start")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	slug := os.Getenv("FLOW_TASK")
+	slug := lookupBoundTaskSlug()
 	if slug == "" {
 		return emitAmbientSkillHint()
 	}
@@ -116,15 +114,51 @@ func appendStaleVersionHint() string {
 	)
 }
 
-// emitAmbientSkillHint is the FLOW_TASK-unset branch of the SessionStart
-// hook. The user has installed flow — a personal task/session manager
-// and knowledge base — and benefits from having work flow through it.
-// The hint frames that value prop and tells Claude to load the skill;
-// it deliberately does NOT ask Claude to pre-judge whether the user's
-// request is "substantive enough". That gate is the skill's job, not
-// the hook's, and prior framing leaked Claude's interpretive bias.
+// lookupBoundTaskSlug returns the slug of the task whose session_id
+// matches $CLAUDE_CODE_SESSION_ID, or "" if no such task exists, the
+// env var is unset, or the DB lookup fails. Hook code must never
+// fail loud — a hook error blocks the user's session — so all errors
+// are swallowed and treated as "unbound".
+func lookupBoundTaskSlug() string {
+	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	if sid == "" {
+		return ""
+	}
+	dbPath, err := flowDBPath()
+	if err != nil {
+		return ""
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	t, err := flowdb.TaskBySessionID(db, sid)
+	if err != nil {
+		return ""
+	}
+	return t.Slug
+}
+
+// emitAmbientSkillHint is the unbound-session branch of the
+// SessionStart hook. The user has installed flow — a personal task/
+// session manager and knowledge base — and benefits from having work
+// flow through it. The hint frames that value prop and tells Claude
+// to load the skill; it deliberately does NOT ask Claude to pre-judge
+// whether the user's request is "substantive enough". That gate is
+// the skill's job, not the hook's.
 func emitAmbientSkillHint() int {
-	hint := "This Claude session is not bound to a flow task. The user already tracks " +
+	// Substitute the real flow root so the hint points at the right
+	// paths under FLOW_ROOT (default ~/.flow). Falling back to literal
+	// "~/.flow" keeps the hint useful if home-dir lookup fails.
+	root := "~/.flow"
+	if r, err := flowRoot(); err == nil {
+		root = r
+	}
+	hint := "This Claude session is not bound to a flow task — this hint IS the " +
+		"binding answer. Do NOT re-probe binding with `flow show task` (no arg) " +
+		"until you've actually bound this session via `flow do --here <slug>`; " +
+		"until then it will error and waste a tool call. The user already tracks " +
 		"their work and knowledge in flow — a personal task and session manager that " +
 		"captures work as briefs, logs progress notes, resumes Claude sessions across " +
 		"days, and maintains a central knowledge base of durable facts about them, " +
@@ -138,8 +172,8 @@ func emitAmbientSkillHint() int {
 		"\n\n" +
 		"If the user's message uses unfamiliar terminology — an internal codename, a " +
 		"person, a customer, a product line, a tool you don't recognize — consult " +
-		"flow's data before guessing or asking. The KB at ~/.flow/kb/ holds durable " +
-		"facts; the briefs under ~/.flow/projects/<slug>/ and ~/.flow/tasks/<slug>/ " +
+		"flow's data before guessing or asking. The KB at " + root + "/kb/ holds durable " +
+		"facts; the briefs under " + root + "/projects/<slug>/ and " + root + "/tasks/<slug>/ " +
 		"hold project and task context. Names and context that are non-obvious from " +
 		"this conversation alone are very likely already documented there — and not " +
 		"only in active work: when the reference points at past work, also consult " +
@@ -173,17 +207,10 @@ func emitHookContext(event, ctx string) int {
 }
 
 // cmdHookUserPromptSubmit is a permanent no-op kept only for forward
-// compatibility with stale `~/.claude/settings.json` entries that
-// reference `flow hook user-prompt-submit`. The hook used to emit a
-// per-prompt skill nudge in ad-hoc sessions, but the per-turn token
-// cost of injecting ~200 words of additionalContext on every prompt
-// outweighed the marginal value over the SessionStart hook.
-//
+// compatibility with stale `~/.claude/settings.json` entries.
 // `flow skill install` (and the auto-upgrade path) now actively
 // remove any UserPromptSubmit entry from settings.json, so this code
-// path should not be hit on upgraded installs. Kept here so users on
-// older binaries with stale settings entries don't see hook errors
-// in the meantime.
+// path should not be hit on upgraded installs.
 func cmdHookUserPromptSubmit(args []string) int {
 	fs := flagSet("hook user-prompt-submit")
 	if err := fs.Parse(args); err != nil {

@@ -40,13 +40,6 @@ func showTaskCmd(args []string) int {
 	if fs.NArg() > 0 {
 		ref = fs.Arg(0)
 	}
-	if ref == "" {
-		ref = os.Getenv("FLOW_TASK")
-	}
-	if ref == "" {
-		fmt.Fprintln(os.Stderr, "error: no task ref given and $FLOW_TASK not set")
-		return 1
-	}
 
 	dbPath, err := flowDBPath()
 	if err != nil {
@@ -60,10 +53,29 @@ func showTaskCmd(args []string) int {
 	}
 	defer db.Close()
 
-	t, err := resolveTaskRef(db, ref)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
+	var t *flowdb.Task
+	if ref == "" {
+		// No explicit ref: reverse-lookup via the current Claude session.
+		bound, lookupErr := currentSessionTask(db)
+		if lookupErr != nil {
+			if isNoBindingErr(lookupErr) {
+				if currentSessionID() == "" {
+					fmt.Fprintln(os.Stderr, "error: no task ref given and not running inside a Claude session ($CLAUDE_CODE_SESSION_ID unset)")
+				} else {
+					fmt.Fprintln(os.Stderr, "error: no task ref given and this Claude session is not bound to a task — pass a slug or run `flow do --here <slug>` first")
+				}
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: lookup task by session: %v\n", lookupErr)
+			return 1
+		}
+		t = bound
+	} else {
+		t, err = resolveTaskRef(db, ref)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	root, err := flowRoot()
@@ -75,7 +87,9 @@ func showTaskCmd(args []string) int {
 	return 0
 }
 
-// showProjectCmd implements `flow show project [<ref>]`.
+// showProjectCmd implements `flow show project [<ref>]`. With no
+// argument, falls back to the project of the task bound to the
+// current Claude session.
 func showProjectCmd(args []string) int {
 	fs := flagSet("show project")
 	if err := fs.Parse(args); err != nil {
@@ -84,13 +98,6 @@ func showProjectCmd(args []string) int {
 	ref := ""
 	if fs.NArg() > 0 {
 		ref = fs.Arg(0)
-	}
-	if ref == "" {
-		ref = os.Getenv("FLOW_PROJECT")
-	}
-	if ref == "" {
-		fmt.Fprintln(os.Stderr, "error: no project ref given and $FLOW_PROJECT not set")
-		return 1
 	}
 
 	dbPath, err := flowDBPath()
@@ -104,6 +111,28 @@ func showProjectCmd(args []string) int {
 		return 1
 	}
 	defer db.Close()
+
+	if ref == "" {
+		// Reverse-lookup: find the task bound to this session, then its project.
+		bound, lookupErr := currentSessionTask(db)
+		if lookupErr != nil {
+			if isNoBindingErr(lookupErr) {
+				if currentSessionID() == "" {
+					fmt.Fprintln(os.Stderr, "error: no project ref given and not running inside a Claude session ($CLAUDE_CODE_SESSION_ID unset)")
+				} else {
+					fmt.Fprintln(os.Stderr, "error: no project ref given and this Claude session is not bound to a task")
+				}
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: lookup task by session: %v\n", lookupErr)
+			return 1
+		}
+		if !bound.ProjectSlug.Valid || bound.ProjectSlug.String == "" {
+			fmt.Fprintf(os.Stderr, "error: bound task %q is floating (no project)\n", bound.Slug)
+			return 1
+		}
+		ref = bound.ProjectSlug.String
+	}
 
 	p, err := resolveProjectRef(db, ref)
 	if err != nil {
