@@ -286,14 +286,14 @@ func TestFocusSessionRoutesToITerm(t *testing.T) {
 	Override = BackendITerm
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	flags := stubAllFocusBackends(t)
 	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
-	if !*itermCalled {
+	if !*flags.iterm {
 		t.Error("expected iterm focus path to be called")
 	}
-	if *terminalCalled || *zellijCalled {
+	if *flags.terminal || *flags.zellij || *flags.kitty {
 		t.Error("only iterm focus path should be called")
 	}
 }
@@ -304,14 +304,14 @@ func TestFocusSessionRoutesToTerminal(t *testing.T) {
 	Override = BackendTerminal
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	flags := stubAllFocusBackends(t)
 	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
-	if !*terminalCalled {
+	if !*flags.terminal {
 		t.Error("expected terminal focus path to be called")
 	}
-	if *itermCalled || *zellijCalled {
+	if *flags.iterm || *flags.zellij || *flags.kitty {
 		t.Error("only terminal focus path should be called")
 	}
 }
@@ -322,24 +322,51 @@ func TestFocusSessionRoutesToZellij(t *testing.T) {
 	Override = BackendZellij
 	t.Cleanup(func() { Override = "" })
 
-	itermCalled, terminalCalled, zellijCalled := stubAllFocusBackends(t)
+	flags := stubAllFocusBackends(t)
 	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
-	if !*zellijCalled {
+	if !*flags.zellij {
 		t.Error("expected zellij focus path to be called")
 	}
-	if *itermCalled || *terminalCalled {
+	if *flags.iterm || *flags.terminal || *flags.kitty {
 		t.Error("only zellij focus path should be called")
 	}
+}
+
+// TestFocusSessionRoutesToKitty — Override=Kitty hits the kitty
+// backend. The kitty backend uses `kitty @ ls` JSON rather than
+// ps/tty, so the stub returns an empty OS-window list which yields
+// (false, nil) without invoking the focus call.
+func TestFocusSessionRoutesToKitty(t *testing.T) {
+	Override = BackendKitty
+	t.Cleanup(func() { Override = "" })
+
+	flags := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*flags.kitty {
+		t.Error("expected kitty focus path to be called")
+	}
+	if *flags.iterm || *flags.terminal || *flags.zellij {
+		t.Error("only kitty focus path should be called")
+	}
+}
+
+// focusFlags bundles per-backend "was called" flags so the focus
+// routing tests can assert which backend FocusSession dispatched to
+// without an awkward multi-return-value tuple.
+type focusFlags struct {
+	iterm, terminal, zellij, kitty *bool
 }
 
 // stubAllFocusBackends replaces the per-backend PSRunner / RunnerOutput
 // vars with stubs that flip a bool when the backend's FocusSession
 // path runs. Restores originals on cleanup.
-func stubAllFocusBackends(t *testing.T) (*bool, *bool, *bool) {
+func stubAllFocusBackends(t *testing.T) focusFlags {
 	t.Helper()
-	var itermCalled, terminalCalled, zellijCalled bool
+	var itermCalled, terminalCalled, zellijCalled, kittyCalled bool
 
 	oldITermPS := iterm.PSRunner
 	iterm.PSRunner = func() ([]byte, error) {
@@ -362,7 +389,19 @@ func stubAllFocusBackends(t *testing.T) (*bool, *bool, *bool) {
 	}
 	t.Cleanup(func() { zellij.RunnerOutput = oldZellijRO })
 
-	return &itermCalled, &terminalCalled, &zellijCalled
+	oldKittyRO := kitty.RunnerOutput
+	kitty.RunnerOutput = func(args []string) ([]byte, error) {
+		kittyCalled = true
+		return []byte("[]"), nil // empty OS-window list -> (false, nil)
+	}
+	t.Cleanup(func() { kitty.RunnerOutput = oldKittyRO })
+
+	return focusFlags{
+		iterm:    &itermCalled,
+		terminal: &terminalCalled,
+		zellij:   &zellijCalled,
+		kitty:    &kittyCalled,
+	}
 }
 
 // TestShellQuoteParity makes sure the re-exported helper matches

@@ -114,12 +114,15 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 //
 // Backend dispatch mirrors SpawnTab:
 //   - Zellij: list-panes JSON match on pane_command + focus-pane-id
+//   - Kitty: `kitty @ ls` JSON match on foreground_processes cmdline + focus-window
 //   - Terminal.app: pid → tty via ps, then osascript walk
 //   - iTerm2 (default): pid → tty via ps, then osascript walk
 func FocusSession(sessionID string) (bool, error) {
 	switch Detect() {
 	case BackendZellij:
 		return zellij.FocusSession(sessionID)
+	case BackendKitty:
+		return kitty.FocusSession(sessionID)
 	case BackendTerminal:
 		return terminal.FocusSession(sessionID)
 	default:

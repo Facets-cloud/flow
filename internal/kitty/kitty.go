@@ -31,8 +31,10 @@
 package kitty
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -93,6 +95,113 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	flat := strings.ReplaceAll(command, "\n", " ")
 	line := " " + envPrefix + flat + "\n"
 	return Runner([]string{"@", "send-text", "--match=id:" + windowID, line})
+}
+
+// FocusSession tries to focus the kitty window currently running
+// `claude` with the given session UUID. Returns (true, nil) on focus,
+// (false, nil) if no window across any kitty OS window matches, and
+// (false, err) only on a backend failure (kitty CLI errored or returned
+// malformed JSON).
+//
+// Mechanism: `kitty @ ls` returns the full OS-window → tab → window
+// tree. Each terminal window's foreground_processes array carries the
+// argv of the child processes currently running under that PTY — the
+// `claude` invocation lives there, not in the window's own cmdline
+// (which is the shell). We join each foreground process's cmdline with
+// spaces, apply the same UUID regex used by the iterm / zellij backends,
+// and call `kitty @ focus-window --match=id:<id>` on the first hit.
+// That single call raises the OS window, selects the tab, and focuses
+// the window — no need to chain focus-tab.
+//
+// Scope: unlike zellij's `list-panes` (which only sees the current
+// zellij session), `kitty @ ls` enumerates every OS window the kitty
+// instance owns, so cross-OS-window focus works without any extra IPC.
+//
+// Prereq: `allow_remote_control yes` in kitty.conf — same as SpawnTab.
+// If remote control is disabled, `kitty @ ls` exits non-zero and the
+// error is surfaced wrapped.
+func FocusSession(sessionID string) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+	out, err := RunnerOutput([]string{"@", "ls"})
+	if err != nil {
+		return false, fmt.Errorf("kitty @ ls: %w", err)
+	}
+	winID, ok, err := windowIDForClaudeSession(out, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if err := Runner([]string{"@", "focus-window", fmt.Sprintf("--match=id:%d", winID)}); err != nil {
+		return false, fmt.Errorf("kitty @ focus-window: %w", err)
+	}
+	return true, nil
+}
+
+// kittyOSWindow / kittyTab / kittyWindow / kittyFGProc are the minimal
+// subset of the `kitty @ ls` JSON schema we care about. The full schema
+// has many more fields (geometry, env, title, padding, etc.) but only
+// the window id and the foreground_processes cmdline matter for focus
+// matching.
+type kittyOSWindow struct {
+	Tabs []kittyTab `json:"tabs"`
+}
+type kittyTab struct {
+	Windows []kittyWindow `json:"windows"`
+}
+type kittyWindow struct {
+	ID                  int           `json:"id"`
+	ForegroundProcesses []kittyFGProc `json:"foreground_processes"`
+}
+type kittyFGProc struct {
+	Cmdline []string `json:"cmdline"`
+}
+
+// claudeSessionRowRe matches a `claude` invocation carrying a session
+// UUID in argv. Same shape as the iterm and zellij regex so focus
+// behaviour stays consistent across backends.
+var claudeSessionRowRe = regexp.MustCompile(
+	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
+)
+
+// windowIDForClaudeSession parses `kitty @ ls` JSON and returns the
+// kitty window id of the first window whose foreground_processes
+// contain a `claude` process running with the given session UUID.
+// Returns (0, false, nil) on no match, (0, false, err) only on JSON
+// parse failure.
+func windowIDForClaudeSession(jsonBytes []byte, sessionID string) (int, bool, error) {
+	var osWindows []kittyOSWindow
+	if err := json.Unmarshal(jsonBytes, &osWindows); err != nil {
+		return 0, false, fmt.Errorf("parse kitty ls JSON: %w", err)
+	}
+	needle := strings.ToLower(sessionID)
+	for _, osw := range osWindows {
+		for _, tab := range osw.Tabs {
+			for _, win := range tab.Windows {
+				for _, proc := range win.ForegroundProcesses {
+					if len(proc.Cmdline) == 0 {
+						continue
+					}
+					joined := strings.Join(proc.Cmdline, " ")
+					if !strings.Contains(joined, "claude") {
+						continue
+					}
+					matches := claudeSessionRowRe.FindStringSubmatch(joined)
+					if len(matches) < 2 {
+						continue
+					}
+					if strings.ToLower(matches[1]) != needle {
+						continue
+					}
+					return win.ID, true, nil
+				}
+			}
+		}
+	}
+	return 0, false, nil
 }
 
 // ShellQuote wraps s in single quotes with proper escaping. Same
