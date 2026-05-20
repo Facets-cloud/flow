@@ -176,10 +176,10 @@ doesn't refuse to run the unsigned binary.
 ### For those who use Claude's agents view
 
 If you use the agents view and you use flow, these aliases will help.
-`flow do` and `flow run` don't pass `--bg` today — the aliases do, so
-flow's sessions (and your own direct invocations) land in the agents
-view. Add to your shell rc (`~/.zshrc` or `~/.bashrc`) and `source`
-it.
+`flow do` and `flow run` don't pass `--bg` today — the aliases below
+will, so flow's sessions (and your own direct invocations) land in
+the agents view. Add to your shell rc (`~/.zshrc` or `~/.bashrc`) and
+`source` it.
 
 ```bash
 # Bare `claude` now drops into the agents view. Add
