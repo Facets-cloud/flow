@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"os"
 	"strings"
 	"testing"
 
@@ -57,8 +58,9 @@ func TestHarnessForTask(t *testing.T) {
 
 // TestCmdDoPersistsHarnessOnBootstrap pins the contract: the first
 // `flow do` on a previously-unbound task writes the chosen harness
-// to the tasks.harness column atomically with session_id. Used by
-// future `flow do` invocations to look up the right adapter.
+// AND the session_cwd to the tasks row atomically with session_id.
+// Future `flow do` invocations read both back to look up the right
+// adapter and find the transcript on disk.
 func TestCmdDoPersistsHarnessOnBootstrap(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "harness-bootstrap")
@@ -81,16 +83,28 @@ func TestCmdDoPersistsHarnessOnBootstrap(t *testing.T) {
 	if !task.Harness.Valid || task.Harness.String != "claude" {
 		t.Errorf("task.harness after bootstrap = %+v, want claude", task.Harness)
 	}
+	// session_cwd should equal work_dir on fresh bootstrap.
+	if !task.SessionCwd.Valid || task.SessionCwd.String != task.WorkDir {
+		t.Errorf("task.session_cwd after bootstrap = %+v, want work_dir=%q",
+			task.SessionCwd, task.WorkDir)
+	}
 }
 
 // TestCmdDoHerePersistsHarnessColumn pins that --here writes the
-// harness column on bind, not just session_id.
+// harness column AND session_cwd on bind, not just session_id.
+// session_cwd captures the cwd of THIS flow process — equal to the
+// cwd claude was started in, which is what determines the on-disk
+// transcript path. Without recording it, --here-bound tasks whose
+// claude session was started in a different cwd than work_dir
+// (common with --force binds) couldn't have their transcript found.
 func TestCmdDoHerePersistsHarnessColumn(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "here-harness")
 
 	const sid = "11111111-2222-4333-8444-555555555555"
 	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+
+	wantCwd, _ := os.Getwd()
 
 	if rc := cmdDoHere("here-harness", false); rc != 0 {
 		t.Fatalf("cmdDoHere rc=%d", rc)
@@ -106,6 +120,10 @@ func TestCmdDoHerePersistsHarnessColumn(t *testing.T) {
 	}
 	if task.SessionID.String != sid {
 		t.Errorf("task.session_id after --here = %q, want %s", task.SessionID.String, sid)
+	}
+	if !task.SessionCwd.Valid || task.SessionCwd.String != wantCwd {
+		t.Errorf("task.session_cwd after --here = %+v, want %q (the test process's cwd)",
+			task.SessionCwd, wantCwd)
 	}
 }
 

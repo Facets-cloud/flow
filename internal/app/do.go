@@ -257,12 +257,16 @@ func cmdDo(args []string) int {
 		// `flow do` invocations read the same adapter — even if
 		// they're issued from a different ambient harness or no
 		// harness at all.
+		//
+		// session_cwd = work_dir on fresh bootstrap by construction:
+		// we spawn the tab with cwd=task.WorkDir, so claude (or any
+		// harness) writes its transcript under that encoded path.
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-			 session_id=?, session_started=?, harness=?, updated_at=?
+			 session_id=?, session_started=?, session_cwd=?, harness=?, updated_at=?
 			 WHERE slug=? AND `+statusFilter,
-			now, sessionID, now, string(h.Name()), now, task.Slug,
+			now, sessionID, now, task.WorkDir, string(h.Name()), now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
 			return 1
@@ -662,7 +666,23 @@ func cmdDoHere(query string, force bool) int {
 	}
 
 	now := flowdb.NowISO()
-	// Also writes harness = ? — for a previously-unpinned task this
+	// session_cwd at --here time = the cwd of THIS flow process,
+	// which equals the cwd claude was started in (flow inherits
+	// claude's cwd via the shell). Without recording this, the
+	// transcript-finding code would assume claude wrote its jsonl
+	// under task.work_dir, which is only true for fresh `flow do`
+	// spawns. The two diverge whenever the user runs `flow do
+	// --here` from a directory that isn't the task's work_dir —
+	// most commonly seen with --force binds.
+	cwd, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		// Defensive fallback: if Getwd fails (extremely rare),
+		// don't block the bind — record work_dir, which is at
+		// least better than NULL.
+		fmt.Fprintf(os.Stderr, "warning: could not read cwd for session_cwd: %v; falling back to task.work_dir\n", cwdErr)
+		cwd = task.WorkDir
+	}
+	// Also writes harness — for a previously-unpinned task this
 	// is the first bind; for a same-harness --here it's a no-op
 	// write; for a --force harness switch it persists the swap
 	// alongside the new session_id.
@@ -670,12 +690,13 @@ func cmdDoHere(query string, force bool) int {
 		`UPDATE tasks SET
 			session_id      = ?,
 			session_started = COALESCE(session_started, ?),
+			session_cwd     = ?,
 			status          = 'in-progress',
 			status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			harness         = ?,
 			updated_at      = ?
 		WHERE slug = ?`,
-		sid, now, now, string(h.Name()), now, task.Slug,
+		sid, now, cwd, now, string(h.Name()), now, task.Slug,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: bind session: %v\n", err)

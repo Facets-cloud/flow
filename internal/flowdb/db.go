@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     session_id            TEXT,
     session_started       TEXT,
     session_last_resumed  TEXT,
+    session_cwd           TEXT,
     harness               TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
@@ -133,6 +134,13 @@ type Task struct {
 	SessionID          sql.NullString
 	SessionStarted     sql.NullString
 	SessionLastResumed sql.NullString
+	// SessionCwd records the working directory the harness session
+	// was started in — needed because claude (and likely others)
+	// key their on-disk transcript path by `(cwd, session_id)`, not
+	// session_id alone. For fresh `flow do` this equals WorkDir; for
+	// `flow do --here` it equals os.Getwd() at bind time. NULL on
+	// pre-column rows; callers fall back to WorkDir for those.
+	SessionCwd         sql.NullString
 	// Harness records which agent CLI (claude/codex/gemini/…) owns the
 	// task's session. NULL/empty is treated as "claude" by callers — a
 	// back-compat convention so pre-harness-column DBs Just Work.
@@ -296,6 +304,24 @@ func runMigrations(db *sql.DB) error {
 	if !has {
 		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN harness TEXT`); err != nil {
 			return fmt.Errorf("add tasks.harness: %w", err)
+		}
+	}
+
+	// tasks.session_cwd: records the cwd the harness session was
+	// started in, which determines where the harness writes its
+	// transcript on disk. For `flow do` (fresh bootstrap) this
+	// equals work_dir by construction. For `flow do --here` it
+	// equals os.Getwd() at bind time, which may differ from
+	// work_dir if claude was started in a parent/sibling
+	// directory. Transcript-finding code prefers this column,
+	// falling back to work_dir for legacy NULL rows.
+	has, err = columnExists(db, "tasks", "session_cwd")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN session_cwd TEXT`); err != nil {
+			return fmt.Errorf("add tasks.session_cwd: %w", err)
 		}
 	}
 
@@ -649,7 +675,7 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, session_cwd, harness, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
@@ -657,7 +683,7 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 		&t.Slug, &t.Name, &t.ProjectSlug, &t.Status, &t.Kind, &t.PlaybookSlug,
 		&t.Priority, &t.WorkDir,
 		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.StatusChangedAt, &t.SessionID,
-		&t.SessionStarted, &t.SessionLastResumed, &t.Harness,
+		&t.SessionStarted, &t.SessionLastResumed, &t.SessionCwd, &t.Harness,
 		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)
 	if err != nil {

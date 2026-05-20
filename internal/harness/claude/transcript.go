@@ -15,6 +15,12 @@ import (
 // path (~/.claude/projects/<encoded-cwd>/<sessionID>.jsonl), decodes
 // the claude-specific JSONL schema, and writes a normalized human-
 // readable rendering to w.
+//
+// The cwd input is the directory claude was started in (recorded by
+// flow as tasks.session_cwd), NOT necessarily the task's work_dir —
+// claude's transcript path is keyed on its startup cwd, and the two
+// can diverge for `flow do --here` binds. Callers in app/ pass the
+// right value.
 func (c *claude) RenderTranscript(workDir, sessionID string, compact bool, cutoff time.Time, w io.Writer) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -24,7 +30,14 @@ func (c *claude) RenderTranscript(workDir, sessionID string, compact bool, cutof
 	p := filepath.Join(home, ".claude", "projects", encoded, sessionID+".jsonl")
 	f, err := os.Open(p)
 	if err != nil {
-		return fmt.Errorf("session file %s: %w", p, err)
+		if os.IsNotExist(err) {
+			return fmt.Errorf(
+				"claude transcript not found at %s (expected because session_cwd=%q maps to project dir %q). "+
+					"the file might be under a different project dir if claude was started elsewhere",
+				p, workDir, encoded,
+			)
+		}
+		return fmt.Errorf("open claude transcript %s: %w", p, err)
 	}
 	defer f.Close()
 	return RenderJSONL(f, compact, cutoff, w)

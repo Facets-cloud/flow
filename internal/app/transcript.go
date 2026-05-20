@@ -80,8 +80,33 @@ func cmdTranscript(args []string) int {
 		}
 	}
 
-	if err := harnessForTask(task).RenderTranscript(task.WorkDir, task.SessionID.String, *compact, cutoff, os.Stdout); err != nil {
+	// Use the recorded session_cwd if set — that's the cwd the
+	// harness was started in, which determines where the transcript
+	// file lives. Falls back to work_dir for legacy rows that
+	// predate the session_cwd column (NULL means "we didn't record
+	// it; the safe bet is task.work_dir, which equals session_cwd
+	// for fresh `flow do` spawns by construction").
+	cwd := task.WorkDir
+	if task.SessionCwd.Valid && task.SessionCwd.String != "" {
+		cwd = task.SessionCwd.String
+	}
+	if err := harnessForTask(task).RenderTranscript(cwd, task.SessionID.String, *compact, cutoff, os.Stdout); err != nil {
+		// Better error: tell the user what we looked for and why
+		// it might be missing, with hints for the most common
+		// recovery paths.
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		if !task.SessionCwd.Valid || task.SessionCwd.String == "" {
+			fmt.Fprintf(os.Stderr,
+				"hint: this task predates the session_cwd column; flow assumed claude was started in %q. "+
+					"if claude was actually started elsewhere (e.g. via `flow do --here` from a different directory), "+
+					"the transcript lives under that other directory. re-bind via `flow do --here %s` from inside the claude session to record the correct cwd.\n",
+				task.WorkDir, task.Slug)
+		} else if task.SessionCwd.String != task.WorkDir {
+			fmt.Fprintf(os.Stderr,
+				"hint: session_cwd=%q differs from work_dir=%q (likely a --here-bound session). "+
+					"verify the harness session is actually running and its transcript is on disk.\n",
+				task.SessionCwd.String, task.WorkDir)
+		}
 		return 1
 	}
 	return 0
