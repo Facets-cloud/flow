@@ -173,19 +173,23 @@ doesn't refuse to run the unsigned binary.
 
 </details>
 
-### Optional: Claude shell aliases
+### For those who use Claude's agents view
 
-Two aliases that make day-to-day Claude Code use a little nicer. Add to
-your shell rc (`~/.zshrc` or `~/.bashrc`) and `source` it.
+Claude Code's `agents` view is the dashboard for managing background
+agents. Two aliases that make reaching it a one- or two-letter trip —
+add to your shell rc (`~/.zshrc` or `~/.bashrc`) and `source` it.
 
 ```bash
-# Default `claude` skips per-tool permission prompts and runs in the
-# background. Drop either flag if you'd rather keep the prompts or stay
-# in the foreground.
-alias claude='claude --dangerously-skip-permissions --bg'
+# Bare `claude` drops straight into the agents view via --bg. Add
+# `--dangerously-skip-permissions` too if you'd also like dispatched
+# sessions to skip per-tool permission prompts (optional flavor).
+alias claude='claude --bg'
 
-# Shortcut for Claude agents mode. `command` bypasses the `claude` alias
-# above so the agents subcommand sees a clean argv.
+# Shortcut: `ca` opens the agents view via its subcommand. `command`
+# bypasses the `claude` alias above so the subcommand sees a clean
+# argv — apply the same `command claude <sub>` pattern if you want
+# shortcuts for any other subcommand (`mcp`, `doctor`, etc.) while
+# the `claude` alias is in place.
 alias ca='command claude agents'
 ```
 
