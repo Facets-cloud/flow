@@ -175,13 +175,14 @@ doesn't refuse to run the unsigned binary.
 
 ### For those who use Claude's agents view
 
-Claude Code's `agents` view is the dashboard for managing background
-agents. Two aliases that make reaching it a one- or two-letter trip —
-add to your shell rc (`~/.zshrc` or `~/.bashrc`) and `source` it.
+If Claude Code's agents view is where you live, these two aliases make
+it the default destination for every `claude` invocation — no `--bg`
+to type each time. Add to your shell rc (`~/.zshrc` or `~/.bashrc`)
+and `source` it.
 
 ```bash
-# Bare `claude` drops straight into the agents view via --bg. Add
-# `--dangerously-skip-permissions` too if you'd also like dispatched
+# Bare `claude` now drops into the agents view. Add
+# `--dangerously-skip-permissions` if you'd also like dispatched
 # sessions to skip per-tool permission prompts (optional flavor).
 alias claude='claude --bg'
 
