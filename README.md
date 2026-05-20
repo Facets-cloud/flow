@@ -173,6 +173,22 @@ doesn't refuse to run the unsigned binary.
 
 </details>
 
+### Optional: Claude shell aliases
+
+Two aliases that make day-to-day Claude Code use a little nicer. Add to
+your shell rc (`~/.zshrc` or `~/.bashrc`) and `source` it.
+
+```bash
+# Default `claude` skips per-tool permission prompts and runs in the
+# background. Drop either flag if you'd rather keep the prompts or stay
+# in the foreground.
+alias claude='claude --dangerously-skip-permissions --bg'
+
+# Shortcut for Claude agents mode. `command` bypasses the `claude` alias
+# above so the agents subcommand sees a clean argv.
+alias ca='command claude agents'
+```
+
 ## Upgrade
 
 In any Claude Code session:
