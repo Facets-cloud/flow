@@ -3,8 +3,33 @@ package app
 import (
 	"crypto/rand"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
+
+// sessionJSONLExistsAt reports whether Claude has a session jsonl for
+// sessionID under the encoded form of cwd. Used by `flow do` to decide
+// whether to honor the work_dir as the resume cwd (skipping worktree
+// creation) when a session was bound via `flow do --here` from cwd.
+//
+// Returns false on any error — the caller treats "can't tell" as "no
+// match" and falls through to the worktree-default path.
+func sessionJSONLExistsAt(cwd, sessionID string) bool {
+	cwd = strings.TrimSpace(cwd)
+	sessionID = strings.TrimSpace(sessionID)
+	if cwd == "" || sessionID == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	encoded := EncodeCwdForClaude(cwd)
+	path := filepath.Join(home, ".claude", "projects", encoded, sessionID+".jsonl")
+	_, err = os.Stat(path)
+	return err == nil
+}
 
 // newUUID returns a new UUID v4 in the standard 8-4-4-4-12 hex format.
 // `flow do` pre-generates a UUID, claims it in the DB via an optimistic

@@ -2123,6 +2123,67 @@ A session is "bound" when some task carries its session_id (set by
 retroactively). A session is "dispatch / unbound" when no task does
 — `flow show task` errors with a friendly message.
 
+## 10b. Slack-reply tasks (reaction-trigger pipeline)
+
+`flow ui serve` hosts a Slack Socket Mode listener that watches every
+conversation the user can see. When the user adds a designated reaction
+(`:claude:` by default — configurable via `FLOW_SLACK_TRIGGER_EMOJI`) to
+any message, the listener creates a flow task tagged `slack-reply` and
+`slack-thread:<channel>:<thread_ts>`, then opens an iTerm tab on it.
+Subsequent messages and reactions in the same thread route into the
+same task's `inbox.jsonl`, so this conversation (the spawned Claude
+session) is the single hub for everything that happens in the Slack
+thread.
+
+If your task carries the `slack-reply` tag (`flow show task` lists tags
+under the `tags:` line), follow this bootstrap:
+
+1. **Read your brief.** It's a snapshot of what triggered you —
+   channel, thread_ts, item author, the reactor, and the conventions
+   for replying. Treat its "Slack context" block as authoritative;
+   don't re-derive thread_ts from the inbox.
+2. **Catch up on the inbox.** Read every line of
+   `~/.flow/tasks/<your-slug>/inbox.jsonl` in order. Each line is a JSON
+   object `{enqueued_at, event}` where `event` is an `InboundEvent`
+   (Kind = `message` | `app_mention` | `reaction_added`; full schema in
+   `internal/monitor/inbound_event.go`). The events arrived while this
+   session was closed — process them before posting fresh replies.
+3. **Arm a live tail.** While the session is open, run
+   `Monitor(persistent=true, command="tail -F ~/.flow/tasks/<your-slug>/inbox.jsonl", ...)`
+   so new events from the same Slack thread appear as chat notifications
+   without you having to refresh.
+4. **Pull richer Slack context if needed.** The inbox event payload is
+   compact. To see the full thread (older messages, files, deep links),
+   use the Slack MCP tools — primarily
+   `mcp__claude_ai_Slack__slack_read_thread` against the channel +
+   thread_ts in your brief.
+5. **Reply.** Use `mcp__claude_ai_Slack__slack_send_message` with
+   `channel` and `thread_ts` from your brief. Posts go as the user (User
+   Token), not a bot, so write in their voice and avoid claims you can't
+   back up. Save a progress note after each meaningful exchange so the
+   thread's history is captured in flow even if the inbox file rotates.
+6. **Close out.** When the thread is resolved (`:white_check_mark:` from
+   the user, "thanks", explicit "done"), run `flow done` — the close-out
+   sweep distills the Slack conversation into KB facts and a project
+   update.
+
+**Anti-patterns specific to slack-reply tasks:**
+
+- **Do not post top-level into a public/private channel.** The
+  underlying SlackWriter refuses any `chat.postMessage` to a non-DM
+  channel without `thread_ts`, but you should never need to anyway —
+  every reply belongs in the originating thread.
+- **Do not edit the brief mid-thread.** The brief is the spawn-time
+  snapshot. New events arrive via the inbox, not by mutating the brief.
+- **Do not invoke `flow do` on another task while this one is live.**
+  The inbox tail only delivers events to the *current* session. Jumping
+  away means the next message in the Slack thread won't reach you live
+  (it queues in inbox.jsonl, but you don't see it until you `flow do
+  <slack-slug>` again).
+- **Do not bypass the reaction trigger.** If the user wants Claude on a
+  new thread, they add a reaction. Don't manually create slack-reply
+  tasks for threads they didn't consent to.
+
 ## 11. When in doubt
 
 Ask. The worst outcome is writing a bad brief or silently

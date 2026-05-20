@@ -14,3 +14,6 @@
 
 # flow-managed agent worktrees
 /.codex/worktrees/
+
+# flow-managed agent worktrees
+/.claude/worktrees/

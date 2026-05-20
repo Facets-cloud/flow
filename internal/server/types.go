@@ -2,6 +2,8 @@ package server
 
 import (
 	"database/sql"
+
+	"flow/internal/monitor"
 )
 
 type Config struct {
@@ -13,12 +15,13 @@ type Config struct {
 }
 
 type Server struct {
-	cfg         Config
-	terminals   *terminalHub
-	events      *eventHub
-	reconcile   *livenessReconciler
-	transcripts *transcriptCache
-	caches      *uiCaches
+	cfg           Config
+	terminals     *terminalHub
+	events        *eventHub
+	reconcile     *livenessReconciler
+	transcripts   *transcriptCache
+	caches        *uiCaches
+	slackListener *monitor.SlackListener
 }
 
 type HealthView struct {

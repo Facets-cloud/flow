@@ -321,28 +321,45 @@ func cmdDo(args []string) int {
 		return 1
 	}
 
-	// Worktree resolution: if the work_dir is inside a git repo, swap the
-	// agent's cwd to a per-task worktree at <repo>/.<agent>/worktrees/<slug>
-	// on branch flow/<slug>. This isolates concurrent task sessions in the
-	// same project from each other's working tree. Non-repo work_dirs (e.g.
-	// auto-created task workspaces) fall through unchanged.
-	wt, wtErr := worktree.Ensure(task.WorkDir, provider, task.Slug)
-	if wtErr != nil {
-		fmt.Fprintf(os.Stderr, "error: worktree setup failed: %v\n", wtErr)
-		return 1
+	// Honor "session lives at work_dir" when a session_id was bound via
+	// `flow do --here` from the main checkout (not a worktree). In that
+	// case the Claude/Codex session JSONL is in
+	// ~/.claude/projects/<encode(work_dir)>/<session_id>.jsonl, NOT in the
+	// worktree's encoded directory. Forcing a worktree cwd on resume
+	// would make `claude --resume` look in the wrong place and fail with
+	// "No conversation found." Detect this case and skip worktree
+	// creation entirely.
+	resumeAtWorkDir := false
+	if provider == agents.ProviderClaude && task.SessionID.Valid && task.SessionID.String != "" {
+		if sessionJSONLExistsAt(task.WorkDir, task.SessionID.String) {
+			resumeAtWorkDir = true
+		}
 	}
-	if wt.IsRepo {
-		cwd = wt.WorktreePath
-		if _, err := db.Exec(
-			`UPDATE tasks SET worktree_path = ?, updated_at = ? WHERE slug = ?`,
-			wt.WorktreePath, flowdb.NowISO(), task.Slug,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "error: persist worktree_path: %v\n", err)
+
+	if !resumeAtWorkDir {
+		// Worktree resolution: if the work_dir is inside a git repo, swap the
+		// agent's cwd to a per-task worktree at <repo>/.<agent>/worktrees/<slug>
+		// on branch flow/<slug>. This isolates concurrent task sessions in the
+		// same project from each other's working tree. Non-repo work_dirs (e.g.
+		// auto-created task workspaces) fall through unchanged.
+		wt, wtErr := worktree.Ensure(task.WorkDir, provider, task.Slug)
+		if wtErr != nil {
+			fmt.Fprintf(os.Stderr, "error: worktree setup failed: %v\n", wtErr)
 			return 1
 		}
-		task.WorktreePath = sql.NullString{String: wt.WorktreePath, Valid: true}
-		if wt.Created {
-			fmt.Printf("Created worktree %s on branch %s (from %s)\n", wt.WorktreePath, wt.Branch, wt.BaseBranch)
+		if wt.IsRepo {
+			cwd = wt.WorktreePath
+			if _, err := db.Exec(
+				`UPDATE tasks SET worktree_path = ?, updated_at = ? WHERE slug = ?`,
+				wt.WorktreePath, flowdb.NowISO(), task.Slug,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "error: persist worktree_path: %v\n", err)
+				return 1
+			}
+			task.WorktreePath = sql.NullString{String: wt.WorktreePath, Valid: true}
+			if wt.Created {
+				fmt.Printf("Created worktree %s on branch %s (from %s)\n", wt.WorktreePath, wt.Branch, wt.BaseBranch)
+			}
 		}
 	}
 

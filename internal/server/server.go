@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"flow/internal/monitor"
 )
 
 //go:embed all:static
@@ -26,6 +28,17 @@ func New(cfg Config) *Server {
 	s.reconcile = newLivenessReconciler(s)
 	s.transcripts = newTranscriptCache()
 	s.caches = newUICaches()
+	// Slack Socket Mode listener: only constructed when a DB is available
+	// (the dispatcher needs one). Start()/Stop() are no-ops when the env
+	// isn't configured for Socket Mode, so wiring is safe to leave in
+	// place at all times. The opener attaches new slack-reply tasks to
+	// a server-managed PTY so the Claude session streams into the UI
+	// instead of an iTerm tab.
+	if cfg.DB != nil {
+		s.slackListener = monitor.NewSlackListener(
+			monitor.NewDispatcher(cfg.DB, &slackTaskOpener{server: s}),
+		)
+	}
 	return s
 }
 
@@ -69,6 +82,17 @@ func (s *Server) ListenAndServe(addr string) int {
 	if s.reconcile != nil {
 		s.reconcile.start()
 		defer s.reconcile.stop()
+	}
+	// Start the Slack Socket Mode listener when configured. The listener
+	// is responsible for receiving reaction_added + message events and
+	// routing them into flow tasks via monitor.Dispatcher. Start() is a
+	// no-op when env config is incomplete; Stop() is safe to call
+	// unconditionally on shutdown.
+	if s.slackListener != nil {
+		if err := s.slackListener.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: slack listener start: %v\n", err)
+		}
+		defer s.slackListener.Stop()
 	}
 	// One-shot async backfill of tasks.session_path for pre-existing
 	// Codex sessions captured before the column was added. Skipped if
