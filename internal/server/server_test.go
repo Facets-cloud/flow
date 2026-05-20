@@ -1600,6 +1600,103 @@ func TestRestartBrowserTerminalPreservesExistingSession(t *testing.T) {
 	}
 }
 
+func TestRestartFreshBrowserTerminalClearsExistingSession(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+	sessionID := "44444444-4444-4444-8444-444444444444"
+	if _, err := db.Exec(
+		`UPDATE tasks SET status = 'in-progress', session_id = ?, session_started = ?, session_last_resumed = ? WHERE slug = 'build-ui'`,
+		sessionID, "2026-05-12T10:01:00+05:30", "2026-05-12T10:02:00+05:30",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(Config{DB: db, FlowRoot: root, CommandPath: "/bin/false"})
+	browserSess := &terminalSession{
+		slug:      "build-ui",
+		sessionID: sessionID,
+		done:      make(chan struct{}),
+		clients:   map[*terminalClient]struct{}{},
+	}
+	srv.terminals.mu.Lock()
+	srv.terminals.sessions["build-ui"] = browserSess
+	srv.terminals.mu.Unlock()
+
+	resp, status := srv.runAction(actionRequest{Kind: "restart-fresh", Target: "build-ui"})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, resp = %+v", status, resp)
+	}
+	if !resp.OK || !resp.Bridge {
+		t.Fatalf("expected fresh browser bridge response, got %+v", resp)
+	}
+	srv.terminals.mu.Lock()
+	_, stillRunning := srv.terminals.sessions["build-ui"]
+	srv.terminals.mu.Unlock()
+	if stillRunning {
+		t.Fatal("fresh restart should stop the stale browser terminal session")
+	}
+
+	task, err := flowdb.GetTask(db, "build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "backlog" {
+		t.Fatalf("status = %q, want backlog before websocket launch", task.Status)
+	}
+	if task.SessionID.Valid || task.SessionStarted.Valid || task.SessionLastResumed.Valid {
+		t.Fatalf("fresh restart should clear session fields: %+v", task)
+	}
+
+	launch, err := srv.prepareTerminalLaunch("build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !launch.Created || launch.SessionID == "" || launch.SessionID == sessionID {
+		t.Fatalf("launch = %+v, want fresh new session", launch)
+	}
+	if len(launch.Args) < 2 || launch.Args[0] != "--session-id" || launch.Args[1] != launch.SessionID {
+		t.Fatalf("args = %#v, want fresh claude launch args", launch.Args)
+	}
+	task, err = flowdb.GetTask(db, "build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "in-progress" || !task.SessionID.Valid || task.SessionID.String != launch.SessionID {
+		t.Fatalf("task after websocket launch = %+v", task)
+	}
+}
+
+func TestStaticSessionUIHasFreshRestartDropdown(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("static", "assets", "c906f42d-c4d3-4f33-b4a9-aca5e8a18052.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(body)
+	for _, want := range []string{
+		"restart-fresh",
+		"RestartDropdown",
+		"Restart fresh",
+		"aria-label=\"Restart options\"",
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("session UI missing %q", want)
+		}
+	}
+	if strings.Contains(js, "Pick restart mode") {
+		t.Fatal("restart control should be one visible dropdown button, not a subtle split-caret control")
+	}
+	if strings.Contains(js, "New session") {
+		t.Fatal("fresh restart should live in the restart dropdown, not as a separate New session button")
+	}
+	shell, err := os.ReadFile(filepath.Join("static", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shell), "restart-fresh") {
+		t.Fatal("app shell action router must wire restart-fresh to the browser bridge")
+	}
+}
+
 func TestITermActionOpensNativeTerminalNotBrowserBridge(t *testing.T) {
 	root, db := testRootDB(t)
 	commands := enableSharedTerminalForTest(t)

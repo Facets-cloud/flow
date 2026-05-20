@@ -106,6 +106,11 @@ func (s *Server) runAction(req actionRequest) (actionResponse, int) {
 			return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
 		}
 		return s.restartBrowserTerminalBridge(target)
+	case "restart-fresh":
+		if err := validateSlug(target); err != nil {
+			return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+		}
+		return s.restartFreshBrowserTerminalBridge(target)
 	case "switch-branch":
 		return s.switchBranch(req)
 	case "archive":
@@ -829,6 +834,47 @@ func (s *Server) restartBrowserTerminalBridge(target string) (actionResponse, in
 	return actionResponse{OK: true, Message: "restarting browser terminal for " + target, Agent: agent, Bridge: true}, http.StatusOK
 }
 
+func (s *Server) restartFreshBrowserTerminalBridge(target string) (actionResponse, int) {
+	task, err := flowdb.GetTask(s.cfg.DB, target)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return actionResponse{OK: false, Message: "task not found: " + target}, http.StatusNotFound
+		}
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	if task.Status == "done" {
+		return actionResponse{OK: false, Message: "task " + target + " is done; move it back to in-progress before reopening"}, http.StatusBadRequest
+	}
+	if err := flowdb.EnsureTaskStartable(s.cfg.DB, task); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, taskStartErrorStatus(err)
+	}
+	provider := strings.TrimSpace(task.SessionProvider)
+	if provider == "" {
+		provider = "claude"
+	}
+	if err := s.ensureProviderAvailable(provider); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	s.terminals.stop(target)
+	now := flowdb.NowISO()
+	if _, err := s.cfg.DB.Exec(
+		`UPDATE tasks SET
+			status = 'backlog',
+			status_changed_at = CASE WHEN status != 'backlog' THEN ? ELSE status_changed_at END,
+			session_id = NULL,
+			session_started = NULL,
+			session_last_resumed = NULL,
+			session_path = NULL,
+			updated_at = ?
+		 WHERE slug = ?`,
+		now, now, target,
+	); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	agent, _ := s.agentForTask(target)
+	return actionResponse{OK: true, Message: "starting fresh browser terminal for " + target, Agent: agent, Bridge: true}, http.StatusOK
+}
+
 func (s *Server) openTaskBridge(target, terminalKind string, force bool) (actionResponse, int) {
 	task, err := flowdb.GetTask(s.cfg.DB, target)
 	if err != nil {
@@ -1204,7 +1250,6 @@ func (s *Server) editPlaybook(target string) (actionResponse, int) {
 	brief := filepath.Join(s.cfg.FlowRoot, "playbooks", pb.Slug, "brief.md")
 	return actionResponse{OK: true, Message: "playbook brief: " + brief}, http.StatusOK
 }
-
 
 func (s *Server) overviewChat(req actionRequest) (actionResponse, int) {
 	prompt := strings.TrimSpace(req.Prompt)

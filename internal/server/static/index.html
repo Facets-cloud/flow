@@ -2058,7 +2058,12 @@ const App = () => {
     };
     const openBridge = (bridgeKind, bridgeTarget) => {
       if (!ensureProvider(bridgeTarget)) return null;
-      setToast(`${bridgeKind === 'restart' ? 'restarting' : 'opening'} ${bridgeTarget.slug}…`);
+      const bridgeVerb = bridgeKind === 'restart-fresh'
+        ? 'starting fresh session for'
+        : bridgeKind === 'restart'
+        ? 'restarting'
+        : 'opening';
+      setToast(`${bridgeVerb} ${bridgeTarget.slug}…`);
       return serverAction(bridgeKind, bridgeTarget)
         .then(data => {
           if (data.agent && data.agent.slug) {
@@ -2081,6 +2086,7 @@ const App = () => {
     }
     if (kind === 'switch-branch') { setToast(`switching ${target.slug} to ${target.branch}…`); return serverAction(kind, target).catch(err => { setToast(err.message); return null; }); }
     if (kind === 'restart') { return openBridge('restart', target); }
+    if (kind === 'restart-fresh') { return openBridge('restart-fresh', target); }
     if (kind === 'archive') { setToast(`archiving ${target.slug}…`); serverAction('archive', target).then(refreshUIData).catch(err => setToast(err.message)); return; }
     if (kind === 'delete') {
       const slug = (target && (target.slug || target.name)) || '';

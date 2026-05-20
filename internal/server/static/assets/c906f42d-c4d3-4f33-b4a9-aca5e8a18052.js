@@ -1428,6 +1428,56 @@ const TerminalDropdown = ({ action, agent }) => {
   );
 };
 
+const RestartDropdown = ({ disabled, actionDisabled, title, freshTitle, onRestart, onFresh }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    window.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onClick); window.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  const runRestart = () => {
+    if (disabled || actionDisabled) return;
+    setOpen(false);
+    onRestart();
+  };
+  const runFresh = () => {
+    if (disabled || actionDisabled) return;
+    setOpen(false);
+    onFresh();
+  };
+
+  return (
+    <div className="term-launcher" ref={ref}>
+      <button className="btn sm" onClick={() => !disabled && setOpen(v => !v)} disabled={disabled} aria-label="Restart options" aria-expanded={open} title={title}>
+        <Icon name="refresh-cw" size={11}/>Restart
+        <Icon name="chevron-down" size={11}/>
+      </button>
+      {open && (
+        <div className="term-launcher-menu">
+          <div className="term-launcher-head mono">Restart terminal…</div>
+          <button className="term-launcher-item" title={title} onClick={runRestart} disabled={actionDisabled}>
+            <Icon name="refresh-cw" size={13}/>
+            <span className="term-launcher-label">Restart</span>
+            <span className="term-launcher-os mono">{actionDisabled ? title : 'resume session'}</span>
+            <Icon name="check" size={11}/>
+          </button>
+          <button className="term-launcher-item" title={freshTitle} onClick={runFresh} disabled={actionDisabled}>
+            <Icon name="play" size={13}/>
+            <span className="term-launcher-label">Restart fresh</span>
+            <span className="term-launcher-os mono">{actionDisabled ? title : 'new session'}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const BranchSwitcher = ({ agent, action }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -1534,7 +1584,8 @@ const SessionDetail = ({ agent, goto, action, gitDiffOpen = false, toggleGitDiff
   const nativeTranscriptMode = terminalMode === 'native' && completedTask;
   const providerAvailable = isCapabilityAvailable('providers', provider);
   const providerReason = capabilityReason('providers', provider);
-  const canRestartTerminal = providerAvailable && !nativeTranscriptMode && terminalStatus !== 'connecting' && !isTerminalLiveStatus(terminalStatus);
+  const canOpenRestartMenu = providerAvailable && !nativeTranscriptMode && terminalStatus !== 'connecting';
+  const canRestartTerminal = canOpenRestartMenu && !isTerminalLiveStatus(terminalStatus);
   const restartTitle = canRestartTerminal
     ? 'Restart terminal'
     : !providerAvailable
@@ -1544,9 +1595,24 @@ const SessionDetail = ({ agent, goto, action, gitDiffOpen = false, toggleGitDiff
       : isTerminalLiveStatus(terminalStatus)
       ? 'Terminal is running'
       : 'Terminal is connecting';
+  const freshTitle = canRestartTerminal
+    ? 'Start a fresh session instead of resuming the exited terminal'
+    : restartTitle;
   const restartTerminal = () => {
     if (!canRestartTerminal) return;
     const result = action('restart', current);
+    if (result && typeof result.then === 'function') {
+      result.then((data) => {
+        if (!data || data.ok === false) return;
+        setTerminalStatus('connecting');
+        setTerminalRestartKey(v => v + 1);
+        window.dispatchEvent(new Event('flow-terminal-focus'));
+      });
+    }
+  };
+  const startFreshTerminal = () => {
+    if (!canRestartTerminal) return;
+    const result = action('restart-fresh', current);
     if (result && typeof result.then === 'function') {
       result.then((data) => {
         if (!data || data.ok === false) return;
@@ -1603,7 +1669,7 @@ const SessionDetail = ({ agent, goto, action, gitDiffOpen = false, toggleGitDiff
             })}
           </div>
           <button className="btn sm" onClick={() => goto('mc')}><Icon name="arrow-left" size={11}/>Detach</button>
-          <button className="btn sm" onClick={restartTerminal} disabled={!canRestartTerminal} title={restartTitle}><Icon name="refresh-cw" size={11}/>Restart</button>
+          <RestartDropdown disabled={!canOpenRestartMenu} actionDisabled={!canRestartTerminal} title={restartTitle} freshTitle={freshTitle} onRestart={restartTerminal} onFresh={startFreshTerminal}/>
           <TerminalDropdown action={action} agent={current}/>
         </div>
       </div>
