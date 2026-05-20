@@ -90,6 +90,51 @@ func TestCmdDoPersistsHarnessOnBootstrap(t *testing.T) {
 	}
 }
 
+// TestCmdDoBootstrapPreservesExistingHarnessPin pins the
+// set-once-on-first-bind contract: if a task already has a
+// non-NULL harness column (e.g. pinned to "codex" by a future
+// build), a `flow do` bootstrap from a binary that doesn't
+// register that adapter must NOT silently overwrite the pin with
+// the coerced fallback. The COALESCE clause in the bootstrap
+// UPDATE preserves the existing value; the harness column is
+// "set once on first bind" — only `flow do --here --force`
+// switches it.
+//
+// Without this guard, a user who upgrades flow today, has a
+// pinned-to-codex task from tomorrow's build, then downgrades
+// would silently corrupt the column to "claude" on the next
+// `flow do`.
+func TestCmdDoBootstrapPreservesExistingHarnessPin(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "future-pin")
+	_, _ = stubITerm(t)
+
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+
+	// Simulate a future build having pinned the task.
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET harness='codex' WHERE slug='future-pin'`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	if rc := cmdDo([]string{"future-pin"}); rc != 0 {
+		t.Fatalf("cmdDo rc=%d", rc)
+	}
+
+	db = openFlowDB(t)
+	task, err := flowdb.GetTask(db, "future-pin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Harness.String != "codex" {
+		t.Errorf("bootstrap should preserve pre-existing harness pin; got %q, want codex",
+			task.Harness.String)
+	}
+}
+
 // TestCmdDoHerePersistsHarnessColumn pins that --here writes the
 // harness column AND session_cwd on bind, not just session_id.
 // session_cwd captures the cwd of THIS flow process — equal to the
@@ -208,42 +253,45 @@ func TestCmdDoHereForceSwitchesHarness(t *testing.T) {
 	}
 }
 
-// TestHarnessForSpawnPrefersAmbientForUnpinned pins the convenience
-// behavior: a brand-new task (no harness pinned) created from inside
-// a known harness session adopts that harness on first `flow do`,
-// not the static claude default.
+// TestHarnessForSpawn_AllPathsLandOnClaudeToday smoke-tests every
+// branch of harnessForSpawn under the single-harness registry
+// (claude is the only adapter today). Each of the three branches
+// — null pin + no ambient, null pin + claude ambient, claude pin —
+// lands on claude, which is the only assertion the test can make
+// without a second registered adapter.
 //
-// This test exercises the helper directly rather than running cmdDo
-// end-to-end, because exercising "task born in codex" requires a
-// codex env var probe that ambientHarness can match against a
-// registered adapter. With only claude registered, we verify the
-// general behavior: claude env set + null task harness ⇒ claude.
-func TestHarnessForSpawnPrefersAmbientForUnpinned(t *testing.T) {
+// The actual *precedence* properties (pinned > ambient > default)
+// can't be exercised here: when ambient is claude and pin is empty,
+// "matches ambient" and "fell through to default" are
+// indistinguishable. Add real coverage once codex/gemini registers
+// and a non-claude ambient is possible.
+func TestHarnessForSpawn_AllPathsLandOnClaudeToday(t *testing.T) {
 	for _, h := range allHarnesses() {
 		t.Setenv(h.SessionIDEnvVar(), "")
 	}
 
-	// Sanity: ambient is nil → fallback to claude.
+	// Branch 1: ambient nil + null pin → claude (fallback).
 	task := &flowdb.Task{}
 	if got := harnessForSpawn(task).Name(); got != harness.NameClaude {
 		t.Errorf("no ambient + null pin = %v, want claude", got)
 	}
 
-	// Ambient claude set → returns claude.
+	// Branch 2: claude ambient + null pin → claude. Doesn't prove
+	// ambient is *preferred over* fallback (same answer either way);
+	// only proves the branch doesn't error.
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "658bf2be-5ae3-4842-a8a4-e0d0b785514d")
 	if got := harnessForSpawn(task).Name(); got != harness.NameClaude {
 		t.Errorf("ambient claude + null pin = %v, want claude", got)
 	}
 
-	// Pinned takes precedence over ambient (would matter once codex
-	// is registered; here we exercise the precedence rule by setting
-	// the column to claude explicitly).
+	// Branch 3: claude pin → claude. Doesn't prove pinned is
+	// *preferred over* ambient (same as above).
 	task.Harness = sql.NullString{Valid: true, String: "claude"}
 	if got := harnessForSpawn(task).Name(); got != harness.NameClaude {
 		t.Errorf("pinned claude = %v, want claude", got)
 	}
 
-	// Ensure claude adapter type is what we got (sanity).
+	// Sanity: returned value satisfies harness.Harness.
 	if _, ok := harnessForSpawn(task).(harness.Harness); !ok {
 		t.Error("harnessForSpawn return doesn't satisfy harness.Harness")
 	}

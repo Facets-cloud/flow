@@ -174,8 +174,8 @@ func cmdDo(args []string) int {
 			if n := live[strings.ToLower(task.SessionID.String)]; n > 0 {
 				if n > 1 {
 					fmt.Fprintf(os.Stderr,
-						"warning: %d claude processes are running session %s — both write to the same transcript and may race; close duplicates if unintended\n",
-						n, task.SessionID.String)
+						"warning: %d %s processes are running session %s — both write to the same transcript and may race; close duplicates if unintended\n",
+						n, h.Binary(), task.SessionID.String)
 				}
 				focused, ferr := spawner.FocusSession(task.SessionID.String, h.Binary())
 				if focused {
@@ -186,8 +186,8 @@ func cmdDo(args []string) int {
 					fmt.Fprintf(os.Stderr, "warning: focus attempt failed: %v\n", ferr)
 				}
 				fmt.Fprintf(os.Stderr,
-					"error: task %q has a live Claude session (%s) running elsewhere — switch to that tab, or pass --force to open another\n",
-					task.Slug, task.SessionID.String)
+					"error: task %q has a live %s session (%s) running elsewhere — switch to that tab, or pass --force to open another\n",
+					task.Slug, h.Binary(), task.SessionID.String)
 				return 1
 			}
 		}
@@ -258,13 +258,22 @@ func cmdDo(args []string) int {
 		// they're issued from a different ambient harness or no
 		// harness at all.
 		//
+		// COALESCE on the harness column: write only when currently
+		// NULL/empty. The column is "set once on first bind"
+		// (per the doc comment in flowdb/db.go) — the bootstrap
+		// path should never silently overwrite a pre-existing pin.
+		// `flow do --here --force` is the explicit lane for harness
+		// switches and writes the column unconditionally there.
+		//
 		// session_cwd = work_dir on fresh bootstrap by construction:
 		// we spawn the tab with cwd=task.WorkDir, so claude (or any
 		// harness) writes its transcript under that encoded path.
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-			 session_id=?, session_started=?, session_cwd=?, harness=?, updated_at=?
+			 session_id=?, session_started=?, session_cwd=?,
+			 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
+			 updated_at=?
 			 WHERE slug=? AND `+statusFilter,
 			now, sessionID, now, task.WorkDir, string(h.Name()), now, task.Slug,
 		); err != nil {
@@ -666,14 +675,20 @@ func cmdDoHere(query string, force bool) int {
 	}
 
 	now := flowdb.NowISO()
-	// session_cwd at --here time = the cwd of THIS flow process,
-	// which equals the cwd claude was started in (flow inherits
-	// claude's cwd via the shell). Without recording this, the
-	// transcript-finding code would assume claude wrote its jsonl
-	// under task.work_dir, which is only true for fresh `flow do`
-	// spawns. The two diverge whenever the user runs `flow do
-	// --here` from a directory that isn't the task's work_dir —
-	// most commonly seen with --force binds.
+	// session_cwd at --here time = the cwd of THIS flow process.
+	// That's usually the cwd claude was started in (claude's Bash
+	// tool resets cwd to claude's pwd on each call), but it can
+	// diverge in edge cases — e.g. a single Bash call that chains
+	// `cd /elsewhere && flow do --here task` yields os.Getwd() =
+	// /elsewhere while claude's jsonl still sits at the original
+	// spawn dir. The common path is fine and covers the
+	// --force-bind case that motivated this column; the chained-cd
+	// case has the same blind spot the legacy work_dir lookup did
+	// and is left as a known limitation.
+	//
+	// Without recording any cwd, the transcript-finding code would
+	// assume claude wrote its jsonl under task.work_dir, which is
+	// only true for fresh `flow do` spawns.
 	cwd, cwdErr := os.Getwd()
 	if cwdErr != nil {
 		// Defensive fallback: if Getwd fails (extremely rare),

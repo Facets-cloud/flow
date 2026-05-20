@@ -197,7 +197,7 @@ func runPS() ([]byte, error) {
 // RenderTranscript and the jsonl decoder it uses live in transcript.go
 // in this package.
 
-// encodeCwd encodes an absolute cwd path for Claude Code's
+// EncodeCwd encodes an absolute cwd path for Claude Code's
 // ~/.claude/projects/<dir> directory naming. Empirically: the
 // characters `/`, `.`, and `_` are each replaced by `-`. Other
 // characters pass through unchanged.
@@ -210,17 +210,13 @@ func runPS() ([]byte, error) {
 //
 // If CC introduces a new substitution in a future version, add the
 // char here and add a sample case to claude_test.go.
-func encodeCwd(cwd string) string {
+//
+// Exported because some test code in the app package pre-creates
+// fake transcript files at the encoded path; internal callers
+// (RenderTranscript) use this same function.
+func EncodeCwd(cwd string) string {
 	r := strings.NewReplacer("/", "-", ".", "-", "_", "-")
 	return r.Replace(cwd)
-}
-
-// EncodeCwd is the exported wrapper used by callers that need the
-// encoded form for paths other than the session jsonl (e.g. tests
-// that pre-create a fake transcript file at a known path). Most
-// callers should use TranscriptPath instead.
-func EncodeCwd(cwd string) string {
-	return encodeCwd(cwd)
 }
 
 // ---------- skill install ----------

@@ -66,7 +66,7 @@ func TestValidateSessionID(t *testing.T) {
 // ~/.claude/projects/* vs. the original cwd recorded in each dir's
 // *.jsonl. `/`, `.`, and `_` each map to `-`; everything else is
 // unchanged. If a new sample surfaces that needs a different rule,
-// add the observed pair here before touching encodeCwd.
+// add the observed pair here before touching EncodeCwd.
 func TestEncodeCwd(t *testing.T) {
 	cases := []struct {
 		cwd, want string
@@ -92,9 +92,6 @@ func TestEncodeCwd(t *testing.T) {
 	for _, tc := range cases {
 		if got := EncodeCwd(tc.cwd); got != tc.want {
 			t.Errorf("EncodeCwd(%q) = %q, want %q", tc.cwd, got, tc.want)
-		}
-		if got := encodeCwd(tc.cwd); got != tc.want {
-			t.Errorf("encodeCwd(%q) = %q, want %q", tc.cwd, got, tc.want)
 		}
 	}
 }

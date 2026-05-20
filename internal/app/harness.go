@@ -19,9 +19,19 @@ func allHarnesses() []harness.Harness {
 	}
 }
 
-// harnessByName looks up an adapter by stored Name. Empty or unknown
-// names fall back to claude — every pre-harness-column DB row reads
-// as NULL, which we want to treat as claude rather than error.
+// harnessByName looks up an adapter by stored Name. Empty/NULL names
+// fall back to claude — every pre-harness-column DB row reads as
+// NULL, which we want to treat as claude rather than error.
+//
+// Unknown non-empty values (typo, or a future harness name written
+// by a newer flow binary) also coerce to claude on the read side.
+// This is intentional for back-compat but creates a write-side
+// hazard if the bootstrap path naively writes the coerced name back
+// — the do.go UPDATE guards against that by only writing the harness
+// column when it's currently NULL/empty (set-once semantics). When
+// codex/gemini adapters land and the registry grows, this coercion
+// should be revisited; for the single-harness era it's a no-op in
+// practice.
 func harnessByName(name string) harness.Harness {
 	for _, h := range allHarnesses() {
 		if string(h.Name()) == name {

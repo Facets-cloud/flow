@@ -120,16 +120,18 @@ type Harness interface {
 	// Transcripts ------------------------------------------------------
 
 	// RenderTranscript reads the harness's on-disk transcript for
-	// (workDir, sessionID) and writes a normalized human-readable
-	// form to w. Each impl owns both path resolution AND format
-	// decoding — claude's jsonl, codex's event log, gemini's single-
-	// object json all converge to the same text shape on w.
+	// (cwd, sessionID) and writes a normalized human-readable form
+	// to w. Each impl owns both path resolution AND format decoding
+	// — claude's jsonl, codex's event log, gemini's single-object
+	// json all converge to the same text shape on w.
 	//
-	// compact omits tool results and thinking blocks. cutoff filters
-	// entries strictly before the given time (use zero to disable
-	// the filter). Returns an error if the transcript can't be found
-	// or decoded.
-	RenderTranscript(workDir, sessionID string, compact bool, cutoff time.Time, w io.Writer) error
+	// cwd is the directory the harness session was started in (NOT
+	// necessarily the task's work_dir — see tasks.session_cwd; for
+	// legacy NULL rows callers fall back to work_dir). compact omits
+	// tool results and thinking blocks. cutoff filters entries
+	// strictly before the given time (use zero to disable). Returns
+	// an error if the transcript can't be found or decoded.
+	RenderTranscript(cwd, sessionID string, compact bool, cutoff time.Time, w io.Writer) error
 
 	// Skill / rules file -----------------------------------------------
 
