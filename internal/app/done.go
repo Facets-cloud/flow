@@ -90,7 +90,7 @@ func cmdDone(args []string) int {
 		if task.ProjectSlug.Valid {
 			projectSlug = task.ProjectSlug.String
 		}
-		if err := defaultHarness().HeadlessRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
+		if err := defaultHarness().SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
 			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
 		} else {

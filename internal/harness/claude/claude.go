@@ -22,16 +22,18 @@ import (
 // Package-level seams. Tests in other packages swap these to avoid
 // spawning real subprocesses.
 //
-//	NewUUID         — session UUID minted by PrepareSpawn.
-//	HeadlessRunner  — invocation of `claude -p` for the close-out sweep.
-//	PSRunner        — `ps -axo pid,command` output used by LiveSessionIDs.
+//	NewUUID                — session UUID minted by NewSessionID.
+//	SkipPermissionsRunner  — invocation of `claude -p` for the
+//	                         close-out sweep.
+//	PSRunner               — `ps -axo pid,command` output used by
+//	                         LiveSessionIDs.
 //
 // Use t.Cleanup to restore after stubbing, exactly as iterm.Runner is
 // stubbed in the existing tests.
 var (
-	NewUUID        = newUUID
-	HeadlessRunner = runHeadless
-	PSRunner       = runPS
+	NewUUID               = newUUID
+	SkipPermissionsRunner = runSkipPermissions
+	PSRunner              = runPS
 )
 
 const (
@@ -62,10 +64,13 @@ var sessionIDRe = regexp.MustCompile(
 	`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
 )
 
-// PrepareSpawn pre-allocates a v4 UUID. flow's caller writes it to
-// tasks.session_id before spawning so `claude --session-id <uuid>`
-// produces a transcript at a deterministic path.
-func (c *claude) PrepareSpawn() (string, error) {
+// NewSessionID generates a v4 UUID locally. flow's caller writes it
+// to tasks.session_id before spawning so `claude --session-id <uuid>`
+// produces a transcript at a deterministic path. (Codex/Gemini will
+// implement this by probing the harness CLI to mint and capture an
+// id; claude doesn't need that — it accepts an externally-supplied
+// UUID via --session-id.)
+func (c *claude) NewSessionID() (string, error) {
 	return NewUUID()
 }
 
@@ -99,7 +104,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
 	cmd := fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
-	if opts.SkipApprovals {
+	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
 	return cmd
@@ -111,29 +116,23 @@ func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
-	if opts.SkipApprovals {
+	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
 	return cmd
 }
 
-// HookEnvForSpawn is nil for claude — the session UUID was claimed in
-// the DB before spawn, so there's no correlation work for the hook.
-func (c *claude) HookEnvForSpawn(taskSlug string) map[string]string {
-	return nil
-}
-
 // ---------- headless ----------
 
-func (c *claude) HeadlessRun(prompt string) error {
-	return HeadlessRunner(prompt)
+func (c *claude) SkipPermissionsRun(prompt string) error {
+	return SkipPermissionsRunner(prompt)
 }
 
-// runHeadless is the default HeadlessRun — execs
+// runSkipPermissions is the default SkipPermissionsRunner — execs
 // `claude -p <prompt> --dangerously-skip-permissions`. Stdout/stderr
 // are discarded because the sweep prompt instructs claude to write
 // files silently with no chat output.
-func runHeadless(prompt string) error {
+func runSkipPermissions(prompt string) error {
 	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
@@ -194,22 +193,9 @@ func runPS() ([]byte, error) {
 }
 
 // ---------- transcript ----------
-
-// TranscriptPath returns the absolute path to a task's session jsonl
-// under ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl. Errors if the
-// file isn't on disk yet (e.g. spawn never completed).
-func (c *claude) TranscriptPath(workDir, sessionID string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("no home dir: %w", err)
-	}
-	encoded := encodeCwd(workDir)
-	p := filepath.Join(home, ".claude", "projects", encoded, sessionID+".jsonl")
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("session file not found: %s", p)
-	}
-	return p, nil
-}
+//
+// RenderTranscript and the jsonl decoder it uses live in transcript.go
+// in this package.
 
 // encodeCwd encodes an absolute cwd path for Claude Code's
 // ~/.claude/projects/<dir> directory naming. Empirically: the

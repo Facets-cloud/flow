@@ -1,26 +1,35 @@
 // Package harness abstracts the agent CLI (Claude Code, Codex, Gemini, …)
 // that flow drives behind a per-task session.
 //
-// The interface intentionally accommodates two binding models:
+// Design principles encoded in the interface:
 //
-//   - Pre-allocating harnesses (Claude Code today). PrepareSpawn mints a
-//     session UUID up front; flow claims it in the DB before spawning so
-//     the session's transcript file lands at a deterministic path. The
-//     status flip to in-progress and the session_id write are atomic.
+//   - Flow never sets env vars on spawned harness processes. Flow only
+//     reads env vars the harness itself exports (CLAUDE_CODE_SESSION_ID,
+//     CODEX_THREAD_ID, GEMINI_SESSION_ID). Avoids polluting the spawned
+//     environment and keeps `flow do --here`'s discovery path symmetric
+//     with the first-spawn binding path.
 //
-//   - Self-allocating harnesses (Codex, Gemini). PrepareSpawn returns "";
-//     the harness mints its own id at startup. HookEnvForSpawn injects a
-//     correlator (e.g. FLOW_TASK=<slug>) so the SessionStart hook can
-//     learn the runtime id and bind it back to the right task. The
-//     status flip is deferred to the hook handler.
+//   - Every harness pre-allocates a session id from flow's perspective.
+//     Claude generates locally; codex/gemini probe their CLI (e.g.
+//     `codex exec` mints a session and prints the id, which the impl
+//     captures). Either way NewSessionID returns a real id, so flow's
+//     caller code has a single uniform spawn path — no deferred-bind
+//     branches, no FLOW_TASK env injection, no pending-spawn DB column.
 //
-// The single LaunchCmd/ResumeCmd/HeadlessRun shape works for both
-// because the data — sessionID is empty when not pre-allocated — drives
-// the branching in flow's caller code, never a per-harness switch.
+//   - Each harness owns its own transcript format end-to-end. Path
+//     layout AND on-disk schema differ per harness (claude jsonl with
+//     claude messages; codex jsonl with codex events; gemini single-
+//     object json); the harness renders to a normalized text stream
+//     so callers never decode harness-specific bytes.
 package harness
 
+import (
+	"io"
+	"time"
+)
+
 // Name is the short identifier persisted on tasks.harness and used to
-// look up an implementation via ByName.
+// look up an implementation.
 type Name string
 
 const (
@@ -37,9 +46,9 @@ const InjectionMarker = "[via flow do --with]"
 // Harness adapters translate to per-CLI flags (Claude:
 // --dangerously-skip-permissions, Codex: --dangerously-bypass-…, etc).
 type LaunchOpts struct {
-	// SkipApprovals asks the harness to run without per-tool approval
-	// prompts. Each impl picks its own flag.
-	SkipApprovals bool
+	// SkipPermissions asks the harness to run without per-tool
+	// approval prompts. Each impl picks its own flag.
+	SkipPermissions bool
 
 	// Inject is the first-user-message text to wrap with
 	// InjectionMarker and feed to the spawned session.
@@ -60,17 +69,18 @@ type Harness interface {
 
 	// SessionIDEnvVar returns the env var the harness exports inside
 	// each running session so flow can reverse-lookup the bound task
-	// (e.g. "CLAUDE_CODE_SESSION_ID").
+	// (e.g. "CLAUDE_CODE_SESSION_ID"). Flow reads this; it never sets
+	// it.
 	SessionIDEnvVar() string
 
 	// Session allocation -----------------------------------------------
 
-	// PrepareSpawn returns a session id to claim BEFORE spawning, or
-	// "" if the harness mints its own at startup. flow's caller
-	// branches on the empty-string return — pre-alloc'd harnesses get
-	// an immediate status flip; self-allocating ones defer to the
-	// SessionStart hook.
-	PrepareSpawn() (sessionID string, err error)
+	// NewSessionID returns the session id flow should claim before
+	// spawning. Implementations either generate locally (claude
+	// synthesizes a v4 UUID) or probe the harness (codex/gemini exec
+	// a one-shot to mint and capture an id). Always returns a real
+	// id on success — flow's caller has a single uniform spawn path.
+	NewSessionID() (string, error)
 
 	// ValidateSessionID rejects strings that can't be a session id for
 	// this harness. Used by `flow do --here` to gate the env-var-
@@ -79,9 +89,11 @@ type Harness interface {
 
 	// Launching --------------------------------------------------------
 
-	// LaunchCmd builds the shell command to start a fresh session.
-	// sessionID is whatever PrepareSpawn returned (may be "").
-	// The returned string is fed verbatim to spawner.SpawnTab.
+	// LaunchCmd builds the shell command to start a fresh session
+	// with the given session id. For claude this is `--session-id
+	// <id>`; for codex/gemini it's a resume of the id minted during
+	// NewSessionID. The returned string is fed verbatim to
+	// spawner.SpawnTab.
 	LaunchCmd(sessionID, prompt string, opts LaunchOpts) string
 
 	// ResumeCmd builds the shell command to continue an existing
@@ -89,17 +101,11 @@ type Harness interface {
 	// turn after resume.
 	ResumeCmd(sessionID string, opts LaunchOpts) string
 
-	// HookEnvForSpawn returns env vars to inject into the spawned
-	// process so the SessionStart hook can correlate the runtime
-	// session id to the task being launched. Returns nil for pre-
-	// allocating harnesses (no correlation needed — the id was
-	// already written to the DB before spawn).
-	HookEnvForSpawn(taskSlug string) map[string]string
-
-	// HeadlessRun executes a non-interactive prompt against the
-	// harness (used by `flow done`'s close-out sweep). Stdout/stderr
-	// are discarded; only the exit code matters.
-	HeadlessRun(prompt string) error
+	// SkipPermissionsRun executes a non-interactive prompt against
+	// the harness with per-tool approvals auto-allowed (used by
+	// `flow done`'s close-out sweep). Stdout/stderr are discarded;
+	// only the exit code matters.
+	SkipPermissionsRun(prompt string) error
 
 	// Live-session detection -------------------------------------------
 
@@ -113,12 +119,17 @@ type Harness interface {
 
 	// Transcripts ------------------------------------------------------
 
-	// TranscriptPath returns the absolute path on disk where the
-	// harness records the session's transcript. Used by
-	// `flow transcript` when called directly with a task ref. The
-	// hook-stdin path provides this dynamically; harnesses that don't
-	// expose a stable on-disk path may return an error.
-	TranscriptPath(workDir, sessionID string) (string, error)
+	// RenderTranscript reads the harness's on-disk transcript for
+	// (workDir, sessionID) and writes a normalized human-readable
+	// form to w. Each impl owns both path resolution AND format
+	// decoding — claude's jsonl, codex's event log, gemini's single-
+	// object json all converge to the same text shape on w.
+	//
+	// compact omits tool results and thinking blocks. cutoff filters
+	// entries strictly before the given time (use zero to disable
+	// the filter). Returns an error if the transcript can't be found
+	// or decoded.
+	RenderTranscript(workDir, sessionID string, compact bool, cutoff time.Time, w io.Writer) error
 
 	// Skill / rules file -----------------------------------------------
 
@@ -156,4 +167,3 @@ type Harness interface {
 	// installs converge to a clean config.
 	UninstallUserPromptSubmitHook(command string) (removed bool, err error)
 }
-

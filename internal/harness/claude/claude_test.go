@@ -116,7 +116,7 @@ func TestLaunchCmd_PreservesByteIdentity(t *testing.T) {
 	}
 
 	// Skip-approvals appended at the END (matches legacy ordering).
-	got = h.LaunchCmd(sessionID, prompt, harness.LaunchOpts{SkipApprovals: true})
+	got = h.LaunchCmd(sessionID, prompt, harness.LaunchOpts{SkipPermissions: true})
 	want = "claude --session-id " + sessionID + " 'do the thing' --dangerously-skip-permissions"
 	if got != want {
 		t.Errorf("LaunchCmd skip:\n got=%q\nwant=%q", got, want)
@@ -139,7 +139,7 @@ func TestResumeCmd_PreservesByteIdentity(t *testing.T) {
 		t.Errorf("ResumeCmd plain:\n got=%q\nwant=%q", got, want)
 	}
 
-	got = h.ResumeCmd(sessionID, harness.LaunchOpts{SkipApprovals: true})
+	got = h.ResumeCmd(sessionID, harness.LaunchOpts{SkipPermissions: true})
 	want = "claude --resume " + sessionID + " --dangerously-skip-permissions"
 	if got != want {
 		t.Errorf("ResumeCmd skip:\n got=%q\nwant=%q", got, want)
@@ -149,15 +149,6 @@ func TestResumeCmd_PreservesByteIdentity(t *testing.T) {
 	want = "claude --resume " + sessionID + " '" + harness.InjectionMarker + "\nfollow up'"
 	if got != want {
 		t.Errorf("ResumeCmd inject:\n got=%q\nwant=%q", got, want)
-	}
-}
-
-// TestHookEnv_NilForPreAlloc — claude pre-allocates the session id,
-// so no FLOW_TASK correlator is needed.
-func TestHookEnvNil(t *testing.T) {
-	h := New()
-	if env := h.HookEnvForSpawn("any-slug"); env != nil {
-		t.Errorf("HookEnvForSpawn = %v, want nil for pre-allocating harness", env)
 	}
 }
 

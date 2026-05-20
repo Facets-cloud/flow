@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// stubClaudeRunner replaces claude.HeadlessRunner with a capturing
+// stubClaudeRunner replaces claude.SkipPermissionsRunner with a capturing
 // stub that returns the supplied error. The old runner had a (slug,
 // prompt) signature; the harness version is (prompt) only. Tests
 // that previously asserted on slug now read it from the prompt (the
@@ -18,13 +18,13 @@ type capturedClaudeCall struct {
 
 func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 	t.Helper()
-	old := claude.HeadlessRunner
+	old := claude.SkipPermissionsRunner
 	calls := &[]capturedClaudeCall{}
-	claude.HeadlessRunner = func(prompt string) error {
+	claude.SkipPermissionsRunner = func(prompt string) error {
 		*calls = append(*calls, capturedClaudeCall{prompt: prompt})
 		return retErr
 	}
-	t.Cleanup(func() { claude.HeadlessRunner = old })
+	t.Cleanup(func() { claude.SkipPermissionsRunner = old })
 	return calls
 }
 
