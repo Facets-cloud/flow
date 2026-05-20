@@ -344,8 +344,8 @@ with `--bg`) that ships a single-page UI from
 CLI does, so the browser, your terminal sessions, and the skill
 all see one consistent view. The server exposes:
 
-- A Mission Control landing page that aggregates active tasks,
-  recent runs, attention items, and a notification center.
+- A Mission Control landing page that aggregates active tasks
+  and recent runs.
 - Per-entity detail screens for tasks, projects, playbooks, and
   playbook runs — with inline brief editing.
 - An xterm.js **terminal bridge** that attaches your browser to a
@@ -360,93 +360,6 @@ all see one consistent view. The server exposes:
 
 It's a *local* tool — no auth, no TLS, loopback by default. Don't
 expose it on a public network.
-
-### Slack integration
-
-flow can pull Slack events into its `monitor_events` pipeline, route
-them through the same `notif-autospawn` rules engine as GitHub events,
-and (when writes are enabled) post back into the originating thread for
-four lifecycle moments: task done, `waiting_on` set, agent needs input,
-and `notif-autospawn` drafts a task from a Slack message. Inbound Slack
-messages and flow's Slack reactions/replies are also persisted in
-`external_messages` / `external_message_actions`, so future FTS can index
-the conversation trail instead of reconstructing it from Slack.
-
-**Reading from Slack (ingest)** uses Slack Socket Mode, not
-`conversations.history` polling. Enable Socket Mode in the Slack app,
-then run `flow ui serve` with `FLOW_SLACK_SOCKET_MODE=1`,
-`SLACK_APP_TOKEN`, and `SLACK_BOT_TOKEN`. **Writing to Slack** is off
-by default — set `FLOW_SLACK_WRITES_ENABLED=1` to opt in. Writes never
-go to a public/private channel top-level; they only DM (D-prefix
-channel IDs) or thread under a known message.
-
-**Auto-replies** are a second, stricter opt-in. Set both
-`FLOW_SLACK_AUTO_REPLY_ENABLED=1` and `FLOW_SLACK_WRITES_ENABLED=1` to
-let flow answer questions in Slack. Flow only answers from facts already
-stored in flow (for example, a task linked to the same Slack thread). If
-it cannot find a flow-backed answer, it reacts on the message and asks a
-clarifying question in that same thread instead of guessing from general
-model knowledge.
-
-Env vars (precedence top → bottom):
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `FLOW_SLACK_SOCKET_MODE` | `false` unless `SLACK_APP_TOKEN` is set | Enables Slack Socket Mode ingest. |
-| `SLACK_APP_TOKEN` | — | App-level token (`xapp-...`) with `connections:write`; opens Slack's Socket Mode WebSocket. `FLOW_SLACK_APP_TOKEN` is also accepted. |
-| `SLACK_BOT_TOKEN` | — | Bot token (`xoxb-...`) used by Socket Mode and Slack write-back. `FLOW_SLACK_TOKEN`, `SLACK_USER_TOKEN`, and `SLACK_TOKEN` remain fallback Web API tokens for writes, but are not app-level Socket Mode tokens. |
-| `FLOW_SLACK_WRITE_TOKEN` | — | Explicit token for Slack writes (`chat.postMessage`, `reactions.add`). Use this when Socket Mode uses a bot token but writes should use a different token with `chat:write` and `reactions:write`. `SLACK_WRITE_TOKEN` is also accepted. |
-| `FLOW_SLACK_USER_TOKEN` | — | User token (`xoxp-...`) used as a fallback for resolving private-channel names and for user-scoped Events API subscriptions. `SLACK_USER_TOKEN`, `FLOW_SLACK_TOKEN`, and `SLACK_TOKEN` are also accepted. |
-| `FLOW_SLACK_MENTION_USER_ID` / `FLOW_SLACK_MENTION_USER_IDS` | inferred from a user token when possible | Slack user ID(s) to treat as personal mentions. When a `message.channels` / `message.groups` / `message.mpim` event contains `<@that-user>`, flow keeps it as `slack.personal_mention` even if the channel is not in `FLOW_SLACK_CHANNELS`. |
-| `FLOW_SLACK_WRITES_ENABLED` | `false` | Off-by-default safety gate. Set to `1` / `true` to allow flow to post into Slack at all. |
-| `FLOW_SLACK_AUTO_REPLY_ENABLED` | `false` | Enables Flow-backed Slack auto-replies. Requires `FLOW_SLACK_WRITES_ENABLED=1`; never answers from general model knowledge. |
-| `FLOW_SLACK_AUTO_REPLY_EMOJI` | `eyes` | Reaction added before flow answers or asks for clarification in the originating thread. Slack short name without colons. |
-| `FLOW_SLACK_CHANNELS` | (empty) | Comma-separated channel IDs for optional channel-message events. Channel chatter only ingests when its channel ID is in this list or `FLOW_SLACK_INCLUDE_CHANNEL_MESSAGES=1`. |
-| `FLOW_SLACK_INCLUDE_CHANNEL_MESSAGES` | `false` | When true, ingest non-mention channel chatter from every readable conversation. Almost certainly too noisy — prefer `FLOW_SLACK_CHANNELS`. |
-| `FLOW_SLACK_DEBUG` | `false` | When true, print Socket Mode client diagnostics. |
-| `FLOW_SLACK_API_BASE_URL` | `https://slack.com/api` | Override for tests / mock servers. |
-| `FLOW_SLACK_AGENT_DEBOUNCE` | `60s` | Minimum gap between "agent needs your input" DMs for the same session. Duration string. |
-| `FLOW_SLACK_DRAFT_EMOJI` | `eyes` | Reaction added on the originating message when `notif-autospawn` drafts a task from it. Slack short name without colons. |
-| `FLOW_BASE_URL` | — | Override for the deep-link prefix flow puts into Slack notices. When unset, flow reads `~/.flow/server.url` (auto-written by `flow ui serve`); when both are unset, Slack messages omit the link and fall back to a slug-only mention. |
-
-Slack app setup: enable **Socket Mode**, create an app-level token with
-`connections:write`, and subscribe the bot to `app_mention`,
-`message.im`, and `message.mpim`. Optional bot channel ingest needs
-`message.channels` / `message.groups` plus the matching bot scopes.
-Slack write-back needs the token selected for writes to have
-`chat:write` and `reactions:write`; if `SLACK_BOT_TOKEN` lacks those,
-set `FLOW_SLACK_WRITE_TOKEN` to a token that has them.
-Bot events only cover conversations the bot user is part of: DMs sent
-to the app/bot, channels the bot is in, and app mentions. A user's
-personal self-DM, human-to-human DM, or channel mention of the human user
-will not arrive through bot-only events. To catch pings to the human
-without inviting the bot everywhere, configure Slack **Workspace Events**
-for `message.channels` / `message.groups` / `message.mpim` as needed,
-authorize with the corresponding user scopes, set
-`FLOW_SLACK_MENTION_USER_ID` to the human Slack user ID (or provide an
-explicit user token so flow can infer it), and let flow filter those
-user-scoped message events down to personal mentions.
-
-Default routing: DMs, app @-mentions, and personal @-mentions trigger
-an attention notification in flow's inbox (`approval` mode); channel
-messages are logged without surfacing a notification (`log` mode). Both
-defaults are
-overridable via the rules UI in Mission Control — no Slack message
-ever auto-spawns an agent unless you explicitly set the rule mode
-to `auto_agent` for that source/kind. See `notif-autospawn` for the
-full safety stance.
-
-The first `flow do` from stock Terminal.app needs macOS Accessibility
-permission for the **app hosting your shell** — not the `flow` binary
-itself. Terminal.app's AppleScript dictionary has no "make new tab"
-verb, so flow drives cmd-T through System Events, and System Events
-checks Accessibility against the responsible parent app. Until that's
-granted, `flow do` errors out with a multi-line explanation pointing at
-System Settings → Privacy & Security → Accessibility (enable the
-toggle for "Terminal" if you launched flow from Terminal.app, "iTerm"
-from iTerm2, "Claude" if Claude Code is the host, etc.; add it via the
-+ button if it's not listed). After the grant the spawn is silent.
-iTerm2 doesn't need this — it has a native `create tab` verb.
 
 ## Your data — local, portable, yours
 

@@ -2123,44 +2123,6 @@ A session is "bound" when some task carries its session_id (set by
 retroactively). A session is "dispatch / unbound" when no task does
 — `flow show task` errors with a friendly message.
 
-## 10a. Slack-origin tasks
-
-Some tasks are created by `notif-autospawn` drafting from a Slack
-message. Those tasks have a `monitor_event_actions` row pointing
-at a `monitor_events.source = 'slack'` event that records the
-originating `(channel, ts, thread_ts)`. When you encounter such a
-task, expect the following side-effects from `flow` operations
-(none of which need your action — they happen at the binary level):
-
-- **`flow done`** posts a one-line closure into the originating
-  Slack thread when `FLOW_SLACK_WRITES_ENABLED=1`. Message shape:
-  `Task "<name>" done. Closing notes captured in flow: <FLOW_BASE_URL>/tasks/<slug>`.
-- **`flow update task --waiting "<X>"`** posts a threaded notice
-  with the new waiting_on text and a deep link. Clearing
-  waiting_on does NOT post anything — quiet recovery is friendlier.
-- **Agent transition to status=`waiting`** (permission prompt,
-  elicitation, etc.) DMs the user via the originating thread,
-  debounced to once per 60s per session.
-- **Drafting a new task from a Slack event** adds a `:eyes:`
-  reaction on the originating message and posts a one-line thread
-  reply naming the slug.
-- **Slack question auto-reply** is stricter than normal write-back:
-  it requires both `FLOW_SLACK_AUTO_REPLY_ENABLED=1` and
-  `FLOW_SLACK_WRITES_ENABLED=1`. Flow may answer only from facts already
-  stored in flow (for example a task linked to the same Slack thread).
-  If there is no flow-backed answer, flow reacts and asks a clarifying
-  question in the same thread rather than guessing.
-
-All writes are off by default (`FLOW_SLACK_WRITES_ENABLED=false`)
-and only ever target DMs or already-threaded messages — flow never
-broadcasts top-level into a public channel. Slack writes use
-`FLOW_SLACK_WRITE_TOKEN` / `SLACK_WRITE_TOKEN` when set, otherwise the
-configured Slack bot/user token fallback. If the user reports "flow
-stopped posting to Slack," check that the selected write token has
-`chat:write` and `reactions:write`. If the link in the Slack notice is
-wrong, check `FLOW_BASE_URL` env (plus `~/.flow/server.url` when
-`flow ui serve` is running) before assuming a bug.
-
 ## 11. When in doubt
 
 Ask. The worst outcome is writing a bad brief or silently
