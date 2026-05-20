@@ -1924,6 +1924,83 @@ func TestTaskBridgeEndpointReturnsAgentSnapshot(t *testing.T) {
 	}
 }
 
+// TestTaskBridgeAgentUsesWorktreeForGitDiff pins that when a task has a
+// worktree_path on a feature branch, the bridge agent snapshot reports
+// the worktree's branch and a diff containing only the worktree's local
+// edits — NOT the parent repo's checked-out branch (e.g. main).
+//
+// This is a regression test for the bug where the GIT DIFF panel was
+// running git in the main checkout instead of the per-task worktree,
+// so the panel showed unrelated main-branch changes instead of the
+// agent's actual in-flight work.
+func TestTaskBridgeAgentUsesWorktreeForGitDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+
+	// Initialize the parent repo with a committed baseline, then stage a
+	// main-branch-only change so the parent's `git diff` is non-empty —
+	// this is what the buggy code path would have surfaced.
+	runGitTest(t, root, "init", "-b", "main")
+	runGitTest(t, root, "config", "user.email", "flow@example.invalid")
+	runGitTest(t, root, "config", "user.name", "Flow Test")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("flow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, root, "add", "README.md")
+	runGitTest(t, root, "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "main-only.txt"), []byte("main edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Spin up a worktree on a feature branch with a different unique file.
+	worktreeDir := filepath.Join(root, ".claude", "worktrees", "build-ui")
+	runGitTest(t, root, "worktree", "add", "-b", "flow/build-ui", worktreeDir)
+	if err := os.WriteFile(filepath.Join(worktreeDir, "worktree-only.txt"), []byte("worktree edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wire the worktree onto the task. Use absolute path to match what
+	// `flow do` writes via worktree.Ensure().
+	absWorktree, err := filepath.Abs(worktreeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`UPDATE tasks SET worktree_path = ? WHERE slug = 'build-ui'`,
+		absWorktree,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(Config{DB: db, FlowRoot: root, Version: "test"}).Handler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks/build-ui/bridge", nil)
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var agent uiAgent
+	if err := json.Unmarshal(rec.Body.Bytes(), &agent); err != nil {
+		t.Fatal(err)
+	}
+	if agent.Branch != "flow/build-ui" {
+		t.Errorf("branch = %q, want flow/build-ui (worktree branch, not parent main)", agent.Branch)
+	}
+	names := map[string]bool{}
+	for _, f := range agent.DiffFiles {
+		names[f.Name] = true
+	}
+	if !names["worktree-only.txt"] {
+		t.Errorf("diff should contain worktree-only.txt; got files=%v", names)
+	}
+	if names["main-only.txt"] {
+		t.Errorf("diff must NOT contain main-only.txt (that's the parent repo's change); got files=%v", names)
+	}
+}
+
 func TestTaskAttachmentUploadStoresFileAndReturnsInsertText(t *testing.T) {
 	root, db := testRootDB(t)
 	insertProjectTask(t, db, root)

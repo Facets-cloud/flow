@@ -32,6 +32,7 @@ func BuildTaskView(db *sql.DB, root string, t *flowdb.Task, live map[string]bool
 	}
 	view.ProjectSlug = nullStringPtr(t.ProjectSlug)
 	view.PlaybookSlug = nullStringPtr(t.PlaybookSlug)
+	view.WorktreePath = nullStringPtr(t.WorktreePath)
 	view.ParentSlug = nullStringPtr(t.ParentSlug)
 	view.WaitingOn = nullStringPtr(t.WaitingOn)
 	view.DueDate = nullStringPtr(t.DueDate)

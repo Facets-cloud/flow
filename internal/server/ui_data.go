@@ -542,14 +542,26 @@ func (s *Server) uiAgent(tv TaskView, live map[string]bool) uiAgent {
 			runtimeEvent = "request_user_input"
 		}
 	}
+	// When the task was bootstrapped into a git worktree (see `flow do`),
+	// the user is editing on the worktree's branch, not the parent repo's
+	// checked-out branch. Prefer the worktree path for git diff and branch
+	// queries so the UI reflects what the agent session sees. Fall back to
+	// workDir if the recorded worktree no longer exists on disk (user
+	// manually removed it).
+	gitDir := workDir
+	if tv.WorktreePath != nil && *tv.WorktreePath != "" {
+		if info, err := os.Stat(*tv.WorktreePath); err == nil && info.IsDir() {
+			gitDir = *tv.WorktreePath
+		}
+	}
 	branches := []string{}
 	branch := "~/.flow"
 	if tv.Slug != overviewTaskSlug {
-		branch = s.cachedGitBranch(workDir)
+		branch = s.cachedGitBranch(gitDir)
 		if branch == "" {
 			branch = tv.Slug + "/main"
 		} else {
-			branches = s.cachedGitBranches(workDir, branch)
+			branches = s.cachedGitBranches(gitDir, branch)
 		}
 	}
 	lastActivityAt := laterTimestamp(latestTaskActivity(tv), insights.ActivityAt)
@@ -558,7 +570,7 @@ func (s *Server) uiAgent(tv TaskView, live map[string]bool) uiAgent {
 	if tv.SessionStarted != nil {
 		startedAt = *tv.SessionStarted
 	}
-	diff, files := s.cachedGitDiff(workDir)
+	diff, files := s.cachedGitDiff(gitDir)
 	summary := latestMarkdownSummary(tv.Updates)
 	if summary == "" {
 		summary = readMarkdownSummary(tv.BriefPath)

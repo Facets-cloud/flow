@@ -78,6 +78,7 @@ type TaskView struct {
 	Children            []TaskSummary `json:"children,omitempty"`
 	Priority            string        `json:"priority"`
 	WorkDir             string        `json:"work_dir"`
+	WorktreePath        *string       `json:"worktree_path,omitempty"`
 	WorkdirKnown        *WorkdirKnown `json:"workdir_known"`
 	WaitingOn           *string       `json:"waiting_on"`
 	DueDate             *string       `json:"due_date"`
