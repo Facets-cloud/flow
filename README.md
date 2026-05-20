@@ -175,10 +175,11 @@ doesn't refuse to run the unsigned binary.
 
 ### For those who use Claude's agents view
 
-If Claude Code's agents view is where you live, these two aliases make
-it the default destination for every `claude` invocation — no `--bg`
-to type each time. Add to your shell rc (`~/.zshrc` or `~/.bashrc`)
-and `source` it.
+flow opens Claude sessions for you (`flow do`, `flow run playbook`,
+etc.). If you've made the agents view your home base, these two
+aliases route every Claude session — flow's and your own — there,
+without `--bg` to type each time. Add to your shell rc (`~/.zshrc` or
+`~/.bashrc`) and `source` it.
 
 ```bash
 # Bare `claude` now drops into the agents view. Add
