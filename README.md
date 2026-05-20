@@ -1,6 +1,11 @@
-# flow
+<p align="center">
+  <img src="assets/flow-logo.svg" alt="flow" width="480">
+</p>
 
-![Status](https://img.shields.io/badge/status-alpha-orange) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+<p align="center">
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status">
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
+</p>
 
 > A complete task manager for Claude Code — and the working memory
 > layer that turns every session from a brilliant new hire into the
@@ -276,6 +281,25 @@ the branch and runs `gh pr create --base <detected> --head
 flow/<slug>` with the task brief as the PR body. The PR URL is
 stored in `task_pr_links`. Pass `--no-pr` to skip; push or PR
 failures warn and keep going (the status flip is the contract).
+
+### Focus instead of spawn for live sessions
+
+When `flow do <task>` is run for a task whose session is already
+live in another tab, flow focuses that tab instead of spawning a
+duplicate. The source tab prints "Already open: `<slug>` — switched
+to existing tab" as an audit line.
+
+The first `flow do` from stock Terminal.app needs macOS Accessibility
+permission for the **app hosting your shell** — not the `flow` binary
+itself. Terminal.app's AppleScript dictionary has no "make new tab"
+verb, so flow drives cmd-T through System Events, and System Events
+checks Accessibility against the responsible parent app. Until that's
+granted, `flow do` errors out with a multi-line explanation pointing at
+System Settings → Privacy & Security → Accessibility (enable the
+toggle for "Terminal" if you launched flow from Terminal.app, "iTerm"
+from iTerm2, "Claude" if Claude Code is the host, etc.; add it via the
++ button if it's not listed). After the grant the spawn is silent.
+iTerm2 doesn't need this — it has a native `create tab` verb.
 
 ### One-shot instructions with `--with`
 

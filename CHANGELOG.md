@@ -7,6 +7,74 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.14] — 2026-05-18
+
+### Added
+
+- **`flow do --with` / `--with-file`.** Inject a one-shot instruction
+  as the resumed/started session's first user message (prefixed with
+  `[via flow do --with]` so the model can distinguish injected from
+  typed input). `--with-file <path>` points the session at a file
+  (`read instructions at <abs-path>`) instead of embedding contents —
+  no size limits. `--with` on a `done` task auto-rolls it back to
+  in-progress. Rejected in combination with `--here` (no spawned
+  session to inject into). `flow run playbook <slug>` accepts the same
+  flags. The lane for nudging parked tasks and feeding ad-hoc
+  instructions to scheduled playbook runs without opening the tab.
+  ([#50](https://github.com/Facets-cloud/flow/pull/50) by
+  [@anshulsao](https://github.com/anshulsao))
+- **kitty as a first-class spawn backend.** `flow do` opens new tabs
+  in kitty via `kitty @ launch --type tab` when invoked from a kitty
+  shell. Requires `allow_remote_control yes` in kitty config.
+  ([#37](https://github.com/Facets-cloud/flow/pull/37) by
+  [@unni-facets](https://github.com/unni-facets))
+- **Warp as a first-class spawn backend.** `flow do` opens new tabs
+  in Warp when invoked from a Warp shell (`TERM_PROGRAM=WarpTerminal`).
+  Uses `warp://action/new_tab` to open the tab and osascript to
+  keystroke a self-deleting bootstrap script, since Warp has no
+  AppleScript dictionary or command-running CLI. Requires macOS
+  Accessibility for Warp.
+  ([#46](https://github.com/Facets-cloud/flow/pull/46) by
+  [@swapnildahiphale](https://github.com/swapnildahiphale))
+- **Ghostty as a first-class spawn backend.** `flow do` opens new
+  tabs in Ghostty when invoked from a Ghostty shell.
+  ([#53](https://github.com/Facets-cloud/flow/pull/53) by
+  [@cyphernext](https://github.com/cyphernext))
+- **`FLOW_TERM` env override.** Set
+  `FLOW_TERM=warp|iterm|terminal|zellij|kitty|ghostty` to force a
+  specific spawn backend regardless of `$TERM_PROGRAM`. `$ZELLIJ`
+  still wins; unrecognized values fall through to `$TERM_PROGRAM`
+  detection.
+  ([#46](https://github.com/Facets-cloud/flow/pull/46))
+- **`flow run playbook --here`.** Bind THIS Claude session to a
+  playbook-run task without spawning a new tab — mirrors `flow do
+  --here` for run-tasks. Includes a close-out sweep refactor.
+  ([#48](https://github.com/Facets-cloud/flow/pull/48) by
+  [@vishnukv-facets](https://github.com/vishnukv-facets))
+
+### Changed
+
+- **`flow list` rendering.** Tabwriter-aligned columns,
+  `--format json|tsv` for machine-readable output, ANSI color when
+  stdout is a TTY.
+  ([#44](https://github.com/Facets-cloud/flow/pull/44) by
+  [@unni-facets](https://github.com/unni-facets))
+- **README wordmark logo.** Theme-aware SVG logo at the top of
+  the README.
+  ([#35](https://github.com/Facets-cloud/flow/pull/35) by
+  [@pa](https://github.com/pa))
+
+### Fixed
+
+- **flowdb concurrent-open race.** `busy_timeout` is now applied at
+  `OpenDB` time so concurrent opens don't race the pragma.
+  ([#36](https://github.com/Facets-cloud/flow/pull/36) by
+  [@pa](https://github.com/pa))
+- **e2e spawner override leak.** Pin `spawner.Override` in the e2e
+  test so a real kitty tab isn't spawned during CI.
+  ([#42](https://github.com/Facets-cloud/flow/pull/42) by
+  [@unni-facets](https://github.com/unni-facets))
+
 ## [0.1.0-alpha.8] — 2026-05-09
 
 ### Added
@@ -134,7 +202,8 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.8...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.14...HEAD
+[0.1.0-alpha.14]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.14
 [0.1.0-alpha.8]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.6
