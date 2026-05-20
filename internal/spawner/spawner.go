@@ -104,9 +104,12 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 }
 
 // FocusSession tries to focus an existing tab/pane that is already
-// running `claude` with the given session UUID. Returns (true, nil)
-// on focus, (false, nil) if no matching tab was found in the active
-// backend, and (false, err) only on a backend failure.
+// running the named harness binary with the given session UUID. The
+// `binary` arg is the harness's executable name (e.g. "claude",
+// "codex", "gemini") — backends use it to filter the process table
+// down to relevant rows. Returns (true, nil) on focus, (false, nil)
+// if no matching tab was found in the active backend, and
+// (false, err) only on a backend failure.
 //
 // Callers should treat (false, nil) as "fall through" — typically by
 // surfacing the existing "session running elsewhere" error so the
@@ -117,16 +120,16 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 //   - Kitty: `kitty @ ls` JSON match on foreground_processes cmdline + focus-window
 //   - Terminal.app: pid → tty via ps, then osascript walk
 //   - iTerm2 (default): pid → tty via ps, then osascript walk
-func FocusSession(sessionID string) (bool, error) {
+func FocusSession(sessionID, binary string) (bool, error) {
 	switch Detect() {
 	case BackendZellij:
-		return zellij.FocusSession(sessionID)
+		return zellij.FocusSession(sessionID, binary)
 	case BackendKitty:
-		return kitty.FocusSession(sessionID)
+		return kitty.FocusSession(sessionID, binary)
 	case BackendTerminal:
-		return terminal.FocusSession(sessionID)
+		return terminal.FocusSession(sessionID, binary)
 	default:
-		return iterm.FocusSession(sessionID)
+		return iterm.FocusSession(sessionID, binary)
 	}
 }
 

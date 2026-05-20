@@ -100,7 +100,7 @@ func cmdDo(args []string) int {
 	}
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
-	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "pass --dangerously-skip-permissions through to claude")
+	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
 	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
@@ -178,7 +178,7 @@ func cmdDo(args []string) int {
 						"warning: %d claude processes are running session %s — both write to the same transcript and may race; close duplicates if unintended\n",
 						n, task.SessionID.String)
 				}
-				focused, ferr := spawner.FocusSession(task.SessionID.String)
+				focused, ferr := spawner.FocusSession(task.SessionID.String, h.Binary())
 				if focused {
 					fmt.Printf("Already open: %s — switched to existing tab\n", task.Slug)
 					return 0

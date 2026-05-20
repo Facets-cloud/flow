@@ -166,7 +166,7 @@ func TestFocusSessionEmptyID(t *testing.T) {
 		rCalled = true
 		return nil, nil
 	})
-	focused, err := FocusSession("")
+	focused, err := FocusSession("", "claude")
 	if focused || err != nil {
 		t.Errorf("FocusSession(\"\") = (%v, %v); want (false, nil)", focused, err)
 	}
@@ -208,7 +208,7 @@ func TestFocusSessionMatchesAndFocuses(t *testing.T) {
 	}
 	t.Cleanup(func() { Runner = old })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestFocusSessionResumeFlag(t *testing.T) {
 	Runner = func(args []string) error { focusArgs = args; return nil }
 	t.Cleanup(func() { Runner = old })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil || !focused {
 		t.Fatalf("got (%v, %v); want (true, nil)", focused, err)
 	}
@@ -267,7 +267,7 @@ func TestFocusSessionUUIDCaseInsensitive(t *testing.T) {
 	Runner = func(args []string) error { return nil }
 	t.Cleanup(func() { Runner = old })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil || !focused {
 		t.Errorf("uppercase UUID should match lowercase cmdline; got (%v, %v)", focused, err)
 	}
@@ -295,7 +295,7 @@ func TestFocusSessionAcrossOSWindows(t *testing.T) {
 	Runner = func(args []string) error { focusArgs = args; return nil }
 	t.Cleanup(func() { Runner = old })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil || !focused {
 		t.Fatalf("got (%v, %v); want (true, nil)", focused, err)
 	}
@@ -322,7 +322,7 @@ func TestFocusSessionNoMatch(t *testing.T) {
 	Runner = func(args []string) error { rCalled = true; return nil }
 	t.Cleanup(func() { Runner = old })
 
-	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
 	if focused || err != nil {
 		t.Errorf("got (%v, %v); want (false, nil)", focused, err)
 	}
@@ -350,7 +350,7 @@ func TestFocusSessionSkipsWindowsWithoutClaude(t *testing.T) {
 
 	// Even though the cmdline contains a UUID that matches the regex,
 	// the absence of `claude` in the joined cmdline must short-circuit.
-	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
 	if focused || err != nil {
 		t.Errorf("got (%v, %v); want (false, nil)", focused, err)
 	}
@@ -366,7 +366,7 @@ func TestFocusSessionLsError(t *testing.T) {
 	stubRunnerOutput(t, func(args []string) ([]byte, error) {
 		return nil, errors.New("exit status 1: remote control is not enabled")
 	})
-	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
 	if focused || err == nil {
 		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
 	}
@@ -393,7 +393,7 @@ func TestFocusSessionFocusError(t *testing.T) {
 	Runner = func(args []string) error { return errors.New("kitty failed") }
 	t.Cleanup(func() { Runner = old })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if focused || err == nil {
 		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
 	}
@@ -405,7 +405,7 @@ func TestFocusSessionFocusError(t *testing.T) {
 // TestFocusSessionMalformedJSON — guard against kitty output drift.
 func TestFocusSessionMalformedJSON(t *testing.T) {
 	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte("{not json"), nil })
-	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
 	if focused || err == nil {
 		t.Errorf("got (%v, %v); want (false, non-nil) for malformed JSON", focused, err)
 	}

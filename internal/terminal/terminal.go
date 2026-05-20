@@ -167,20 +167,22 @@ Underlying osascript error: %w`, err)
 }
 
 // FocusSession tries to focus the Terminal.app tab whose underlying
-// process is `claude` running with `--session-id <sessionID>` or
-// `--resume <sessionID>`. Returns (true, nil) on focus, (false, nil)
-// if no matching tab was found in Terminal.app, and (false, err) only
-// on a backend (ps / osascript) failure.
+// process is `binary` running with `--session-id <sessionID>` or
+// `--resume <sessionID>`. The `binary` arg is the harness's
+// executable name (e.g. "claude", "codex", "gemini") used to filter
+// ps rows. Returns (true, nil) on focus, (false, nil) if no matching
+// tab was found in Terminal.app, and (false, err) only on a backend
+// (ps / osascript) failure.
 //
-// Mechanism: scan `ps -axo pid,tty,command` for a claude process whose
-// argv contains the session UUID, extract its controlling tty, then
-// drive osascript to walk every window/tab and select the one whose
-// `tty` property matches.
-func FocusSession(sessionID string) (bool, error) {
+// Mechanism: scan `ps -axo pid,tty,command` for a row mentioning the
+// harness binary whose argv contains the session UUID, extract its
+// controlling tty, then drive osascript to walk every window/tab and
+// select the one whose `tty` property matches.
+func FocusSession(sessionID, binary string) (bool, error) {
 	if sessionID == "" {
 		return false, nil
 	}
-	tty, err := ttyForClaudeSession(sessionID)
+	tty, err := ttyForHarnessSession(sessionID, binary)
 	if err != nil {
 		return false, err
 	}
@@ -190,26 +192,28 @@ func FocusSession(sessionID string) (bool, error) {
 	return focusByTTY(tty)
 }
 
-// claudeSessionRowRe matches a `ps` line that has BOTH a `claude` token
-// and a `--session-id <uuid>` or `--resume <uuid>` flag.
-var claudeSessionRowRe = regexp.MustCompile(
+// sessionUUIDRowRe matches a `ps` line carrying a session UUID via
+// `--session-id <uuid>` or `--resume <uuid>`. Paired with a binary-
+// name check by ttyForHarnessSession to filter rows down to the
+// caller's harness only.
+var sessionUUIDRowRe = regexp.MustCompile(
 	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
 )
 
-// ttyForClaudeSession returns the controlling tty (e.g., "/dev/ttys012")
-// of the claude process running with the given session UUID, or "" if
-// no such process is currently running.
-func ttyForClaudeSession(sessionID string) (string, error) {
+// ttyForHarnessSession returns the controlling tty (e.g.,
+// "/dev/ttys012") of the process matching `binary` and carrying the
+// given session UUID in its argv, or "" if no such process exists.
+func ttyForHarnessSession(sessionID, binary string) (string, error) {
 	out, err := PSRunner()
 	if err != nil {
 		return "", fmt.Errorf("ps: %w", err)
 	}
 	needle := strings.ToLower(sessionID)
 	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, "claude") {
+		if !strings.Contains(line, binary) {
 			continue
 		}
-		matches := claudeSessionRowRe.FindStringSubmatch(line)
+		matches := sessionUUIDRowRe.FindStringSubmatch(line)
 		if len(matches) < 2 {
 			continue
 		}

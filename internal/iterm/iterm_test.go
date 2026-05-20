@@ -16,7 +16,7 @@ func TestFocusSessionEmptyID(t *testing.T) {
 	}
 	t.Cleanup(func() { PSRunner = old })
 
-	focused, err := FocusSession("")
+	focused, err := FocusSession("", "claude")
 	if focused || err != nil {
 		t.Errorf("FocusSession(\"\") = (%v, %v); want (false, nil)", focused, err)
 	}
@@ -42,7 +42,7 @@ func TestFocusSessionMatchesAndFocuses(t *testing.T) {
 		return []byte("ok\n"), nil
 	})
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestFocusSessionResumeFlag(t *testing.T) {
 		return []byte("ok"), nil
 	})
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil || !focused {
 		t.Errorf("FocusSession(--resume row) = (%v, %v); want (true, nil)", focused, err)
 	}
@@ -92,7 +92,7 @@ func TestFocusSessionUUIDCaseInsensitive(t *testing.T) {
 	stubRunnerOutput(t, func(args []string) ([]byte, error) {
 		return []byte("ok"), nil
 	})
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil || !focused {
 		t.Errorf("uppercase UUID should match lowercase ps row; got (%v, %v)", focused, err)
 	}
@@ -110,7 +110,7 @@ func TestFocusSessionNoMatchInPS(t *testing.T) {
 		return nil, nil
 	})
 
-	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
 	if focused || err != nil {
 		t.Errorf("got (%v, %v); want (false, nil)", focused, err)
 	}
@@ -134,7 +134,7 @@ func TestFocusSessionSkipsNoControllingTTY(t *testing.T) {
 		return nil, nil
 	})
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if focused || err != nil {
 		t.Errorf("got (%v, %v); want (false, nil) for ?? tty", focused, err)
 	}
@@ -157,7 +157,7 @@ func TestFocusSessionScriptMissReturnsFalse(t *testing.T) {
 		return []byte("miss"), nil
 	})
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if focused || err != nil {
 		t.Errorf("got (%v, %v); want (false, nil) for script miss", focused, err)
 	}
@@ -168,7 +168,7 @@ func TestFocusSessionScriptMissReturnsFalse(t *testing.T) {
 // whether to fall through or surface to the user.
 func TestFocusSessionPSError(t *testing.T) {
 	stubPS(t, "", errors.New("ps blew up"))
-	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
 	if focused {
 		t.Error("focused should be false on ps error")
 	}
@@ -190,7 +190,7 @@ func TestFocusSessionOsascriptError(t *testing.T) {
 		return nil, errors.New("osascript exit 1")
 	})
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if focused {
 		t.Error("focused should be false on osascript error")
 	}

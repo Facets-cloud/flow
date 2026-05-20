@@ -98,20 +98,21 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 }
 
 // FocusSession tries to focus the kitty window currently running
-// `claude` with the given session UUID. Returns (true, nil) on focus,
-// (false, nil) if no window across any kitty OS window matches, and
-// (false, err) only on a backend failure (kitty CLI errored or returned
-// malformed JSON).
+// `binary` with the given session UUID. The `binary` arg is the
+// harness's executable name (e.g. "claude", "codex", "gemini") used
+// to filter windows. Returns (true, nil) on focus, (false, nil) if no
+// window across any kitty OS window matches, and (false, err) only on
+// a backend failure (kitty CLI errored or returned malformed JSON).
 //
 // Mechanism: `kitty @ ls` returns the full OS-window → tab → window
 // tree. Each terminal window's foreground_processes array carries the
 // argv of the child processes currently running under that PTY — the
-// `claude` invocation lives there, not in the window's own cmdline
-// (which is the shell). We join each foreground process's cmdline with
-// spaces, apply the same UUID regex used by the iterm / zellij backends,
-// and call `kitty @ focus-window --match=id:<id>` on the first hit.
-// That single call raises the OS window, selects the tab, and focuses
-// the window — no need to chain focus-tab.
+// harness invocation lives there, not in the window's own cmdline
+// (which is the shell). We join each foreground process's cmdline
+// with spaces, apply the same UUID regex used by the iterm / zellij
+// backends, and call `kitty @ focus-window --match=id:<id>` on the
+// first hit. That single call raises the OS window, selects the tab,
+// and focuses the window — no need to chain focus-tab.
 //
 // Scope: unlike zellij's `list-panes` (which only sees the current
 // zellij session), `kitty @ ls` enumerates every OS window the kitty
@@ -120,7 +121,7 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 // Prereq: `allow_remote_control yes` in kitty.conf — same as SpawnTab.
 // If remote control is disabled, `kitty @ ls` exits non-zero and the
 // error is surfaced wrapped.
-func FocusSession(sessionID string) (bool, error) {
+func FocusSession(sessionID, binary string) (bool, error) {
 	if sessionID == "" {
 		return false, nil
 	}
@@ -128,7 +129,7 @@ func FocusSession(sessionID string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("kitty @ ls: %w", err)
 	}
-	winID, ok, err := windowIDForClaudeSession(out, sessionID)
+	winID, ok, err := windowIDForHarnessSession(out, sessionID, binary)
 	if err != nil {
 		return false, err
 	}
@@ -160,19 +161,19 @@ type kittyFGProc struct {
 	Cmdline []string `json:"cmdline"`
 }
 
-// claudeSessionRowRe matches a `claude` invocation carrying a session
+// sessionUUIDRowRe matches a harness invocation carrying a session
 // UUID in argv. Same shape as the iterm and zellij regex so focus
 // behaviour stays consistent across backends.
-var claudeSessionRowRe = regexp.MustCompile(
+var sessionUUIDRowRe = regexp.MustCompile(
 	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
 )
 
-// windowIDForClaudeSession parses `kitty @ ls` JSON and returns the
+// windowIDForHarnessSession parses `kitty @ ls` JSON and returns the
 // kitty window id of the first window whose foreground_processes
-// contain a `claude` process running with the given session UUID.
-// Returns (0, false, nil) on no match, (0, false, err) only on JSON
-// parse failure.
-func windowIDForClaudeSession(jsonBytes []byte, sessionID string) (int, bool, error) {
+// contain a process matching `binary` and carrying the given session
+// UUID. Returns (0, false, nil) on no match, (0, false, err) only on
+// JSON parse failure.
+func windowIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int, bool, error) {
 	var osWindows []kittyOSWindow
 	if err := json.Unmarshal(jsonBytes, &osWindows); err != nil {
 		return 0, false, fmt.Errorf("parse kitty ls JSON: %w", err)
@@ -186,10 +187,10 @@ func windowIDForClaudeSession(jsonBytes []byte, sessionID string) (int, bool, er
 						continue
 					}
 					joined := strings.Join(proc.Cmdline, " ")
-					if !strings.Contains(joined, "claude") {
+					if !strings.Contains(joined, binary) {
 						continue
 					}
-					matches := claudeSessionRowRe.FindStringSubmatch(joined)
+					matches := sessionUUIDRowRe.FindStringSubmatch(joined)
 					if len(matches) < 2 {
 						continue
 					}

@@ -84,22 +84,24 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 }
 
 // FocusSession tries to focus the zellij pane currently running
-// `claude` with the given session UUID. Returns (true, nil) on focus,
-// (false, nil) if no pane in the current zellij session matches, and
-// (false, err) only on a backend failure (zellij CLI errored or
-// returned malformed JSON).
+// `binary` with the given session UUID. The `binary` arg is the
+// harness's executable name (e.g. "claude", "codex", "gemini") used
+// to filter panes. Returns (true, nil) on focus, (false, nil) if no
+// pane in the current zellij session matches, and (false, err) only
+// on a backend failure (zellij CLI errored or returned malformed
+// JSON).
 //
 // Mechanism: `zellij action list-panes --all --json` returns every
 // pane's `pane_command` (the actual command line of the running
-// process). We scan for a pane whose command contains
-// `claude --session-id <uuid>` or `--resume <uuid>`, then call
+// process). We scan for a pane whose command mentions the binary
+// and carries `--session-id <uuid>` or `--resume <uuid>`, then call
 // `zellij action focus-pane-id terminal_<id>` to switch to it.
 //
 // Limitation: list-panes covers only the *current* zellij session.
 // If the user opened the task tab from a different zellij session,
 // this returns (false, nil) and the caller falls through to the
 // existing "running elsewhere" error.
-func FocusSession(sessionID string) (bool, error) {
+func FocusSession(sessionID, binary string) (bool, error) {
 	if sessionID == "" {
 		return false, nil
 	}
@@ -107,7 +109,7 @@ func FocusSession(sessionID string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("zellij list-panes: %w", err)
 	}
-	paneID, ok, err := paneIDForClaudeSession(out, sessionID)
+	paneID, ok, err := paneIDForHarnessSession(out, sessionID, binary)
 	if err != nil {
 		return false, err
 	}
@@ -129,17 +131,18 @@ type paneInfo struct {
 	PaneCommand string `json:"pane_command"`
 }
 
-// claudeSessionRowRe matches `claude` invocations carrying a session
+// sessionUUIDRowRe matches harness invocations carrying a session
 // UUID in the same shape as the iterm/terminal regex.
-var claudeSessionRowRe = regexp.MustCompile(
+var sessionUUIDRowRe = regexp.MustCompile(
 	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
 )
 
-// paneIDForClaudeSession parses zellij list-panes JSON and returns the
-// pane id of the first non-plugin pane whose pane_command runs
-// `claude` with the given session UUID. Returns (0, false, nil) if no
-// match. Returns (0, false, err) on JSON parse failure.
-func paneIDForClaudeSession(jsonBytes []byte, sessionID string) (int, bool, error) {
+// paneIDForHarnessSession parses zellij list-panes JSON and returns
+// the pane id of the first non-plugin pane whose pane_command
+// mentions `binary` and carries the given session UUID. Returns
+// (0, false, nil) if no match. Returns (0, false, err) on JSON parse
+// failure.
+func paneIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int, bool, error) {
 	var panes []paneInfo
 	if err := json.Unmarshal(jsonBytes, &panes); err != nil {
 		return 0, false, fmt.Errorf("parse list-panes JSON: %w", err)
@@ -149,10 +152,10 @@ func paneIDForClaudeSession(jsonBytes []byte, sessionID string) (int, bool, erro
 		if p.IsPlugin || p.PaneCommand == "" {
 			continue
 		}
-		if !strings.Contains(p.PaneCommand, "claude") {
+		if !strings.Contains(p.PaneCommand, binary) {
 			continue
 		}
-		matches := claudeSessionRowRe.FindStringSubmatch(p.PaneCommand)
+		matches := sessionUUIDRowRe.FindStringSubmatch(p.PaneCommand)
 		if len(matches) < 2 {
 			continue
 		}

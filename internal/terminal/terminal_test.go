@@ -172,7 +172,7 @@ func TestFocusSessionEmptyID(t *testing.T) {
 	PSRunner = func() ([]byte, error) { psCalled = true; return nil, nil }
 	t.Cleanup(func() { PSRunner = old })
 
-	focused, err := FocusSession("")
+	focused, err := FocusSession("", "claude")
 	if focused || err != nil {
 		t.Errorf("FocusSession(\"\") = (%v, %v); want (false, nil)", focused, err)
 	}
@@ -195,7 +195,7 @@ func TestFocusSessionMatchesAndFocuses(t *testing.T) {
 		return []byte("ok\n"), nil
 	})
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if err != nil || !focused {
 		t.Fatalf("FocusSession = (%v, %v); want (true, nil)", focused, err)
 	}
@@ -220,7 +220,7 @@ func TestFocusSessionScriptMissReturnsFalse(t *testing.T) {
 `, nil)
 	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte("miss"), nil })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if focused || err != nil {
 		t.Errorf("got (%v, %v); want (false, nil) for script miss", focused, err)
 	}
@@ -229,7 +229,7 @@ func TestFocusSessionScriptMissReturnsFalse(t *testing.T) {
 // TestFocusSessionPSError surfaces ps failures.
 func TestFocusSessionPSError(t *testing.T) {
 	stubPS(t, "", errors.New("ps blew up"))
-	focused, err := FocusSession("11111111-2222-4333-8444-555555555555")
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
 	if focused || err == nil {
 		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
 	}
@@ -244,7 +244,7 @@ func TestFocusSessionOsascriptError(t *testing.T) {
 `, nil)
 	stubRunnerOutput(t, func(args []string) ([]byte, error) { return nil, errors.New("osascript exit 1") })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if focused || err == nil {
 		t.Errorf("got (%v, %v); want (false, non-nil)", focused, err)
 	}
@@ -259,7 +259,7 @@ func TestFocusSessionSkipsNoControllingTTY(t *testing.T) {
 	osCalled := false
 	stubRunnerOutput(t, func(args []string) ([]byte, error) { osCalled = true; return nil, nil })
 
-	focused, err := FocusSession(uuid)
+	focused, err := FocusSession(uuid, "claude")
 	if focused || err != nil {
 		t.Errorf("got (%v, %v); want (false, nil)", focused, err)
 	}

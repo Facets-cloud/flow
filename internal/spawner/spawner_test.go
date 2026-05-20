@@ -287,7 +287,7 @@ func TestFocusSessionRoutesToITerm(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	flags := stubAllFocusBackends(t)
-	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude"); err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
 	if !*flags.iterm {
@@ -305,7 +305,7 @@ func TestFocusSessionRoutesToTerminal(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	flags := stubAllFocusBackends(t)
-	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude"); err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
 	if !*flags.terminal {
@@ -323,7 +323,7 @@ func TestFocusSessionRoutesToZellij(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	flags := stubAllFocusBackends(t)
-	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude"); err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
 	if !*flags.zellij {
@@ -343,7 +343,7 @@ func TestFocusSessionRoutesToKitty(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	flags := stubAllFocusBackends(t)
-	if _, err := FocusSession("11111111-2222-4333-8444-555555555555"); err != nil {
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude"); err != nil {
 		t.Fatalf("FocusSession: %v", err)
 	}
 	if !*flags.kitty {
