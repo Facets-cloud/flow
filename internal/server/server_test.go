@@ -1371,6 +1371,51 @@ func TestStaticActionPayloadForwardsProvider(t *testing.T) {
 	}
 }
 
+func TestStaticMemorySourcesHydration(t *testing.T) {
+	index, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexBody := string(index)
+	for _, want := range []string{
+		"AGENT_MEMORY_SOURCES = []",
+		"replaceArray(AGENT_MEMORY_SOURCES, fresh.AGENT_MEMORY_SOURCES)",
+		"window.MC.AGENT_MEMORY_SOURCES = AGENT_MEMORY_SOURCES",
+		"{route === 'memories' && <MemorySourcesView/>}",
+		"memories: AGENT_MEMORY_SOURCES.length",
+	} {
+		if !strings.Contains(indexBody, want) {
+			t.Fatalf("memory source UI hydration missing %q", want)
+		}
+	}
+
+	bootstrap, err := staticFS.ReadFile("static/assets/ebaab09c-07dc-4d0a-b14b-5fa8d1c49925.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(bootstrap), "const AGENT_MEMORY_SOURCES = []") ||
+		!strings.Contains(string(bootstrap), "KB_FILES, AGENT_MEMORY_SOURCES, WORKDIRS") {
+		t.Fatal("sample bootstrap must expose AGENT_MEMORY_SOURCES before live ui-data arrives")
+	}
+
+	screens, err := staticFS.ReadFile("static/assets/c906f42d-c4d3-4f33-b4a9-aca5e8a18052.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	screensBody := string(screens)
+	for _, want := range []string{
+		"const MemorySourcesView = () => {",
+		"const sources = Array.isArray(AGENT_MEMORY_SOURCES) ? AGENT_MEMORY_SOURCES : []",
+		"Rendered Markdown",
+		"<MarkdownView source={selected.content || ''}",
+		"MemorySourcesView, WorkdirsView",
+	} {
+		if !strings.Contains(screensBody, want) {
+			t.Fatalf("memory source screen missing %q", want)
+		}
+	}
+}
+
 func TestStaticPlaybookDetailUsesRealDataAndEditableBrief(t *testing.T) {
 	data, err := staticFS.ReadFile("static/assets/c906f42d-c4d3-4f33-b4a9-aca5e8a18052.js")
 	if err != nil {

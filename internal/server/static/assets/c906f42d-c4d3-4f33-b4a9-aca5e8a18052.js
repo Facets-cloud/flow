@@ -1,6 +1,6 @@
 // Mission Control — screens + app shell
 const {
-  AGENTS, DEAD_AGENT, DONE_AGENTS = [], BACKLOG, DONE_TASKS = [], KB_FILES, WORKDIRS, PLAYBOOKS_MC, PROJECTS_MC, ACTIVITY_HEATMAP, TRASH,
+  AGENTS, DEAD_AGENT, DONE_AGENTS = [], BACKLOG, DONE_TASKS = [], KB_FILES, AGENT_MEMORY_SOURCES = [], WORKDIRS, PLAYBOOKS_MC, PROJECTS_MC, ACTIVITY_HEATMAP, TRASH,
   SAMPLE_TRANSCRIPT, TERMINAL_SAMPLES, SAMPLE_DIFF_FILES,
   formatAge, formatActivity, fmtTokens, shortUUID, rerenderIcons,
   Icon, FlowMark, FlowLogo, SkeletonRows, StatusPill, TaskStatePill, PriorityPill, AgentChip, ProviderMark, BranchChip, Dot, PixelIndicator, Sparkline,
@@ -3372,6 +3372,139 @@ const KBView = () => {
   );
 };
 
+// ───────── Memories ────────────────────────────────────────────────────
+const MemorySourcesView = () => {
+  const [provider, setProvider] = useState('all');
+  const [scope, setScope] = useState('all');
+  const [q, setQ] = useState('');
+  const [selectedID, setSelectedID] = useState('');
+  const sources = Array.isArray(AGENT_MEMORY_SOURCES) ? AGENT_MEMORY_SOURCES : [];
+  const providerCounts = sources.reduce((acc, src) => {
+    const key = src.provider || 'other';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const filtered = sources.filter(src => {
+    if (provider !== 'all' && src.provider !== provider) return false;
+    if (scope !== 'all' && src.scope !== scope) return false;
+    if (!q.trim()) return true;
+    const hay = [src.provider, src.scope, src.kind, src.label, src.path, src.status, src.content].join(' ').toLowerCase();
+    return hay.includes(q.trim().toLowerCase());
+  });
+  useEffect(() => {
+    if (!filtered.length) {
+      setSelectedID('');
+      return;
+    }
+    if (!filtered.some(src => src.id === selectedID)) {
+      const next = filtered.find(src => src.available) || filtered[0];
+      setSelectedID(next.id);
+    }
+  }, [filtered.map(src => src.id).join('|')]);
+  const selected = filtered.find(src => src.id === selectedID) || filtered.find(src => src.available) || filtered[0];
+  const available = sources.filter(src => src.available).length;
+  const missing = sources.length - available;
+  const scopeOptions = [
+    ['all', 'All'],
+    ['global', 'Global'],
+    ['user', 'User'],
+    ['project', 'Project'],
+  ];
+  const providerOptions = [
+    ['all', 'All'],
+    ['codex', 'Codex'],
+    ['claude', 'Claude'],
+  ].filter(([id]) => id === 'all' || providerCounts[id]);
+  if (!sources.length) {
+    return (
+      <div>
+        <div className="section-head"><h2>Memories</h2><span className="count mono">0 sources</span></div>
+        <div className="empty"><FlowMark size={32} title=""/><h3>No memory sources</h3><p>No agent memory files found.</p></div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="section-head">
+        <h2>Memories</h2>
+        <span className="count mono">{available} available · {missing} missing</span>
+      </div>
+      <div className="memory-toolbar">
+        <div className="seg-row compact">
+          {providerOptions.map(([id, label]) => (
+            <button key={id} className={`seg-btn ${provider===id?'on':''}`} onClick={() => setProvider(id)}>{label}</button>
+          ))}
+        </div>
+        <div className="seg-row compact">
+          {scopeOptions.map(([id, label]) => (
+            <button key={id} className={`seg-btn ${scope===id?'on':''}`} onClick={() => setScope(id)}>{label}</button>
+          ))}
+        </div>
+        <div className="memory-search">
+          <Icon name="search" size={12}/>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter sources"/>
+        </div>
+      </div>
+      <div className="memory-wrap">
+        <div className="memory-list">
+          {filtered.map(src => (
+            <button key={src.id} className={`memory-row ${src.id === selected?.id ? 'active' : ''} ${src.status}`} onClick={() => setSelectedID(src.id)}>
+              <span className="memory-row-head">
+                <span className={`memory-provider ${src.provider}`}>
+                  <ProviderMark provider={src.provider} size={13}/>
+                  <span>{src.provider}</span>
+                </span>
+                <span className={`memory-status ${src.status}`}>{src.status}</span>
+              </span>
+              <span className="memory-label">{src.label}</span>
+              <span className="memory-kind mono">{src.kind}</span>
+              <span className="memory-path mono">{src.path}</span>
+            </button>
+          ))}
+          {!filtered.length && <div className="memory-empty mono">No matching sources</div>}
+        </div>
+        <div className="memory-main">
+          {selected ? (
+            <Fragment>
+              <div className="memory-head">
+                <div>
+                  <div className="memory-title">
+                    <span className={`memory-provider ${selected.provider}`}>
+                      <ProviderMark provider={selected.provider} size={14}/>
+                      <span>{selected.provider}</span>
+                    </span>
+                    <span>{selected.label}</span>
+                  </div>
+                  <div className="memory-meta mono">{selected.scope} · {selected.kind || 'source'} · {selected.size || 0} bytes{selected.mtime ? ` · ${selected.mtime}` : ''}</div>
+                </div>
+                <span className={`memory-status ${selected.status}`}>{selected.status}</span>
+              </div>
+              <div className="memory-pathline mono">{selected.path}</div>
+              {selected.available ? (
+                <details className="memory-content" open>
+                  <summary><Icon name="file-text" size={12}/>{selected.format === 'markdown' ? 'Rendered Markdown' : 'Full content'}</summary>
+                  {selected.format === 'markdown' ? (
+                    <div className="memory-rendered"><MarkdownView source={selected.content || ''} empty="No content found."/></div>
+                  ) : (
+                    <pre>{selected.content || ''}</pre>
+                  )}
+                </details>
+              ) : (
+                <div className="memory-missing">
+                  <Icon name="circle-off" size={18}/>
+                  <span className="mono">{selected.error || 'File is not present on this machine.'}</span>
+                </div>
+              )}
+            </Fragment>
+          ) : (
+            <div className="memory-missing"><Icon name="search-x" size={18}/><span className="mono">No source selected</span></div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ───────── Workdirs ────────────────────────────────────────────────────
 const WorkdirsView = ({ action }) => {
   const [path, setPath] = useState('');
@@ -3577,6 +3710,7 @@ const CommandPalette = ({ onClose, goto, action }) => {
       { group: 'Navigation', icon: 'folder-tree', label: 'Projects', meta: 'g p', onSel: () => goto('projects') },
       { group: 'Navigation', icon: 'play', label: 'Playbooks', meta: 'g b', onSel: () => goto('playbooks') },
       { group: 'Navigation', icon: 'folder', label: 'Workdirs', meta: 'g w', onSel: () => goto('workdirs') },
+      { group: 'Navigation', icon: 'brain-circuit', label: 'Memories', meta: 'g c', onSel: () => goto('memories') },
       { group: 'Navigation', icon: 'book-open', label: 'KB', meta: 'g k', onSel: () => goto('kb') },
       { group: 'Navigation', icon: 'inbox', label: 'Inbox', meta: 'g i', onSel: () => goto('inbox') },
       { group: 'Navigation', icon: 'trash-2', label: 'Trash', meta: 'g x', onSel: () => goto('trash') },
@@ -3788,6 +3922,7 @@ const ShortcutsOverlay = ({ onClose }) => (
           [<><span className="kbd">g</span> <span className="kbd">p</span></>, 'Projects'],
           [<><span className="kbd">g</span> <span className="kbd">b</span></>, 'Playbooks'],
           [<><span className="kbd">g</span> <span className="kbd">w</span></>, 'Workdirs'],
+          [<><span className="kbd">g</span> <span className="kbd">c</span></>, 'Memories'],
           [<><span className="kbd">g</span> <span className="kbd">k</span></>, 'KB'],
           [<><span className="kbd">g</span> <span className="kbd">i</span></>, 'Inbox'],
           [<><span className="kbd">g</span> <span className="kbd">x</span></>, 'Trash'],
@@ -3816,6 +3951,6 @@ const ShortcutsOverlay = ({ onClose }) => (
 
 window.MC_SCREENS = {
   MissionControl, SessionsGrid, SessionDetail, CompletedSessionView, TasksList, TaskDetail, ProjectsList, ProjectDetail, PlaybooksList, PlaybookDetail,
-  TrashView, KBView, WorkdirsView,
+  TrashView, KBView, MemorySourcesView, WorkdirsView,
   CommandPalette, QRModal, ConfirmModal, ShortcutsOverlay, CreateFlowModal, CreateProjectModal,
 };

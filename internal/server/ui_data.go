@@ -21,20 +21,21 @@ import (
 )
 
 type uiData struct {
-	Agents           []uiAgent       `json:"AGENTS"`
-	DeadAgent        *uiAgent        `json:"DEAD_AGENT"`
-	DoneAgents       []uiAgent       `json:"DONE_AGENTS"`
-	Backlog          []uiBacklogTask `json:"BACKLOG"`
-	DoneTasks        []uiBacklogTask `json:"DONE_TASKS"`
-	KBFiles          []uiKBFile      `json:"KB_FILES"`
-	Workdirs         []uiWorkdir     `json:"WORKDIRS"`
-	Playbooks        []uiPlaybook    `json:"PLAYBOOKS_MC"`
-	Projects         []uiProject     `json:"PROJECTS_MC"`
-	ActivityHeatmap  []uiActivityDay `json:"ACTIVITY_HEATMAP"`
-	Capabilities     uiCapabilities  `json:"CAPABILITIES"`
-	Trash            uiTrash         `json:"TRASH"`
-	SampleTranscript []uiTranscript  `json:"SAMPLE_TRANSCRIPT"`
-	SampleDiffFiles  []uiDiffFile    `json:"SAMPLE_DIFF_FILES"`
+	Agents           []uiAgent        `json:"AGENTS"`
+	DeadAgent        *uiAgent         `json:"DEAD_AGENT"`
+	DoneAgents       []uiAgent        `json:"DONE_AGENTS"`
+	Backlog          []uiBacklogTask  `json:"BACKLOG"`
+	DoneTasks        []uiBacklogTask  `json:"DONE_TASKS"`
+	KBFiles          []uiKBFile       `json:"KB_FILES"`
+	MemorySources    []uiMemorySource `json:"AGENT_MEMORY_SOURCES"`
+	Workdirs         []uiWorkdir      `json:"WORKDIRS"`
+	Playbooks        []uiPlaybook     `json:"PLAYBOOKS_MC"`
+	Projects         []uiProject      `json:"PROJECTS_MC"`
+	ActivityHeatmap  []uiActivityDay  `json:"ACTIVITY_HEATMAP"`
+	Capabilities     uiCapabilities   `json:"CAPABILITIES"`
+	Trash            uiTrash          `json:"TRASH"`
+	SampleTranscript []uiTranscript   `json:"SAMPLE_TRANSCRIPT"`
+	SampleDiffFiles  []uiDiffFile     `json:"SAMPLE_DIFF_FILES"`
 }
 
 type uiActivityDay struct {
@@ -209,6 +210,22 @@ type uiKBEntry struct {
 	T string `json:"t"`
 }
 
+type uiMemorySource struct {
+	ID        string `json:"id"`
+	Provider  string `json:"provider"`
+	Scope     string `json:"scope"`
+	Kind      string `json:"kind"`
+	Label     string `json:"label"`
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Available bool   `json:"available"`
+	Format    string `json:"format,omitempty"`
+	MTime     string `json:"mtime,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+	Content   string `json:"content,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 type uiWorkdir struct {
 	Path      string  `json:"path"`
 	Name      string  `json:"name"`
@@ -343,6 +360,7 @@ func (s *Server) buildUIData() (uiData, error) {
 	if len(diffFiles) == 0 {
 		diffFiles = []uiDiffFile{{Name: "No local git diff", Add: 0, Rem: 0}}
 	}
+	memorySources := s.uiAgentMemorySources(taskViews, projects, playbooks, workdirs)
 
 	var dead *uiAgent
 	if len(doneCandidates) > 0 {
@@ -356,6 +374,7 @@ func (s *Server) buildUIData() (uiData, error) {
 		Backlog:          backlog,
 		DoneTasks:        doneTasks,
 		KBFiles:          kb,
+		MemorySources:    memorySources,
 		Workdirs:         workdirs,
 		Playbooks:        playbooks,
 		Projects:         projects,
@@ -411,7 +430,6 @@ func (s *Server) uiTrash() uiTrash {
 	out.Total = len(out.Tasks) + len(out.Projects) + len(out.Playbooks)
 	return out
 }
-
 
 func (s *Server) uiAgent(tv TaskView, live map[string]bool) uiAgent {
 	workDir := tv.WorkDir

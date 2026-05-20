@@ -492,11 +492,12 @@ const ClockProvider = ({ children }) => {
 };
 
 const TRASH = { tasks: [], projects: [], playbooks: [], total: 0 };
+const AGENT_MEMORY_SOURCES = [];
 
 // Expose
 window.MC = window.MC || {};
 Object.assign(window.MC, {
-  AGENTS, DEAD_AGENT, DONE_AGENTS, BACKLOG, DONE_TASKS, KB_FILES, WORKDIRS, PLAYBOOKS_MC, PROJECTS_MC, ACTIVITY_HEATMAP, MONITOR, TRASH,
+  AGENTS, DEAD_AGENT, DONE_AGENTS, BACKLOG, DONE_TASKS, KB_FILES, AGENT_MEMORY_SOURCES, WORKDIRS, PLAYBOOKS_MC, PROJECTS_MC, ACTIVITY_HEATMAP, MONITOR, TRASH,
   SAMPLE_TRANSCRIPT, SAMPLE_TERMINAL, TERMINAL_SAMPLES, SAMPLE_DIFF_FILES,
   formatAge, formatActivity, fmtTokens, shortUUID, rerenderIcons,
   ClockProvider, ClockCtx,

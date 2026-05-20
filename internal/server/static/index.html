@@ -1162,6 +1162,53 @@ button.readable-file-head:focus-visible { outline: 1px solid var(--primary); out
 .kb-entry { display: flex; gap: 16px; padding: 6px 0; font-size: 13px; color: var(--text-mid); line-height: 1.4; }
 .kb-entry .d { font-family: var(--mono); color: var(--text-faint); font-size: 11.5px; flex-shrink: 0; width: 90px; }
 
+/* ── Agent Memories ───────────────────────────────────────── */
+.memory-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.seg-row.compact { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.seg-row.compact .seg-btn { border: 0; border-radius: 3px; padding: 5px 9px; font-size: 11px; background: transparent; color: var(--text-dim); }
+.seg-row.compact .seg-btn.on { background: var(--surface-2); color: var(--text); }
+.memory-search { position: relative; margin-left: auto; min-width: 240px; }
+.memory-search svg { position: absolute; left: 8px; top: 7px; color: var(--text-faint); }
+.memory-search input { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 9px 6px 26px; border-radius: 4px; font-size: 12px; outline: none; }
+.memory-search input:focus { border-color: var(--primary); }
+.memory-wrap { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 12px; height: calc(100vh - 44px - 122px); min-height: 520px; }
+.memory-list { border: 1px solid var(--border); border-radius: 4px; background: var(--surface); overflow-y: auto; padding: 6px; }
+.memory-row { width: 100%; display: grid; gap: 5px; text-align: left; padding: 9px 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.memory-row:hover { background: var(--surface-2); }
+.memory-row.active { background: var(--surface-2); border-color: var(--border-strong); }
+.memory-row-head { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+.memory-provider { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; color: var(--text-dim); }
+.memory-provider.claude { color: #e8a37a; }
+.memory-provider.codex { color: var(--text); }
+.memory-status { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 999px; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; border: 1px solid var(--border); color: var(--text-dim); }
+.memory-status.available { color: var(--running); border-color: rgba(46,182,114,.35); background: var(--running-dim); }
+.memory-status.missing { color: var(--waiting); border-color: rgba(245,166,35,.35); background: var(--waiting-dim); }
+.memory-status.unavailable { color: var(--error); border-color: rgba(255,90,100,.35); background: var(--error-dim); }
+.memory-label { font-size: 12.5px; color: var(--text); line-height: 1.25; }
+.memory-kind { color: var(--text-dim); font-size: 10px; text-transform: uppercase; }
+.memory-path { display: block; color: var(--text-faint); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-main { border: 1px solid var(--border); border-radius: 4px; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.memory-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.memory-title { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--text); }
+.memory-meta { margin-top: 4px; color: var(--text-dim); font-size: 11px; }
+.memory-pathline { padding: 8px 14px; color: var(--text-faint); border-bottom: 1px solid var(--border); font-size: 11px; word-break: break-all; }
+.memory-content { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.memory-content summary { display: flex; align-items: center; gap: 6px; padding: 8px 14px; cursor: pointer; color: var(--text-mid); font-family: var(--mono); font-size: 11px; border-bottom: 1px solid var(--border); user-select: none; }
+.memory-content pre { margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; color: var(--text-mid); font-family: var(--mono); font-size: 11.5px; line-height: 1.55; flex: 1; background: #07070a; }
+.memory-rendered { padding: 14px; overflow: auto; flex: 1; min-height: 0; }
+.memory-rendered .markdown-rendered { max-width: none; font-size: 13px; line-height: 1.6; }
+.memory-rendered .markdown-rendered h1 { font-size: 20px; margin-bottom: 18px; }
+.memory-rendered .markdown-rendered h2 { font-size: 16px; margin: 24px 0 10px; padding-bottom: 8px; }
+.memory-rendered .markdown-rendered h3 { font-size: 14px; margin: 20px 0 8px; padding-bottom: 6px; }
+.memory-missing { min-height: 220px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); }
+.memory-empty { padding: 18px 10px; color: var(--text-faint); text-align: center; }
+@media (max-width: 900px) {
+  .memory-search { margin-left: 0; width: 100%; }
+  .memory-wrap { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .memory-list { max-height: 280px; }
+  .memory-main { min-height: 360px; }
+}
+
 /* ── Diff ───────────────────────────────────────────────── */
 .diff-layout { display: grid; grid-template-columns: 240px 1fr 280px; gap: 10px; height: calc(100vh - 44px - 100px); }
 .diff-files { border: 1px solid var(--border); border-radius: 4px; background: var(--surface); overflow-y: auto; padding: 6px; }
@@ -1439,8 +1486,8 @@ button.readable-file-head:focus-visible { outline: 1px solid var(--primary); out
 
 <script type="text/babel">
 const { useState, useEffect, useMemo, useRef, useContext, Fragment } = React;
-const { ClockProvider, ClockCtx, AGENTS, DEAD_AGENT, DONE_AGENTS = [], BACKLOG, DONE_TASKS = [], PROJECTS_MC, PLAYBOOKS_MC, WORKDIRS, KB_FILES, ACTIVITY_HEATMAP, TRASH = { tasks: [], projects: [], playbooks: [], total: 0 }, Icon, Dot, FlowLogo, FlowMark } = window.MC;
-const { MissionControl, SessionsGrid, SessionDetail, CompletedSessionView, TasksList, TaskDetail, ProjectsList, ProjectDetail, PlaybooksList, PlaybookDetail, TrashView, KBView, WorkdirsView, CommandPalette, QRModal, ConfirmModal, ShortcutsOverlay, CreateFlowModal, CreateProjectModal } = window.MC_SCREENS;
+const { ClockProvider, ClockCtx, AGENTS, DEAD_AGENT, DONE_AGENTS = [], BACKLOG, DONE_TASKS = [], PROJECTS_MC, PLAYBOOKS_MC, WORKDIRS, KB_FILES, AGENT_MEMORY_SOURCES = [], ACTIVITY_HEATMAP, TRASH = { tasks: [], projects: [], playbooks: [], total: 0 }, Icon, Dot, FlowLogo, FlowMark } = window.MC;
+const { MissionControl, SessionsGrid, SessionDetail, CompletedSessionView, TasksList, TaskDetail, ProjectsList, ProjectDetail, PlaybooksList, PlaybookDetail, TrashView, KBView, MemorySourcesView, WorkdirsView, CommandPalette, QRModal, ConfirmModal, ShortcutsOverlay, CreateFlowModal, CreateProjectModal } = window.MC_SCREENS;
 
 const NAV = [
   { group: 'core', items: [
@@ -1452,6 +1499,7 @@ const NAV = [
     { id: 'projects', label: 'Projects', icon: 'folder-tree', kbd: 'g p' },
     { id: 'playbooks', label: 'Playbooks', icon: 'play', kbd: 'g b' },
     { id: 'workdirs', label: 'Workdirs', icon: 'folder', kbd: 'g w' },
+    { id: 'memories', label: 'Memories', icon: 'brain-circuit', kbd: 'g c' },
     { id: 'kb', label: 'KB', icon: 'book-open', kbd: 'g k' },
   ]},
   { group: 'review', items: [
@@ -1466,6 +1514,7 @@ const TITLES = {
   projects: ['Projects'],
   playbooks: ['Playbooks'],
   workdirs: ['Workdirs'],
+  memories: ['Memories'],
   kb: ['Knowledge base'],
   inbox: ['Inbox'],
   trash: ['Trash'],
@@ -1894,6 +1943,7 @@ const App = () => {
 	    replaceArray(BACKLOG, fresh.BACKLOG);
 	    replaceArray(DONE_TASKS, fresh.DONE_TASKS);
 	    replaceArray(KB_FILES, fresh.KB_FILES);
+	    replaceArray(AGENT_MEMORY_SOURCES, fresh.AGENT_MEMORY_SOURCES);
 	    replaceArray(WORKDIRS, fresh.WORKDIRS);
 	    replaceArray(PLAYBOOKS_MC, fresh.PLAYBOOKS_MC);
 	    replaceArray(PROJECTS_MC, fresh.PROJECTS_MC);
@@ -1903,6 +1953,7 @@ const App = () => {
 	    window.MC.CAPABILITIES = fresh.CAPABILITIES || window.MC.CAPABILITIES;
 	    window.MC.MONITOR = fresh.MONITOR || window.MC.MONITOR;
 	    window.MC.DONE_TASKS = DONE_TASKS;
+	    window.MC.AGENT_MEMORY_SOURCES = AGENT_MEMORY_SOURCES;
 	    applyTrash(fresh.TRASH);
 	    setFocus(current => {
 	      if (!current || !current.slug) return current;
@@ -2254,6 +2305,7 @@ const App = () => {
         if (e.key === 't') { goto('tasks'); }
         if (e.key === 'p') { goto('projects'); }
         if (e.key === 'b') { goto('playbooks'); }
+        if (e.key === 'c') { goto('memories'); }
         if (e.key === 'k') { goto('kb'); }
         if (e.key === 'w') { goto('workdirs'); }
         if (e.key === 'i') { goto('inbox'); }
@@ -2339,15 +2391,16 @@ const App = () => {
     return () => { cancelled = true; clearInterval(timer); };
   }, [isSession, sessionSlug]);
 
-	  const navCounts = {
+  const navCounts = {
     mc: AGENTS.length,
     sessions: AGENTS.length,
     tasks: AGENTS.length + BACKLOG.length,
     projects: PROJECTS_MC.length,
     playbooks: PLAYBOOKS_MC.length,
-	    workdirs: WORKDIRS.length,
-	    kb: KB_FILES.length,
-	    // Inbox badge: count only ACTIONABLE slack/github items so the
+    workdirs: WORKDIRS.length,
+    memories: AGENT_MEMORY_SOURCES.length,
+    kb: KB_FILES.length,
+    // Inbox badge: count only ACTIONABLE slack/github items so the
     // sidebar number tracks what's actually waiting on you in the Inbox
     // view. Dismissed notifications drop out automatically because
     // ListMonitorNotifications already filters WHERE status != 'dismissed'.
@@ -2438,6 +2491,7 @@ const App = () => {
         {route === 'playbooks' && <PlaybooksList action={action} goto={goto}/>}
         {isPlaybook && <PlaybookDetail slug={playbookSlug} goto={goto} action={action}/>}
         {route === 'workdirs' && <WorkdirsView action={action}/>}
+        {route === 'memories' && <MemorySourcesView/>}
         {route === 'kb' && <KBView/>}
         {route === 'trash' && <TrashView action={action}/>}
       </main>
