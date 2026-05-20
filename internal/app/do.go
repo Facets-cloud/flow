@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/spawner"
 	"fmt"
 	"net/url"
@@ -12,10 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 )
-
-// withMarker prefixes the injected text so the receiving session can
-// distinguish a --with instruction from typed user input.
-const withMarker = "[via flow do --with]"
 
 // loadInjectionText resolves --with / --with-file into the text that
 // will be injected as the session's first user message. For
@@ -172,10 +169,11 @@ func cmdDo(args []string) int {
 	// `claude --resume <uuid>` in another tab), warn before focusing.
 	// Both processes write to the same session jsonl and can race —
 	// the user almost certainly wants to know.
+	h := defaultHarness()
 	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
-		if live, err := liveClaudeSessions(); err == nil {
-			if live[strings.ToLower(task.SessionID.String)] {
-				if n := countClaudeProcessesForSession(task.SessionID.String); n > 1 {
+		if live, err := h.LiveSessionIDs(); err == nil {
+			if n := live[strings.ToLower(task.SessionID.String)]; n > 0 {
+				if n > 1 {
 					fmt.Fprintf(os.Stderr,
 						"warning: %d claude processes are running session %s — both write to the same transcript and may race; close duplicates if unintended\n",
 						n, task.SessionID.String)
@@ -242,7 +240,7 @@ func cmdDo(args []string) int {
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
 	if needsBootstrap {
-		id, err := newUUID()
+		id, err := h.PrepareSpawn()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
 			return 1
@@ -313,19 +311,24 @@ func cmdDo(args []string) int {
 		return 1
 	}
 
-	// Spawn the iTerm tab.
+	// Spawn the tab via the active harness adapter.
 	//
-	// We shell out to `claude` directly (no wrapper). The skill on disk at
-	// ~/.claude/skills/flow/SKILL.md is whatever was last installed via
+	// The skill on disk (e.g. ~/.claude/skills/flow/SKILL.md for the
+	// claude harness) is whatever was last installed via
 	// `flow skill install` / `flow skill update`. To refresh it after
 	// upgrading flow, the user runs `flow skill update` manually.
 	var command string
+	launchOpts := harness.LaunchOpts{
+		SkipApprovals: *dangerSkip,
+		Inject:        injectionText,
+	}
 	if needsBootstrap {
-		// Fresh bootstrap path: we pre-allocated the session UUID above
-		// and committed it to the DB. Passing --session-id to claude
-		// makes it write its jsonl at the deterministic path
-		// ~/.claude/projects/<encoded-cwd>/<sessionID>.jsonl, so there is
-		// nothing to discover afterwards.
+		// Fresh bootstrap path. For pre-allocating harnesses (claude),
+		// PrepareSpawn already minted the sessionID and the status flip
+		// above committed it, so the harness can embed it in the spawn
+		// command (e.g. `--session-id <uuid>`) for deterministic
+		// transcript paths. For self-allocating harnesses sessionID will
+		// be empty — the SessionStart hook completes the binding later.
 		playbookSlug := ""
 		isFirstRun := false
 		if task.PlaybookSlug.Valid {
@@ -343,29 +346,25 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
-		if injectionText != "" {
-			prompt = prompt + "\n\n" + withMarker + "\n" + injectionText
-		}
-		command = fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
+		command = h.LaunchCmd(sessionID, prompt, launchOpts)
 	} else {
-		// Resume path: the UUID we already have in the DB is what claude
-		// used to write its existing jsonl.
-		command = "claude --resume " + sessionID
-		if injectionText != "" {
-			command += " " + spawner.ShellQuote(withMarker+"\n"+injectionText)
-		}
+		// Resume path: the UUID we already have in the DB is what the
+		// harness used when it first wrote its transcript.
+		command = h.ResumeCmd(sessionID, launchOpts)
 	}
-	if *dangerSkip {
-		command += " --dangerously-skip-permissions"
-	}
-	// The spawned session learns its task via reverse-lookup on
-	// $CLAUDE_CODE_SESSION_ID against tasks.session_id — the DB is the
-	// single source of truth, so no FLOW_TASK / FLOW_PROJECT injection.
-	// We DO propagate $FLOW_ROOT when set, so the spawned session reads
-	// the same flow.db / kb / briefs the parent process is using.
-	var spawnEnv map[string]string
+	// Per-harness env propagation. The claude path adds nothing — the
+	// task is bound via tasks.session_id reverse-lookup on
+	// $CLAUDE_CODE_SESSION_ID. Self-allocating harnesses get a
+	// correlator (FLOW_TASK) so the SessionStart hook can finish the
+	// bind once the runtime id is known.
+	// We propagate $FLOW_ROOT when set so the spawned session reads
+	// the same flow.db / kb / briefs as the parent process.
+	spawnEnv := h.HookEnvForSpawn(task.Slug)
 	if root := os.Getenv("FLOW_ROOT"); root != "" {
-		spawnEnv = map[string]string{"FLOW_ROOT": root}
+		if spawnEnv == nil {
+			spawnEnv = map[string]string{}
+		}
+		spawnEnv["FLOW_ROOT"] = root
 	}
 	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
 		if needsBootstrap {
@@ -569,15 +568,18 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 // var injection. Subsequent `flow do <slug>` from elsewhere will
 // resume this session via `claude --resume`.
 func cmdDoHere(query string, force bool) int {
+	h := defaultHarness()
 	sid := currentSessionID()
 	if sid == "" {
-		fmt.Fprintln(os.Stderr,
-			"error: --here requires running inside a Claude Code session ($CLAUDE_CODE_SESSION_ID is unset)")
+		fmt.Fprintf(os.Stderr,
+			"error: --here requires running inside a Claude Code session ($%s is unset)\n",
+			h.SessionIDEnvVar())
 		return 1
 	}
-	if !sessionUUIDRe.MatchString(sid) {
+	if err := h.ValidateSessionID(sid); err != nil {
 		fmt.Fprintf(os.Stderr,
-			"error: $CLAUDE_CODE_SESSION_ID is not a valid v4 UUID (got %q)\n", sid)
+			"error: $%s is not a valid session id (%v)\n",
+			h.SessionIDEnvVar(), err)
 		return 1
 	}
 

@@ -6,7 +6,6 @@ import (
 	"flow/internal/flowdb"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -29,10 +28,6 @@ func cmdUpdate(args []string) int {
 	fmt.Fprintf(os.Stderr, "error: unknown update target %q (expected 'task' or 'project')\n", args[0])
 	return 2
 }
-
-// sessionUUIDRe mirrors claude's --session-id contract: standard v4
-// UUID, lowercase hex, with the version/variant bits enforced.
-var sessionUUIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 // cmdUpdateTask implements `flow update task <ref> [--work-dir <path>]
 // [--mkdir] [--status <s>] [--assignee <name>] [--due-date <date>]

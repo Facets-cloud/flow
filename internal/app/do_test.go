@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness/claude"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
 	"io"
@@ -14,6 +15,28 @@ import (
 	"sync/atomic"
 	"testing"
 )
+
+// stubPS replaces claude.PSRunner with a canned-output stub so the
+// live-session guard in cmdDo can be exercised without touching the
+// real process table. Replaces the legacy app-package `psRunner`
+// override the test suite used before the harness refactor.
+func stubPS(t *testing.T, output string) {
+	t.Helper()
+	old := claude.PSRunner
+	claude.PSRunner = func() ([]byte, error) {
+		return []byte(output), nil
+	}
+	t.Cleanup(func() { claude.PSRunner = old })
+}
+
+// stubNewUUID pins claude.NewUUID to a fixed value for the duration
+// of the test.
+func stubNewUUID(t *testing.T, sid string) {
+	t.Helper()
+	old := claude.NewUUID
+	claude.NewUUID = func() (string, error) { return sid, nil }
+	t.Cleanup(func() { claude.NewUUID = old })
+}
 
 // stubITerm replaces iterm.Runner with a counter + captured-script
 // recorder. Returns the counter pointer and a function that reads the
@@ -244,9 +267,7 @@ func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
 	_, getScript := stubITerm(t)
 
 	const pinnedSID = "11111111-2222-3333-4444-555555555555"
-	oldNewUUID := newUUID
-	newUUID = func() (string, error) { return pinnedSID, nil }
-	t.Cleanup(func() { newUUID = oldNewUUID })
+	stubNewUUID(t, pinnedSID)
 
 	if rc := cmdDo([]string{"fresh-task"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
@@ -297,9 +318,7 @@ func TestCmdDoFreshSpawnFailureRollsBackSessionID(t *testing.T) {
 	seedTask(t, "fail-task")
 
 	const pinnedSID = "ffffffff-aaaa-bbbb-cccc-dddddddddddd"
-	oldNewUUID := newUUID
-	newUUID = func() (string, error) { return pinnedSID, nil }
-	t.Cleanup(func() { newUUID = oldNewUUID })
+	stubNewUUID(t, pinnedSID)
 
 	// Stub iterm.Runner to fail every call — simulates the
 	// Accessibility-denied path on Terminal.app, but works equally
@@ -422,9 +441,7 @@ func TestCmdDoFreshRotatesStaleSession(t *testing.T) {
 	db.Close()
 
 	const pinnedSID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	oldNewUUID := newUUID
-	newUUID = func() (string, error) { return pinnedSID, nil }
-	t.Cleanup(func() { newUUID = oldNewUUID })
+	stubNewUUID(t, pinnedSID)
 
 	_, getScript := stubITerm(t)
 	if rc := cmdDo([]string{"stale-task", "--fresh"}); rc != 0 {

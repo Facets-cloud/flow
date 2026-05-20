@@ -2,6 +2,7 @@ package app
 
 import (
 	"flow/internal/flowdb"
+	"flow/internal/harness/claude"
 	"flow/internal/iterm"
 	"os"
 	"path/filepath"
@@ -174,7 +175,7 @@ func TestTranscriptCmdWithSession(t *testing.T) {
 		sid, now, now, "tx-test")
 
 	// Write a minimal jsonl.
-	encoded := EncodeCwdForClaude(repo)
+	encoded := claude.EncodeCwd(repo)
 	sessionDir := filepath.Join(tmp, ".claude", "projects", encoded)
 	os.MkdirAll(sessionDir, 0o755)
 	os.WriteFile(

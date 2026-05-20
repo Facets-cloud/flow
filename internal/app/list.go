@@ -264,10 +264,10 @@ func listTasksCmd(args []string) int {
 
 	now := time.Now()
 
-	// Best-effort scan of running claude processes. ps failures are
+	// Best-effort scan of running harness processes. ps failures are
 	// silently ignored — the rows still render, just without [live]
-	// markers. See sessions.go for the limitations.
-	live, _ := liveClaudeSessions()
+	// markers. See internal/harness for per-harness limitations.
+	live, _ := defaultHarness().LiveSessionIDs()
 
 	// Batch-load tags for every task in the result set. Failures are
 	// non-fatal; the rows still render without #tag tokens.
@@ -319,7 +319,7 @@ func listTasksCmd(args []string) int {
 		if t.Assignee.Valid {
 			r.Assignee = t.Assignee.String
 		}
-		if t.SessionID.Valid && live[strings.ToLower(t.SessionID.String)] {
+		if t.SessionID.Valid && live[strings.ToLower(t.SessionID.String)] > 0 {
 			r.Live = true
 		}
 		if tags, ok := tagsByTask[t.Slug]; ok {

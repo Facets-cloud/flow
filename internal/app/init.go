@@ -94,18 +94,15 @@ func cmdInit(args []string) int {
 
 	// Install the skill idempotently. Skip if already present; we never
 	// overwrite on init (use `flow skill update` for that).
-	skillPath, err := skillInstallPath()
+	h := defaultHarness()
+	skillPath, err := h.SkillInstallPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(skillPath), err)
-			return 1
-		}
-		if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", skillPath, err)
+		if err := h.InstallSkill(embeddedSkill); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 		if err := writeSkillVersion(Version); err != nil {
@@ -118,11 +115,10 @@ func cmdInit(args []string) int {
 	}
 
 	// Install the SessionStart hook idempotently.
-	if added, err := installSessionStartHook(); err != nil {
+	if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
 	} else if added {
-		settings, _ := userSettingsPath()
-		fmt.Printf("installed SessionStart hook in %s\n", settings)
+		fmt.Println("installed SessionStart hook")
 	}
 
 	fmt.Printf("flow initialized at %s\n", root)

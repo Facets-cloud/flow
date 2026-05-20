@@ -8,7 +8,6 @@ import (
 	"flow/internal/flowdb"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -94,18 +93,11 @@ func cmdTranscript(args []string) int {
 	return renderTranscript(jsonlPath, *compact, cutoff)
 }
 
-// sessionJSONLPath returns the absolute path to a task's session jsonl file.
+// sessionJSONLPath returns the absolute path to a task's session jsonl
+// file by delegating to the harness for the (workDir, sessionID) → path
+// mapping. Each harness owns its own on-disk convention.
 func sessionJSONLPath(task *flowdb.Task) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("no home dir: %w", err)
-	}
-	encoded := EncodeCwdForClaude(task.WorkDir)
-	p := filepath.Join(home, ".claude", "projects", encoded, task.SessionID.String+".jsonl")
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("session file not found: %s", p)
-	}
-	return p, nil
+	return defaultHarness().TranscriptPath(task.WorkDir, task.SessionID.String)
 }
 
 // ---------- jsonl record types ----------

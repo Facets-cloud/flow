@@ -3,26 +3,8 @@ package app
 import (
 	"flow/internal/flowdb"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 )
-
-// claudeRunner invokes the headless `claude -p` CLI for the post-done
-// close-out sweep. Tests override this var to capture invocations
-// without spawning claude. Stdout/stderr are discarded — the sweep
-// prompt instructs claude to write KB entries and (when applicable) a
-// project update silently and produce no chat output.
-//
-// The sweep prompt names the task slug explicitly (it doesn't rely on
-// any inherited env var); the headless session has its own brand-new
-// $CLAUDE_CODE_SESSION_ID that doesn't match any flow task.
-var claudeRunner = func(slug, prompt string) error {
-	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
-}
 
 // cmdDone marks a task done. Per spec §5.3 this is a single UPDATE that
 // does NOT touch the iTerm tab, kill the Claude session, or clear
@@ -108,7 +90,7 @@ func cmdDone(args []string) int {
 		if task.ProjectSlug.Valid {
 			projectSlug = task.ProjectSlug.String
 		}
-		if err := claudeRunner(task.Slug, buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
+		if err := defaultHarness().HeadlessRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
 			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
 		} else {

@@ -3,26 +3,28 @@ package app
 import (
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness/claude"
 	"testing"
 )
 
-// stubClaudeRunner replaces claudeRunner with a capturing stub that returns
-// the supplied error. Returns a *call counter and a *captured-args record so
-// tests can assert how the runner was invoked.
+// stubClaudeRunner replaces claude.HeadlessRunner with a capturing
+// stub that returns the supplied error. The old runner had a (slug,
+// prompt) signature; the harness version is (prompt) only. Tests
+// that previously asserted on slug now read it from the prompt (the
+// close-out template names the slug verbatim).
 type capturedClaudeCall struct {
-	slug   string
 	prompt string
 }
 
 func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 	t.Helper()
-	old := claudeRunner
+	old := claude.HeadlessRunner
 	calls := &[]capturedClaudeCall{}
-	claudeRunner = func(slug, prompt string) error {
-		*calls = append(*calls, capturedClaudeCall{slug: slug, prompt: prompt})
+	claude.HeadlessRunner = func(prompt string) error {
+		*calls = append(*calls, capturedClaudeCall{prompt: prompt})
 		return retErr
 	}
-	t.Cleanup(func() { claudeRunner = old })
+	t.Cleanup(func() { claude.HeadlessRunner = old })
 	return calls
 }
 
@@ -145,8 +147,8 @@ func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
 		t.Fatalf("expected 1 sweep call, got %d", len(*calls))
 	}
 	got := (*calls)[0]
-	if got.slug != "has-session" {
-		t.Errorf("call slug = %q, want has-session", got.slug)
+	if !contains(got.prompt, "has-session") {
+		t.Errorf("call prompt missing task slug; got %q", got.prompt)
 	}
 	if got.prompt == "" {
 		t.Error("call prompt is empty")

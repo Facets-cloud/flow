@@ -2,56 +2,32 @@ package app
 
 import (
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
 )
 
 //go:embed skill/SKILL.md
 var embeddedSkill []byte
 
-// hookCommand is the exact string written into settings.json under
-// hooks.SessionStart so install/uninstall can idempotently find it.
-// Keep it stable — changing this string would orphan existing
-// installations.
+// hookCommand is the exact string the harness's settings.json
+// (settings.json / hooks.json depending on harness) records as the
+// SessionStart hook handler. Stable — changing this string would
+// orphan existing installations.
 const hookCommand = "flow hook session-start"
 
-// hookMatcher is the SessionStart matcher string — fires on both
-// fresh startup and `claude --resume`.
-const hookMatcher = "startup|resume"
-
-// userPromptSubmitHookCommand is the exact string written into
-// settings.json under hooks.UserPromptSubmit. Same stability rule as
-// hookCommand: changing this string would orphan existing installs.
+// userPromptSubmitHookCommand is the legacy UserPromptSubmit hook
+// string. flow no longer installs this hook (removed in
+// v0.1.0-alpha.7), but every install/upgrade actively uninstalls
+// stale entries so existing-user setups converge to a clean state.
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
-// skillInstallPath returns the absolute path where the skill should be
-// installed on disk: ~/.claude/skills/flow/SKILL.md.
-func skillInstallPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("no home dir: %w", err)
-	}
-	return filepath.Join(home, ".claude", "skills", "flow", "SKILL.md"), nil
-}
-
-// skillVersionPath returns the sidecar file that records which binary
-// version installed the current SKILL.md — used by the auto-upgrade
-// check to decide whether to refresh the skill.
-func skillVersionPath() (string, error) {
-	skill, err := skillInstallPath()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(filepath.Dir(skill), "VERSION"), nil
-}
-
-// readSkillVersion returns the recorded version string, or "" if the
-// sidecar file is missing or unreadable.
+// readSkillVersion returns the version string recorded in the
+// harness's skill-version sidecar, or "" if missing/unreadable.
 func readSkillVersion() string {
-	p, err := skillVersionPath()
+	p, err := defaultHarness().SkillVersionPath()
 	if err != nil {
 		return ""
 	}
@@ -62,11 +38,12 @@ func readSkillVersion() string {
 	return strings.TrimSpace(string(b))
 }
 
-// writeSkillVersion records v as the version of the binary that
-// installed the current SKILL.md. Errors are non-fatal — failing to
-// write the sidecar should never block a successful skill install.
+// writeSkillVersion records `v` as the version of the binary that
+// installed the current skill content. Errors are non-fatal —
+// failing to write the sidecar should never block a successful
+// skill install.
 func writeSkillVersion(v string) error {
-	p, err := skillVersionPath()
+	p, err := defaultHarness().SkillVersionPath()
 	if err != nil {
 		return err
 	}
@@ -74,15 +51,6 @@ func writeSkillVersion(v string) error {
 		return err
 	}
 	return os.WriteFile(p, []byte(v+"\n"), 0o644)
-}
-
-// userSettingsPath returns ~/.claude/settings.json.
-func userSettingsPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("no home dir: %w", err)
-	}
-	return filepath.Join(home, ".claude", "settings.json"), nil
 }
 
 // maybeAutoUpgradeSkill checks the recorded skill version against the
@@ -98,13 +66,14 @@ func userSettingsPath() (string, error) {
 //   - The recorded version already matches Version. The common path.
 //
 // All errors are silent — auto-upgrade is best-effort plumbing, not a
-// command. A user-visible failure here would be far more annoying than
-// the eventual symptom of a stale skill.
+// command. A user-visible failure here would be far more annoying
+// than the eventual symptom of a stale skill.
 func maybeAutoUpgradeSkill() {
 	if Version == "" || Version == "dev" {
 		return
 	}
-	skillPath, err := skillInstallPath()
+	h := defaultHarness()
+	skillPath, err := h.SkillInstallPath()
 	if err != nil {
 		return
 	}
@@ -116,15 +85,15 @@ func maybeAutoUpgradeSkill() {
 		return
 	}
 	// Version mismatch — refresh skill bytes and the SessionStart hook.
-	if err := os.WriteFile(skillPath, embeddedSkill, 0o644); err != nil {
+	if err := h.InstallSkill(embeddedSkill); err != nil {
 		return
 	}
 	_ = writeSkillVersion(Version)
-	_, _ = installSessionStartHook()
+	_, _ = h.InstallSessionStartHook(hookCommand)
 	// UserPromptSubmit hook was removed in v0.1.0-alpha.7 — the
 	// per-prompt token cost wasn't worth the marginal value. Actively
 	// uninstall any stale entry left behind by older binaries.
-	_, _ = uninstallUserPromptSubmitHook()
+	_, _ = h.UninstallUserPromptSubmitHook(userPromptSubmitHookCommand)
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
@@ -151,12 +120,13 @@ func cmdSkill(args []string) int {
 func skillInstall(args []string, forceDefault bool) int {
 	fs := flagSet("skill install")
 	force := fs.Bool("force", forceDefault, "overwrite an existing installation")
-	skipHook := fs.Bool("skip-hook", false, "don't auto-install the SessionStart hook in ~/.claude/settings.json")
+	skipHook := fs.Bool("skip-hook", false, "don't auto-install the SessionStart hook")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	dest, err := skillInstallPath()
+	h := defaultHarness()
+	dest, err := h.SkillInstallPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -168,12 +138,8 @@ func skillInstall(args []string, forceDefault bool) int {
 		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", dest, err)
 		return 1
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "error: create %s: %v\n", filepath.Dir(dest), err)
-		return 1
-	}
-	if err := os.WriteFile(dest, embeddedSkill, 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", dest, err)
+	if err := h.InstallSkill(embeddedSkill); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	if err := writeSkillVersion(Version); err != nil {
@@ -182,42 +148,40 @@ func skillInstall(args []string, forceDefault bool) int {
 	fmt.Printf("installed flow skill to %s\n", dest)
 
 	if *skipHook {
-		fmt.Println("--skip-hook: leaving ~/.claude/settings.json alone")
+		fmt.Println("--skip-hook: leaving harness settings alone")
 		return 0
 	}
-	if added, err := installSessionStartHook(); err != nil {
+	if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
 		// Non-fatal: the skill is still usable without the hook; the
 		// user can wire it manually. Return 0 so `flow init` doesn't
-		// fail on a settings.json quirk.
+		// fail on a settings quirk.
 		return 0
 	} else if added {
-		settings, _ := userSettingsPath()
-		fmt.Printf("installed SessionStart hook in %s (fires on startup + resume)\n", settings)
+		fmt.Printf("installed SessionStart hook (fires on startup + resume)\n")
 	} else {
 		fmt.Println("SessionStart hook already installed — leaving as is")
 	}
 	// UserPromptSubmit hook was removed in v0.1.0-alpha.7. Actively
 	// uninstall any stale entry left behind by older binaries so a
-	// fresh `flow skill install` (or `update`) leaves a clean
-	// settings.json.
-	if removed, err := uninstallUserPromptSubmitHook(); err != nil {
+	// fresh `flow skill install` (or `update`) leaves a clean config.
+	if removed, err := h.UninstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not remove stale UserPromptSubmit hook: %v\n", err)
 		return 0
 	} else if removed {
-		settings, _ := userSettingsPath()
-		fmt.Printf("removed stale UserPromptSubmit hook from %s (no longer used)\n", settings)
+		fmt.Println("removed stale UserPromptSubmit hook (no longer used)")
 	}
 	return 0
 }
 
 func skillUninstall(args []string) int {
 	fs := flagSet("skill uninstall")
-	keepHook := fs.Bool("keep-hook", false, "don't remove the SessionStart hook from ~/.claude/settings.json")
+	keepHook := fs.Bool("keep-hook", false, "don't remove the SessionStart hook")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	dest, err := skillInstallPath()
+	h := defaultHarness()
+	dest, err := h.SkillInstallPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -226,217 +190,28 @@ func skillUninstall(args []string) int {
 	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
 		fmt.Printf("flow skill not installed at %s — nothing to do\n", skillDir)
 	} else {
-		if err := os.RemoveAll(skillDir); err != nil {
-			fmt.Fprintf(os.Stderr, "error: remove %s: %v\n", skillDir, err)
+		if err := h.UninstallSkill(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 		fmt.Printf("uninstalled flow skill from %s\n", skillDir)
 	}
 
 	if *keepHook {
-		fmt.Println("--keep-hook: leaving SessionStart hook in settings.json")
+		fmt.Println("--keep-hook: leaving SessionStart hook in place")
 		return 0
 	}
-	if removed, err := uninstallSessionStartHook(); err != nil {
+	if removed, err := h.UninstallSessionStartHook(hookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not remove SessionStart hook: %v\n", err)
 		return 0
 	} else if removed {
-		settings, _ := userSettingsPath()
-		fmt.Printf("removed SessionStart hook from %s\n", settings)
+		fmt.Println("removed SessionStart hook")
 	}
-	if removed, err := uninstallUserPromptSubmitHook(); err != nil {
+	if removed, err := h.UninstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not remove UserPromptSubmit hook: %v\n", err)
 		return 0
 	} else if removed {
-		settings, _ := userSettingsPath()
-		fmt.Printf("removed UserPromptSubmit hook from %s\n", settings)
+		fmt.Println("removed UserPromptSubmit hook")
 	}
 	return 0
-}
-
-// installSessionStartHook idempotently adds the flow SessionStart hook
-// to ~/.claude/settings.json. Thin wrapper around installClaudeHook.
-func installSessionStartHook() (bool, error) {
-	return installClaudeHook("SessionStart", hookMatcher, hookCommand)
-}
-
-// uninstallSessionStartHook removes the flow SessionStart hook entry.
-// Thin wrapper around uninstallClaudeHook.
-func uninstallSessionStartHook() (bool, error) {
-	return uninstallClaudeHook("SessionStart", hookCommand)
-}
-
-// uninstallUserPromptSubmitHook removes any stale flow UserPromptSubmit
-// hook entry from ~/.claude/settings.json. The hook itself was
-// removed in v0.1.0-alpha.7 — see cmdHookUserPromptSubmit. Both
-// `flow skill install` and `maybeAutoUpgradeSkill` call this on every
-// upgrade so existing-user installs converge to a clean settings.json.
-func uninstallUserPromptSubmitHook() (bool, error) {
-	return uninstallClaudeHook("UserPromptSubmit", userPromptSubmitHookCommand)
-}
-
-// installClaudeHook idempotently adds a hook entry for the given
-// Claude Code event to ~/.claude/settings.json. matcher may be empty —
-// some events (UserPromptSubmit, Notification) don't use a matcher and
-// the field is omitted from the entry. command is both the literal
-// command Claude Code will execute AND the marker we look for to decide
-// whether the hook is already installed.
-//
-// Returns (added, err) where added is true iff the file was modified.
-// The merge preserves all existing top-level keys, all hooks under
-// other events, and all existing entries under the same event.
-func installClaudeHook(event, matcher, command string) (bool, error) {
-	path, err := userSettingsPath()
-	if err != nil {
-		return false, err
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return false, fmt.Errorf("read %s: %w", path, err)
-		}
-		raw = []byte("{}")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return false, fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-		}
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return false, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if settings == nil {
-		settings = map[string]any{}
-	}
-
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		hooks = map[string]any{}
-	}
-	entries, _ := hooks[event].([]any)
-
-	for _, entry := range entries {
-		m, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		inner, _ := m["hooks"].([]any)
-		for _, h := range inner {
-			hm, ok := h.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cmd, _ := hm["command"].(string); cmd == command {
-				return false, nil
-			}
-		}
-	}
-
-	newEntry := map[string]any{
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": command,
-			},
-		},
-	}
-	if matcher != "" {
-		newEntry["matcher"] = matcher
-	}
-	entries = append(entries, newEntry)
-	hooks[event] = entries
-	settings["hooks"] = hooks
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal settings: %w", err)
-	}
-	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
-	}
-	return true, nil
-}
-
-// uninstallClaudeHook removes any entry under hooks.<event> whose
-// inner hook list contains a command matching the given marker.
-// Returns (removed, err) where removed is true iff the file changed.
-func uninstallClaudeHook(event, command string) (bool, error) {
-	path, err := userSettingsPath()
-	if err != nil {
-		return false, err
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("read %s: %w", path, err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return false, fmt.Errorf("parse %s: %w", path, err)
-	}
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		return false, nil
-	}
-	entries, _ := hooks[event].([]any)
-	if len(entries) == 0 {
-		return false, nil
-	}
-
-	changed := false
-	kept := make([]any, 0, len(entries))
-	for _, entry := range entries {
-		m, ok := entry.(map[string]any)
-		if !ok {
-			kept = append(kept, entry)
-			continue
-		}
-		inner, _ := m["hooks"].([]any)
-		filteredInner := make([]any, 0, len(inner))
-		for _, h := range inner {
-			hm, ok := h.(map[string]any)
-			if !ok {
-				filteredInner = append(filteredInner, h)
-				continue
-			}
-			cmd, _ := hm["command"].(string)
-			if strings.TrimSpace(cmd) == command {
-				changed = true
-				continue
-			}
-			filteredInner = append(filteredInner, h)
-		}
-		if len(filteredInner) == 0 {
-			changed = true
-			continue
-		}
-		m["hooks"] = filteredInner
-		kept = append(kept, m)
-	}
-
-	if !changed {
-		return false, nil
-	}
-	if len(kept) == 0 {
-		delete(hooks, event)
-	} else {
-		hooks[event] = kept
-	}
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
-	}
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal settings: %w", err)
-	}
-	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
-	}
-	return true, nil
 }

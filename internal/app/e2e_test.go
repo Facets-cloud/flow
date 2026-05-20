@@ -2,6 +2,7 @@ package app
 
 import (
 	"flow/internal/flowdb"
+	"flow/internal/harness/claude"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
 	"os"
@@ -45,18 +46,19 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// Stub the headless claude runner so cmdDone doesn't try to invoke
 	// the real claude CLI for its post-flip KB sweep.
-	oldClaude := claudeRunner
-	claudeRunner = func(slug, prompt string) error { return nil }
-	t.Cleanup(func() { claudeRunner = oldClaude })
+	oldClaude := claude.HeadlessRunner
+	claude.HeadlessRunner = func(prompt string) error { return nil }
+	t.Cleanup(func() { claude.HeadlessRunner = oldClaude })
 
 	// Pin the UUID `flow do` allocates so downstream assertions can
-	// reference a known session_id. In production, newUUID produces a
-	// random v4 UUID that is also written to tasks.session_id before
-	// the iTerm tab spawns and passed to `claude --session-id`.
+	// reference a known session_id. In production this minted a random
+	// v4 UUID written to tasks.session_id before the iTerm tab spawns
+	// and passed to `claude --session-id`. Pinning lets us check that
+	// known id survived end to end.
 	const fixedSID = "e2e-session-uuid"
-	oldNewUUID := newUUID
-	newUUID = func() (string, error) { return fixedSID, nil }
-	t.Cleanup(func() { newUUID = oldNewUUID })
+	oldNewUUID := claude.NewUUID
+	claude.NewUUID = func() (string, error) { return fixedSID, nil }
+	t.Cleanup(func() { claude.NewUUID = oldNewUUID })
 
 	step := func(name string, rc int) {
 		t.Helper()
@@ -118,7 +120,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	// 5b. Write real jsonl content at the path claude would have used
 	// given our pre-allocated session_id, so transcript can parse it.
 	{
-		encoded := EncodeCwdForClaude(task.WorkDir)
+		encoded := claude.EncodeCwd(task.WorkDir)
 		sessionDir := filepath.Join(tmp, ".claude", "projects", encoded)
 		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 			t.Fatal(err)

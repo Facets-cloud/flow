@@ -75,15 +75,18 @@ func cmdRunPlaybook(args []string) int {
 	// backlog playbook_run task when env is wrong or this session is
 	// already owned by another task.
 	if *here {
+		h := defaultHarness()
 		sid := currentSessionID()
 		if sid == "" {
-			fmt.Fprintln(os.Stderr,
-				"error: --here requires running inside a Claude Code session ($CLAUDE_CODE_SESSION_ID is unset)")
+			fmt.Fprintf(os.Stderr,
+				"error: --here requires running inside a Claude Code session ($%s is unset)\n",
+				h.SessionIDEnvVar())
 			return 1
 		}
-		if !sessionUUIDRe.MatchString(sid) {
+		if err := h.ValidateSessionID(sid); err != nil {
 			fmt.Fprintf(os.Stderr,
-				"error: $CLAUDE_CODE_SESSION_ID is not a valid v4 UUID (got %q)\n", sid)
+				"error: $%s is not a valid session id (%v)\n",
+				h.SessionIDEnvVar(), err)
 			return 1
 		}
 		priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
