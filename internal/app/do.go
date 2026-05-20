@@ -133,11 +133,6 @@ func cmdDo(args []string) int {
 		return cmdDoHere(query, *force)
 	}
 
-	var extraClaudeArgs []string
-	if *dangerSkip {
-		extraClaudeArgs = append(extraClaudeArgs, "--dangerously-skip-permissions")
-	}
-
 	dbPath, err := flowDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
