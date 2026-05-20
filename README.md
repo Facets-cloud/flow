@@ -186,11 +186,11 @@ the agents view. Add to your shell rc (`~/.zshrc` or `~/.bashrc`) and
 # sessions to skip per-tool permission prompts (optional flavor).
 alias claude='claude --bg'
 
-# Shortcut: `ca` opens the agents view via its subcommand. `command`
-# bypasses the `claude` alias above so the subcommand sees a clean
-# argv — apply the same `command claude <sub>` pattern if you want
-# shortcuts for any other subcommand (`mcp`, `doctor`, etc.) while
-# the `claude` alias is in place.
+# Since `claude` is now aliased, any `claude <sub>` invocation would
+# also pick up `--bg`. For each subcommand you use, add an alias that
+# routes through `command claude` to bypass the outer alias. The one
+# below is for the agents subcommand — the same shape works for
+# `mcp`, `doctor`, etc.
 alias ca='command claude agents'
 ```
 
