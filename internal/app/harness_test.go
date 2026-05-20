@@ -33,23 +33,36 @@ func TestAmbientHarness(t *testing.T) {
 	}
 }
 
-// TestHarnessForTask covers the column → adapter lookup, including
-// the back-compat fallback for NULL and unknown values.
+// TestHarnessForTask covers the column → adapter lookup. NULL and
+// empty resolve to claude+nil error (back-compat). Unknown
+// non-empty names resolve to nil+error so callers refuse rather
+// than silently coerce.
 func TestHarnessForTask(t *testing.T) {
 	cases := []struct {
-		name   string
+		name    string
 		harness sql.NullString
-		want   harness.Name
+		want    harness.Name
+		wantErr bool
 	}{
-		{"null column → claude", sql.NullString{}, harness.NameClaude},
-		{"empty string → claude", sql.NullString{Valid: true, String: ""}, harness.NameClaude},
-		{"claude pin", sql.NullString{Valid: true, String: "claude"}, harness.NameClaude},
-		{"unknown name → claude fallback", sql.NullString{Valid: true, String: "future"}, harness.NameClaude},
+		{"null column → claude", sql.NullString{}, harness.NameClaude, false},
+		{"empty string → claude", sql.NullString{Valid: true, String: ""}, harness.NameClaude, false},
+		{"claude pin", sql.NullString{Valid: true, String: "claude"}, harness.NameClaude, false},
+		{"unknown name → error", sql.NullString{Valid: true, String: "future"}, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			task := &flowdb.Task{Harness: tc.harness}
-			if got := harnessForTask(task).Name(); got != tc.want {
+			h, err := harnessForTask(task)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("got nil error, want non-nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := h.Name(); got != tc.want {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
@@ -90,21 +103,23 @@ func TestCmdDoPersistsHarnessOnBootstrap(t *testing.T) {
 	}
 }
 
-// TestCmdDoBootstrapPreservesExistingHarnessPin pins the
-// set-once-on-first-bind contract: if a task already has a
-// non-NULL harness column (e.g. pinned to "codex" by a future
-// build), a `flow do` bootstrap from a binary that doesn't
-// register that adapter must NOT silently overwrite the pin with
-// the coerced fallback. The COALESCE clause in the bootstrap
-// UPDATE preserves the existing value; the harness column is
-// "set once on first bind" — only `flow do --here --force`
-// switches it.
+// TestCmdDoRefusesUnsupportedHarnessPin pins the two
+// related contracts:
 //
-// Without this guard, a user who upgrades flow today, has a
-// pinned-to-codex task from tomorrow's build, then downgrades
-// would silently corrupt the column to "claude" on the next
-// `flow do`.
-func TestCmdDoBootstrapPreservesExistingHarnessPin(t *testing.T) {
+//  1. A task pinned to a harness this binary doesn't register
+//     must NOT spawn as the silent claude fallback. cmdDo returns
+//     an error mentioning the unsupported name and the registered
+//     alternatives — better that the user sees the issue
+//     explicitly than that we silently run the wrong adapter.
+//
+//  2. The pin survives the refusal. cmdDo doesn't UPDATE the
+//     harness column when it can't resolve the pin, so a future
+//     binary that DOES register the pinned harness can still pick
+//     up the task untouched.
+//
+// Together: today's binary refuses, tomorrow's binary works,
+// downgrade is safe.
+func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "future-pin")
 	_, _ = stubITerm(t)
@@ -120,8 +135,14 @@ func TestCmdDoBootstrapPreservesExistingHarnessPin(t *testing.T) {
 	}
 	db.Close()
 
-	if rc := cmdDo([]string{"future-pin"}); rc != 0 {
-		t.Fatalf("cmdDo rc=%d", rc)
+	stderr := captureStderr(t)
+	rc := cmdDo([]string{"future-pin"})
+	if rc == 0 {
+		t.Fatalf("cmdDo rc=%d, want non-zero (unsupported pin should refuse)", rc)
+	}
+	got := stderr()
+	if !strings.Contains(got, "codex") || !strings.Contains(got, "isn't supported") {
+		t.Errorf("stderr should name the unsupported harness; got:\n%s", got)
 	}
 
 	db = openFlowDB(t)
@@ -130,8 +151,11 @@ func TestCmdDoBootstrapPreservesExistingHarnessPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	if task.Harness.String != "codex" {
-		t.Errorf("bootstrap should preserve pre-existing harness pin; got %q, want codex",
+		t.Errorf("refusal should preserve the pin; got %q, want codex",
 			task.Harness.String)
+	}
+	if task.SessionID.Valid {
+		t.Errorf("refusal should not allocate a session_id; got %+v", task.SessionID)
 	}
 }
 
@@ -270,9 +294,18 @@ func TestHarnessForSpawn_AllPathsLandOnClaudeToday(t *testing.T) {
 		t.Setenv(h.SessionIDEnvVar(), "")
 	}
 
+	mustResolve := func(t *testing.T, task *flowdb.Task) harness.Harness {
+		t.Helper()
+		h, err := harnessForSpawn(task)
+		if err != nil {
+			t.Fatalf("harnessForSpawn: unexpected error: %v", err)
+		}
+		return h
+	}
+
 	// Branch 1: ambient nil + null pin → claude (fallback).
 	task := &flowdb.Task{}
-	if got := harnessForSpawn(task).Name(); got != harness.NameClaude {
+	if got := mustResolve(t, task).Name(); got != harness.NameClaude {
 		t.Errorf("no ambient + null pin = %v, want claude", got)
 	}
 
@@ -280,19 +313,19 @@ func TestHarnessForSpawn_AllPathsLandOnClaudeToday(t *testing.T) {
 	// ambient is *preferred over* fallback (same answer either way);
 	// only proves the branch doesn't error.
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "658bf2be-5ae3-4842-a8a4-e0d0b785514d")
-	if got := harnessForSpawn(task).Name(); got != harness.NameClaude {
+	if got := mustResolve(t, task).Name(); got != harness.NameClaude {
 		t.Errorf("ambient claude + null pin = %v, want claude", got)
 	}
 
 	// Branch 3: claude pin → claude. Doesn't prove pinned is
 	// *preferred over* ambient (same as above).
 	task.Harness = sql.NullString{Valid: true, String: "claude"}
-	if got := harnessForSpawn(task).Name(); got != harness.NameClaude {
+	if got := mustResolve(t, task).Name(); got != harness.NameClaude {
 		t.Errorf("pinned claude = %v, want claude", got)
 	}
 
 	// Sanity: returned value satisfies harness.Harness.
-	if _, ok := harnessForSpawn(task).(harness.Harness); !ok {
+	if _, ok := mustResolve(t, task).(harness.Harness); !ok {
 		t.Error("harnessForSpawn return doesn't satisfy harness.Harness")
 	}
 	_ = claude.New() // import-keep

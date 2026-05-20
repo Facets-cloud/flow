@@ -90,7 +90,14 @@ func cmdDone(args []string) int {
 		if task.ProjectSlug.Valid {
 			projectSlug = task.ProjectSlug.String
 		}
-		if err := harnessForTask(task).SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
+		h, lookupErr := harnessForTask(task)
+		if lookupErr != nil {
+			// Task pinned to an unsupported harness — skip the
+			// sweep but keep the status flip (the flip is the
+			// contract; the sweep is best-effort).
+			fmt.Println()
+			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
+		} else if err := h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
 			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
 		} else {

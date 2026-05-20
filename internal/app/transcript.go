@@ -90,7 +90,12 @@ func cmdTranscript(args []string) int {
 	if task.SessionCwd.Valid && task.SessionCwd.String != "" {
 		cwd = task.SessionCwd.String
 	}
-	if err := harnessForTask(task).RenderTranscript(cwd, task.SessionID.String, *compact, cutoff, os.Stdout); err != nil {
+	h, err := harnessForTask(task)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if err := h.RenderTranscript(cwd, task.SessionID.String, *compact, cutoff, os.Stdout); err != nil {
 		// Better error: tell the user what we looked for and why
 		// it might be missing, with hints for the most common
 		// recovery paths.

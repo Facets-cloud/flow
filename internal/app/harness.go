@@ -1,7 +1,9 @@
 package app
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"flow/internal/flowdb"
 	"flow/internal/harness"
@@ -19,44 +21,67 @@ func allHarnesses() []harness.Harness {
 	}
 }
 
-// harnessByName looks up an adapter by stored Name. Empty/NULL names
-// fall back to claude — every pre-harness-column DB row reads as
-// NULL, which we want to treat as claude rather than error.
+// registeredHarnessNames returns the comma-joined list of harness
+// Names this binary supports. Used in error messages so the user
+// sees the available alternatives when a task is pinned to a name
+// that isn't in the registry.
+func registeredHarnessNames() string {
+	names := make([]string, 0, len(allHarnesses()))
+	for _, h := range allHarnesses() {
+		names = append(names, string(h.Name()))
+	}
+	return strings.Join(names, ", ")
+}
+
+// harnessByName looks up an adapter by stored Name.
 //
-// Unknown non-empty values (typo, or a future harness name written
-// by a newer flow binary) also coerce to claude on the read side.
-// This is intentional for back-compat but creates a write-side
-// hazard if the bootstrap path naively writes the coerced name back
-// — the do.go UPDATE guards against that by only writing the harness
-// column when it's currently NULL/empty (set-once semantics). When
-// codex/gemini adapters land and the registry grows, this coercion
-// should be revisited; for the single-harness era it's a no-op in
-// practice.
-func harnessByName(name string) harness.Harness {
+//   - Empty/NULL name → returns (claude, nil). Back-compat for
+//     pre-harness-column DB rows where the column is always NULL.
+//   - Known non-empty name → returns (matched adapter, nil).
+//   - Unknown non-empty name → returns (nil, error). Callers decide
+//     whether to error out (cmdDo, cmdTranscript), warn + skip
+//     (cmdDone's close-out sweep, list.go's [live] markers), or
+//     coerce. No silent fallback — the "set once on first bind"
+//     column semantics break the moment a binary doesn't recognize
+//     its own task's pin, and we'd rather refuse than corrupt
+//     downstream state by running the wrong adapter.
+func harnessByName(name string) (harness.Harness, error) {
+	if name == "" {
+		return claude.New(), nil
+	}
 	for _, h := range allHarnesses() {
 		if string(h.Name()) == name {
-			return h
+			return h, nil
 		}
 	}
-	return claude.New()
+	return nil, fmt.Errorf(
+		"task is pinned to harness %q which isn't supported by this flow binary (registered: %s) — upgrade flow, or update tasks.harness via sqlite",
+		name, registeredHarnessNames(),
+	)
 }
 
 // harnessForTask returns the adapter for the task's stored harness.
-// NULL/empty harness column → claude (back-compat). Used by code that
-// already has a task row (cmdDone close-out sweep, cmdTranscript
-// rendering, per-task [live] markers).
-func harnessForTask(task *flowdb.Task) harness.Harness {
-	if task != nil && task.Harness.Valid && task.Harness.String != "" {
-		return harnessByName(task.Harness.String)
+// NULL/empty harness column → claude+nil (back-compat). Unknown
+// non-empty name → nil+error. Callers that can tolerate the error
+// (e.g. list.go's per-row [live] marker) should skip the operation;
+// callers that can't (cmdTranscript, cmdDo's resume path) should
+// surface the error to the user and stop.
+func harnessForTask(task *flowdb.Task) (harness.Harness, error) {
+	if task == nil {
+		return claude.New(), nil
 	}
-	return claude.New()
+	var name string
+	if task.Harness.Valid {
+		name = task.Harness.String
+	}
+	return harnessByName(name)
 }
 
 // ambientHarness probes the current process env for each known
 // harness's session-id env var. Returns the matching adapter if
-// exactly one is set; returns nil if none are set OR if multiple are
-// (defensive — shouldn't happen in practice, but if a user nests
-// sessions we'd rather refuse to guess than pick wrong).
+// exactly one is set; returns nil if none are set OR if multiple
+// are (defensive — shouldn't happen in practice, but if a user
+// nests sessions we'd rather refuse to guess than pick wrong).
 func ambientHarness() harness.Harness {
 	var matches []harness.Harness
 	for _, h := range allHarnesses() {
@@ -73,32 +98,34 @@ func ambientHarness() harness.Harness {
 // harnessForSpawn returns the harness to use when bootstrapping a
 // new session for a task:
 //
-//  1. If the task already has a harness set, use it (the task is
-//     committed to that adapter for its lifetime).
+//  1. If the task already has a harness set, look it up by name —
+//     unknown names error out so we don't silently spawn the wrong
+//     adapter for a pinned task.
 //  2. Otherwise, detect ambient — the harness running THIS `flow do`
-//     process. The reasoning: if the user runs `flow do <new-task>`
-//     from inside a codex shell, they almost certainly want the new
-//     task to use codex too.
+//     process. If the user is inside a codex shell, the new task
+//     adopts codex.
 //  3. Otherwise, default to claude.
 //
-// flow's caller persists the result onto task.harness atomically with
-// the session_id write, so step 1 dominates on every subsequent
-// invocation.
-func harnessForSpawn(task *flowdb.Task) harness.Harness {
+// flow's caller persists the result onto task.harness atomically
+// with the session_id write (guarded by a COALESCE clause so an
+// existing pin isn't overwritten), so step 1 dominates on every
+// subsequent invocation.
+func harnessForSpawn(task *flowdb.Task) (harness.Harness, error) {
 	if task != nil && task.Harness.Valid && task.Harness.String != "" {
 		return harnessByName(task.Harness.String)
 	}
 	if h := ambientHarness(); h != nil {
-		return h
+		return h, nil
 	}
-	return claude.New()
+	return claude.New(), nil
 }
 
 // defaultHarness returns the adapter for code paths that have no
 // task context (e.g. `flow init`, `flow skill install`, the
 // SessionStart hook handler before bind). Probes ambient first so a
 // user inside a codex/gemini shell gets the matching skill install;
-// otherwise claude.
+// otherwise claude. Always returns a concrete adapter — no error
+// path because there's no task pin to potentially mis-resolve.
 func defaultHarness() harness.Harness {
 	if h := ambientHarness(); h != nil {
 		return h
@@ -108,15 +135,21 @@ func defaultHarness() harness.Harness {
 
 // liveSessionsForTasks returns a merged id→count map across every
 // unique harness referenced by the given task slice. Calls each
-// harness's LiveSessionIDs at most once. ps failures are swallowed
-// per-harness — the merged map only contains entries from harnesses
-// whose ps probe succeeded. Used by `flow list tasks` to render
-// [live] markers without scanning the same process table N times.
+// harness's LiveSessionIDs at most once. ps failures and unknown-
+// harness errors are both swallowed per-task — the merged map only
+// contains entries from harnesses that resolved AND whose probe
+// succeeded. Used by `flow list tasks` to render [live] markers
+// without scanning the same process table N times.
 func liveSessionsForTasks(tasks []*flowdb.Task) map[string]int {
 	seen := map[harness.Name]bool{}
 	merged := map[string]int{}
 	for _, t := range tasks {
-		h := harnessForTask(t)
+		h, err := harnessForTask(t)
+		if err != nil {
+			// Task pinned to an unsupported harness — skip; the
+			// row still renders, just without a [live] marker.
+			continue
+		}
 		if seen[h.Name()] {
 			continue
 		}

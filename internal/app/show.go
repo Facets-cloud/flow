@@ -280,9 +280,11 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	sid := "(not bootstrapped)"
 	if t.SessionID.Valid && t.SessionID.String != "" {
 		sid = t.SessionID.String
-		if live, err := harnessForTask(t).LiveSessionIDs(); err == nil {
-			if live[strings.ToLower(t.SessionID.String)] > 0 {
-				sid += "  [live]"
+		if h, err := harnessForTask(t); err == nil {
+			if live, err := h.LiveSessionIDs(); err == nil {
+				if live[strings.ToLower(t.SessionID.String)] > 0 {
+					sid += "  [live]"
+				}
 			}
 		}
 	}

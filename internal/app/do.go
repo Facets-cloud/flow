@@ -168,7 +168,11 @@ func cmdDo(args []string) int {
 	// before, task.harness is set and binding; otherwise detect from
 	// the current process's ambient harness env (so `flow do` from
 	// inside codex picks codex), falling back to claude.
-	h := harnessForSpawn(task)
+	h, err := harnessForSpawn(task)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
 	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
 		if live, err := h.LiveSessionIDs(); err == nil {
 			if n := live[strings.ToLower(task.SessionID.String)]; n > 0 {
