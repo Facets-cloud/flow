@@ -80,7 +80,7 @@ func cmdTranscript(args []string) int {
 		}
 	}
 
-	if err := defaultHarness().RenderTranscript(task.WorkDir, task.SessionID.String, *compact, cutoff, os.Stdout); err != nil {
+	if err := harnessForTask(task).RenderTranscript(task.WorkDir, task.SessionID.String, *compact, cutoff, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

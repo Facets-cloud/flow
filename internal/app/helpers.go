@@ -16,15 +16,13 @@ func flagSet(name string) *flag.FlagSet {
 }
 
 // currentSessionID returns this process's harness session id, or ""
-// if not running inside one. The env var name comes from the active
-// harness adapter (e.g. CLAUDE_CODE_SESSION_ID for claude); each
-// harness injects its own var into spawned sessions.
-//
-// In a future multi-harness setup, this becomes "probe every known
-// harness's env var, return the one that's set". For now, with
-// defaultHarness() always returning claude, it's a single read.
+// if not running inside any known harness. Probes every implemented
+// harness's session-id env var and returns the one that's set.
 func currentSessionID() string {
-	return os.Getenv(defaultHarness().SessionIDEnvVar())
+	if h := ambientHarness(); h != nil {
+		return os.Getenv(h.SessionIDEnvVar())
+	}
+	return ""
 }
 
 // currentSessionTask returns the task bound to this Claude session

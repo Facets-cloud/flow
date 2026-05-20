@@ -164,7 +164,11 @@ func cmdDo(args []string) int {
 	// `claude --resume <uuid>` in another tab), warn before focusing.
 	// Both processes write to the same session jsonl and can race —
 	// the user almost certainly wants to know.
-	h := defaultHarness()
+	// Pick the harness for this spawn. If the task has been opened
+	// before, task.harness is set and binding; otherwise detect from
+	// the current process's ambient harness env (so `flow do` from
+	// inside codex picks codex), falling back to claude.
+	h := harnessForSpawn(task)
 	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
 		if live, err := h.LiveSessionIDs(); err == nil {
 			if n := live[strings.ToLower(task.SessionID.String)]; n > 0 {
@@ -249,12 +253,16 @@ func cmdDo(args []string) int {
 	// 'done' is reachable here only via the --with auto-reopen path above.
 	const statusFilter = "status IN ('backlog','in-progress','done')"
 	if needsBootstrap {
+		// Persist the harness name alongside session_id so future
+		// `flow do` invocations read the same adapter — even if
+		// they're issued from a different ambient harness or no
+		// harness at all.
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-			 session_id=?, session_started=?, updated_at=?
+			 session_id=?, session_started=?, harness=?, updated_at=?
 			 WHERE slug=? AND `+statusFilter,
-			now, sessionID, now, now, task.Slug,
+			now, sessionID, now, string(h.Name()), now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
 			return 1
@@ -558,14 +566,21 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 // var injection. Subsequent `flow do <slug>` from elsewhere will
 // resume this session via `claude --resume`.
 func cmdDoHere(query string, force bool) int {
-	h := defaultHarness()
-	sid := currentSessionID()
-	if sid == "" {
+	// --here only makes sense from inside a harness session. Probe
+	// ambient explicitly — defaultHarness's claude fallback would
+	// mask the "user isn't in any harness" case.
+	h := ambientHarness()
+	if h == nil {
+		var probed []string
+		for _, hh := range allHarnesses() {
+			probed = append(probed, "$"+hh.SessionIDEnvVar())
+		}
 		fmt.Fprintf(os.Stderr,
-			"error: --here requires running inside a Claude Code session ($%s is unset)\n",
-			h.SessionIDEnvVar())
+			"error: --here requires running inside a known harness session; none of %s is set\n",
+			strings.Join(probed, ", "))
 		return 1
 	}
+	sid := os.Getenv(h.SessionIDEnvVar())
 	if err := h.ValidateSessionID(sid); err != nil {
 		fmt.Fprintf(os.Stderr,
 			"error: $%s is not a valid session id (%v)\n",
@@ -595,6 +610,25 @@ func cmdDoHere(query string, force bool) int {
 			"error: task %q is done; reopen it first via `flow update task %s --status in-progress` (after which --here is unnecessary — the prior session_id is preserved)\n",
 			task.Slug, task.Slug)
 		return 1
+	}
+
+	// If the task has a harness pinned and it differs from the
+	// session this --here would attach, --force is required to
+	// switch. The switch is destructive in the soft sense — the
+	// prior harness's transcript file stays on disk but flow no
+	// longer tracks it (close-out sweep, transcript renderer, and
+	// resume path all now point at the new harness). Without
+	// --force we refuse so the user makes the swap deliberately.
+	if task.Harness.Valid && task.Harness.String != "" && task.Harness.String != string(h.Name()) {
+		if !force {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q is pinned to harness %q but this session is %q — pass --force to switch harnesses (the prior harness's transcript history will no longer be tracked by flow)\n",
+				task.Slug, task.Harness.String, h.Name())
+			return 1
+		}
+		fmt.Fprintf(os.Stderr,
+			"warning: --force switching task %q from harness %q to %q; prior transcript is orphaned from flow's view\n",
+			task.Slug, task.Harness.String, h.Name())
 	}
 
 	// Check 1: is THIS session already bound to a different task? Binding
@@ -628,15 +662,20 @@ func cmdDoHere(query string, force bool) int {
 	}
 
 	now := flowdb.NowISO()
+	// Also writes harness = ? — for a previously-unpinned task this
+	// is the first bind; for a same-harness --here it's a no-op
+	// write; for a --force harness switch it persists the swap
+	// alongside the new session_id.
 	res, err := db.Exec(
 		`UPDATE tasks SET
 			session_id      = ?,
 			session_started = COALESCE(session_started, ?),
 			status          = 'in-progress',
 			status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+			harness         = ?,
 			updated_at      = ?
 		WHERE slug = ?`,
-		sid, now, now, now, task.Slug,
+		sid, now, now, string(h.Name()), now, task.Slug,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: bind session: %v\n", err)
