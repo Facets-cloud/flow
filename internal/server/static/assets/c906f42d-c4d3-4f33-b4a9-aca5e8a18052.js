@@ -1724,8 +1724,7 @@ const SessionDetail = ({ agent, goto, action, gitDiffOpen = false, toggleGitDiff
                   title={cur ? `Permissions: ${m} (current)` : `Switch to ${m} — terminates the running session; reattach to apply`}
                   onClick={() => {
                     if (cur) return;
-                    if (!window.confirm(`Switch permissions to ${m}?\n\nThis terminates the running session; reattach to spawn a fresh one with the new mode.`)) return;
-                    action('update-permission-mode', { slug: current.slug, permission_mode: m, provider: current.provider });
+                    action('update-permission-mode-confirm', { slug: current.slug, permission_mode: m, provider: current.provider, _live: true });
                   }}
                 >{m}</button>
               );
@@ -3337,14 +3336,7 @@ const TaskDetail = ({ slug, goto, action, refreshKey }) => {
                       title={current ? `Current mode (${m})` : `Switch to ${m}` + (live ? ' (restarts running session)' : '')}
                       onClick={() => {
                         if (current) return;
-                        const apply = () => {
-                          action('update-permission-mode', { slug, permission_mode: m, _live: live, provider });
-                        };
-                        if (live) {
-                          if (window.confirm(`Switch permissions to ${m}?\n\nThis terminates the running session; reattach to spawn a fresh one with the new mode.`)) apply();
-                        } else {
-                          apply();
-                        }
+                        action('update-permission-mode-confirm', { slug, permission_mode: m, _live: live, provider });
                       }}
                     >{m}</button>
                   );

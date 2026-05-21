@@ -2173,6 +2173,27 @@ const App = () => {
       });
       return;
     }
+    if (kind === 'update-permission-mode-confirm') {
+      const mode = target && target.permission_mode;
+      const slug = (target && target.slug) || '';
+      if (!mode || !slug) return;
+      const live = !!(target && target._live);
+      const apply = () => serverAction('update-permission-mode', { slug, permission_mode: mode, _live: live, provider: target.provider }).then(refreshUIData).catch(err => setToast(err.message));
+      if (!live) { apply(); return; }
+      setConfirm({
+        title: <>Switch permissions to <span className="mono" style={{color: 'var(--text)'}}>{mode}</span>?</>,
+        body: (
+          <>
+            This terminates the running session for <span className="mono" style={{color: 'var(--text)'}}>{slug}</span>.
+            <div style={{marginTop: 6, color: 'var(--text-dim)'}}>Reattach to spawn a fresh one with the new mode.</div>
+          </>
+        ),
+        confirm: `Switch to ${mode}`,
+        danger: mode === 'bypass',
+        onConfirm: apply,
+      });
+      return;
+    }
     if (kind === 'investigate') { openBridge('attach', target); return; }
     if (kind === 'spawn') {
       const blockReason = taskStartBlocker(target);
