@@ -36,9 +36,13 @@ func New(cfg Config) *Server {
 	// a server-managed PTY so the Claude session streams into the UI
 	// instead of an iTerm tab.
 	if cfg.DB != nil {
-		s.slackListener = monitor.NewSlackListener(
+		slackListener := monitor.NewSlackListener(
 			monitor.NewDispatcher(cfg.DB, &slackTaskOpener{server: s}),
 		)
+		slackListener.SetChangeNotifier(func(kind string) {
+			s.publishUIChange(kind)
+		})
+		s.slackListener = slackListener
 	}
 	return s
 }

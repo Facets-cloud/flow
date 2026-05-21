@@ -42,6 +42,41 @@ func TestSlackListener_StopBeforeStart(t *testing.T) {
 	l.Stop() // should not panic, should not block
 }
 
+func TestSlackListener_BackfillNotifiesUIChange(t *testing.T) {
+	t.Setenv("FLOW_SLACK_SOCKET_MODE", "0")
+	db := dispatcherTestDB(t)
+	threadKey := "D123:1779345633.950689"
+	seedSlackTask(t, db, "legacy-slack", threadKey)
+	if _, err := db.Exec(`UPDATE tasks SET name = ? WHERE slug = ?`,
+		"Slack reply in D123 (thread 1779345633.9506)", "legacy-slack"); err != nil {
+		t.Fatal(err)
+	}
+
+	origResolver := resolveSlackTaskTitle
+	resolveSlackTaskTitle = func(_ context.Context, decision ReactionDecision) (string, error) {
+		if decision.ThreadKey == threadKey {
+			return "Rohit - CoinSwitch CSX project kickoff", nil
+		}
+		return "", nil
+	}
+	defer func() { resolveSlackTaskTitle = origResolver }()
+
+	changed := make(chan string, 1)
+	l := NewSlackListener(NewDispatcher(db, nil))
+	l.SetChangeNotifier(func(kind string) { changed <- kind })
+	if err := l.Start(); err != nil {
+		t.Fatalf("Start err = %v", err)
+	}
+	select {
+	case got := <-changed:
+		if got != "slack-title-backfill" {
+			t.Fatalf("change kind = %q, want slack-title-backfill", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for slack title backfill change notification")
+	}
+}
+
 func TestSlackListener_MockConnectorDispatchesEvents(t *testing.T) {
 	t.Setenv("FLOW_SLACK_APP_TOKEN", "xapp-test")
 	t.Setenv("SLACK_APP_TOKEN", "")
@@ -119,8 +154,8 @@ func TestSlackListener_MockConnectorDispatchesEvents(t *testing.T) {
 
 func makeReactionEvent(reactor, emoji, channel, itemTS, eventTS string) slackevents.EventsAPIEvent {
 	return slackevents.EventsAPIEvent{
-		Type:    "events_api",
-		TeamID:  "T123",
+		Type:     "events_api",
+		TeamID:   "T123",
 		APIAppID: "A123",
 		InnerEvent: slackevents.EventsAPIInnerEvent{
 			Type: string(slackevents.ReactionAdded),

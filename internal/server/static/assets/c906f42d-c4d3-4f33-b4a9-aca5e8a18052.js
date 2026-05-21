@@ -1627,8 +1627,8 @@ const SessionDetail = ({ agent, goto, action, gitDiffOpen = false, toggleGitDiff
     <div>
       <div className="action-bar">
         <Dot status={current.status}/>
-        <span className="mono" style={{fontSize: 14, fontWeight: 500}}>{current.slug}</span>
-        <span style={{color: 'var(--text-dim)'}}>{current.name}</span>
+        <span style={{fontSize: 14, fontWeight: 600}}>{current.name || current.slug}</span>
+        <span className="mono" style={{fontSize: 12, color: 'var(--text-dim)'}}>{current.slug}</span>
         <StatusPill status={current.status}/>
         <TaskStatePill status={current.task_status}/>
         <AgentChip provider={current.provider}/>
@@ -1729,8 +1729,8 @@ const CompletedSessionView = ({ agent, goto, gitDiffOpen = false, toggleGitDiff 
   <div>
     <div className="action-bar">
       <Icon name="check-circle" size={14} style={{color: 'var(--running)'}}/>
-      <span className="mono" style={{fontSize: 14, fontWeight: 500}}>{agent.slug}</span>
-      <span style={{color: 'var(--text-dim)'}}>{agent.name}</span>
+      <span style={{fontSize: 14, fontWeight: 600}}>{agent.name || agent.slug}</span>
+      <span className="mono" style={{fontSize: 12, color: 'var(--text-dim)'}}>{agent.slug}</span>
       <StatusPill status="done"/>
       <AgentChip provider={agent.provider}/>
       {agent.branch && <BranchChip name={agent.branch}/>}
@@ -3216,13 +3216,13 @@ const TaskDetail = ({ slug, goto, action, refreshKey }) => {
         <div className="entity-hero-main">
           <div className="entity-kicker"><button className="btn sm" onClick={() => goto('tasks')}><Icon name="arrow-left" size={11}/>Back</button>{detail.project_slug && <button className="tag-chip" style={{cursor: 'pointer'}} onClick={() => goto(`project/${detail.project_slug}`)} title="Open project">{detail.project_slug}</button>}</div>
           <div className="entity-title-row">
-            <h1>{detail.slug}</h1>
+            <h1>{detail.name || detail.slug}</h1>
             <StatusPill status={status}/>
             <PriorityPill priority={detail.priority}/>
             {live && <span className="tag-chip" title="Live session" style={{background: 'var(--running)', color: 'var(--bg)'}}>live</span>}
             {stale && <span className="tag-chip" title={`Stale ${detail.stale_days}d`} style={{background: 'var(--idle)'}}>⚠ stale</span>}
           </div>
-          <p className="entity-subtitle">{detail.name}</p>
+          <p className="entity-subtitle mono">{detail.slug}</p>
           <div className="entity-meta-row">
             <span title={workDir}><Icon name="folder" size={13}/>{workDir || 'no workdir'}</span>
             <span title={`Agent: ${provider}`}><ProviderMark provider={provider} size={13}/>{provider}</span>

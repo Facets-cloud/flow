@@ -290,6 +290,63 @@ func TestDispatcher_MessageInUntrackedThreadIgnored(t *testing.T) {
 	}
 }
 
+func TestDispatcher_BackfillSlackTaskTitlesOnlyLegacyNames(t *testing.T) {
+	t.Setenv("FLOW_SLACK_SELF_USER_IDS", "U_me")
+	db := dispatcherTestDB(t)
+	_, _, _, restoreIO := stubDispatcherIO(t)
+	defer restoreIO()
+
+	legacyKey := "D123:1779345633.950689"
+	manualKey := "D456:1779345999.123456"
+	seedSlackTask(t, db, "legacy-slack", legacyKey)
+	seedSlackTask(t, db, "manual-slack", manualKey)
+	if _, err := db.Exec(`UPDATE tasks SET name = ? WHERE slug = ?`,
+		"Slack reply in D123 (thread 1779345633.9506)", "legacy-slack"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET name = ? WHERE slug = ?`,
+		"Rohit - manually curated context", "manual-slack"); err != nil {
+		t.Fatal(err)
+	}
+
+	origResolver := resolveSlackTaskTitle
+	resolveSlackTaskTitle = func(_ context.Context, decision ReactionDecision) (string, error) {
+		switch decision.ThreadKey {
+		case legacyKey:
+			return "Rohit - CoinSwitch CSX project kickoff", nil
+		case manualKey:
+			return "Should not overwrite manual names", nil
+		default:
+			return "", nil
+		}
+	}
+	defer func() { resolveSlackTaskTitle = origResolver }()
+
+	d := NewDispatcher(db, nil)
+	updated, err := d.BackfillSlackTaskTitles(context.Background())
+	if err != nil {
+		t.Fatalf("BackfillSlackTaskTitles: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("BackfillSlackTaskTitles updated %d tasks, want 1", updated)
+	}
+
+	legacy, err := flowdb.GetTask(db, "legacy-slack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Name != "Rohit - CoinSwitch CSX project kickoff" {
+		t.Fatalf("legacy name = %q", legacy.Name)
+	}
+	manual, err := flowdb.GetTask(db, "manual-slack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manual.Name != "Rohit - manually curated context" {
+		t.Fatalf("manual name was overwritten: %q", manual.Name)
+	}
+}
+
 func TestSlugForThread_Idempotent(t *testing.T) {
 	// Same key in → same slug out. Required for re-fire safety.
 	got1 := SlugForThread("C123:1234.0001")

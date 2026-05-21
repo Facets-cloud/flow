@@ -572,6 +572,37 @@ func TestPauseActionStopsBrowserTerminalButKeepsTaskIdle(t *testing.T) {
 	}
 }
 
+func TestClearWaitingActionClearsWaitingOnAndReturnsAgent(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+	sessionID := "22222222-2222-4222-8222-222222222222"
+	if _, err := db.Exec(
+		`UPDATE tasks SET status = 'in-progress', session_id = ?, session_started = ?, waiting_on = ? WHERE slug = 'build-ui'`,
+		sessionID, "2026-05-12T10:01:00+05:30", "user review",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(Config{DB: db, FlowRoot: root, CommandPath: "/bin/false"})
+	resp, status := srv.runAction(actionRequest{Kind: "clear-waiting", Target: "build-ui"})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, resp = %+v", status, resp)
+	}
+	if !resp.OK || resp.Agent == nil {
+		t.Fatalf("expected agent response, got %+v", resp)
+	}
+	if resp.Agent.WaitingFor != nil {
+		t.Fatalf("waiting_for still present: %+v", resp.Agent.WaitingFor)
+	}
+	task, err := flowdb.GetTask(db, "build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.WaitingOn.Valid {
+		t.Fatalf("waiting_on still set: %#v", task.WaitingOn)
+	}
+}
+
 func TestPrepareTerminalLaunchAllocatesBrowserSession(t *testing.T) {
 	root, db := testRootDB(t)
 	insertProjectTask(t, db, root)
@@ -1382,6 +1413,12 @@ func TestStaticActionPayloadForwardsProvider(t *testing.T) {
 	}
 	if !strings.Contains(string(tiles), "permissionWaiting ? (") || !strings.Contains(string(tiles), "onAction('pause', agent)") {
 		t.Fatal("non-permission waiting tiles should expose pause/open actions instead of approve/deny")
+	}
+	if !strings.Contains(string(tiles), "flowWaiting") || !strings.Contains(string(tiles), "onAction('clear-waiting', agent)") {
+		t.Fatal("flow waiting tiles should expose a direct unblock action")
+	}
+	if !strings.Contains(string(tiles), "tile-title") || !strings.Contains(string(tiles), "tile-ref mono") {
+		t.Fatal("agent tiles should render the human task name as the primary title and slug as the secondary ref")
 	}
 	if !strings.Contains(string(tiles), "const DependencyBadges") || !strings.Contains(string(tiles), "window.MC.DependencyBadges = DependencyBadges") {
 		t.Fatal("agent tiles must expose dependency badges for parent/child task relationships")

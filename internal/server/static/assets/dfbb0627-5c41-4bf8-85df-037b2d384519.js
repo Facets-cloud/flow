@@ -273,6 +273,7 @@ const AgentTile = ({ agent, onOpen, onAction, big }) => {
   const tokens_tier = tokens_pct >= 90 ? 'danger' : tokens_pct >= 70 ? 'warn' : 'ok';
   const waitingKind = agent.waiting_for?.kind || '';
   const permissionWaiting = agent.status === 'waiting' && waitingKind === 'permission';
+  const flowWaiting = agent.status === 'waiting' && waitingKind === 'flow';
   return (
     <div className={`tile ${agent.status}`} onClick={() => onOpen(agent)}>
       <div className="tile-stripe"></div>
@@ -285,8 +286,8 @@ const AgentTile = ({ agent, onOpen, onAction, big }) => {
           <span className="tile-spacer"></span>
           <AgentChip provider={agent.provider}/>
         </div>
-        <div className="tile-slug">{agent.slug}</div>
-        <div className="tile-name">{agent.name}</div>
+        <div className="tile-title">{agent.name || agent.slug}</div>
+        <div className="tile-ref mono">{agent.slug}</div>
         <div className="tile-meta">
           <BranchChip name={agent.branch}/>
           <span className="m-sep">·</span>
@@ -348,6 +349,7 @@ const AgentTile = ({ agent, onOpen, onAction, big }) => {
                   </>
                 ) : (
                   <>
+                    {flowWaiting && <button className="btn sm green" onClick={() => onAction('clear-waiting', agent)}><Icon name="unlock" size={11}/>Unblock</button>}
                     <button className="btn sm" onClick={() => onAction('pause', agent)}><Icon name="pause" size={11}/>Pause</button>
                     <button className="btn sm primary" onClick={() => onAction('attach', agent)}><Icon name="external-link" size={11}/>Open</button>
                   </>

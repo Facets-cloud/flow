@@ -39,8 +39,9 @@ type SlackListener struct {
 	done    chan struct{}
 
 	// Hooks for tests. Production paths use the real slack-go client.
-	connectFn   func(ctx context.Context) (eventsCh <-chan socketmode.Event, ack func(req socketmode.Request), runErr <-chan error)
-	logFn       func(string, ...any)
+	connectFn func(ctx context.Context) (eventsCh <-chan socketmode.Event, ack func(req socketmode.Request), runErr <-chan error)
+	logFn     func(string, ...any)
+	changeFn  func(kind string)
 }
 
 // NewSlackListener constructs a listener bound to the given dispatcher.
@@ -55,6 +56,26 @@ func NewSlackListener(d *Dispatcher) *SlackListener {
 		logFn: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "[slack listener] "+format+"\n", args...)
 		},
+	}
+}
+
+// SetChangeNotifier registers a callback for listener-owned database writes
+// that need a UI refresh. The server wires this to publish a ui_change event.
+func (l *SlackListener) SetChangeNotifier(fn func(kind string)) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.changeFn = fn
+}
+
+func (l *SlackListener) notifyChange(kind string) {
+	l.mu.Lock()
+	fn := l.changeFn
+	l.mu.Unlock()
+	if fn != nil {
+		fn(kind)
 	}
 }
 
@@ -96,6 +117,17 @@ func (l *SlackListener) Start() error {
 	if l.running {
 		return nil
 	}
+	go func() {
+		updated, err := l.dispatcher.BackfillSlackTaskTitles(context.Background())
+		if err != nil {
+			l.logFn("backfill slack task titles: %v", err)
+			return
+		}
+		if updated > 0 {
+			l.logFn("backfilled %d slack task title(s)", updated)
+			l.notifyChange("slack-title-backfill")
+		}
+	}()
 	if !SocketModeEnabled() {
 		l.logFn("not starting: SocketModeEnabled() is false (set FLOW_SLACK_APP_TOKEN + SLACK_BOT_TOKEN and FLOW_SLACK_SOCKET_MODE=1)")
 		return nil

@@ -158,6 +158,8 @@ func (s *Server) runAction(req actionRequest) (actionResponse, int) {
 		return s.updatePermissionMode(req)
 	case "pause":
 		return s.pauseTask(target)
+	case "clear-waiting":
+		return s.clearWaiting(target)
 	case "kill":
 		return s.killSession(req)
 	case "approve", "deny":
@@ -559,6 +561,29 @@ func (s *Server) pauseTask(target string) (actionResponse, int) {
 		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
 	}
 	return actionResponse{OK: true, Message: "paused " + target + "; agent is idle", Agent: agent}, http.StatusOK
+}
+
+func (s *Server) clearWaiting(target string) (actionResponse, int) {
+	if err := validateSlug(target); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	if _, err := flowdb.GetTask(s.cfg.DB, target); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return actionResponse{OK: false, Message: "task not found: " + target}, http.StatusNotFound
+		}
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	if _, err := s.cfg.DB.Exec(`UPDATE tasks SET waiting_on = NULL, updated_at = ? WHERE slug = ?`, flowdb.NowISO(), target); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	agent, err := s.agentForTask(target)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return actionResponse{OK: false, Message: "task not found: " + target}, http.StatusNotFound
+		}
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	return actionResponse{OK: true, Message: "cleared waiting block for " + target, Agent: agent}, http.StatusOK
 }
 
 func (s *Server) killSession(req actionRequest) (actionResponse, int) {

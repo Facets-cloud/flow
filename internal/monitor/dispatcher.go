@@ -86,6 +86,8 @@ func (d *Dispatcher) dispatchReaction(ctx context.Context, ev InboundEvent) erro
 		if err != nil {
 			return fmt.Errorf("monitor: create slack task: %w", err)
 		}
+	} else {
+		_ = d.refreshSlackTaskTitleIfLegacy(ctx, slug, decision)
 	}
 	if err := AppendInboxEvent(slug, ev); err != nil {
 		return fmt.Errorf("monitor: append inbox: %w", err)
@@ -150,7 +152,10 @@ func (d *Dispatcher) findTaskByThreadKey(key string) (slug string, found bool, e
 func (d *Dispatcher) createSlackTask(ctx context.Context, decision ReactionDecision) (string, error) {
 	slug := SlugForThread(decision.ThreadKey)
 	name := slackTaskName(decision)
-	brief := slackTaskBrief(decision, slug)
+	if enriched, err := resolveSlackTaskTitle(ctx, decision); err == nil && strings.TrimSpace(enriched) != "" {
+		name = strings.TrimSpace(enriched)
+	}
+	brief := slackTaskBrief(decision, slug, name)
 	if err := spawnFlowTask(ctx, name, slug, brief); err != nil {
 		return "", err
 	}
@@ -219,6 +224,11 @@ func slackTaskName(decision ReactionDecision) string {
 	return fmt.Sprintf("Slack reply in %s (thread %s)", channel, shortenTS(decision.ThreadTS))
 }
 
+func isLegacySlackTaskName(name string) bool {
+	name = strings.TrimSpace(name)
+	return strings.HasPrefix(name, "Slack reply in ") && strings.Contains(name, " (thread ") && strings.HasSuffix(name, ")")
+}
+
 func shortenTS(ts string) string {
 	// Keep the readable suffix; full Slack ts is 17 chars which is noisy
 	// in a task name.
@@ -228,7 +238,7 @@ func shortenTS(ts string) string {
 	return ts
 }
 
-func slackTaskBrief(decision ReactionDecision, slug string) string {
+func slackTaskBrief(decision ReactionDecision, slug, title string) string {
 	dir := TaskDir(slug)
 	if dir == "" {
 		dir = "~/.flow/tasks/" + slug
@@ -282,8 +292,8 @@ slack-reply, slack-thread:%s
 ---
 *Slack-origin task. The Socket Mode listener inside flow ui serve writes
 incoming events to inbox.jsonl as they arrive.*
-`,
-		slackTaskName(decision),
+	`,
+		nonEmptyOr(title, slackTaskName(decision)),
 		decision.Reaction,
 		decision.ThreadTS,
 		decision.Channel, channelType,
@@ -296,6 +306,83 @@ incoming events to inbox.jsonl as they arrive.*
 		decision.ThreadTS,
 		decision.ThreadKey,
 	)
+}
+
+// BackfillSlackTaskTitles refreshes older Slack-origin task names that still
+// use the raw "Slack reply in <channel-id> (thread ...)" format. It deliberately
+// skips manually renamed tasks.
+func (d *Dispatcher) BackfillSlackTaskTitles(ctx context.Context) (int, error) {
+	if d == nil || d.DB == nil {
+		return 0, nil
+	}
+	tasks, err := flowdb.ListTasks(d.DB, flowdb.TaskFilter{Tag: "slack-reply"})
+	if err != nil {
+		return 0, err
+	}
+	updated := 0
+	for _, task := range tasks {
+		if task == nil || !isLegacySlackTaskName(task.Name) {
+			continue
+		}
+		tags, err := flowdb.GetTaskTags(d.DB, task.Slug)
+		if err != nil {
+			return updated, err
+		}
+		decision, ok := decisionFromSlackThreadTags(tags)
+		if !ok {
+			continue
+		}
+		if d.refreshSlackTaskTitleIfLegacy(ctx, task.Slug, decision) {
+			updated++
+		}
+	}
+	return updated, nil
+}
+
+func (d *Dispatcher) refreshSlackTaskTitleIfLegacy(ctx context.Context, slug string, decision ReactionDecision) bool {
+	task, err := flowdb.GetTask(d.DB, slug)
+	if err != nil || !isLegacySlackTaskName(task.Name) {
+		return false
+	}
+	title, err := resolveSlackTaskTitle(ctx, decision)
+	if err != nil || strings.TrimSpace(title) == "" {
+		return false
+	}
+	res, err := d.DB.Exec(
+		`UPDATE tasks SET name = ?, updated_at = ? WHERE slug = ? AND name = ?`,
+		strings.TrimSpace(title), flowdb.NowISO(), slug, task.Name,
+	)
+	if err != nil {
+		return false
+	}
+	rows, err := res.RowsAffected()
+	return err == nil && rows > 0
+}
+
+func decisionFromSlackThreadTags(tags []string) (ReactionDecision, bool) {
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		key := strings.TrimPrefix(tag, SlackThreadTagPrefix)
+		if key == tag {
+			continue
+		}
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		channel := normalizeSlackChannelID(parts[0])
+		threadTS := strings.TrimSpace(parts[1])
+		if channel == "" || threadTS == "" {
+			continue
+		}
+		return ReactionDecision{
+			Trigger:   true,
+			ThreadKey: ThreadKey(channel, threadTS),
+			Channel:   channel,
+			ThreadTS:  threadTS,
+		}, true
+	}
+	return ReactionDecision{}, false
 }
 
 func nonEmptyOr(s, fallback string) string {
