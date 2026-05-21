@@ -269,17 +269,20 @@ func cmdDo(args []string) int {
 		// `flow do --here --force` is the explicit lane for harness
 		// switches and writes the column unconditionally there.
 		//
-		// session_cwd = work_dir on fresh bootstrap by construction:
-		// we spawn the tab with cwd=task.WorkDir, so claude (or any
-		// harness) writes its transcript under that encoded path.
+		// Note on cwd: bootstrap spawns the new tab with
+		// cwd=task.WorkDir, so the harness writes its transcript
+		// under that encoded path. The "session_id is bound to
+		// work_dir" invariant holds by construction here — no
+		// extra column needed; future resumes spawn at work_dir
+		// and the transcript will be found.
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-			 session_id=?, session_started=?, session_cwd=?,
+			 session_id=?, session_started=?,
 			 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
 			 updated_at=?
 			 WHERE slug=? AND `+statusFilter,
-			now, sessionID, now, task.WorkDir, string(h.Name()), now, task.Slug,
+			now, sessionID, now, string(h.Name()), now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: flip status: %v\n", err)
 			return 1
@@ -678,29 +681,32 @@ func cmdDoHere(query string, force bool) int {
 		}
 	}
 
-	now := flowdb.NowISO()
-	// session_cwd at --here time = the cwd of THIS flow process.
-	// That's usually the cwd claude was started in (claude's Bash
-	// tool resets cwd to claude's pwd on each call), but it can
-	// diverge in edge cases — e.g. a single Bash call that chains
-	// `cd /elsewhere && flow do --here task` yields os.Getwd() =
-	// /elsewhere while claude's jsonl still sits at the original
-	// spawn dir. The common path is fine and covers the
-	// --force-bind case that motivated this column; the chained-cd
-	// case has the same blind spot the legacy work_dir lookup did
-	// and is left as a known limitation.
+	// Invariant validation. Any task with session_id has work_dir
+	// == the cwd that session was created at — because the
+	// harness's on-disk transcript path is keyed by (cwd, sid),
+	// and future `flow do <slug>` resumes spawn at work_dir
+	// (GH #59).
 	//
-	// Without recording any cwd, the transcript-finding code would
-	// assume claude wrote its jsonl under task.work_dir, which is
-	// only true for fresh `flow do` spawns.
-	cwd, cwdErr := os.Getwd()
-	if cwdErr != nil {
-		// Defensive fallback: if Getwd fails (extremely rare),
-		// don't block the bind — record work_dir, which is at
-		// least better than NULL.
-		fmt.Fprintf(os.Stderr, "warning: could not read cwd for session_cwd: %v; falling back to task.work_dir\n", cwdErr)
-		cwd = task.WorkDir
+	// h.ValidateSession is the honest check: claude's impl stats
+	// the expected jsonl path on disk. Comparing os.Getwd() to
+	// work_dir would be fooled by chained-cd from inside a claude
+	// Bash invocation (the subprocess cwd has nothing to do with
+	// where the actual jsonl was written). Codex's impl will
+	// no-op since its sessions are sid-only.
+	if err := h.ValidateSession(task.WorkDir, sid); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"error: can't bind this session to task %q — the claude transcript isn't where work_dir says it should be:\n"+
+				"  %v\n"+
+				"this means claude was started in a different directory than task.work_dir, OR work_dir is set wrong.\n"+
+				"pick one of:\n"+
+				"  - open it in a new tab (recommended):           flow do %s\n"+
+				"  - point work_dir at where claude actually runs: flow update task %s --work-dir <real-cwd>\n"+
+				"    (allowed because the new work_dir must match the session's real on-disk location)\n",
+			task.Slug, err, task.Slug, task.Slug)
+		return 1
 	}
+
+	now := flowdb.NowISO()
 	// Also writes harness — for a previously-unpinned task this
 	// is the first bind; for a same-harness --here it's a no-op
 	// write; for a --force harness switch it persists the swap
@@ -709,13 +715,12 @@ func cmdDoHere(query string, force bool) int {
 		`UPDATE tasks SET
 			session_id      = ?,
 			session_started = COALESCE(session_started, ?),
-			session_cwd     = ?,
 			status          = 'in-progress',
 			status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			harness         = ?,
 			updated_at      = ?
 		WHERE slug = ?`,
-		sid, now, cwd, now, string(h.Name()), now, task.Slug,
+		sid, now, now, string(h.Name()), now, task.Slug,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: bind session: %v\n", err)

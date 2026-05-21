@@ -201,6 +201,7 @@ func TestCmdRunPlaybookHereHappyPath(t *testing.T) {
 	}
 	const sid = "f00ba111-2222-4333-8444-555555555555"
 	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	stubClaudeStatOK(t)
 	count, _ := stubITerm(t)
 
 	if rc := cmdRun([]string{"playbook", "tri", "--here"}); rc != 0 {
@@ -344,6 +345,7 @@ func TestCmdRunPlaybookHereIgnoresDangerSkip(t *testing.T) {
 	}
 	const sid = "f00ba111-2222-4333-8444-555555555555"
 	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	stubClaudeStatOK(t)
 	count, _ := stubITerm(t)
 
 	if rc := cmdRun([]string{"playbook", "p", "--here", "--dangerously-skip-permissions"}); rc != 0 {

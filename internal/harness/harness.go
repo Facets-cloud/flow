@@ -87,6 +87,25 @@ type Harness interface {
 	// supplied id before writing it to the DB.
 	ValidateSessionID(s string) error
 
+	// ValidateSession verifies that the on-disk state for
+	// (workDir, sessionID) is consistent with what a future
+	// `flow do <slug>` resume would expect — for cwd-keyed
+	// harnesses (claude, gemini) this means stat'ing the
+	// transcript at the path the harness would write it. Returns
+	// nil if the layout checks out, an error describing the
+	// mismatch otherwise.
+	//
+	// Used to enforce the "any task with a session_id has work_dir
+	// == the cwd that session was created at" invariant — gates
+	// `flow do --here` binds and `flow update task --work-dir`
+	// changes. Comparing os.Getwd() to work_dir is unreliable
+	// (chained `cd && flow do --here` from inside a harness Bash
+	// invocation fools it); this method does the honest check.
+	//
+	// Harnesses whose transcripts are sid-only (e.g. codex)
+	// should return nil unconditionally.
+	ValidateSession(workDir, sessionID string) error
+
 	// Launching --------------------------------------------------------
 
 	// LaunchCmd builds the shell command to start a fresh session

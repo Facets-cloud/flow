@@ -2,7 +2,6 @@ package app
 
 import (
 	"database/sql"
-	"os"
 	"strings"
 	"testing"
 
@@ -96,11 +95,6 @@ func TestCmdDoPersistsHarnessOnBootstrap(t *testing.T) {
 	if !task.Harness.Valid || task.Harness.String != "claude" {
 		t.Errorf("task.harness after bootstrap = %+v, want claude", task.Harness)
 	}
-	// session_cwd should equal work_dir on fresh bootstrap.
-	if !task.SessionCwd.Valid || task.SessionCwd.String != task.WorkDir {
-		t.Errorf("task.session_cwd after bootstrap = %+v, want work_dir=%q",
-			task.SessionCwd, task.WorkDir)
-	}
 }
 
 // TestCmdDoRefusesUnsupportedHarnessPin pins the two
@@ -160,20 +154,20 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 }
 
 // TestCmdDoHerePersistsHarnessColumn pins that --here writes the
-// harness column AND session_cwd on bind, not just session_id.
-// session_cwd captures the cwd of THIS flow process — equal to the
-// cwd claude was started in, which is what determines the on-disk
-// transcript path. Without recording it, --here-bound tasks whose
-// claude session was started in a different cwd than work_dir
-// (common with --force binds) couldn't have their transcript found.
+// harness column on bind, alongside session_id. (Pre-invariant
+// versions also captured session_cwd here; that column is gone now
+// — the invariant `session_id != NULL ⟹ work_dir == cwd-of-session`
+// makes recording the cwd separately redundant.)
 func TestCmdDoHerePersistsHarnessColumn(t *testing.T) {
 	setupFlowRoot(t)
-	seedTask(t, "here-harness")
+	// Seed at the test process's cwd + stub the on-disk
+	// validation so this test isolates the harness/session_id
+	// writes from the invariant check.
+	seedTaskAtCwd(t, "here-harness")
+	stubClaudeStatOK(t)
 
 	const sid = "11111111-2222-4333-8444-555555555555"
 	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
-
-	wantCwd, _ := os.Getwd()
 
 	if rc := cmdDoHere("here-harness", false); rc != 0 {
 		t.Fatalf("cmdDoHere rc=%d", rc)
@@ -189,10 +183,6 @@ func TestCmdDoHerePersistsHarnessColumn(t *testing.T) {
 	}
 	if task.SessionID.String != sid {
 		t.Errorf("task.session_id after --here = %q, want %s", task.SessionID.String, sid)
-	}
-	if !task.SessionCwd.Valid || task.SessionCwd.String != wantCwd {
-		t.Errorf("task.session_cwd after --here = %+v, want %q (the test process's cwd)",
-			task.SessionCwd, wantCwd)
 	}
 }
 
@@ -244,7 +234,12 @@ func TestCmdDoHereRejectsCrossHarness(t *testing.T) {
 // stays on disk but flow no longer tracks it.
 func TestCmdDoHereForceSwitchesHarness(t *testing.T) {
 	setupFlowRoot(t)
-	seedTask(t, "force-switch")
+	// Cross-harness --force still has to satisfy the
+	// cwd==work_dir invariant; seed at the test process's cwd
+	// + stub the on-disk validation so the harness-switch is
+	// the only thing --force is overriding here.
+	seedTaskAtCwd(t, "force-switch")
+	stubClaudeStatOK(t)
 
 	// Pre-pin to "codex" with an existing session_id.
 	db := openFlowDB(t)

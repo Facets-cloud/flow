@@ -84,6 +84,62 @@ func TestCmdUpdateTaskWorkDirMissingNoMkdir(t *testing.T) {
 	}
 }
 
+// TestCmdUpdateTaskWorkDirRefusedWhileSessionBound pins the invariant
+// guard: silently moving work_dir while a session is attached would
+// break `session_id ⟹ work_dir == cwd-of-session` (GH #59). Refuse,
+// pointing the user at the release path.
+func TestCmdUpdateTaskWorkDirRefusedWhileSessionBound(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "ut-bound")
+
+	// Attach a session so the invariant guard fires.
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='ut-bound'`,
+		"abcdef12-3456-4789-8abc-def012345678", flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	original, err := flowdb.GetTask(db, "ut-bound")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	newDir := filepath.Join(t.TempDir(), "new-spot")
+	if rc := cmdUpdate([]string{"task", "ut-bound", "--work-dir", newDir, "--mkdir"}); rc != 1 {
+		t.Errorf("rc=%d, want 1 when session is bound", rc)
+	}
+
+	db = openFlowDB(t)
+	post, _ := flowdb.GetTask(db, "ut-bound")
+	if post.WorkDir != original.WorkDir {
+		t.Errorf("work_dir changed while session bound: pre=%q post=%q", original.WorkDir, post.WorkDir)
+	}
+}
+
+// TestCmdUpdateTaskWorkDirIdempotentWhileSessionBound pins that
+// setting work_dir to the value it already has is allowed even with
+// a session bound — no real change, no invariant break.
+func TestCmdUpdateTaskWorkDirIdempotentWhileSessionBound(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "ut-idem")
+
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='ut-idem'`,
+		"abcdef12-3456-4789-8abc-def012345678", flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	task, _ := flowdb.GetTask(db, "ut-idem")
+	db.Close()
+
+	if rc := cmdUpdate([]string{"task", "ut-idem", "--work-dir", task.WorkDir}); rc != 0 {
+		t.Errorf("rc=%d, want 0 for no-op work_dir update", rc)
+	}
+}
+
 // TestCmdUpdateTaskBothFields exercises combining multiple field-
 // changing flags in one call.
 func TestCmdUpdateTaskBothFields(t *testing.T) {

@@ -117,6 +117,23 @@ func cmdRunPlaybook(args []string) int {
 		return 1
 	}
 
+	// Run task's work_dir. For the default (new-tab) path that's
+	// the playbook's work_dir — we spawn a tab there. For the
+	// --here path we adopt the binding session's cwd, because the
+	// run will execute in THIS session (wherever the user has it),
+	// and the cwd==work_dir invariant the bind path enforces means
+	// they must agree. If the user wants the run at the playbook's
+	// default path, they cd there first.
+	runWorkDir := pb.WorkDir
+	if *here {
+		wd, gerr := os.Getwd()
+		if gerr != nil {
+			fmt.Fprintf(os.Stderr, "error: read cwd: %v\n", gerr)
+			return 1
+		}
+		runWorkDir = wd
+	}
+
 	// Insert the run-task row.
 	now := flowdb.NowISO()
 	_, err = db.Exec(
@@ -126,7 +143,7 @@ func cmdRunPlaybook(args []string) int {
 		fmt.Sprintf("%s run %s", pb.Slug, runSlug),
 		pb.ProjectSlug,
 		pb.Slug,
-		pb.WorkDir,
+		runWorkDir,
 		now, now, now,
 	)
 	if err != nil {
@@ -151,7 +168,9 @@ func cmdRunPlaybook(args []string) int {
 
 	if *here {
 		// In-session bind path: no terminal spawn. dangerSkip is dropped
-		// — there's no claude process to forward the flag to.
+		// — there's no claude process to forward the flag to. Run task
+		// was inserted with work_dir = os.Getwd() above so cmdDoHere's
+		// cwd-matches-work_dir invariant check passes without --force.
 		return cmdDoHere(runSlug, false)
 	}
 
