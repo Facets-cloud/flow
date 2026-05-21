@@ -299,24 +299,6 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
-	// Drop the orphan tasks.session_cwd column if it's still around.
-	// The column was introduced in bdfe9c8 (`fix(transcript): key
-	// sessions by (cwd, session_id)`) but never released — the
-	// GH #59 fix replaced its purpose with the harness's
-	// ValidateSession check. DBs that ran intermediate
-	// `harness-pluggable` builds during PR-58 development still
-	// carry the column; this drop is the cleanup. Idempotent via
-	// columnExists.
-	has, err = columnExists(db, "tasks", "session_cwd")
-	if err != nil {
-		return err
-	}
-	if has {
-		if _, err := db.Exec(`ALTER TABLE tasks DROP COLUMN session_cwd`); err != nil {
-			return fmt.Errorf("drop tasks.session_cwd: %w", err)
-		}
-	}
-
 	// Session-id invariant: any non-backlog task must have a session_id.
 	// Adds a CHECK to the tasks table; old DBs need a table rebuild.
 	if err := migrateTasksSessionInvariant(db); err != nil {
