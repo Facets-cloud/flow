@@ -151,6 +151,60 @@ func TestDispatcher_NewThreadReactionSpawnsAndAppends(t *testing.T) {
 	}
 }
 
+func TestDispatcher_BriefIncludesProjectPicker(t *testing.T) {
+	t.Setenv("FLOW_SLACK_SELF_USER_IDS", "U_me")
+	t.Setenv("FLOW_SLACK_TRIGGER_EMOJI", "claude")
+	t.Setenv("FLOW_SLACK_AUTOOPEN", "0")
+	db := dispatcherTestDB(t)
+	spawns, _, _, restore := stubDispatcherIO(t)
+	defer restore()
+
+	// Stub the project lookup so the test doesn't depend on flowdb having
+	// any projects inserted via the CLI. Two active projects + the
+	// existence of the picker section is what the agent's first turn
+	// keys off of.
+	origProjects := listProjectChoices
+	listProjectChoices = func(_ *sql.DB) ([]projectChoice, error) {
+		return []projectChoice{
+			{Slug: "budgeting", Name: "Budgeting app", UpdatedAt: "2026-05-21T00:00:00Z", Priority: "high"},
+			{Slug: "devops", Name: "DevOps", UpdatedAt: "2026-05-20T12:00:00Z", Priority: "medium"},
+		}, nil
+	}
+	defer func() { listProjectChoices = origProjects }()
+
+	d := NewDispatcher(db, nil)
+	if err := d.Dispatch(context.Background(), mustParseReaction(t, "U_me", "claude", "C123", "1.10", "1.01")); err != nil {
+		t.Fatalf("Dispatch err = %v", err)
+	}
+	if len(*spawns) != 1 {
+		t.Fatalf("spawn count = %d, want 1", len(*spawns))
+	}
+	brief := (*spawns)[0].Brief
+
+	for _, want := range []string{
+		"## First step — pick a project",
+		"Ask the operator **in this Claude Code session**",
+		"flow update task " + (*spawns)[0].Slug + " --project <chosen-slug>",
+		"--clear-project",
+		"`budgeting`",
+		"`devops`",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("brief missing %q\n--- brief ---\n%s", want, brief)
+		}
+	}
+}
+
+func TestRenderProjectPicker_EmptyCatalogFallsBack(t *testing.T) {
+	body := renderProjectPicker("slack-c123-1-01", nil)
+	if !strings.Contains(body, "No active projects found") {
+		t.Errorf("empty catalog should explain how to recover; got:\n%s", body)
+	}
+	if !strings.Contains(body, "flow update task slack-c123-1-01") {
+		t.Errorf("empty catalog should still show the update command so the agent can wire up a project the operator creates next; got:\n%s", body)
+	}
+}
+
 func TestDispatcher_CodexEmojiSpawnsCodexProvider(t *testing.T) {
 	t.Setenv("FLOW_SLACK_SELF_USER_IDS", "U_me")
 	t.Setenv("FLOW_SLACK_TRIGGER_EMOJI", "claude,codex")

@@ -155,7 +155,12 @@ func (d *Dispatcher) createSlackTask(ctx context.Context, decision ReactionDecis
 	if enriched, err := resolveSlackTaskTitle(ctx, decision); err == nil && strings.TrimSpace(enriched) != "" {
 		name = strings.TrimSpace(enriched)
 	}
-	brief := slackTaskBrief(decision, slug, name)
+	// Snapshot the live project catalog so the brief can ask the operator
+	// to pick a project as the agent's first turn. Failures here are
+	// soft — without the snapshot, the picker section just lists nothing,
+	// which still leaves the agent free to ask "which project?" blind.
+	projects, _ := listProjectChoices(d.DB)
+	brief := slackTaskBrief(decision, slug, name, projects)
 	provider := ProviderForEmoji(decision.Reaction)
 	if err := spawnFlowTask(ctx, name, slug, brief, provider); err != nil {
 		return "", err
@@ -167,6 +172,41 @@ func (d *Dispatcher) createSlackTask(ctx context.Context, decision ReactionDecis
 		return slug, err
 	}
 	return slug, nil
+}
+
+// projectChoice is a small projection of flowdb.Project — just what the
+// brief's "pick a project" section needs.
+type projectChoice struct {
+	Slug      string
+	Name      string
+	UpdatedAt string
+	Priority  string
+}
+
+// listProjectChoices reads active (non-archived, non-deleted) projects
+// from flowdb. Package-level variable so the test stub can return a
+// canned list without touching the DB.
+var listProjectChoices = func(db *sql.DB) ([]projectChoice, error) {
+	if db == nil {
+		return nil, nil
+	}
+	projects, err := flowdb.ListProjects(db, flowdb.ProjectFilter{IncludeArchived: false})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]projectChoice, 0, len(projects))
+	for _, p := range projects {
+		if p == nil {
+			continue
+		}
+		out = append(out, projectChoice{
+			Slug:      p.Slug,
+			Name:      p.Name,
+			UpdatedAt: p.UpdatedAt,
+			Priority:  p.Priority,
+		})
+	}
+	return out, nil
 }
 
 // SlackThreadTagPrefix is the prefix for the per-thread linkage tag.
@@ -239,7 +279,7 @@ func shortenTS(ts string) string {
 	return ts
 }
 
-func slackTaskBrief(decision ReactionDecision, slug, title string) string {
+func slackTaskBrief(decision ReactionDecision, slug, title string, projects []projectChoice) string {
 	dir := TaskDir(slug)
 	if dir == "" {
 		dir = "~/.flow/tasks/" + slug
@@ -248,7 +288,11 @@ func slackTaskBrief(decision ReactionDecision, slug, title string) string {
 	if channelType == "" {
 		channelType = "unknown"
 	}
+	picker := renderProjectPicker(slug, projects)
 	return fmt.Sprintf(`# %s
+
+## First step — pick a project
+%s
 
 ## What
 You were invoked by a :%s: reaction on a Slack message. Read the thread
@@ -295,6 +339,7 @@ slack-reply, slack-thread:%s
 incoming events to inbox.jsonl as they arrive.*
 	`,
 		nonEmptyOr(title, slackTaskName(decision)),
+		picker,
 		decision.Reaction,
 		decision.ThreadTS,
 		decision.Channel, channelType,
@@ -307,6 +352,50 @@ incoming events to inbox.jsonl as they arrive.*
 		decision.ThreadTS,
 		decision.ThreadKey,
 	)
+}
+
+// renderProjectPicker writes the body of the "First step — pick a project"
+// section. The agent reads the Slack thread, ranks the listed projects by
+// relevance, asks the operator IN THIS SESSION (not in Slack) for a
+// choice, and then runs `flow update task <slug> --project <choice>` to
+// record the answer. Keeping this synchronous-with-the-operator avoids
+// the dispatcher having to wait on a Slack reply before the task can be
+// created.
+func renderProjectPicker(slug string, projects []projectChoice) string {
+	var b strings.Builder
+	b.WriteString("**Before doing anything else**, decide which flow project this task should belong to.\n\n")
+	b.WriteString("1. Read the Slack thread context (channel, item author, recent messages in `inbox.jsonl`).\n")
+	b.WriteString("2. From the list below, pick the 2–3 projects that look most relevant to that conversation.\n")
+	b.WriteString("3. Ask the operator **in this Claude Code session** (not in Slack) which one to use, ")
+	b.WriteString("offering an `adhoc` option if none fit.\n")
+	b.WriteString("4. Once the operator answers, run exactly one of:\n\n")
+	b.WriteString("   ```bash\n")
+	b.WriteString("   flow update task " + slug + " --project <chosen-slug>\n")
+	b.WriteString("   # or, if they pick adhoc / none:\n")
+	b.WriteString("   flow update task " + slug + " --clear-project\n")
+	b.WriteString("   ```\n\n")
+	b.WriteString("Do NOT skip this step or proceed to the actual Slack reply work until the project is recorded.\n\n")
+	if len(projects) == 0 {
+		b.WriteString("_No active projects found in flowdb. Ask the operator whether to leave this task as adhoc, ")
+		b.WriteString("or to first create a project via `flow add project \"<name>\" --work-dir <path>` and then ")
+		b.WriteString("rerun the update command above._\n")
+		return b.String()
+	}
+	b.WriteString("**Available projects** (active, non-archived):\n\n")
+	for _, p := range projects {
+		line := "- `" + p.Slug + "`"
+		if strings.TrimSpace(p.Name) != "" && p.Name != p.Slug {
+			line += " — " + p.Name
+		}
+		if strings.TrimSpace(p.Priority) != "" {
+			line += " · priority " + p.Priority
+		}
+		if strings.TrimSpace(p.UpdatedAt) != "" {
+			line += " · last activity " + p.UpdatedAt
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
 }
 
 // BackfillSlackTaskTitles refreshes older Slack-origin task names that still
