@@ -2236,6 +2236,12 @@ const App = () => {
         .catch(err => setToast(err.message));
       return;
     }
+    if (kind === 'update-priority') {
+      serverAction('update-priority', target)
+        .then(() => refreshUIData())
+        .catch(err => setToast(err.message));
+      return;
+    }
     if (kind === 'create-project-open') { setCreateProjectOpen(true); return; }
     if (kind === 'create-project') {
       setToast(`creating project · ${target.slug}`);

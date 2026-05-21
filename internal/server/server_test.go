@@ -1208,6 +1208,55 @@ func TestUpdatePermissionModeUnknownSlug(t *testing.T) {
 	}
 }
 
+func TestUpdatePriorityStoresPriority(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+	srv := New(Config{DB: db, FlowRoot: root, CommandPath: testFlowBinary(t)})
+
+	resp, status := srv.runAction(actionRequest{
+		Kind:     "update-priority",
+		Slug:     "build-ui",
+		Priority: "high",
+	})
+	if status != http.StatusOK || !resp.OK {
+		t.Fatalf("status = %d, resp = %+v", status, resp)
+	}
+	task, err := flowdb.GetTask(db, "build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Priority != "high" {
+		t.Fatalf("priority = %q, want high", task.Priority)
+	}
+}
+
+func TestUpdatePriorityRejectsInvalidPriority(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root)
+	srv := New(Config{DB: db, FlowRoot: root, CommandPath: testFlowBinary(t)})
+	resp, status := srv.runAction(actionRequest{
+		Kind:     "update-priority",
+		Slug:     "build-ui",
+		Priority: "urgent",
+	})
+	if status != http.StatusBadRequest || resp.OK {
+		t.Fatalf("expected 400 bad request, got status=%d resp=%+v", status, resp)
+	}
+}
+
+func TestUpdatePriorityUnknownSlug(t *testing.T) {
+	root, db := testRootDB(t)
+	srv := New(Config{DB: db, FlowRoot: root, CommandPath: testFlowBinary(t)})
+	resp, status := srv.runAction(actionRequest{
+		Kind:     "update-priority",
+		Slug:     "no-such-task",
+		Priority: "high",
+	})
+	if status != http.StatusNotFound || resp.OK {
+		t.Fatalf("expected 404, got status=%d resp=%+v", status, resp)
+	}
+}
+
 func TestCreateProjectRequiresWorkDir(t *testing.T) {
 	root, db := testRootDB(t)
 	srv := New(Config{DB: db, FlowRoot: root, CommandPath: testFlowBinary(t)})

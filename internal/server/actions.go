@@ -156,6 +156,8 @@ func (s *Server) runAction(req actionRequest) (actionResponse, int) {
 		return s.createProject(req)
 	case "update-permission-mode":
 		return s.updatePermissionMode(req)
+	case "update-priority":
+		return s.updatePriority(req)
 	case "pause":
 		return s.pauseTask(target)
 	case "clear-waiting":
@@ -546,6 +548,34 @@ func (s *Server) updatePermissionMode(req actionRequest) (actionResponse, int) {
 		msg += "; current session terminated, reattach to apply"
 	}
 	return actionResponse{OK: true, Message: msg, AlreadyLive: restarted}, http.StatusOK
+}
+
+func (s *Server) updatePriority(req actionRequest) (actionResponse, int) {
+	target := firstNonEmpty(req.Target, req.Slug)
+	if err := validateSlug(target); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	priority, err := flowdb.NormalizePriority(req.Priority)
+	if err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	task, err := flowdb.GetTask(s.cfg.DB, target)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return actionResponse{OK: false, Message: "task not found: " + target}, http.StatusNotFound
+		}
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	if task.Priority == priority {
+		return actionResponse{OK: true, Message: "priority unchanged (" + priority + ")"}, http.StatusOK
+	}
+	if _, err := s.cfg.DB.Exec(
+		`UPDATE tasks SET priority = ?, updated_at = ? WHERE slug = ?`,
+		priority, flowdb.NowISO(), task.Slug,
+	); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	return actionResponse{OK: true, Message: "priority set to " + priority}, http.StatusOK
 }
 
 func (s *Server) pauseTask(target string) (actionResponse, int) {

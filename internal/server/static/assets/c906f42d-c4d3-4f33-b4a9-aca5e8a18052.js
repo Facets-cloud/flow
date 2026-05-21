@@ -1730,6 +1730,7 @@ const SessionDetail = ({ agent, goto, action, gitDiffOpen = false, toggleGitDiff
               );
             })}
           </div>
+          <button className="btn sm" onClick={() => goto(`task/${current.slug}`)} title="Open task metadata page"><Icon name="info" size={11}/>Info</button>
           <button className="btn sm" onClick={() => goto('mc')}><Icon name="arrow-left" size={11}/>Detach</button>
           <RestartDropdown disabled={!canOpenRestartMenu} actionDisabled={!canRestartTerminal} title={restartTitle} freshTitle={freshTitle} onRestart={restartTerminal} onFresh={startFreshTerminal}/>
           <TerminalDropdown action={action} agent={current}/>
@@ -3339,6 +3340,25 @@ const TaskDetail = ({ slug, goto, action, refreshKey }) => {
                         action('update-permission-mode-confirm', { slug, permission_mode: m, _live: live, provider });
                       }}
                     >{m}</button>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{display: 'flex', alignItems: 'center', gap: 8, marginTop: 2}}>
+              <span className="mono" style={{fontSize: 11, color: 'var(--text-faint)'}}>priority:</span>
+              <div className="seg" style={{transform: 'scale(0.9)', transformOrigin: 'left center'}}>
+                {['high', 'medium', 'low'].map(p => {
+                  const current = (detail.priority || 'medium') === p;
+                  return (
+                    <button
+                      key={p}
+                      className={`seg-btn ${current ? 'on' : ''}`}
+                      title={current ? `Current priority (${p})` : `Set priority to ${p}`}
+                      onClick={() => {
+                        if (current) return;
+                        action('update-priority', { slug, priority: p });
+                      }}
+                    >{p}</button>
                   );
                 })}
               </div>

@@ -622,6 +622,20 @@ func NormalizePermissionMode(mode string) (string, error) {
 	}
 }
 
+// NormalizePriority canonicalizes a task or project priority value.
+func NormalizePriority(priority string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(priority)) {
+	case "high", "h":
+		return "high", nil
+	case "", "medium", "med", "m":
+		return "medium", nil
+	case "low", "l":
+		return "low", nil
+	default:
+		return "", fmt.Errorf("priority must be high|medium|low, got %q", priority)
+	}
+}
+
 // NormalizeSessionProvider canonicalizes the agent/provider used for a task
 // session. Claude can accept pre-allocated session ids; Codex sessions are
 // captured after launch from Codex's own session store.
