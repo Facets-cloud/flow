@@ -191,6 +191,44 @@ func TestMigrationAddsDueDateAndStatusChangedAt(t *testing.T) {
 	}
 }
 
+// TestMigrationDropsSessionCwd pins the cleanup behavior for DBs
+// that ran intermediate `harness-pluggable` builds during PR-58
+// development: the `session_cwd` column (introduced by bdfe9c8 and
+// since superseded by the harness's ValidateSession check) is
+// dropped on next OpenDB. Idempotent: a fresh DB has no column to
+// drop and the migration is a no-op.
+func TestMigrationDropsSessionCwd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flow.db")
+
+	// First open: creates a clean schema (no session_cwd column).
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has, _ := columnExists(db, "tasks", "session_cwd"); has {
+		t.Error("fresh schema should not have session_cwd column")
+	}
+
+	// Simulate an in-development DB by re-adding the column.
+	if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN session_cwd TEXT`); err != nil {
+		t.Fatal(err)
+	}
+	if has, _ := columnExists(db, "tasks", "session_cwd"); !has {
+		t.Fatal("setup failed: session_cwd not added")
+	}
+	db.Close()
+
+	// Re-open: migration should drop the orphan column.
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if has, _ := columnExists(db, "tasks", "session_cwd"); has {
+		t.Error("session_cwd should be dropped by the cleanup migration")
+	}
+}
+
 func TestMigrationAddsAssignee(t *testing.T) {
 	db := openTempDB(t)
 	has, err := columnExists(db, "tasks", "assignee")
