@@ -2275,6 +2275,19 @@ const App = () => {
 	    return () => clearTimeout(t);
 	  }, [toast]);
 
+	  // External toast bus — other bundles (e.g. the terminal pane in
+	  // assets/c906f...js, where TerminalPane lives outside this React
+	  // tree) dispatch `flow:toast` CustomEvents instead of prop-drilling
+	  // setToast across modules.
+	  useEffect(() => {
+	    const onToast = (e) => {
+	      const message = e && e.detail && e.detail.message;
+	      if (message) setToast(message);
+	    };
+	    window.addEventListener('flow:toast', onToast);
+	    return () => window.removeEventListener('flow:toast', onToast);
+	  }, []);
+
 	  useEffect(() => {
 	    if (!window.EventSource) {
 	      refreshUIData();

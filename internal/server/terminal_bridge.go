@@ -570,6 +570,35 @@ func (s *Server) ensureSharedTerminalSession(launch terminalLaunch, cols, rows i
 		"mouse",
 		"on",
 		";",
+		// Make tmux's own copy commands forward selections to the outer
+		// terminal via OSC 52. Without this, dragging-to-select in the
+		// browser terminal puts text into tmux's internal paste buffer
+		// but never reaches the page's clipboard.
+		"set-option",
+		"-g",
+		"set-clipboard",
+		"on",
+		";",
+		// Bind mouse-drag-end to copy-and-cancel so a single drag is the
+		// whole copy gesture (instead of leaving the user stranded in
+		// copy-mode). Bind both copy-mode and copy-mode-vi so this works
+		// regardless of the user's mode-keys preference.
+		"bind-key",
+		"-T",
+		"copy-mode",
+		"MouseDragEnd1Pane",
+		"send-keys",
+		"-X",
+		"copy-pipe-and-cancel",
+		";",
+		"bind-key",
+		"-T",
+		"copy-mode-vi",
+		"MouseDragEnd1Pane",
+		"send-keys",
+		"-X",
+		"copy-pipe-and-cancel",
+		";",
 		"set-window-option",
 		"-g",
 		"history-limit",

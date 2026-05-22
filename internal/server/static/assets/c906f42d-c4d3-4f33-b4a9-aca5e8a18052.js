@@ -2126,6 +2126,35 @@ const TaskTerminal = ({ agent, onStatus }) => {
     }
     const fit = window.FitAddon ? new window.FitAddon.FitAddon() : null;
     if (fit) term.loadAddon(fit);
+
+    // OSC 52 → browser clipboard. flow runs sessions inside tmux with
+    // mouse-mode on, so drag-selection never surfaces as a DOM selection;
+    // instead tmux (with `set-clipboard on`) emits OSC 52 with the
+    // selected text base64-encoded. xterm.js doesn't write OSC 52 to
+    // the system clipboard by default — for security — so we plug it
+    // in explicitly here. Payload format is "<Pc>;<Pd>" where Pc is the
+    // selection target (c=clipboard, s=primary, etc.) and Pd is base64
+    // (or `?` for a query, which we ignore — we can't read the page's
+    // clipboard without an explicit user gesture anyway).
+    const osc52Disposable = term.parser?.registerOscHandler
+      ? term.parser.registerOscHandler(52, (data) => {
+          const semi = data.indexOf(';');
+          if (semi < 0) return false;
+          const payload = data.slice(semi + 1);
+          if (!payload || payload === '?') return false;
+          if (!navigator.clipboard || !navigator.clipboard.writeText) return true;
+          let text;
+          try { text = atob(payload); } catch (_) { return false; }
+          if (!text) return true;
+          navigator.clipboard.writeText(text).then(() => {
+            window.dispatchEvent(new CustomEvent('flow:toast', { detail: { message: 'copied to clipboard' } }));
+          }).catch(() => {
+            window.dispatchEvent(new CustomEvent('flow:toast', { detail: { message: 'clipboard copy failed' } }));
+          });
+          return true;
+        })
+      : null;
+
     term.open(host);
     term.focus();
     let wheelRemainder = 0;
@@ -2307,6 +2336,28 @@ const TaskTerminal = ({ agent, onStatus }) => {
     host.addEventListener('dragover', dragOverHandler);
     host.addEventListener('drop', dropHandler);
 
+    // Auto-copy terminal selection: when the user finishes highlighting
+    // text in the xterm, write it to the system clipboard and surface a
+    // toast via the app-shell event bus. Debounced so a single drag only
+    // copies once when the user releases (instead of on every mousemove).
+    let selectionCopyTimer = 0;
+    const flushSelectionCopy = () => {
+      selectionCopyTimer = 0;
+      if (!termRef.current || !termRef.current.hasSelection()) return;
+      const text = termRef.current.getSelection();
+      if (!text || !text.trim()) return;
+      if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+      navigator.clipboard.writeText(text).then(() => {
+        window.dispatchEvent(new CustomEvent('flow:toast', { detail: { message: 'copied to clipboard' } }));
+      }).catch(() => {
+        window.dispatchEvent(new CustomEvent('flow:toast', { detail: { message: 'clipboard copy failed' } }));
+      });
+    };
+    const selectionDisposable = term.onSelectionChange(() => {
+      if (selectionCopyTimer) clearTimeout(selectionCopyTimer);
+      selectionCopyTimer = setTimeout(flushSelectionCopy, 120);
+    });
+
     return () => {
       clearTimeout(focusTimer);
       fitTimers.forEach(clearTimeout);
@@ -2319,6 +2370,9 @@ const TaskTerminal = ({ agent, onStatus }) => {
       window.removeEventListener('resize', resize);
       dataDisposable.dispose();
       resizeDisposable.dispose();
+      selectionDisposable.dispose();
+      if (osc52Disposable && osc52Disposable.dispose) osc52Disposable.dispose();
+      if (selectionCopyTimer) clearTimeout(selectionCopyTimer);
       if (wsRef.current) wsRef.current.close();
       wsRef.current = null;
       term.dispose();
