@@ -23,6 +23,7 @@ type GitHubAPIClient interface {
 	SearchIssues(ctx context.Context, query string) ([]githubIssueRecord, error)
 	GetPullRequest(ctx context.Context, owner, repo string, number int) (githubPullRequestRecord, error)
 	ListReviewComments(ctx context.Context, owner, repo string, number int, since string) ([]githubReviewCommentRecord, error)
+	ListReviews(ctx context.Context, owner, repo string, number int, since string) ([]githubReviewRecord, error)
 }
 
 func GitHubPollingEnabled() bool {
@@ -202,6 +203,16 @@ func (p GitHubPoller) pollTrackedPRComments(ctx context.Context) ([]GitHubEvent,
 				events = append(events, ev)
 			}
 		}
+		reviews, err := p.Client.ListReviews(ctx, pr.Owner, pr.Repo, pr.Number, "")
+		if err != nil {
+			return events, err
+		}
+		for _, r := range reviews {
+			ev, ok := r.toGitHubEvent(pr.Owner, pr.Repo, pr.Number)
+			if ok {
+				events = append(events, ev)
+			}
+		}
 	}
 	return events, nil
 }
@@ -302,6 +313,29 @@ func (ghAPIClient) ListReviewComments(ctx context.Context, owner, repo string, n
 		return nil, fmt.Errorf("parse github review comments: %w", err)
 	}
 	return resp, nil
+}
+
+func (ghAPIClient) ListReviews(ctx context.Context, owner, repo string, number int, since string) ([]githubReviewRecord, error) {
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)
+	out, err := exec.CommandContext(ctx, "gh", "api", endpoint, "-f", "per_page=100").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("gh api %s: %w (output: %s)", endpoint, err, strings.TrimSpace(string(out)))
+	}
+	var resp []githubReviewRecord
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return nil, fmt.Errorf("parse github reviews: %w", err)
+	}
+	since = strings.TrimSpace(since)
+	if since == "" {
+		return resp, nil
+	}
+	filtered := make([]githubReviewRecord, 0, len(resp))
+	for _, record := range resp {
+		if strings.TrimSpace(record.SubmittedAt) > since {
+			filtered = append(filtered, record)
+		}
+	}
+	return filtered, nil
 }
 
 type githubIssueSearchResponse struct {
@@ -419,6 +453,16 @@ type githubReviewCommentRecord struct {
 	UpdatedAt      string     `json:"updated_at"`
 }
 
+type githubReviewRecord struct {
+	ID          int64      `json:"id"`
+	NodeID      string     `json:"node_id"`
+	State       string     `json:"state"`
+	Body        string     `json:"body"`
+	HTMLURL     string     `json:"html_url"`
+	User        githubUser `json:"user"`
+	SubmittedAt string     `json:"submitted_at"`
+}
+
 func (r githubReviewCommentRecord) toGitHubEvent(owner, repo string, number int) (GitHubEvent, bool) {
 	if owner == "" || repo == "" || number <= 0 {
 		return GitHubEvent{}, false
@@ -444,5 +488,44 @@ func (r githubReviewCommentRecord) toGitHubEvent(owner, repo string, number int)
 		RawJSON:   string(raw),
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
+	}, true
+}
+
+func (r githubReviewRecord) toGitHubEvent(owner, repo string, number int) (GitHubEvent, bool) {
+	if owner == "" || repo == "" || number <= 0 {
+		return GitHubEvent{}, false
+	}
+	id := strings.TrimSpace(r.NodeID)
+	if id == "" && r.ID > 0 {
+		id = strconv.FormatInt(r.ID, 10)
+	}
+	if id == "" {
+		return GitHubEvent{}, false
+	}
+	var kind GitHubEventKind
+	switch strings.ToUpper(strings.TrimSpace(r.State)) {
+	case "CHANGES_REQUESTED":
+		kind = GitHubEventPRReviewChangesRequested
+	case "APPROVED":
+		kind = GitHubEventPRReviewApproved
+	case "COMMENTED":
+		kind = GitHubEventPRReviewComment
+	default:
+		return GitHubEvent{}, false
+	}
+	raw, _ := json.Marshal(r)
+	return GitHubEvent{
+		Kind:      kind,
+		Owner:     owner,
+		Repo:      repo,
+		Number:    number,
+		Body:      r.Body,
+		URL:       r.HTMLURL,
+		Author:    r.User.Login,
+		CommentID: id,
+		EventKey:  "review:" + id,
+		RawJSON:   string(raw),
+		CreatedAt: r.SubmittedAt,
+		UpdatedAt: r.SubmittedAt,
 	}, true
 }

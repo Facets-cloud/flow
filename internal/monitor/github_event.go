@@ -8,12 +8,14 @@ import (
 type GitHubEventKind string
 
 const (
-	GitHubEventPRAssigned        GitHubEventKind = "pr_assigned"
-	GitHubEventPRReviewRequested GitHubEventKind = "pr_review_requested"
-	GitHubEventPRReviewComment   GitHubEventKind = "pr_review_comment"
-	GitHubEventPRHeadUpdated     GitHubEventKind = "pr_head_updated"
-	GitHubEventPRMerged          GitHubEventKind = "pr_merged"
-	GitHubEventIssueAssigned     GitHubEventKind = "issue_assigned"
+	GitHubEventPRAssigned               GitHubEventKind = "pr_assigned"
+	GitHubEventPRReviewRequested        GitHubEventKind = "pr_review_requested"
+	GitHubEventPRReviewComment          GitHubEventKind = "pr_review_comment"
+	GitHubEventPRReviewChangesRequested GitHubEventKind = "pr_review_changes_requested"
+	GitHubEventPRReviewApproved         GitHubEventKind = "pr_review_approved"
+	GitHubEventPRHeadUpdated            GitHubEventKind = "pr_head_updated"
+	GitHubEventPRMerged                 GitHubEventKind = "pr_merged"
+	GitHubEventIssueAssigned            GitHubEventKind = "issue_assigned"
 )
 
 type GitHubEvent struct {
@@ -50,6 +52,8 @@ func (ev GitHubEvent) IsPR() bool {
 	return ev.Kind == GitHubEventPRAssigned ||
 		ev.Kind == GitHubEventPRReviewRequested ||
 		ev.Kind == GitHubEventPRReviewComment ||
+		ev.Kind == GitHubEventPRReviewChangesRequested ||
+		ev.Kind == GitHubEventPRReviewApproved ||
 		ev.Kind == GitHubEventPRHeadUpdated ||
 		ev.Kind == GitHubEventPRMerged
 }
@@ -140,6 +144,7 @@ func gitHubEventToInboxEvent(ev GitHubEvent) InboundEvent {
 		ThreadTS:    ev.LinkTag(),
 		UserID:      strings.TrimSpace(ev.Author),
 		Text:        strings.TrimSpace(ev.Body),
+		URL:         strings.TrimSpace(ev.URL),
 		ItemChannel: ev.RepoKey(),
 		ItemTS:      fmt.Sprintf("%d", ev.Number),
 		ItemAuthor:  strings.TrimSpace(ev.Author),

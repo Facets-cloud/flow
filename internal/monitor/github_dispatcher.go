@@ -42,8 +42,8 @@ func (d *GitHubDispatcher) Dispatch(ctx context.Context, ev GitHubEvent) error {
 	switch ev.Kind {
 	case GitHubEventPRAssigned, GitHubEventPRReviewRequested, GitHubEventIssueAssigned:
 		return d.dispatchGitHubItem(ctx, ev)
-	case GitHubEventPRReviewComment:
-		return d.dispatchGitHubComment(ctx, ev)
+	case GitHubEventPRReviewComment, GitHubEventPRReviewChangesRequested, GitHubEventPRReviewApproved:
+		return d.dispatchGitHubReview(ctx, ev)
 	case GitHubEventPRHeadUpdated:
 		return d.dispatchGitHubHeadUpdated(ev)
 	case GitHubEventPRMerged:
@@ -87,7 +87,7 @@ func (d *GitHubDispatcher) dispatchGitHubItem(ctx context.Context, ev GitHubEven
 	return nil
 }
 
-func (d *GitHubDispatcher) dispatchGitHubComment(ctx context.Context, ev GitHubEvent) error {
+func (d *GitHubDispatcher) dispatchGitHubReview(ctx context.Context, ev GitHubEvent) error {
 	slug, found, err := d.findTaskByGitHubTag(ev.LinkTag())
 	if err != nil {
 		return fmt.Errorf("github monitor: lookup task by tag: %w", err)
@@ -100,6 +100,11 @@ func (d *GitHubDispatcher) dispatchGitHubComment(ctx context.Context, ev GitHubE
 	}
 	if err := AppendInboxEvent(slug, gitHubEventToInboxEvent(ev)); err != nil {
 		return fmt.Errorf("github monitor: append inbox: %w", err)
+	}
+	if ev.Kind == GitHubEventPRReviewChangesRequested {
+		if err := d.reopenTaskForGitHubReview(slug); err != nil {
+			return err
+		}
 	}
 	return d.recordEvent(ev, slug)
 }

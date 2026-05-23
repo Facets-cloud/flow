@@ -162,6 +162,92 @@ func TestGitHubDispatcher_ReviewCommentAppendsToTrackedPR(t *testing.T) {
 	}
 }
 
+func TestGitHubDispatcher_ChangesRequestedReviewReopensTrackedPR(t *testing.T) {
+	db := dispatcherTestDB(t)
+	_, _, _, restore := stubDispatcherIO(t)
+	defer restore()
+	seedGitHubTask(t, "tracked-pr", db, "gh-pr:Facets-cloud/flow-manager#42")
+	if _, err := db.Exec(`UPDATE tasks SET status='done', updated_at=? WHERE slug='tracked-pr'`, flowdb.NowISO()); err != nil {
+		t.Fatalf("seed done status: %v", err)
+	}
+
+	d := NewGitHubDispatcher(db, nil)
+	ev := GitHubEvent{
+		Kind:     GitHubEventPRReviewChangesRequested,
+		Owner:    "Facets-cloud",
+		Repo:     "flow-manager",
+		Number:   42,
+		Author:   "reviewer",
+		Body:     "Please add a regression test.",
+		URL:      "https://github.com/Facets-cloud/flow-manager/pull/42#pullrequestreview-44",
+		EventKey: "review:PRR_kwDOAAABBB",
+		RawJSON:  `{"node_id":"PRR_kwDOAAABBB"}`,
+	}
+	if err := d.Dispatch(context.Background(), ev); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	entries, err := ReadInboxEntries("tracked-pr")
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("inbox entries = %d, want 1", len(entries))
+	}
+	if entries[0].Event.Kind != string(GitHubEventPRReviewChangesRequested) || !entries[0].Meta.Actionable {
+		t.Fatalf("entry = %+v", entries[0])
+	}
+	task, err := flowdb.GetTask(db, "tracked-pr")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != "backlog" {
+		t.Fatalf("status = %q, want backlog after changes requested", task.Status)
+	}
+}
+
+func TestGitHubDispatcher_ApprovedReviewAppendsWithoutReopeningTrackedPR(t *testing.T) {
+	db := dispatcherTestDB(t)
+	_, _, _, restore := stubDispatcherIO(t)
+	defer restore()
+	seedGitHubTask(t, "tracked-pr", db, "gh-pr:Facets-cloud/flow-manager#42")
+	if _, err := db.Exec(`UPDATE tasks SET status='done', updated_at=? WHERE slug='tracked-pr'`, flowdb.NowISO()); err != nil {
+		t.Fatalf("seed done status: %v", err)
+	}
+
+	d := NewGitHubDispatcher(db, nil)
+	ev := GitHubEvent{
+		Kind:     GitHubEventPRReviewApproved,
+		Owner:    "Facets-cloud",
+		Repo:     "flow-manager",
+		Number:   42,
+		Author:   "reviewer",
+		Body:     "Looks good.",
+		URL:      "https://github.com/Facets-cloud/flow-manager/pull/42#pullrequestreview-45",
+		EventKey: "review:PRR_kwDOAAACCC",
+		RawJSON:  `{"node_id":"PRR_kwDOAAACCC"}`,
+	}
+	if err := d.Dispatch(context.Background(), ev); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	entries, err := ReadInboxEntries("tracked-pr")
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("inbox entries = %d, want 1", len(entries))
+	}
+	if entries[0].Event.Kind != string(GitHubEventPRReviewApproved) || entries[0].Meta.Actionable {
+		t.Fatalf("entry = %+v", entries[0])
+	}
+	task, err := flowdb.GetTask(db, "tracked-pr")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != "done" {
+		t.Fatalf("status = %q, want done after approved review", task.Status)
+	}
+}
+
 func TestGitHubDispatcher_IssueAssignmentCreatesTask(t *testing.T) {
 	t.Setenv("FLOW_GH_AUTOOPEN", "0")
 	db := dispatcherTestDB(t)

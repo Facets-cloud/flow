@@ -12,6 +12,8 @@ type fakeGitHubAPIClient struct {
 	prs         map[string]githubPullRequestRecord
 	commentPRs  []int
 	commentRows []githubReviewCommentRecord
+	reviewPRs   []int
+	reviewRows  []githubReviewRecord
 }
 
 func (f fakeGitHubAPIClient) SearchIssues(_ context.Context, query string) ([]githubIssueRecord, error) {
@@ -37,6 +39,11 @@ func (f fakeGitHubAPIClient) GetPullRequest(_ context.Context, owner, repo strin
 func (f *fakeGitHubAPIClient) ListReviewComments(_ context.Context, _ string, _ string, number int, _ string) ([]githubReviewCommentRecord, error) {
 	f.commentPRs = append(f.commentPRs, number)
 	return f.commentRows, nil
+}
+
+func (f *fakeGitHubAPIClient) ListReviews(_ context.Context, _ string, _ string, number int, _ string) ([]githubReviewRecord, error) {
+	f.reviewPRs = append(f.reviewPRs, number)
+	return f.reviewRows, nil
 }
 
 func TestGitHubPollerEnrichesPullRequestRefs(t *testing.T) {
@@ -97,6 +104,53 @@ func TestGitHubPollerFetchesReviewCommentsForTrackedPRNumber(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Kind != GitHubEventPRReviewComment {
 		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestGitHubPollerFetchesReviewsForTrackedPRNumber(t *testing.T) {
+	db := dispatcherTestDB(t)
+	seedGitHubTask(t, "tracked-pr", db, "gh-pr:Facets-cloud/flow-manager#42")
+	client := &fakeGitHubAPIClient{
+		prs: map[string]githubPullRequestRecord{
+			"Facets-cloud/flow-manager#42": {
+				State: "open",
+			},
+		},
+		reviewRows: []githubReviewRecord{
+			{
+				NodeID:      "PRR_kwDOAAABBB",
+				State:       "CHANGES_REQUESTED",
+				Body:        "Please add a regression test.",
+				HTMLURL:     "https://github.com/Facets-cloud/flow-manager/pull/42#pullrequestreview-44",
+				User:        githubUser{Login: "reviewer"},
+				SubmittedAt: "2026-05-23T10:00:00Z",
+			},
+		},
+	}
+	p := GitHubPoller{
+		DB:         db,
+		Client:     client,
+		SelfLogins: []string{"me"},
+	}
+
+	events, err := p.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(client.reviewPRs) != 1 || client.reviewPRs[0] != 42 {
+		t.Fatalf("review PR calls = %v, want [42]", client.reviewPRs)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %#v", events)
+	}
+	if events[0].Kind != GitHubEventPRReviewChangesRequested {
+		t.Fatalf("kind = %q, want %q", events[0].Kind, GitHubEventPRReviewChangesRequested)
+	}
+	if events[0].EventKey != "review:PRR_kwDOAAABBB" {
+		t.Fatalf("event key = %q", events[0].EventKey)
+	}
+	if events[0].URL != "https://github.com/Facets-cloud/flow-manager/pull/42#pullrequestreview-44" {
+		t.Fatalf("url = %q", events[0].URL)
 	}
 }
 
