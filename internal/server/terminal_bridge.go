@@ -191,6 +191,20 @@ func (h *terminalHub) sendInput(slug, data string) error {
 	return sess.write(data)
 }
 
+func terminalPasteInput(prompt string) string {
+	return "\x1b[200~" + prompt + "\x1b[201~\r"
+}
+
+func (h *terminalHub) wakeTask(slug, prompt string) error {
+	if err := h.sendInput(slug, terminalPasteInput(prompt)); err == nil {
+		return nil
+	}
+	if _, err := h.attach(slug, 120, 32); err != nil {
+		return err
+	}
+	return h.sendInput(slug, terminalPasteInput(prompt))
+}
+
 func (h *terminalHub) scrollbackText(slug string, limit int) (string, bool) {
 	h.mu.Lock()
 	sess := h.sessions[slug]

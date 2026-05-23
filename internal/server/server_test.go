@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/iterm"
+	"flow/internal/monitor"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -70,6 +71,40 @@ func TestNewWiresGitHubListenerWhenDBAvailable(t *testing.T) {
 	srv := New(Config{DB: db, FlowRoot: root, Version: "test"})
 	if srv.githubListener == nil {
 		t.Fatal("github listener was not wired")
+	}
+}
+
+func TestTerminalPasteInputWrapsPromptForBracketedPaste(t *testing.T) {
+	got := terminalPasteInput("flow monitor wake")
+	want := "\x1b[200~flow monitor wake\x1b[201~\r"
+	if got != want {
+		t.Fatalf("terminalPasteInput() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatInboxWakePromptIncludesSourceAndURL(t *testing.T) {
+	entries := []monitor.InboxEntry{{
+		Event: monitor.InboundEvent{
+			Kind:        "pr_review_comment",
+			ChannelType: "github",
+			Text:        "please update the migration",
+			URL:         "https://github.com/acme/app/pull/7#discussion_r1",
+		},
+		Meta: monitor.InboxEventMeta{Source: "github", Actionable: true},
+	}}
+
+	prompt := formatInboxWakePrompt("review-task", entries)
+	if !strings.Contains(prompt, "review-task") {
+		t.Fatalf("prompt missing slug: %s", prompt)
+	}
+	if !strings.Contains(prompt, "github pr_review_comment") {
+		t.Fatalf("prompt missing source/kind: %s", prompt)
+	}
+	if !strings.Contains(prompt, "https://github.com/acme/app/pull/7#discussion_r1") {
+		t.Fatalf("prompt missing URL: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Read the new task inbox entries") {
+		t.Fatalf("prompt missing inbox instruction: %s", prompt)
 	}
 }
 
