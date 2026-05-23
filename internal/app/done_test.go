@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flow/internal/flowdb"
 	"os"
@@ -55,6 +56,51 @@ func TestCmdDoneHappyPath(t *testing.T) {
 	}
 	if task.Status != "done" {
 		t.Errorf("status: got %q, want done", task.Status)
+	}
+}
+
+func TestCmdDoneLinksCurrentBranchPR(t *testing.T) {
+	setupFlowRoot(t)
+	stubClaudeRunner(t, nil)
+	workDir := t.TempDir()
+	if rc := cmdAdd([]string{"task", "Review Task", "--work-dir", workDir}); rc != 0 {
+		t.Fatalf("add rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=? WHERE slug='review-task'`,
+		fakeSessionID("review-task"), flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	old := ghPRViewOutput
+	ghPRViewOutput = func(ctx context.Context, dir string) ([]byte, error) {
+		if dir != workDir {
+			t.Fatalf("gh dir = %q, want %q", dir, workDir)
+		}
+		return []byte(`{"url":"https://github.com/acme/app/pull/12"}`), nil
+	}
+	t.Cleanup(func() { ghPRViewOutput = old })
+
+	if rc := cmdDone([]string{"review-task"}); rc != 0 {
+		t.Fatalf("done rc=%d, want 0", rc)
+	}
+	db = openFlowDB(t)
+	tags, err := flowdb.GetTaskTags(db, "review-task")
+	if err != nil {
+		t.Fatalf("GetTaskTags() error = %v", err)
+	}
+	found := false
+	for _, tag := range tags {
+		if tag == "gh-pr:acme/app#12" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("tags = %v, want gh-pr:acme/app#12", tags)
 	}
 }
 

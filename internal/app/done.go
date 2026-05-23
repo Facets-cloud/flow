@@ -115,6 +115,9 @@ func cmdDone(args []string) int {
 	} else {
 		gitSnapshotPath = path
 	}
+	if err := linkTaskToCurrentBranchPR(db, task); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not link current PR: %v\n", err)
+	}
 
 	now := flowdb.NowISO()
 	res, err := db.Exec(
