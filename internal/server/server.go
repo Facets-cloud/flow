@@ -29,6 +29,7 @@ func New(cfg Config) *Server {
 	s.transcripts = newTranscriptCache()
 	s.caches = newUICaches()
 	s.dbWatcher = newDBWatcher(s)
+	s.inboxMonitors = newInboxMonitorManager(inboxWakeTarget{terminals: s.terminals})
 	// Slack Socket Mode listener: only constructed when a DB is available
 	// (the dispatcher needs one). Start()/Stop() are no-ops when the env
 	// isn't configured for Socket Mode, so wiring is safe to leave in

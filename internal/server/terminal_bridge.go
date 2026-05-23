@@ -168,6 +168,9 @@ func (h *terminalHub) attach(slug string, cols, rows int) (*terminalSession, err
 		return nil, err
 	}
 	h.sessions[slug] = sess
+	if h.server != nil && h.server.inboxMonitors != nil {
+		h.server.inboxMonitors.start(slug)
+	}
 	return sess, nil
 }
 
@@ -177,6 +180,9 @@ func (h *terminalHub) stop(slug string) {
 	delete(h.sessions, slug)
 	h.mu.Unlock()
 	if sess != nil {
+		if h.server != nil && h.server.inboxMonitors != nil {
+			h.server.inboxMonitors.stop(slug)
+		}
 		sess.terminate()
 	}
 }
@@ -1174,6 +1180,9 @@ func (s *terminalSession) wait() {
 		delete(s.hub.sessions, s.slug)
 	}
 	s.hub.mu.Unlock()
+	if s.hub.server != nil && s.hub.server.inboxMonitors != nil {
+		s.hub.server.inboxMonitors.stop(s.slug)
+	}
 	s.hub.sharedRunningCache.invalidate(s.slug)
 }
 

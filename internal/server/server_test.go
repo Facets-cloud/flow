@@ -74,6 +74,14 @@ func TestNewWiresGitHubListenerWhenDBAvailable(t *testing.T) {
 	}
 }
 
+func TestNewWiresInboxMonitorManager(t *testing.T) {
+	root, db := testRootDB(t)
+	srv := New(Config{DB: db, FlowRoot: root, Version: "test"})
+	if srv.inboxMonitors == nil {
+		t.Fatal("inbox monitor manager was not wired")
+	}
+}
+
 func TestTerminalPasteInputWrapsPromptForBracketedPaste(t *testing.T) {
 	got := terminalPasteInput("flow monitor wake")
 	want := "\x1b[200~flow monitor wake\x1b[201~\r"
@@ -105,6 +113,35 @@ func TestFormatInboxWakePromptIncludesSourceAndURL(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Read the new task inbox entries") {
 		t.Fatalf("prompt missing inbox instruction: %s", prompt)
+	}
+}
+
+func TestInboxMonitorManagerStartIsIdempotent(t *testing.T) {
+	t.Setenv("FLOW_ROOT", t.TempDir())
+	manager := newInboxMonitorManager(inboxWakeTarget{})
+	manager.start("review")
+	manager.start("review")
+	defer manager.stop("review")
+
+	manager.mu.Lock()
+	count := len(manager.cancel)
+	manager.mu.Unlock()
+	if count != 1 {
+		t.Fatalf("monitor count = %d, want 1", count)
+	}
+}
+
+func TestInboxMonitorManagerStopRemovesMonitor(t *testing.T) {
+	t.Setenv("FLOW_ROOT", t.TempDir())
+	manager := newInboxMonitorManager(inboxWakeTarget{})
+	manager.start("review")
+	manager.stop("review")
+
+	manager.mu.Lock()
+	count := len(manager.cancel)
+	manager.mu.Unlock()
+	if count != 0 {
+		t.Fatalf("monitor count = %d, want 0", count)
 	}
 }
 

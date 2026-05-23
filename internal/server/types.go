@@ -23,6 +23,7 @@ type Server struct {
 	caches         *uiCaches
 	slackListener  *monitor.SlackListener
 	githubListener *monitor.GitHubListener
+	inboxMonitors  *inboxMonitorManager
 	dbWatcher      *dbWatcher
 }
 
