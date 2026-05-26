@@ -1,3 +1,17 @@
+// Live-update the data-theme attribute when the OS color scheme changes.
+// The initial value is set synchronously by the inline <head> script.
+(function () {
+  const mql = window.matchMedia('(prefers-color-scheme: light)');
+  function apply(e) {
+    document.documentElement.setAttribute('data-theme', e.matches ? 'light' : 'dark');
+  }
+  if (typeof mql.addEventListener === 'function') {
+    mql.addEventListener('change', apply);
+  } else if (typeof mql.addListener === 'function') {
+    mql.addListener(apply);
+  }
+})();
+
 // Honor prefers-reduced-motion: pause demo videos and surface their poster.
 // Also: click-to-play affordance when motion is suppressed.
 (function () {

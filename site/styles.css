@@ -1,28 +1,56 @@
 /* ───────────────────────────── tokens ───────────────────────────── */
 :root {
-  /* terminal palette */
+  /* surface palette (theme-aware; default = dark) */
   --bg-deep:       #0B0D10;
   --bg-elev:       #14171D;
   --bg-paper:      #161B22;
   --bg-paper-2:    #1C2128;
 
-  /* text */
+  /* text (theme-aware) */
   --fg:            #E6EDF3;
   --fg-soft:       #C9D1D9;
   --fg-muted:      #8B949E;
   --fg-dim:        #6E7681;
 
-  /* rules / borders */
+  /* rules / borders (theme-aware) */
   --rule:          #30363D;
   --rule-soft:     #21262D;
   --rule-strong:   #484F58;
 
-  /* wave gradient (lifted from wordmark SVG) */
+  /* small tint overlays for hovers / subtle elevation. Inverted in light. */
+  --tint-1:        rgba(255,255,255,0.02);
+  --tint-2:        rgba(255,255,255,0.05);
+  --tint-strong:   rgba(255,255,255,0.06);
+  --shadow-card:   0 24px 60px -28px rgba(0,0,0,0.55);
+
+  /* the wordmark "fl" + "o" letters (theme-aware fill) */
+  --wm-letter:     #F5F6FA;
+
+  /* ALWAYS-DARK code/terminal surface — does not flip in light mode */
+  --code-bg:       #14171D;
+  --code-bg-elev:  #1C2128;
+  --code-chrome:   rgba(255,255,255,0.02);
+  --code-fg:       #E6EDF3;
+  --code-fg-soft:  #C9D1D9;
+  --code-fg-muted: #8B949E;
+  --code-fg-dim:   #6E7681;
+  --code-rule:     #30363D;
+  --code-rule-soft:#21262D;
+
+  /* Wave gradient — theme-aware. Stops darken in light mode for readable
+     contrast on white. The wordmark and other accents pick these up so the
+     brand stays consistent across themes. */
   --grad-1:        #0AEAA8;
   --grad-2:        #0ADCCE;
   --grad-3:        #198FFF;
   --gradient:      linear-gradient(90deg, var(--grad-1) 0%, var(--grad-2) 55%, var(--grad-3) 100%);
   --gradient-soft: linear-gradient(90deg, rgba(10,234,168,0.08) 0%, rgba(10,220,206,0.08) 55%, rgba(25,143,255,0.08) 100%);
+
+  /* ALWAYS-BRIGHT accents — for use inside always-dark surfaces (terminal
+     frames, diagrams) where the theme-aware --grad-* would go invisible if it
+     darkened in light mode. */
+  --code-accent-1: #0AEAA8;
+  --code-accent-2: #0ADCCE;
 
   /* terminal sigils */
   --term-red:      #FF5F56;
@@ -41,6 +69,62 @@
 
   /* layout */
   --maxw:          1100px;
+}
+
+/* ───────────────────────────── light theme override ─────────────────────────────
+   Drives the swap via two paths so it's robust against browser overrides and
+   stale caches: (1) html[data-theme="light"] is set synchronously by the inline
+   script in <head>; (2) the @media block is a no-JS fallback. Both share the
+   same variable values. */
+:where(html[data-theme="light"]) {
+  --bg-deep:       #FFFFFF;
+  --bg-elev:       #F6F8FA;
+  --bg-paper:      #F6F8FA;
+  --bg-paper-2:    #FFFFFF;
+
+  --fg:            #1F2328;
+  --fg-soft:       #32383F;
+  --fg-muted:      #57606A;
+  --fg-dim:        #8C959F;
+
+  --rule:          #D0D7DE;
+  --rule-soft:     #E1E4E8;
+  --rule-strong:   #AFB8C1;
+
+  --tint-1:        rgba(0,0,0,0.025);
+  --tint-2:        rgba(0,0,0,0.05);
+  --tint-strong:   rgba(0,0,0,0.07);
+  --shadow-card:   0 18px 44px -22px rgba(15,20,30,0.18);
+
+  --wm-letter:     #1F2328;
+
+  /* Wave gradient stays its original bright mint → teal → blue in both
+     themes (per user direction). --grad-* tokens are not overridden here. */
+}
+
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) {
+    --bg-deep:       #FFFFFF;
+    --bg-elev:       #F6F8FA;
+    --bg-paper:      #F6F8FA;
+    --bg-paper-2:    #FFFFFF;
+
+    --fg:            #1F2328;
+    --fg-soft:       #32383F;
+    --fg-muted:      #57606A;
+    --fg-dim:        #8C959F;
+
+    --rule:          #D0D7DE;
+    --rule-soft:     #E1E4E8;
+    --rule-strong:   #AFB8C1;
+
+    --tint-1:        rgba(0,0,0,0.025);
+    --tint-2:        rgba(0,0,0,0.05);
+    --tint-strong:   rgba(0,0,0,0.07);
+    --shadow-card:   0 18px 44px -22px rgba(15,20,30,0.18);
+
+    --wm-letter:     #1F2328;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -65,7 +149,9 @@ a {
   border-bottom: 1px dotted var(--rule);
   transition: color .12s ease, border-color .12s ease;
 }
-a:hover { color: var(--grad-2); border-bottom-color: var(--grad-2); }
+/* Buttons own their own hover styles — exclude them from the generic link
+   hover so the gradient text color doesn't bleed in and ruin contrast. */
+a:not(.btn):hover { color: var(--grad-2); border-bottom-color: var(--grad-2); }
 a:focus-visible {
   outline: 2px solid var(--grad-2);
   outline-offset: 3px;
@@ -76,10 +162,22 @@ code, .mono {
   font-family: var(--font-mono);
   font-size: 0.92em;
   color: var(--fg-soft);
-  background: rgba(255,255,255,0.04);
+  background: var(--tint-2);
   border: 1px solid var(--rule-soft);
   border-radius: 4px;
   padding: 0.05em 0.4em;
+}
+/* <code> inside <pre> is a multi-line inline element — every line fragment
+   draws its own border in some browsers, producing the per-line "underline"
+   effect (visible on light bg). Reset to a transparent pass-through. */
+pre code {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
 }
 
 ::selection { background: rgba(10, 220, 206, 0.30); color: var(--fg); }
@@ -117,18 +215,6 @@ code, .mono {
   overflow: hidden;
 }
 
-.hero__chrome {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--rule-soft);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--fg-muted);
-  background: rgba(0,0,0,0.25);
-}
-
 .dot {
   width: 12px;
   height: 12px;
@@ -139,26 +225,30 @@ code, .mono {
 .dot--amber  { background: var(--term-amber); }
 .dot--green  { background: var(--term-green); }
 
-.hero__chrome-title { margin-left: 14px; }
-
 .hero__inner {
   position: relative;
-  max-width: var(--maxw);
+  max-width: 760px;
   margin: 0 auto;
-  padding: clamp(60px, 11vw, 130px) 22px clamp(40px, 8vw, 80px);
+  padding: clamp(72px, 11vw, 140px) 22px clamp(50px, 8vw, 90px);
   z-index: 1;
+  text-align: center;
 }
 
 .wordmark {
-  margin: 0 0 28px;
-  max-width: 480px;
+  margin: 0 auto 28px;
+  max-width: 440px;
 }
-.wordmark svg { width: 100%; height: auto; }
-.wm-letter { fill: #F5F6FA; }
+.wordmark svg { width: 100%; height: auto; display: block; }
+.wm-letter { fill: var(--wm-letter); }
+/* Wordmark gradient stops — CSS-driven so the wave adapts (bright in dark
+   mode, darker / readable in light mode) via --grad-* tokens. */
+.wm-s1 { stop-color: var(--grad-1); }
+.wm-s2 { stop-color: var(--grad-2); }
+.wm-s3 { stop-color: var(--grad-3); }
 
 .hero__tagline {
-  max-width: 680px;
-  margin: 0 0 32px;
+  max-width: 620px;
+  margin: 0 auto 32px;
   font-size: clamp(20px, 2.6vw, 28px);
   line-height: 1.35;
   color: var(--fg-soft);
@@ -202,6 +292,7 @@ code, .mono {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  justify-content: center;
 }
 
 .btn {
@@ -213,12 +304,16 @@ code, .mono {
   padding: 11px 18px;
   border-radius: var(--r-sm);
   border: 1px solid var(--rule);
-  background: rgba(255,255,255,0.02);
+  background: var(--tint-1);
   color: var(--fg);
   transition: background .15s ease, border-color .15s ease, transform .08s ease;
   white-space: nowrap;
 }
-.btn:hover { border-color: var(--rule-strong); background: rgba(255,255,255,0.05); }
+.btn:hover {
+  border-color: var(--rule-strong);
+  background: var(--tint-2);
+  color: var(--fg); /* override the generic a:hover gradient color, keep readable contrast */
+}
 .btn:active { transform: translateY(1px); }
 
 .btn--primary {
@@ -238,9 +333,11 @@ code, .mono {
   pointer-events: none;
   z-index: -1;
 }
-.btn--primary:hover { background:
-    linear-gradient(rgba(255,255,255,0.04), rgba(255,255,255,0.04)) padding-box,
-    var(--gradient) border-box; }
+.btn--primary:hover {
+  background:
+    linear-gradient(var(--tint-2), var(--tint-2)) padding-box,
+    var(--gradient) border-box;
+}
 
 .btn--ghost { border-color: var(--rule-soft); }
 .btn--icon { padding: 11px 12px; }
@@ -262,15 +359,6 @@ code, .mono {
   padding: 80px 22px 32px;
 }
 .section__head--terminal { text-align: left; }
-
-.kicker {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--grad-1);
-  letter-spacing: 0.04em;
-  margin: 0 0 12px;
-  text-transform: lowercase;
-}
 
 .section__title {
   font-family: var(--font-mono);
@@ -371,11 +459,11 @@ code, .mono {
 
 .act__media { margin: 0; }
 
-/* terminal frame around videos */
+/* terminal frame around videos / code — intentionally stays dark in both themes */
 .terminal-frame {
-  border: 1px solid var(--rule);
+  border: 1px solid var(--code-rule);
   border-radius: var(--r-md);
-  background: var(--bg-elev);
+  background: var(--code-bg);
   overflow: hidden;
   box-shadow:
     0 1px 0 rgba(255,255,255,0.04) inset,
@@ -386,14 +474,14 @@ code, .mono {
   align-items: center;
   gap: 7px;
   padding: 10px 14px;
-  background: rgba(255,255,255,0.02);
-  border-bottom: 1px solid var(--rule-soft);
+  background: var(--code-chrome);
+  border-bottom: 1px solid var(--code-rule-soft);
 }
 .terminal-frame__title {
   margin-left: 12px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--fg-muted);
+  color: var(--code-fg-muted);
 }
 .demo-video {
   width: 100%;
@@ -412,7 +500,7 @@ code, .mono {
   border-bottom: 1px solid var(--rule-soft);
   padding: 80px 22px;
 }
-.brief--alt { background: #131820; }
+.brief--alt { background: var(--bg-elev); }
 
 .brief__sheet {
   max-width: 780px;
@@ -423,14 +511,12 @@ code, .mono {
   padding: 0;
   position: relative;
   overflow: hidden;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.03) inset,
-    0 24px 60px -28px rgba(0,0,0,0.55);
+  box-shadow: var(--shadow-card);
 }
 
 /* file-tab header (looks like an editor tab strip) */
 .brief__head {
-  background: rgba(0,0,0,0.22);
+  background: var(--tint-strong);
   padding: 14px clamp(20px, 4vw, 40px) 22px;
   border-bottom: 1px solid var(--rule-soft);
   position: relative;
@@ -443,21 +529,6 @@ code, .mono {
   height: 1px;
   background: var(--gradient);
   opacity: 0.5;
-}
-
-.brief__tab {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--fg-soft);
-  padding: 4px 10px;
-  border: 1px solid var(--rule);
-  border-radius: 4px 4px 0 0;
-  background: var(--bg-paper-2);
-  border-bottom: none;
-  margin-bottom: 12px;
-  position: relative;
-  top: -1px;
 }
 
 .brief__title {
@@ -564,7 +635,7 @@ code, .mono {
 }
 
 .card {
-  background: rgba(255,255,255,0.025);
+  background: var(--tint-1);
   border: 1px solid var(--rule-soft);
   border-radius: var(--r-md);
   padding: 16px 16px 18px;
@@ -609,13 +680,16 @@ code, .mono {
   font-size: 0.88em;
 }
 
-/* ───────────────────────────── diagrams (svg) ───────────────────────────── */
+/* ───────────────────────────── diagrams (svg) ──────────────────────────────
+   Diagrams are always dark — they sit inside a brief sheet (which flips in
+   light mode), but the diagram itself is a "code-like" visualization, so it
+   stays a dark panel in both themes. */
 .diagram {
   margin: 32px 0 18px;
   text-align: center;
   padding: 18px;
-  background: rgba(0,0,0,0.18);
-  border: 1px solid var(--rule-soft);
+  background: var(--code-bg);
+  border: 1px solid var(--code-rule-soft);
   border-radius: var(--r-md);
 }
 .diagram__svg {
@@ -628,30 +702,31 @@ code, .mono {
 .diagram__caption {
   font-family: var(--font-mono);
   font-size: 11.5px;
-  color: var(--fg-muted);
+  color: var(--code-fg-muted);
   margin-top: 14px;
   letter-spacing: 0.04em;
 }
 
 .d1-h, .d2-h {
-  fill: var(--fg);
+  fill: var(--code-fg);
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 600;
 }
 .d1-sub, .d2-sub {
-  fill: var(--fg-muted);
+  fill: var(--code-fg-muted);
   font-family: var(--font-mono);
   font-size: 11px;
 }
 .d1-edge, .d2-edge {
-  fill: var(--fg-muted);
+  fill: var(--code-fg-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
 }
-.d1-edge--accent, .d2-edge--accent { fill: var(--grad-2); font-weight: 600; }
-.d1-edge--muted,  .d2-edge--muted  { fill: var(--fg-dim); font-style: italic; }
+/* Inside the always-dark diagram panel — must stay bright in light mode too. */
+.d1-edge--accent, .d2-edge--accent { fill: var(--code-accent-2); font-weight: 600; }
+.d1-edge--muted,  .d2-edge--muted  { fill: var(--code-fg-dim); font-style: italic; }
 
 /* ───────────────────────────── install ───────────────────────────── */
 .install {
@@ -697,13 +772,13 @@ code, .mono {
   font-family: var(--font-mono);
   font-size: 13.5px;
   line-height: 1.7;
-  color: var(--fg-soft);
+  color: var(--code-fg-soft);
   background: transparent;
   overflow-x: auto;
   white-space: pre;
 }
 
-/* copy button (sits in the terminal chrome strip) */
+/* copy button (sits in the always-dark terminal chrome strip) */
 .copy-btn {
   margin-left: auto;
   display: inline-flex;
@@ -711,9 +786,9 @@ code, .mono {
   gap: 6px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--fg-muted);
+  color: var(--code-fg-muted);
   background: rgba(255,255,255,0.04);
-  border: 1px solid var(--rule-soft);
+  border: 1px solid var(--code-rule-soft);
   border-radius: 4px;
   padding: 4px 9px;
   cursor: pointer;
@@ -721,8 +796,8 @@ code, .mono {
   user-select: none;
 }
 .copy-btn:hover {
-  color: var(--fg);
-  border-color: var(--rule);
+  color: var(--code-fg);
+  border-color: var(--code-rule);
   background: rgba(255,255,255,0.06);
 }
 .copy-btn:focus-visible {
@@ -737,19 +812,22 @@ code, .mono {
 .copy-btn__icon--check { display: none; }
 
 .copy-btn.is-copied {
-  color: var(--grad-1);
+  /* Inside an always-dark terminal chrome strip — always-bright accent. */
+  color: var(--code-accent-1);
   border-color: rgba(10,234,168,0.45);
   background: rgba(10,234,168,0.08);
 }
 .copy-btn.is-copied .copy-btn__icon--copy  { display: none; }
 .copy-btn.is-copied .copy-btn__icon--check { display: inline-block; }
 .codeblock__prompt {
-  color: var(--grad-1);
+  /* Inside an always-dark terminal frame — use the always-bright accent so
+     it stays visible regardless of theme. */
+  color: var(--code-accent-1);
   font-weight: 700;
   margin-right: 0.7em;
 }
 .codeblock__comment {
-  color: var(--fg-dim);
+  color: var(--code-fg-dim);
   font-style: italic;
 }
 

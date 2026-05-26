@@ -1,9 +1,24 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
   <title>flow — Claude with working memory</title>
+
+  <script>
+    // Set the theme attribute synchronously, before the stylesheet loads,
+    // so there's no flash and no chance of a browser-level "force dark"
+    // override (or stale cache) winning. Falls back to dark on any error.
+    (function () {
+      try {
+        var prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+        document.documentElement.setAttribute('data-theme', prefersLight ? 'light' : 'dark');
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
   <meta name="description" content="flow is a complete task manager for Claude Code — and the working memory layer that turns every session from a brilliant new hire into the engineer on your team.">
 
   <meta property="og:title" content="flow — Claude with working memory">
@@ -19,22 +34,15 @@
 
   <!-- ─────────────────────────── HERO ─────────────────────────── -->
   <header class="hero" role="banner">
-    <div class="hero__chrome" aria-hidden="true">
-      <span class="dot dot--red"></span>
-      <span class="dot dot--amber"></span>
-      <span class="dot dot--green"></span>
-      <span class="hero__chrome-title">~/flow</span>
-    </div>
-
     <div class="hero__inner">
       <h1 class="wordmark" aria-label="flow">
         <svg viewBox="469 323 862 236" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="flow wordmark">
           <defs>
             <linearGradient id="wave-hero" gradientUnits="userSpaceOnUse"
                             x1="9710" y1="0" x2="13250" y2="0">
-              <stop offset="0%"   stop-color="#0AEAA8"/>
-              <stop offset="55%"  stop-color="#0ADCCE"/>
-              <stop offset="100%" stop-color="#198FFF"/>
+              <stop offset="0%"   class="wm-s1"/>
+              <stop offset="55%"  class="wm-s2"/>
+              <stop offset="100%" class="wm-s3"/>
             </linearGradient>
           </defs>
           <g transform="translate(0,901) scale(0.1,-0.1)">
@@ -63,7 +71,7 @@
           </svg>
         </a>
         <a class="btn btn--ghost" href="#install">Install</a>
-        <a class="btn btn--ghost btn--icon" href="https://github.com/Facets-cloud/flow" aria-label="View on GitHub">
+        <a class="btn btn--ghost btn--icon" href="https://github.com/Facets-cloud/flow" target="_blank" rel="noopener noreferrer" aria-label="View on GitHub (opens in new tab)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.4.5 0 5.9 0 12.5c0 5.3 3.4 9.8 8.2 11.4.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2 1-.3 2-.4 3-.4s2 .1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.8-1.6 8.2-6.1 8.2-11.4C24 5.9 18.6.5 12 .5z"/></svg>
         </a>
       </div>
@@ -75,7 +83,6 @@
   <!-- ─────────────────────────── DEMO ─────────────────────────── -->
   <section id="demo" class="demo" aria-labelledby="demo-heading">
     <div class="section__head section__head--terminal">
-      <p class="kicker">$ flow show demo</p>
       <h2 id="demo-heading" class="section__title">See it in action</h2>
       <p class="section__lede">
         A four-act demo of how flow compounds context across days and tasks.
@@ -206,7 +213,6 @@
   <section id="why" class="brief" aria-labelledby="why-heading">
     <article class="brief__sheet">
       <header class="brief__head">
-        <span class="brief__tab" aria-hidden="true">brief.md</span>
         <h2 id="why-heading" class="brief__title">Why flow</h2>
       </header>
 
@@ -255,7 +261,6 @@
   <section id="compound" class="brief brief--alt" aria-labelledby="compound-heading">
     <article class="brief__sheet">
       <header class="brief__head">
-        <span class="brief__tab" aria-hidden="true">compounding.md</span>
         <h2 id="compound-heading" class="brief__title">How context compounds</h2>
       </header>
 
@@ -361,7 +366,6 @@
   <section id="playbooks" class="brief" aria-labelledby="playbooks-heading">
     <article class="brief__sheet">
       <header class="brief__head">
-        <span class="brief__tab" aria-hidden="true">playbooks.md</span>
         <h2 id="playbooks-heading" class="brief__title">Playbooks for the work you do on cadence</h2>
       </header>
 
@@ -445,7 +449,6 @@
   <!-- ─────────────────────────── INSTALL ─────────────────────────── -->
   <section id="install" class="install" aria-labelledby="install-heading">
     <div class="section__head section__head--terminal">
-      <p class="kicker">$ flow init</p>
       <h2 id="install-heading" class="section__title">Install</h2>
       <p class="section__lede">In any Claude Code session, paste this:</p>
     </div>
@@ -515,9 +518,9 @@ flow init</code></pre>
         <svg viewBox="469 323 862 236" xmlns="http://www.w3.org/2000/svg" class="footer__wordmark" aria-label="flow">
           <defs>
             <linearGradient id="wave-footer" gradientUnits="userSpaceOnUse" x1="9710" y1="0" x2="13250" y2="0">
-              <stop offset="0%" stop-color="#0AEAA8"/>
-              <stop offset="55%" stop-color="#0ADCCE"/>
-              <stop offset="100%" stop-color="#198FFF"/>
+              <stop offset="0%" class="wm-s1"/>
+              <stop offset="55%" class="wm-s2"/>
+              <stop offset="100%" class="wm-s3"/>
             </linearGradient>
           </defs>
           <g transform="translate(0,901) scale(0.1,-0.1)">
@@ -532,16 +535,16 @@ flow init</code></pre>
 
       <nav class="footer__links" aria-label="Project links">
         <ul>
-          <li><a href="https://github.com/Facets-cloud/flow">GitHub</a></li>
-          <li><a href="https://github.com/Facets-cloud/flow/blob/main/README.md">README</a></li>
-          <li><a href="https://github.com/Facets-cloud/flow/blob/main/CHANGELOG.md">Changelog</a></li>
-          <li><a href="https://github.com/Facets-cloud/flow/blob/main/CONTRIBUTING.md">Contributing</a></li>
-          <li><a href="https://github.com/Facets-cloud/flow/issues">Issues</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/blob/main/README.md" target="_blank" rel="noopener noreferrer">README</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Changelog</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">Contributing</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/issues" target="_blank" rel="noopener noreferrer">Issues</a></li>
         </ul>
       </nav>
 
       <p class="footer__legal">
-        MIT — © 2026 <a href="https://facets.cloud">Facets Cloud</a>.
+        MIT — © 2026 <a href="https://facets.cloud" target="_blank" rel="noopener noreferrer">Facets Cloud</a>.
         Started as an internal tool. Open-sourced because it might do the same for you.
       </p>
     </div>
