@@ -1,12 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="g" x1="0" y1="32" x2="64" y2="32" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#0AEAA8"/>
-      <stop offset="55%" stop-color="#0ADCCE"/>
+    <!-- Gradient coords match the wordmark's waveGradient exactly so the
+         w renders with the identical green → teal → blue spectrum.
+         userSpaceOnUse is interpreted in the path's local coord system
+         (the one set up by the inner translate/scale group), so these
+         values are in original path coords, not 64×64 viewBox coords. -->
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="9710" y1="0" x2="13250" y2="0">
+      <stop offset="0%"   stop-color="#0AEAA8"/>
+      <stop offset="55%"  stop-color="#0ADCCE"/>
       <stop offset="100%" stop-color="#198FFF"/>
     </linearGradient>
   </defs>
+
   <rect width="64" height="64" rx="12" fill="#0B0D10"/>
-  <path d="M10 40 C 20 22, 28 22, 32 32 C 36 42, 44 42, 54 24"
-        fill="none" stroke="url(#g)" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- The w glyph from assets/flow-logo.svg, centered in the tile.
+       Outer transform places the wordmark's w-bbox (x=971..1325, y=384..551
+       in original viewBox space) into x=4..60, y≈18.9..45.1 of the 64×64. -->
+  <g transform="translate(-149.4 -41.85) scale(0.158)">
+    <g transform="translate(0 901) scale(0.1 -0.1)">
+      <path fill="url(#g)" d="M11380 5167 c-61 -17 -106 -46 -161 -104 -91 -96 -153 -228 -235 -501 -148 -497 -226 -697 -299 -760 -29 -26 -45 -32 -80 -32 -39 0 -50 5 -83 38 -56 56 -115 186 -193 430 -39 119 -93 287 -121 372 -52 160 -107 290 -151 355 -68 100 -165 173 -259 196 -43 10 -51 9 -68 -6 -18 -16 -20 -32 -20 -126 0 -108 0 -108 54 -134 89 -42 136 -132 226 -430 93 -309 190 -587 236 -676 58 -113 153 -217 232 -256 50 -24 69 -28 147 -28 116 0 177 28 262 119 108 115 180 281 299 686 140 475 202 600 298 600 90 0 150 -100 252 -420 162 -506 186 -576 235 -674 28 -57 72 -129 97 -161 152 -192 397 -207 557 -33 119 128 186 285 334 774 69 228 117 351 166 419 35 51 79 85 107 85 10 0 25 11 33 24 13 20 15 42 9 124 -6 91 -9 101 -30 112 -18 10 -33 10 -70 1 -111 -28 -201 -99 -269 -211 -74 -122 -109 -216 -270 -735 -47 -151 -125 -332 -165 -382 -55 -70 -127 -83 -182 -34 -76 67 -123 179 -268 636 -130 409 -183 526 -289 633 -30 30 -78 65 -106 78 -65 30 -163 39 -225 21z"/>
+    </g>
+  </g>
 </svg>
