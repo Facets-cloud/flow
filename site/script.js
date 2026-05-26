@@ -14,13 +14,12 @@
         v.currentTime = 0;
         v.controls = true;
       } else {
-        v.controls = false;
         v.autoplay = true;
         v.loop = true;
         v.setAttribute('autoplay', '');
         const playPromise = v.play();
         if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch(() => { v.controls = true; });
+          playPromise.catch(() => { /* autoplay blocked — controls are always on, user can press play */ });
         }
       }
     });
