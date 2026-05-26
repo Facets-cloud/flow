@@ -3,6 +3,13 @@
 </p>
 
 <p align="center">
+  <a href="https://facets-cloud.github.io/flow/"><strong>Website</strong></a> ·
+  <a href="#install">Install</a> ·
+  <a href="#see-it-in-action">Demo</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
 </p>
