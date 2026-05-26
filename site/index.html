@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>flow — Claude with working memory</title>
+  <meta name="description" content="flow is a complete task manager for Claude Code — and the working memory layer that turns every session from a brilliant new hire into the engineer on your team.">
+
+  <meta property="og:title" content="flow — Claude with working memory">
+  <meta property="og:description" content="A complete task manager for Claude Code, with a knowledge base that grows on every closed task.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://facets-cloud.github.io/flow/">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ─────────────────────────── HERO ─────────────────────────── -->
+  <header class="hero" role="banner">
+    <div class="hero__chrome" aria-hidden="true">
+      <span class="dot dot--red"></span>
+      <span class="dot dot--amber"></span>
+      <span class="dot dot--green"></span>
+      <span class="hero__chrome-title">~/flow</span>
+    </div>
+
+    <div class="hero__inner">
+      <h1 class="wordmark" aria-label="flow">
+        <svg viewBox="469 323 862 236" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="flow wordmark">
+          <defs>
+            <linearGradient id="wave-hero" gradientUnits="userSpaceOnUse"
+                            x1="9710" y1="0" x2="13250" y2="0">
+              <stop offset="0%"   stop-color="#0AEAA8"/>
+              <stop offset="55%"  stop-color="#0ADCCE"/>
+              <stop offset="100%" stop-color="#198FFF"/>
+            </linearGradient>
+          </defs>
+          <g transform="translate(0,901) scale(0.1,-0.1)">
+            <path class="wm-letter" d="M5581 5724 c-163 -35 -286 -126 -351 -257 -45 -94 -60 -168 -60 -309 l0 -98 -210 0 -210 0 0 -115 0 -115 210 0 210 0 0 -660 0 -660 135 0 135 0 0 660 0 660 320 0 320 0 0 115 0 115 -321 0 -321 0 4 118 c4 94 9 128 28 170 51 116 149 159 347 159 65 -3 151 -11 191 -18 40 -6 74 -10 76 -8 3 2 7 54 11 116 l7 112 -23 6 c-154 35 -384 44 -498 19z"/>
+            <path class="wm-letter" d="M6470 5605 l0 -115 265 0 265 0 0 -875 0 -875 -265 0 -265 0 0 -115 0 -115 660 0 660 0 0 115 0 115 -260 0 -260 0 0 990 0 990 -400 0 -400 0 0 -115z"/>
+            <path class="wm-letter" d="M8562 5060 c-182 -48 -332 -170 -416 -341 -77 -156 -90 -222 -90 -444 0 -164 3 -201 22 -270 67 -242 218 -413 432 -489 80 -29 94 -31 235 -31 165 0 213 10 334 68 91 44 224 176 273 272 120 233 139 549 49 808 -36 103 -84 180 -161 258 -87 87 -178 139 -296 169 -104 27 -280 27 -382 0z m344 -241 c186 -70 284 -278 271 -578 -8 -201 -54 -328 -149 -417 -72 -67 -144 -97 -249 -102 -105 -5 -182 14 -257 65 -117 79 -173 197 -193 402 -23 245 44 478 166 574 105 83 277 106 411 56z"/>
+            <path fill="url(#wave-hero)" d="M11380 5167 c-61 -17 -106 -46 -161 -104 -91 -96 -153 -228 -235 -501 -148 -497 -226 -697 -299 -760 -29 -26 -45 -32 -80 -32 -39 0 -50 5 -83 38 -56 56 -115 186 -193 430 -39 119 -93 287 -121 372 -52 160 -107 290 -151 355 -68 100 -165 173 -259 196 -43 10 -51 9 -68 -6 -18 -16 -20 -32 -20 -126 0 -108 0 -108 54 -134 89 -42 136 -132 226 -430 93 -309 190 -587 236 -676 58 -113 153 -217 232 -256 50 -24 69 -28 147 -28 116 0 177 28 262 119 108 115 180 281 299 686 140 475 202 600 298 600 90 0 150 -100 252 -420 162 -506 186 -576 235 -674 28 -57 72 -129 97 -161 152 -192 397 -207 557 -33 119 128 186 285 334 774 69 228 117 351 166 419 35 51 79 85 107 85 10 0 25 11 33 24 13 20 15 42 9 124 -6 91 -9 101 -30 112 -18 10 -33 10 -70 1 -111 -28 -201 -99 -269 -211 -74 -122 -109 -216 -270 -735 -47 -151 -125 -332 -165 -382 -55 -70 -127 -83 -182 -34 -76 67 -123 179 -268 636 -130 409 -183 526 -289 633 -30 30 -78 65 -106 78 -65 30 -163 39 -225 21z"/>
+          </g>
+        </svg>
+      </h1>
+
+      <p class="hero__tagline">
+        A complete task manager for <span class="kw">Claude&nbsp;Code</span> —
+        and the working memory layer that turns every session from a
+        <span class="strike">brilliant new hire</span>
+        <span class="grad-text">the engineer on your team</span>.
+      </p>
+
+      <p class="hero__prompt"><span class="prompt-sigil">$</span> <span class="typed">flow do build-the-future</span><span class="caret" aria-hidden="true"></span></p>
+
+      <div class="hero__cta">
+        <a class="btn btn--primary" href="#demo">
+          <span>See it in action</span>
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 1v12M3 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+        <a class="btn btn--ghost" href="#install">Install</a>
+        <a class="btn btn--ghost btn--icon" href="https://github.com/Facets-cloud/flow" aria-label="View on GitHub">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.4.5 0 5.9 0 12.5c0 5.3 3.4 9.8 8.2 11.4.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2 1-.3 2-.4 3-.4s2 .1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.8-1.6 8.2-6.1 8.2-11.4C24 5.9 18.6.5 12 .5z"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <div class="hero__glow" aria-hidden="true"></div>
+  </header>
+
+  <!-- ─────────────────────────── DEMO ─────────────────────────── -->
+  <section id="demo" class="demo" aria-labelledby="demo-heading">
+    <div class="section__head section__head--terminal">
+      <p class="kicker">$ flow show demo</p>
+      <h2 id="demo-heading" class="section__title">See it in action</h2>
+      <p class="section__lede">
+        A four-act demo of how flow compounds context across days and tasks.
+        The work is silly on purpose — Star&nbsp;Trek bridge starships — so the
+        mechanic is what you watch, not the code.
+      </p>
+    </div>
+
+    <ol class="acts" role="list">
+      <li class="act" id="act-1">
+        <div class="act__caption">
+          <p class="act__num">Act 01</p>
+          <h3 class="act__title">Capture the work.</h3>
+          <p class="act__body">
+            Just talk. flow interviews you for <em>what / why / where / done-when</em>,
+            drafts a structured brief, and opens a dedicated Claude session for the
+            task in a new tab.
+          </p>
+        </div>
+        <figure class="act__media">
+          <div class="terminal-frame">
+            <div class="terminal-frame__chrome"><span class="dot dot--red"></span><span class="dot dot--amber"></span><span class="dot dot--green"></span></div>
+            <video
+              class="demo-video"
+              src="demo/01-task-intake.mp4"
+              poster="demo/01-task-intake-poster.jpg"
+              autoplay muted loop playsinline preload="metadata"
+              aria-label="Act 1 — task intake. flow interviews the user, drafts a brief, and opens a dedicated Claude session.">
+              <noscript>
+                <img src="demo/01-task-intake.gif" alt="Act 1 — task intake (animated GIF fallback)">
+              </noscript>
+            </video>
+          </div>
+        </figure>
+      </li>
+
+      <li class="act" id="act-2">
+        <div class="act__caption">
+          <p class="act__num">Act 02</p>
+          <h3 class="act__title">Work, then park.</h3>
+          <p class="act__body">
+            The session has the brief, the project context, and the knowledge base
+            loaded. You build until you hit a blocker — here, <em>"Kirk needs to
+            review this"</em> — and tell Claude to park it. Status flips to
+            <code>waiting</code>. Tab can close.
+          </p>
+        </div>
+        <figure class="act__media">
+          <div class="terminal-frame">
+            <div class="terminal-frame__chrome"><span class="dot dot--red"></span><span class="dot dot--amber"></span><span class="dot dot--green"></span></div>
+            <video
+              class="demo-video"
+              src="demo/02-task-execution.mp4"
+              poster="demo/02-task-execution-poster.jpg"
+              autoplay muted loop playsinline preload="metadata"
+              aria-label="Act 2 — work, then park. The session loads context, builds, then parks the task with a waiting note.">
+              <noscript>
+                <img src="demo/02-task-execution.gif" alt="Act 2 — task execution and park (animated GIF fallback)">
+              </noscript>
+            </video>
+          </div>
+        </figure>
+      </li>
+
+      <li class="act" id="act-3">
+        <div class="act__caption">
+          <p class="act__num">Act 03</p>
+          <h3 class="act__title">Resume and close.</h3>
+          <p class="act__body">
+            A day later you say <em>"Kirk signed off."</em> Same session resumes
+            with full memory of where it left off. <code>flow done</code> flips
+            status and triggers the sweep — Claude re-reads the whole transcript
+            and writes durable facts into the knowledge base.
+          </p>
+        </div>
+        <figure class="act__media">
+          <div class="terminal-frame">
+            <div class="terminal-frame__chrome"><span class="dot dot--red"></span><span class="dot dot--amber"></span><span class="dot dot--green"></span></div>
+            <video
+              class="demo-video"
+              src="demo/03-approval-and-close.mp4"
+              poster="demo/03-approval-and-close-poster.jpg"
+              autoplay muted loop playsinline preload="metadata"
+              aria-label="Act 3 — approval and close. The user resumes the session a day later, marks it done, and triggers a knowledge-base sweep.">
+              <noscript>
+                <img src="demo/03-approval-and-close.gif" alt="Act 3 — approval and close (animated GIF fallback)">
+              </noscript>
+            </video>
+          </div>
+        </figure>
+      </li>
+
+      <li class="act act--punchline" id="act-4">
+        <div class="act__caption">
+          <p class="act__num">Act 04 <span class="act__num-tag">— months later</span></p>
+          <h3 class="act__title">Months later, a new captain.</h3>
+          <p class="act__body">
+            New task: <em>"Picard's the new boss, he wants the starship as an
+            SVG."</em> Brand new session, but it already knows the ship, knows
+            the design choices Kirk approved, knows the project conventions —
+            because the KB carried it. Claude just gets to work.
+          </p>
+          <p class="act__sting">
+            That fourth session is what flow is really about.<br>
+            Not the first session — <span class="grad-text">the fiftieth</span>.
+          </p>
+        </div>
+        <figure class="act__media">
+          <div class="terminal-frame">
+            <div class="terminal-frame__chrome"><span class="dot dot--red"></span><span class="dot dot--amber"></span><span class="dot dot--green"></span></div>
+            <video
+              class="demo-video"
+              src="demo/04-picard-svg-upgrade.mp4"
+              poster="demo/04-picard-svg-upgrade-poster.jpg"
+              autoplay muted loop playsinline preload="metadata"
+              aria-label="Act 4 — months later, a new task uses everything the knowledge base captured from prior sessions.">
+              <noscript>
+                <img src="demo/04-picard-svg-upgrade.gif" alt="Act 4 — Picard's SVG upgrade (animated GIF fallback)">
+              </noscript>
+            </video>
+          </div>
+        </figure>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ─────────────────────────── WHY FLOW ─────────────────────────── -->
+  <section id="why" class="brief" aria-labelledby="why-heading">
+    <article class="brief__sheet">
+      <header class="brief__head">
+        <span class="brief__tab" aria-hidden="true">brief.md</span>
+        <h2 id="why-heading" class="brief__title">Why flow</h2>
+      </header>
+
+      <section class="brief__section">
+        <h3 class="brief__h">What</h3>
+        <p>
+          flow is a complete task manager — projects, tasks, structured briefs,
+          progress notes, playbooks for recurring work — <em>and</em> a working
+          memory layer that injects all of it into every Claude session
+          automatically. Capture once, work with Claude on it forever.
+        </p>
+      </section>
+
+      <section class="brief__section">
+        <h3 class="brief__h">Why</h3>
+        <p>
+          If you use Claude Code daily, you've felt the ceiling: every session
+          is a new hire. Brilliant, capable, ready to help — but with no memory
+          of yesterday's decisions, last week's migrations, or the half-finished
+          threads in your other tabs. You spend the first ten minutes of every
+          session catching it up.
+        </p>
+        <p>
+          flow changes the relationship. The first session feels normal. By
+          session ten, Claude knows your codebase quirks, your team, the
+          customer you keep mentioning, and the migration you're three steps
+          into. By session fifty, it's the engineer on your team — not a new
+          hire you re-explain yourself to every morning.
+        </p>
+      </section>
+
+      <section class="brief__section">
+        <h3 class="brief__h">Done when</h3>
+        <ul class="brief__checks">
+          <li>Claude remembers your stack across sessions.</li>
+          <li>Claude remembers your team and the customers you keep mentioning.</li>
+          <li>You stop re-explaining yourself every morning.</li>
+        </ul>
+      </section>
+
+      <p class="brief__byline">Built for power users who want Claude to <em>work with them</em>, not just <em>help them</em>.</p>
+    </article>
+  </section>
+
+  <!-- ─────────────────────────── HOW CONTEXT COMPOUNDS ─────────────────────────── -->
+  <section id="compound" class="brief brief--alt" aria-labelledby="compound-heading">
+    <article class="brief__sheet">
+      <header class="brief__head">
+        <span class="brief__tab" aria-hidden="true">compounding.md</span>
+        <h2 id="compound-heading" class="brief__title">How context compounds</h2>
+      </header>
+
+      <section class="brief__section">
+        <p class="brief__lede">
+          Every task feeds the same knowledge base. Every closed task makes
+          the next one smarter.
+        </p>
+
+        <figure class="diagram">
+          <svg viewBox="0 0 760 340" role="img" aria-labelledby="diagram1-title diagram1-desc" class="diagram__svg">
+            <title id="diagram1-title">Knowledge base, Claude session, and task interactions</title>
+            <desc id="diagram1-desc">A task brief and notes feed a Claude session via flow do. The session loads context from the knowledge base, writes back to it via live scoop and on-done sweep, and emits progress notes back to the task.</desc>
+
+            <defs>
+              <linearGradient id="d1-wave" gradientUnits="userSpaceOnUse" x1="30" y1="0" x2="730" y2="0">
+                <stop offset="0%"   stop-color="#0AEAA8"/>
+                <stop offset="55%"  stop-color="#0ADCCE"/>
+                <stop offset="100%" stop-color="#198FFF"/>
+              </linearGradient>
+              <marker id="d1-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="#0ADCCE"/>
+              </marker>
+              <marker id="d1-arrow-muted" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="#8B949E"/>
+              </marker>
+            </defs>
+
+            <!-- KB sits directly above Session, sharing its horizontal span -->
+            <rect x="380" y="20" width="340" height="92" rx="10" fill="#1C2128" stroke="url(#d1-wave)" stroke-width="2"/>
+            <text x="550" y="50" text-anchor="middle" class="d1-h">~/.flow/kb/</text>
+            <text x="550" y="74" text-anchor="middle" class="d1-sub">user · org · products</text>
+            <text x="550" y="94" text-anchor="middle" class="d1-sub">processes · business</text>
+
+            <!-- Task at lower-left -->
+            <rect x="30" y="200" width="170" height="100" rx="10" fill="#1C2128" stroke="#484F58" stroke-width="1.5"/>
+            <text x="115" y="232" text-anchor="middle" class="d1-h">Task</text>
+            <text x="115" y="258" text-anchor="middle" class="d1-sub">brief.md</text>
+            <text x="115" y="282" text-anchor="middle" class="d1-sub">+ updates/*.md</text>
+
+            <!-- Session at lower-right, aligned under KB -->
+            <rect x="380" y="200" width="340" height="100" rx="10" fill="#1C2128" stroke="url(#d1-wave)" stroke-width="2"/>
+            <text x="550" y="232" text-anchor="middle" class="d1-h">Claude session</text>
+            <text x="550" y="258" text-anchor="middle" class="d1-sub">loads brief + kb + notes</text>
+            <text x="550" y="282" text-anchor="middle" class="d1-sub">+ repo conventions</text>
+
+            <!-- horizontal arrows between task & session -->
+            <line x1="206" y1="232" x2="370" y2="232" stroke="#8B949E" stroke-width="1.6" marker-end="url(#d1-arrow-muted)"/>
+            <text x="288" y="222" text-anchor="middle" class="d1-edge">flow do</text>
+
+            <line x1="370" y1="268" x2="206" y2="268" stroke="#8B949E" stroke-width="1.6" marker-end="url(#d1-arrow-muted)"/>
+            <text x="288" y="286" text-anchor="middle" class="d1-edge">updates</text>
+
+            <!-- vertical arrows from Session top up to KB bottom (within the shared column) -->
+            <line x1="445" y1="198" x2="445" y2="118" stroke="#0ADCCE" stroke-width="1.8" marker-end="url(#d1-arrow)"/>
+            <text x="435" y="156" text-anchor="end" class="d1-edge d1-edge--accent">scoop</text>
+            <text x="435" y="172" text-anchor="end" class="d1-edge d1-edge--muted">live</text>
+
+            <line x1="655" y1="198" x2="655" y2="118" stroke="#0ADCCE" stroke-width="1.8" marker-end="url(#d1-arrow)"/>
+            <text x="665" y="156" text-anchor="start" class="d1-edge d1-edge--accent">sweep</text>
+            <text x="665" y="172" text-anchor="start" class="d1-edge d1-edge--muted">on done</text>
+          </svg>
+          <figcaption class="diagram__caption">
+            kb ⇄ session ⇄ task
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="brief__section brief__section--grid">
+        <div class="card">
+          <h4 class="card__title"><span class="card__bullet">●</span> Scoop <span class="card__tag">live</span></h4>
+          <p>
+            During a session the flow skill listens for durable facts you mention
+            — your role, a teammate's name, a product convention — and appends
+            them to the matching kb file on the fly.
+          </p>
+        </div>
+        <div class="card">
+          <h4 class="card__title"><span class="card__bullet">●</span> Sweep <span class="card__tag">on flow done</span></h4>
+          <p>
+            When you close a task, flow spawns a headless Claude pass that
+            re-reads the entire transcript and pulls anything kb-worthy that
+            the live scoop missed.
+          </p>
+        </div>
+        <div class="card">
+          <h4 class="card__title"><span class="card__bullet">●</span> Cross-reference</h4>
+          <p>
+            <code>flow transcript &lt;sibling-task&gt;</code> lets a current
+            session read what was decided in a related one — useful when the
+            brief alone doesn't carry enough context.
+          </p>
+        </div>
+      </section>
+
+      <p class="brief__byline">Net effect: the longer you use flow, the more your knowledge base grows, the less you re-explain yourself.</p>
+    </article>
+  </section>
+
+  <!-- ─────────────────────────── PLAYBOOKS ─────────────────────────── -->
+  <section id="playbooks" class="brief" aria-labelledby="playbooks-heading">
+    <article class="brief__sheet">
+      <header class="brief__head">
+        <span class="brief__tab" aria-hidden="true">playbooks.md</span>
+        <h2 id="playbooks-heading" class="brief__title">Playbooks for the work you do on cadence</h2>
+      </header>
+
+      <section class="brief__section">
+        <p>
+          Some work repeats. Weekly reviews. Daily PR triage. On-call rotations.
+          Customer-meeting prep.
+        </p>
+        <p>
+          A <strong>playbook</strong> is a reusable run definition — a markdown
+          brief that describes what a run does.
+          <code>flow run playbook weekly-review</code> snapshots that brief into
+          a fresh task and spawns a new Claude session against it. Every run is
+          reproducible (it executes against a frozen snapshot) and contributes
+          back to the knowledge base on <code>flow done</code> like any other task.
+        </p>
+
+        <figure class="diagram">
+          <svg viewBox="0 0 760 220" role="img" aria-labelledby="diagram2-title diagram2-desc" class="diagram__svg">
+            <title id="diagram2-title">Playbook to snapshot to session</title>
+            <desc id="diagram2-desc">A playbook brief is snapshotted into a frozen copy, which becomes a new task, which spawns a new Claude session that executes against the snapshot.</desc>
+
+            <defs>
+              <linearGradient id="d2-wave" gradientUnits="userSpaceOnUse" x1="30" y1="0" x2="750" y2="0">
+                <stop offset="0%"   stop-color="#0AEAA8"/>
+                <stop offset="55%"  stop-color="#0ADCCE"/>
+                <stop offset="100%" stop-color="#198FFF"/>
+              </linearGradient>
+              <marker id="d2-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="#0ADCCE"/>
+              </marker>
+            </defs>
+
+            <!-- Playbook -->
+            <rect x="30" y="70" width="140" height="90" rx="8" fill="#1C2128" stroke="url(#d2-wave)" stroke-width="2"/>
+            <text x="100" y="108" text-anchor="middle" class="d2-h">Playbook</text>
+            <text x="100" y="132" text-anchor="middle" class="d2-sub">brief.md</text>
+
+            <line x1="172" y1="115" x2="246" y2="115" stroke="#0ADCCE" stroke-width="1.8" marker-end="url(#d2-arrow)"/>
+            <text x="209" y="104" text-anchor="middle" class="d2-edge">flow run</text>
+
+            <!-- Snapshot -->
+            <rect x="250" y="70" width="160" height="90" rx="8" fill="#14171D" stroke="#484F58" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <text x="330" y="108" text-anchor="middle" class="d2-h">snapshot</text>
+            <text x="330" y="132" text-anchor="middle" class="d2-sub">(frozen copy)</text>
+
+            <line x1="412" y1="115" x2="486" y2="115" stroke="#0ADCCE" stroke-width="1.8" marker-end="url(#d2-arrow)"/>
+
+            <!-- Run task -->
+            <rect x="490" y="70" width="140" height="90" rx="8" fill="#1C2128" stroke="#484F58" stroke-width="1.5"/>
+            <text x="560" y="108" text-anchor="middle" class="d2-h">new task</text>
+            <text x="560" y="132" text-anchor="middle" class="d2-sub">kind=playbook_run</text>
+
+            <line x1="632" y1="115" x2="694" y2="115" stroke="#0ADCCE" stroke-width="1.8" marker-end="url(#d2-arrow)"/>
+
+            <!-- Session pill -->
+            <rect x="700" y="80" width="50" height="70" rx="10" fill="#1C2128" stroke="url(#d2-wave)" stroke-width="2"/>
+            <text x="725" y="118" text-anchor="middle" class="d2-h">$</text>
+            <text x="725" y="138" text-anchor="middle" class="d2-sub">claude</text>
+
+            <!-- caption row underneath each box -->
+            <text x="100" y="190" text-anchor="middle" class="d2-edge d2-edge--muted">definition</text>
+            <text x="330" y="190" text-anchor="middle" class="d2-edge d2-edge--muted">reproducible</text>
+            <text x="560" y="190" text-anchor="middle" class="d2-edge d2-edge--muted">task row</text>
+            <text x="725" y="190" text-anchor="middle" class="d2-edge d2-edge--muted">session</text>
+          </svg>
+          <figcaption class="diagram__caption">
+            playbook → snapshot → new task → session
+          </figcaption>
+        </figure>
+
+        <p class="brief__byline">
+          Same compounding mechanic. Your weekly review session two months
+          from now will know everything every prior weekly review surfaced.
+        </p>
+      </section>
+    </article>
+  </section>
+
+  <!-- ─────────────────────────── INSTALL ─────────────────────────── -->
+  <section id="install" class="install" aria-labelledby="install-heading">
+    <div class="section__head section__head--terminal">
+      <p class="kicker">$ flow init</p>
+      <h2 id="install-heading" class="section__title">Install</h2>
+      <p class="section__lede">In any Claude Code session, paste this:</p>
+    </div>
+
+    <div class="install__primary">
+      <div class="terminal-frame terminal-frame--code">
+        <div class="terminal-frame__chrome">
+          <span class="dot dot--red"></span><span class="dot dot--amber"></span><span class="dot dot--green"></span>
+          <span class="terminal-frame__title">claude</span>
+          <button class="copy-btn" type="button" data-copy-target="next-codeblock" aria-label="Copy command">
+            <svg class="copy-btn__icon copy-btn__icon--copy" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5 1.5h7A1.5 1.5 0 0 1 13.5 3v10A1.5 1.5 0 0 1 12 14.5H5A1.5 1.5 0 0 1 3.5 13V3A1.5 1.5 0 0 1 5 1.5z" fill="none" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M2.5 5v8A1.5 1.5 0 0 0 4 14.5h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <svg class="copy-btn__icon copy-btn__icon--check" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="copy-btn__label">Copy</span>
+          </button>
+        </div>
+        <pre class="codeblock"><code><span class="codeblock__prompt">&gt;</span> Install flow from https://github.com/Facets-cloud/flow</code></pre>
+      </div>
+      <p class="install__caption">
+        Claude reads the repo, downloads the binary, and runs
+        <code>flow&nbsp;init</code> — which installs the flow skill and registers a
+        SessionStart hook so every future Claude session loads the skill
+        automatically. Then say <strong>"let's get to work"</strong> and follow
+        along.
+      </p>
+    </div>
+
+    <details class="install__manual">
+      <summary>Prefer manual install? Expand for curl + chmod + flow init.</summary>
+      <div class="terminal-frame terminal-frame--code">
+        <div class="terminal-frame__chrome">
+          <span class="dot dot--red"></span><span class="dot dot--amber"></span><span class="dot dot--green"></span>
+          <span class="terminal-frame__title">bash</span>
+          <button class="copy-btn" type="button" data-copy-target="next-codeblock" aria-label="Copy install commands">
+            <svg class="copy-btn__icon copy-btn__icon--copy" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5 1.5h7A1.5 1.5 0 0 1 13.5 3v10A1.5 1.5 0 0 1 12 14.5H5A1.5 1.5 0 0 1 3.5 13V3A1.5 1.5 0 0 1 5 1.5z" fill="none" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M2.5 5v8A1.5 1.5 0 0 0 4 14.5h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <svg class="copy-btn__icon copy-btn__icon--check" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="copy-btn__label">Copy</span>
+          </button>
+        </div>
+        <pre class="codeblock"><code><span class="codeblock__comment"># 1. Download the binary for your Mac.</span>
+ARCH=arm64        <span class="codeblock__comment"># Apple Silicon — use amd64 for Intel.</span>
+
+curl -fsSL -o /usr/local/bin/flow \
+  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
+chmod +x /usr/local/bin/flow
+xattr -d com.apple.quarantine /usr/local/bin/flow 2&gt;/dev/null || true
+
+<span class="codeblock__comment"># 2. Initialize — creates ~/.flow/, installs the skill + hook.</span>
+flow init</code></pre>
+      </div>
+    </details>
+  </section>
+
+  <!-- ─────────────────────────── FOOTER ─────────────────────────── -->
+  <footer class="footer" role="contentinfo">
+    <div class="footer__inner">
+      <div class="footer__brand">
+        <svg viewBox="469 323 862 236" xmlns="http://www.w3.org/2000/svg" class="footer__wordmark" aria-label="flow">
+          <defs>
+            <linearGradient id="wave-footer" gradientUnits="userSpaceOnUse" x1="9710" y1="0" x2="13250" y2="0">
+              <stop offset="0%" stop-color="#0AEAA8"/>
+              <stop offset="55%" stop-color="#0ADCCE"/>
+              <stop offset="100%" stop-color="#198FFF"/>
+            </linearGradient>
+          </defs>
+          <g transform="translate(0,901) scale(0.1,-0.1)">
+            <path class="wm-letter" d="M5581 5724 c-163 -35 -286 -126 -351 -257 -45 -94 -60 -168 -60 -309 l0 -98 -210 0 -210 0 0 -115 0 -115 210 0 210 0 0 -660 0 -660 135 0 135 0 0 660 0 660 320 0 320 0 0 115 0 115 -321 0 -321 0 4 118 c4 94 9 128 28 170 51 116 149 159 347 159 65 -3 151 -11 191 -18 40 -6 74 -10 76 -8 3 2 7 54 11 116 l7 112 -23 6 c-154 35 -384 44 -498 19z"/>
+            <path class="wm-letter" d="M6470 5605 l0 -115 265 0 265 0 0 -875 0 -875 -265 0 -265 0 0 -115 0 -115 660 0 660 0 0 115 0 115 -260 0 -260 0 0 990 0 990 -400 0 -400 0 0 -115z"/>
+            <path class="wm-letter" d="M8562 5060 c-182 -48 -332 -170 -416 -341 -77 -156 -90 -222 -90 -444 0 -164 3 -201 22 -270 67 -242 218 -413 432 -489 80 -29 94 -31 235 -31 165 0 213 10 334 68 91 44 224 176 273 272 120 233 139 549 49 808 -36 103 -84 180 -161 258 -87 87 -178 139 -296 169 -104 27 -280 27 -382 0z m344 -241 c186 -70 284 -278 271 -578 -8 -201 -54 -328 -149 -417 -72 -67 -144 -97 -249 -102 -105 -5 -182 14 -257 65 -117 79 -173 197 -193 402 -23 245 44 478 166 574 105 83 277 106 411 56z"/>
+            <path fill="url(#wave-footer)" d="M11380 5167 c-61 -17 -106 -46 -161 -104 -91 -96 -153 -228 -235 -501 -148 -497 -226 -697 -299 -760 -29 -26 -45 -32 -80 -32 -39 0 -50 5 -83 38 -56 56 -115 186 -193 430 -39 119 -93 287 -121 372 -52 160 -107 290 -151 355 -68 100 -165 173 -259 196 -43 10 -51 9 -68 -6 -18 -16 -20 -32 -20 -126 0 -108 0 -108 54 -134 89 -42 136 -132 226 -430 93 -309 190 -587 236 -676 58 -113 153 -217 232 -256 50 -24 69 -28 147 -28 116 0 177 28 262 119 108 115 180 281 299 686 140 475 202 600 298 600 90 0 150 -100 252 -420 162 -506 186 -576 235 -674 28 -57 72 -129 97 -161 152 -192 397 -207 557 -33 119 128 186 285 334 774 69 228 117 351 166 419 35 51 79 85 107 85 10 0 25 11 33 24 13 20 15 42 9 124 -6 91 -9 101 -30 112 -18 10 -33 10 -70 1 -111 -28 -201 -99 -269 -211 -74 -122 -109 -216 -270 -735 -47 -151 -125 -332 -165 -382 -55 -70 -127 -83 -182 -34 -76 67 -123 179 -268 636 -130 409 -183 526 -289 633 -30 30 -78 65 -106 78 -65 30 -163 39 -225 21z"/>
+          </g>
+        </svg>
+        <p class="footer__tagline">Claude with working memory.</p>
+      </div>
+
+      <nav class="footer__links" aria-label="Project links">
+        <ul>
+          <li><a href="https://github.com/Facets-cloud/flow">GitHub</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/blob/main/README.md">README</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/Facets-cloud/flow/issues">Issues</a></li>
+        </ul>
+      </nav>
+
+      <p class="footer__legal">
+        MIT — © 2026 <a href="https://facets.cloud">Facets Cloud</a>.
+        Started as an internal tool. Open-sourced because it might do the same for you.
+      </p>
+    </div>
+  </footer>
+
+  <script src="script.js" defer></script>
+</body>
+</html>

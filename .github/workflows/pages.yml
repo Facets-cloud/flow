@@ -1,0 +1,56 @@
+name: Publish GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'docs/demo/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assemble publish tree
+        run: |
+          set -euo pipefail
+          rm -rf out
+          mkdir -p out
+
+          # Site files at root.
+          cp -R site/. out/
+
+          # The site links demos via the symlinked `demo/` path; replace
+          # the symlink with the real files so Pages serves them.
+          rm -f out/demo
+          mkdir -p out/demo
+          cp -R docs/demo/. out/demo/
+
+          # Add a .nojekyll so GitHub Pages serves files starting with _ verbatim
+          touch out/.nojekyll
+
+          echo "--- publish tree ---"
+          find out -maxdepth 2 -print
+
+      - name: Deploy to gh-pages (orphan)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./out
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'deploy: ${{ github.sha }}'
