@@ -144,7 +144,7 @@ loads the skill automatically. Then say **"let's get to work"** and
 follow along.
 
 <details>
-<summary>Manual install (curl + chmod + flow init)</summary>
+<summary>Manual install — macOS (curl + chmod + flow init)</summary>
 
 ```bash
 # 1. Download the binary for your Mac.
@@ -170,6 +170,45 @@ flow init
 
 The `xattr` step removes Gatekeeper's quarantine attribute so macOS
 doesn't refuse to run the unsigned binary.
+
+</details>
+
+<details>
+<summary>Manual install — Windows (PowerShell + flow init)</summary>
+
+Requirements: Windows 10 or 11, [Windows Terminal](https://aka.ms/terminal)
+(default on Win11; one-click install from Microsoft Store on Win10),
+and Claude Code on `PATH` (`claude.exe`).
+
+Run from PowerShell:
+
+```powershell
+# 1. Download flow.exe to a per-user location (no admin needed).
+$dest = "$env:LOCALAPPDATA\Programs\flow"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Invoke-WebRequest `
+  -Uri "https://github.com/Facets-cloud/flow/releases/latest/download/flow-windows-amd64.exe" `
+  -OutFile "$dest\flow.exe"
+
+# 2. Add it to your user PATH (persistent across new terminals).
+$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($userPath -notlike "*$dest*") {
+  [Environment]::SetEnvironmentVariable("PATH", "$userPath;$dest", "User")
+  Write-Host "Added $dest to your user PATH — open a new terminal to pick it up."
+}
+
+# 3. Initialize. Same wiring as macOS: creates %USERPROFILE%\.flow\,
+#    writes the skill to %USERPROFILE%\.claude\skills\flow\SKILL.md,
+#    and registers the SessionStart hook in
+#    %USERPROFILE%\.claude\settings.json.
+& "$dest\flow.exe" init
+```
+
+No `xattr` step is needed on Windows. Tab-spawning targets Windows
+Terminal (`wt.exe`); each `flow do` opens a new tab in your current
+window running PowerShell + Claude Code. If you don't have Windows
+Terminal installed, install it once from the Microsoft Store and
+re-run.
 
 </details>
 
@@ -359,20 +398,26 @@ and reinstall the skill + hook.
 
 ## Where flow runs (and where we'd love help)
 
-Today flow runs on **macOS (iTerm2, Warp, stock Terminal.app, kitty,
-or zellij) + Claude Code only**. That's the stack we use, and that's
-what the session-spawn layer was built and tested against. zellij
-and kitty work on Linux too as a side effect — both are
-cross-platform and flow's zellij / kitty backends don't depend on
-any macOS APIs. Kitty needs `allow_remote_control yes` (or
-`socket-only`) in `kitty.conf` so flow can drive `kitty @ launch`
-from inside the running kitty instance.
+Today flow runs on:
+
+- **macOS** — iTerm2, Warp, stock Terminal.app, Ghostty, kitty, or
+  zellij. The stack we use daily.
+- **Windows 10/11** — Windows Terminal (`wt.exe`). PowerShell-based
+  spawn. Tab-focus on a live session falls back to a "switch
+  manually" message because `wt.exe` exposes no programmatic
+  tab-enumeration API.
+- **Linux** — kitty or zellij. Both are cross-platform and don't
+  depend on any macOS APIs. Kitty needs `allow_remote_control yes`
+  (or `socket-only`) in `kitty.conf` so flow can drive `kitty @
+  launch` from inside the running kitty instance.
+
+Claude Code is the only supported harness today.
 
 The architecture is portable — session spawning is one small
 package — but other harnesses (Codex, Cursor, plain shell) and other
-terminals (Linux + tmux/wezterm, Windows Terminal) need contributors
-who run those stacks daily and care enough to wire them in. If that's
-you, [a PR is very welcome](CONTRIBUTING.md).
+terminals (Linux gnome-terminal, tmux/wezterm, etc.) need
+contributors who run those stacks daily and care enough to wire them
+in. If that's you, [a PR is very welcome](CONTRIBUTING.md).
 
 ## Where flow came from
 

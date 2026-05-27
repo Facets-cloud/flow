@@ -218,9 +218,7 @@ func (c *claude) LiveSessionIDs() (map[string]int, error) {
 	return live, nil
 }
 
-func runPS() ([]byte, error) {
-	return exec.Command("ps", "-axo", "pid,command").Output()
-}
+// runPS is defined per OS in claude_ps_unix.go / claude_ps_windows.go.
 
 // ---------- transcript ----------
 //

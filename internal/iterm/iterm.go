@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package iterm provides iTerm2 tab spawning via osascript.
 package iterm
 

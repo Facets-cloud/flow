@@ -1,3 +1,11 @@
+//go:build darwin
+
+// These tests drive cmdDo / cmdDoHere end-to-end and need the iterm-
+// spawning helpers from do_test.go (stubITerm, seedTask, etc.). Those
+// helpers are darwin-only because the iterm backend is darwin-only —
+// so this file inherits the same constraint. Harness selection logic
+// itself is platform-agnostic, but exercising it through the spawn
+// path requires the macOS terminal scaffolding.
 package app
 
 import (

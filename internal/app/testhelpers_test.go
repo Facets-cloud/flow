@@ -3,11 +3,36 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
 	flowdb "flow/internal/flowdb"
 )
+
+// seedTask creates a minimal task row (floating, workspace work_dir).
+// Iterm-free, so safe to use from any test file regardless of build
+// tag.
+func seedTask(t *testing.T, slug string) {
+	t.Helper()
+	if rc := cmdAdd([]string{"task", slug}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+}
+
+// seedTaskAtCwd creates a task with work_dir set to the test process's
+// current cwd. Used by --here tests that want to satisfy the
+// cwd-mismatch invariant without contriving a chdir.
+func seedTaskAtCwd(t *testing.T, slug string) {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	if rc := cmdAdd([]string{"task", slug, "--work-dir", cwd}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+}
 
 func openTempDB(t *testing.T) *sql.DB {
 	t.Helper()
