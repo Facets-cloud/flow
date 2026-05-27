@@ -5,10 +5,37 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	flowdb "flow/internal/flowdb"
 )
+
+// testHome redirects the test process's "user home dir" lookup to
+// `dir` on every supported OS. On Unix `os.UserHomeDir()` consults
+// $HOME; on Windows it consults %USERPROFILE% (with %HOMEDRIVE%+
+// %HOMEPATH% as fallback). Overriding only $HOME silently does
+// nothing on Windows and leaves tests writing into the real CI
+// runner's profile — which then cascades into "already exists"
+// failures across the skill-install suite. This helper sets both
+// vars and lets `t.Setenv` handle cleanup.
+func testHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
+// noopEditor returns an EDITOR value that runs successfully on every
+// supported OS, ignoring the file path argument. Used by edit tests
+// that need EDITOR to exit 0 without modifying the brief. On Unix
+// the GNU coreutils `true` does the job; on Windows we shell out
+// through cmd.exe to invoke the `rem` built-in (no-op comment).
+func noopEditor() string {
+	if runtime.GOOS == "windows" {
+		return "cmd /c rem"
+	}
+	return "true"
+}
 
 // seedTask creates a minimal task row (floating, workspace work_dir).
 // Iterm-free, so safe to use from any test file regardless of build

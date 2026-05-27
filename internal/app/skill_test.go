@@ -58,13 +58,12 @@ func expectedCommand(event string) string {
 	return ""
 }
 
-// withTempHome redirects $HOME to a tempdir for the duration of the test.
+// withTempHome redirects the user-home lookup to a tempdir for the
+// duration of the test (both $HOME and %USERPROFILE% — see testHome).
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", oldHome) })
+	testHome(t, dir)
 	return dir
 }
 

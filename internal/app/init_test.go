@@ -17,14 +17,8 @@ func initTempFlowRoot(t *testing.T) string {
 	root := t.TempDir()
 	home := t.TempDir()
 
-	oldRoot := os.Getenv("FLOW_ROOT")
-	oldHome := os.Getenv("HOME")
-	os.Setenv("FLOW_ROOT", root)
-	os.Setenv("HOME", home)
-	t.Cleanup(func() {
-		os.Setenv("FLOW_ROOT", oldRoot)
-		os.Setenv("HOME", oldHome)
-	})
+	t.Setenv("FLOW_ROOT", root)
+	testHome(t, home)
 	return root
 }
 
