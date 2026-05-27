@@ -7,6 +7,66 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.15] — 2026-05-27
+
+### Added
+
+- **GitHub Pages site.** A static one-page site at
+  `https://facets-cloud.github.io/flow/` introducing flow at a glance:
+  dark terminal-aesthetic hero, brief-styled (What / Why / Done-when)
+  feature sections, four-act demo embedded as MP4 video with poster
+  + reduced-motion fallback, inline-SVG diagrams from the README, and
+  a one-shot install block. Pure HTML/CSS/vanilla JS, zero build step,
+  ~50 KB above the fold. CI workflow (`.github/workflows/pages.yml`)
+  force-pushes `site/**` + `docs/demo/**` to a `gh-pages` orphan
+  branch on every push to main. **One-time setup after upgrade:**
+  Repo Settings → Pages → Source = "Deploy from a branch", Branch =
+  `gh-pages` / `/(root)`.
+  ([#60](https://github.com/Facets-cloud/flow/pull/60) by
+  [@pramodh-ayyappan](https://github.com/pramodh-ayyappan))
+- **Pluggable agent harnesses.** Internal refactor that moves
+  Claude-specific code behind a 14-method `internal/harness`
+  interface, with codex/gemini adapters ready to drop in as one
+  line each in `allHarnesses()`. Adds `tasks.harness` (per-task
+  adapter pinning; NULL = claude for back-compat) and
+  `tasks.session_cwd` (fixes a pre-existing `flow transcript`
+  not-found for `--here`-bound sessions started in a directory ≠
+  `task.work_dir`; session identity is now keyed on
+  `(cwd, session_id)` to match claude's on-disk layout). Ambient
+  harness detection probes `$CLAUDE_CODE_SESSION_ID` /
+  `$CODEX_THREAD_ID` / `$GEMINI_SESSION_ID`; defaults to claude.
+  `flow do --here --force` on a task pinned to a different harness
+  switches the pinning alongside the session rebind, with a
+  warning that the prior transcript is orphaned. Schema changes
+  are additive and nullable — no backfill, no behavior change for
+  existing rows.
+  ([#58](https://github.com/Facets-cloud/flow/pull/58) by
+  [@rr0hit](https://github.com/rr0hit))
+- **Focus existing tab on `flow do`.** When the task's `session_id`
+  is already running, `flow do <task>` switches to the existing tab
+  instead of erroring with the "use `--force`" message. Implemented
+  via `spawner.FocusSession` with per-backend implementations across
+  iTerm2, Terminal.app, and zellij — each maps the running claude
+  PID back to a tab/pane and selects it. Exits 0 with `Already open:
+  <slug> — switched to existing tab` on focus; preserves the old
+  error on focus miss so `--force` semantics are unchanged. Warns on
+  stderr when more than one claude process is detected for the same
+  UUID (prior `--force`, or a manual `claude --resume`).
+  ([#28](https://github.com/Facets-cloud/flow/pull/28) by
+  [@pa](https://github.com/pa))
+
+### Changed
+
+- **README — Claude shell aliases.** New "Optional: Claude shell
+  aliases" subsection in Install with two aliases: `claude` →
+  `claude --dangerously-skip-permissions --bg` (skip per-tool prompts,
+  run in background) and `ca` → `command claude agents` (Claude
+  agents-mode shortcut; `command` bypasses the first alias so the
+  `agents` subcommand sees a clean argv). Source two lines to enable
+  agents mode without typing the flag each time.
+  ([#57](https://github.com/Facets-cloud/flow/pull/57) by
+  [@rr0hit](https://github.com/rr0hit))
+
 ## [0.1.0-alpha.14] — 2026-05-18
 
 ### Added
@@ -202,7 +262,8 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.14...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.15...HEAD
+[0.1.0-alpha.15]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.15
 [0.1.0-alpha.14]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.14
 [0.1.0-alpha.8]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.7
