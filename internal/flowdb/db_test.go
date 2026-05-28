@@ -455,6 +455,83 @@ func TestMigrationIdempotent(t *testing.T) {
 	db.Close()
 }
 
+// TestMigrationHarnessSurvivesSessionInvariantRebuild pins the fix for
+// a bug where DBs upgrading from a pre-session-invariant version (e.g.
+// v0.1.0-alpha.4) lost the freshly-added tasks.harness column. The
+// rebuild in migrateTasksSessionInvariant used to omit harness from
+// tasks_new's DDL, silently dropping the column. Symptom: every
+// subsequent SELECT using TaskCols errored with "no such column:
+// harness".
+//
+// Setup: seed a tasks table that lacks the session-invariant CHECK
+// (the rebuild's idempotency guard short-circuits when present) AND
+// lacks the harness column, simulating an upgrade from before both
+// migrations existed. Then OpenDB and verify harness is present.
+func TestMigrationHarnessSurvivesSessionInvariantRebuild(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "flow.db")
+
+	pre, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pre.Exec(`
+		CREATE TABLE projects (
+			slug TEXT PRIMARY KEY, name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active', priority TEXT NOT NULL DEFAULT 'medium',
+			work_dir TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			archived_at TEXT
+		);
+		CREATE TABLE tasks (
+			slug TEXT PRIMARY KEY, name TEXT NOT NULL,
+			project_slug TEXT, status TEXT NOT NULL DEFAULT 'backlog',
+			priority TEXT NOT NULL DEFAULT 'medium', work_dir TEXT NOT NULL,
+			waiting_on TEXT, session_id TEXT, session_started TEXT,
+			session_last_resumed TEXT, created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL, archived_at TEXT
+		);
+		CREATE TABLE workdirs (
+			path TEXT PRIMARY KEY, name TEXT, git_remote TEXT,
+			last_used_at TEXT, created_at TEXT NOT NULL
+		);
+		INSERT INTO tasks (slug, name, status, priority, work_dir, created_at, updated_at)
+			VALUES ('legacy', 'Legacy task', 'backlog', 'high', '/tmp', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+	`); err != nil {
+		pre.Close()
+		t.Fatalf("seed pre-migration DB: %v", err)
+	}
+	pre.Close()
+
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB on pre-migration DB: %v", err)
+	}
+	defer db.Close()
+
+	has, err := columnExists(db, "tasks", "harness")
+	if err != nil {
+		t.Fatalf("columnExists(harness): %v", err)
+	}
+	if !has {
+		t.Fatal("tasks.harness column missing after rebuild — the session-invariant rebuild dropped it")
+	}
+
+	// TaskCols-shaped SELECT must succeed (this is the surface that
+	// errored before the fix).
+	if _, err := db.Query("SELECT " + TaskCols + " FROM tasks"); err != nil {
+		t.Errorf("SELECT TaskCols failed: %v", err)
+	}
+
+	// The legacy row should still be readable, with harness=NULL.
+	var harness sql.NullString
+	if err := db.QueryRow(`SELECT harness FROM tasks WHERE slug='legacy'`).Scan(&harness); err != nil {
+		t.Fatalf("read legacy row: %v", err)
+	}
+	if harness.Valid {
+		t.Errorf("legacy row harness should be NULL (back-compat for claude); got %q", harness.String)
+	}
+}
+
 // TestMigrationDeduplicatesSessionIDs simulates Anshul's bug: a DB
 // where two non-archived tasks share the same session_id (could
 // happen via the now-removed `flow update task --session-id` flag,

@@ -528,6 +528,7 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 			session_id            TEXT,
 			session_started       TEXT,
 			session_last_resumed  TEXT,
+			harness               TEXT,
 			created_at            TEXT NOT NULL,
 			updated_at            TEXT NOT NULL,
 			archived_at           TEXT,
@@ -540,13 +541,13 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 		INSERT INTO tasks_new (
 			slug, name, project_slug, status, kind, playbook_slug, priority,
 			work_dir, waiting_on, due_date, assignee, status_changed_at,
-			session_id, session_started, session_last_resumed,
+			session_id, session_started, session_last_resumed, harness,
 			created_at, updated_at, archived_at
 		)
 		SELECT
 			slug, name, project_slug, status, kind, playbook_slug, priority,
 			work_dir, waiting_on, due_date, assignee, status_changed_at,
-			session_id, session_started, session_last_resumed,
+			session_id, session_started, session_last_resumed, harness,
 			created_at, updated_at, archived_at
 		FROM tasks`); err != nil {
 		return fmt.Errorf("copy rows: %w", err)
