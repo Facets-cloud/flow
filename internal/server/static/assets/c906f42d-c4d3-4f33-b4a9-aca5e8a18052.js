@@ -3666,6 +3666,23 @@ const markdownInlineParts = (text) => {
   return parts.length ? parts : [{ type: 'text', text: source }];
 };
 
+// GFM table helpers. A table is a pipe row, a separator row (|---|:--:|),
+// then pipe rows. parseTableRow strips the optional leading/trailing pipe.
+const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/;
+const isTableSeparator = (line) => TABLE_SEPARATOR_RE.test(String(line || ''));
+const parseTableRow = (line) => {
+  let s = String(line || '').trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map(c => c.trim());
+};
+const parseTableAlign = (sep) => parseTableRow(sep).map(c => {
+  const left = c.startsWith(':'), right = c.endsWith(':');
+  if (left && right) return 'center';
+  if (right) return 'right';
+  return 'left';
+});
+
 const MarkdownInline = ({ text }) => (
   <>
     {markdownInlineParts(text).map((part, i) => {
@@ -3700,7 +3717,8 @@ const MarkdownView = ({ source, empty = 'No brief text found.' }) => {
     blocks.push({ type: 'code', text: code.lines.join('\n') });
     code = null;
   };
-  for (const raw of lines) {
+  for (let li = 0; li < lines.length; li++) {
+    const raw = lines[li];
     const line = raw.replace(/\s+$/, '');
     const trimmed = line.trim();
     const fence = trimmed.match(/^```/);
@@ -3718,6 +3736,24 @@ const MarkdownView = ({ source, empty = 'No brief text found.' }) => {
     if (!trimmed) {
       flushParagraph();
       flushList();
+      continue;
+    }
+    // GFM table: a pipe row immediately followed by a separator row
+    // (|---|:--:|). Without this, every table row collapses into one
+    // paragraph of literal pipes.
+    if (trimmed.includes('|') && li + 1 < lines.length && isTableSeparator(lines[li + 1])) {
+      flushParagraph();
+      flushList();
+      const header = parseTableRow(trimmed);
+      const align = parseTableAlign(lines[li + 1]);
+      const rows = [];
+      let j = li + 2;
+      while (j < lines.length && lines[j].trim() && lines[j].includes('|')) {
+        rows.push(parseTableRow(lines[j]));
+        j++;
+      }
+      blocks.push({ type: 'table', header, align, rows });
+      li = j - 1;
       continue;
     }
     const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
@@ -3769,6 +3805,14 @@ const MarkdownView = ({ source, empty = 'No brief text found.' }) => {
         if (block.type === 'code') return <pre key={i}><code>{block.text}</code></pre>;
         if (block.type === 'ul') return <ul key={i}>{block.items.map((item, j) => <li key={j}><MarkdownInline text={item}/></li>)}</ul>;
         if (block.type === 'ol') return <ol key={i}>{block.items.map((item, j) => <li key={j}><MarkdownInline text={item}/></li>)}</ol>;
+        if (block.type === 'table') return (
+          <div key={i} className="md-table-wrap">
+            <table className="md-table">
+              <thead><tr>{block.header.map((h, j) => <th key={j} style={{textAlign: block.align[j] || 'left'}}><MarkdownInline text={h}/></th>)}</tr></thead>
+              <tbody>{block.rows.map((row, r) => <tr key={r}>{block.header.map((_, j) => <td key={j} style={{textAlign: block.align[j] || 'left'}}><MarkdownInline text={row[j] || ''}/></td>)}</tr>)}</tbody>
+            </table>
+          </div>
+        );
         return null;
       })}
     </div>
