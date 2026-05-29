@@ -279,6 +279,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		taskLive := t.SessionID.Valid && t.SessionID.String != "" && live[strings.ToLower(t.SessionID.String)]
+		taskMonitored := s.inboxMonitors != nil && s.inboxMonitors.running(t.Slug)
 		taskName := s.scrubSlackIDs(ctx, t.Name)
 		var project *string
 		if t.ProjectSlug.Valid && t.ProjectSlug.String != "" {
@@ -331,6 +332,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 				Unread:      isUnread,
 				Source:      inboxEntrySource(je),
 				Live:        taskLive,
+				Monitored:   taskMonitored,
 			})
 		}
 	}
@@ -427,6 +429,7 @@ func (s *Server) handleInboxConversation(w http.ResponseWriter, r *http.Request)
 		Status:      task.Status,
 		Provider:    provider,
 		Live:        taskLive,
+		Monitored:   s.inboxMonitors != nil && s.inboxMonitors.running(task.Slug),
 		Source:      source,
 		ChannelName: channelName,
 		Messages:    messages,

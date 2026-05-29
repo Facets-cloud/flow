@@ -113,6 +113,9 @@ type uiAgent struct {
 	Updates         []FileRef      `json:"updates,omitempty"`
 	AuxFiles        []FileRef      `json:"aux_files,omitempty"`
 	Terminal        uiTerminal     `json:"terminal"`
+	// Monitored reports whether a persistent background monitor is watching
+	// this task's inbox (independent of whether the session is live).
+	Monitored bool `json:"monitored"`
 }
 
 type uiWaitingFor struct {
@@ -673,6 +676,7 @@ func (s *Server) uiAgent(tv TaskView, live map[string]bool) uiAgent {
 		RuntimeStatus:   status,
 		RuntimeEvent:    runtimeEvent,
 		RuntimeSource:   runtimeSource,
+		Monitored:       s.inboxMonitors != nil && s.inboxMonitors.running(tv.Slug),
 		HookHealth:      s.agentHookHealth(tv, provider, fullTranscript, hookRuntime),
 		SessionID:       sessionID,
 		StartedMin:      minutesSince(startedAt),

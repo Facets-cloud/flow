@@ -243,6 +243,31 @@ func WriteInboxMonitorCursor(slug string, offset int64) error {
 	return nil
 }
 
+// SeedInboxMonitorCursorToEnd initializes a task's monitor cursor to the
+// current end of its inbox.jsonl, but ONLY when no cursor exists yet. This
+// makes a freshly-started monitor watch for events that arrive after it starts
+// rather than replaying the entire historical backlog — without it, restoring
+// monitors on boot would wake or respawn the agent for every old event. A task
+// whose cursor already exists resumes from its saved position untouched.
+func SeedInboxMonitorCursorToEnd(slug string) error {
+	cursorPath := MonitorCursorPath(slug)
+	if cursorPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(cursorPath); err == nil {
+		return nil // cursor exists — resume from where we left off
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	size := int64(0)
+	if info, err := os.Stat(InboxPath(slug)); err == nil {
+		size = info.Size()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return WriteInboxMonitorCursor(slug, size)
+}
+
 // ReadInboxCursor returns the latest Slack ts processed for the task's
 // thread, or "" when no cursor file exists. Used by the listener's
 // catch-up sweep on startup to know where to resume.

@@ -29,6 +29,12 @@ type Server struct {
 	// Inbox UI, caching lookups across requests. Nil when no Slack token is
 	// configured; all of its methods are nil-safe.
 	nameResolver *monitor.SlackNameResolver
+	// monitorReconcile keeps persistent background monitors converged with the
+	// set of tasks that need one (origin/branch-linked + active), restoring
+	// them on boot and recreating any that die.
+	monitorReconcile *monitorReconciler
+	// respawn debounces agent respawns triggered by inbox events.
+	respawn *respawnGate
 }
 
 type HealthView struct {
@@ -171,6 +177,9 @@ type InboxFeedEntry struct {
 	// Live reports whether the task's session is currently running, so the
 	// conversation list can show a live indicator. Matches TaskView.Live.
 	Live bool `json:"live"`
+	// Monitored reports whether a persistent background monitor is currently
+	// running for the task (independent of whether a session is live).
+	Monitored bool `json:"monitored"`
 }
 
 // InboxConversation is the GET /api/inbox/conversation?slug=<task> response:
@@ -183,6 +192,7 @@ type InboxConversation struct {
 	Status      string                     `json:"status"`
 	Provider    string                     `json:"provider"`
 	Live        bool                       `json:"live"`
+	Monitored   bool                       `json:"monitored"`
 	Source      string                     `json:"source"`                 // slack | github | mixed | ""
 	ChannelName string                     `json:"channel_name,omitempty"` // resolved; never a raw ID
 	Messages    []InboxConversationMessage `json:"messages"`               // chronological (oldest first)

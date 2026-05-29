@@ -1056,6 +1056,7 @@ const InboxConvRow = ({ conv, selected, onSelect }) => (
       <span className="inbox-conv-top">
         {conv.sources.map(s => <SourceMark key={s} source={s} size={12}/>)}
         <span className="inbox-conv-name">{conv.name}</span>
+        {conv.monitored && <span className="inbox-monitor-chip" title="Background monitor running"><Icon name="radar" size={11}/></span>}
       </span>
       <span className="inbox-conv-sub mono">
         {conv.project_slug && <span className="inbox-conv-project">{conv.project_slug}</span>}
@@ -1132,6 +1133,7 @@ const InboxConversationPane = ({ conv, loading, error, action, goto, onBack }) =
             {conv.project_slug && <span className="inbox-conv-project inbox-conv-project--link" onClick={() => goto(`project/${conv.project_slug}`)} title="Open project">{conv.project_slug}</span>}
             <span>{messages.length} message{messages.length === 1 ? '' : 's'}</span>
             {conv.live && <span className="inbox-live-pill"><span className="inbox-live-dot"/>live</span>}
+            {conv.monitored && <span className="inbox-monitor-pill" title="A background monitor is watching this task for new Slack/GitHub events"><Icon name="radar" size={11}/>monitoring</span>}
           </div>
         </div>
         <div className="inbox-detail-actions">
@@ -1202,12 +1204,13 @@ const InboxView = ({ action, goto }) => {
     items.forEach(it => {
       let c = map.get(it.task_slug);
       if (!c) {
-        c = { slug: it.task_slug, name: it.task_name || it.task_slug, project_slug: it.project_slug || null, status: it.status, live: !!it.live, count: 0, unreadCount: 0, latestTs: '', sourceSet: new Set(), bodies: [] };
+        c = { slug: it.task_slug, name: it.task_name || it.task_slug, project_slug: it.project_slug || null, status: it.status, live: !!it.live, monitored: !!it.monitored, count: 0, unreadCount: 0, latestTs: '', sourceSet: new Set(), bodies: [] };
         map.set(it.task_slug, c);
       }
       c.count += 1;
       if (it.unread) c.unreadCount += 1;
       if (it.live) c.live = true;
+      if (it.monitored) c.monitored = true;
       if (it.source) c.sourceSet.add(it.source);
       if (it.body) c.bodies.push(it.body);
       const t = parseInboxTimestamp(it.timestamp);
@@ -2461,6 +2464,7 @@ const SessionDetail = ({ agent, goto, action, gitDiffOpen = false, toggleGitDiff
         <span className="mono" style={{fontSize: 12, color: 'var(--text-dim)'}}>{current.slug}</span>
         <StatusPill status={current.status}/>
         <TaskStatePill status={current.task_status}/>
+        {current.monitored && <span className="inbox-monitor-pill" title="A background monitor is watching this task for new Slack/GitHub events and will keep it alive"><Icon name="radar" size={11}/>monitoring</span>}
         <AgentChip provider={current.provider}/>
         <BranchSwitcher agent={current} action={action}/>
         {(current.pr_links || []).map(pr => (

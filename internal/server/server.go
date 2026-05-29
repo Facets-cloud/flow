@@ -29,7 +29,9 @@ func New(cfg Config) *Server {
 	s.transcripts = newTranscriptCache()
 	s.caches = newUICaches()
 	s.dbWatcher = newDBWatcher(s)
-	s.inboxMonitors = newInboxMonitorManager(inboxWakeTarget{terminals: s.terminals})
+	s.respawn = newRespawnGate(respawnDebounceWindow)
+	s.inboxMonitors = newInboxMonitorManager(inboxWakeTarget{server: s})
+	s.monitorReconcile = newMonitorReconciler(s)
 	// Resolves Slack user/channel IDs to display names for the Inbox UI.
 	// Nil when no Slack token is configured; all uses are nil-safe.
 	s.nameResolver = monitor.NewSlackNameResolver()
@@ -97,6 +99,13 @@ func (s *Server) ListenAndServe(addr string) int {
 	if s.reconcile != nil {
 		s.reconcile.start()
 		defer s.reconcile.stop()
+	}
+	// Start the persistent-monitor reconciler: restore background monitors for
+	// Slack/GitHub/branch-linked tasks on boot, recreate any that die, and
+	// tear down monitors for finished tasks.
+	if s.monitorReconcile != nil {
+		s.monitorReconcile.start()
+		defer s.monitorReconcile.stop()
 	}
 	// Watch SQLite data_version so writes from external processes
 	// (notably the flow CLI) trigger an SSE refresh within ~1s without

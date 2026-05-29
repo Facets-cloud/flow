@@ -9,7 +9,7 @@ import (
 )
 
 type inboxWakeTarget struct {
-	terminals *terminalHub
+	server *Server
 }
 
 func (w inboxWakeTarget) WakeTask(ctx context.Context, slug string, entries []monitor.InboxEntry) error {
@@ -18,10 +18,10 @@ func (w inboxWakeTarget) WakeTask(ctx context.Context, slug string, entries []mo
 		return ctx.Err()
 	default:
 	}
-	if w.terminals == nil {
-		return fmt.Errorf("terminal hub unavailable")
+	if w.server == nil {
+		return fmt.Errorf("server unavailable")
 	}
-	return w.terminals.wakeTask(slug, formatInboxWakePrompt(slug, entries))
+	return w.server.deliverInboxEvents(slug, entries)
 }
 
 func formatInboxWakePrompt(slug string, entries []monitor.InboxEntry) string {
