@@ -25,7 +25,6 @@ package harness
 
 import (
 	"io"
-	"time"
 )
 
 // Name is the short identifier persisted on tasks.harness and used to
@@ -147,10 +146,13 @@ type Harness interface {
 	// cwd is the directory the harness session was started in (NOT
 	// necessarily the task's work_dir — see tasks.session_cwd; for
 	// legacy NULL rows callers fall back to work_dir). compact omits
-	// tool results and thinking blocks. cutoff filters entries
-	// strictly before the given time (use zero to disable). Returns
-	// an error if the transcript can't be found or decoded.
-	RenderTranscript(cwd, sessionID string, compact bool, cutoff time.Time, w io.Writer) error
+	// tool results and thinking blocks. The whole transcript is
+	// rendered — there is no time cutoff. (An earlier design scoped
+	// output to entries after tasks.session_started, but that elided
+	// all real work on retrospective `flow do --here` binds, where
+	// session_started is stamped at bind time AFTER the conversation.)
+	// Returns an error if the transcript can't be found or decoded.
+	RenderTranscript(cwd, sessionID string, compact bool, w io.Writer) error
 
 	// Skill / rules file -----------------------------------------------
 

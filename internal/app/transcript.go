@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 )
 
 // cmdTranscript implements `flow transcript <task-slug>`. It delegates
@@ -69,17 +68,6 @@ func cmdTranscript(args []string) int {
 		return 1
 	}
 
-	// Compute the cutoff from session_started so the transcript output
-	// is scoped to the task's own conversation, not pre-bind dispatch
-	// chatter that --here-bound tasks accumulate. NULL/unparseable
-	// session_started → zero cutoff → filter is a no-op.
-	var cutoff time.Time
-	if task.SessionStarted.Valid && task.SessionStarted.String != "" {
-		if ts, perr := time.Parse(time.RFC3339Nano, task.SessionStarted.String); perr == nil {
-			cutoff = ts
-		}
-	}
-
 	// Spawn cwd == work_dir is an invariant for any task with a
 	// session_id (enforced at bind time in cmdDo + cmdDoHere). So
 	// the transcript file lives under work_dir's encoded path.
@@ -92,7 +80,7 @@ func cmdTranscript(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if err := h.RenderTranscript(task.WorkDir, task.SessionID.String, *compact, cutoff, os.Stdout); err != nil {
+	if err := h.RenderTranscript(task.WorkDir, task.SessionID.String, *compact, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		fmt.Fprintf(os.Stderr,
 			"hint: flow assumed the harness was started at work_dir=%q. "+
