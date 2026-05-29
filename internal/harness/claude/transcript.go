@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // RenderTranscript opens the session jsonl at the claude convention
@@ -20,7 +19,7 @@ import (
 // tasks.session_cwd; callers in app/ fall back to task.work_dir for
 // legacy NULL rows). Claude keys its transcript path on its startup
 // cwd; the two can diverge for `flow do --here` binds.
-func (c *claude) RenderTranscript(cwd, sessionID string, compact bool, cutoff time.Time, w io.Writer) error {
+func (c *claude) RenderTranscript(cwd, sessionID string, compact bool, w io.Writer) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("no home dir: %w", err)
@@ -39,7 +38,7 @@ func (c *claude) RenderTranscript(cwd, sessionID string, compact bool, cutoff ti
 		return fmt.Errorf("open claude transcript %s: %w", p, err)
 	}
 	defer f.Close()
-	return RenderJSONL(f, compact, cutoff, w)
+	return RenderJSONL(f, compact, w)
 }
 
 // RenderJSONL renders a claude session jsonl byte-stream to w. Exposed
@@ -47,12 +46,14 @@ func (c *claude) RenderTranscript(cwd, sessionID string, compact bool, cutoff ti
 // decoder against fixture data in tempdir without going through path
 // resolution.
 //
-// cutoff scopes the output to entries with timestamp >= cutoff. Pass
-// the zero time.Time to disable the filter. Entries with a missing or
-// unparseable `timestamp` field are kept regardless of cutoff —
-// silent data loss in a KB-distill input is worse than an over-
-// inclusive sweep.
-func RenderJSONL(r io.Reader, compact bool, cutoff time.Time, w io.Writer) error {
+// The entire stream is rendered. There is no time cutoff: an earlier
+// design dropped entries before tasks.session_started to strip pre-bind
+// dispatch chatter, but on a retrospective `flow do --here` bind
+// session_started lands AFTER the real work, so the cutoff silently
+// elided exactly what the close-out KB sweep needed to read. Rendering
+// everything is the safer contract — an over-inclusive sweep beats
+// silent data loss.
+func RenderJSONL(r io.Reader, compact bool, w io.Writer) error {
 	scanner := bufio.NewScanner(r)
 	// Session jsonl lines can be very long (tool results with file contents).
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
@@ -67,18 +68,6 @@ func RenderJSONL(r io.Reader, compact bool, cutoff time.Time, w io.Writer) error
 		var rec jsonlRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
 			continue // skip malformed lines
-		}
-
-		// Filter: drop entries strictly before the cutoff. Defensive
-		// on parse failure / missing field — keep the entry rather
-		// than silently dropping it. RFC3339Nano accepts both the
-		// jsonl's fractional-second UTC form and the DB's offset
-		// form without fractional, so we use it as a single parser
-		// for both sources.
-		if !cutoff.IsZero() && rec.Timestamp != "" {
-			if ts, perr := time.Parse(time.RFC3339Nano, rec.Timestamp); perr == nil && ts.Before(cutoff) {
-				continue
-			}
 		}
 
 		switch rec.Type {
