@@ -29,6 +29,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   dispatch-chatter-stripping the cutoff bought for early binds was
   deemed not worth the failure mode. `RenderTranscript`'s `cutoff`
   parameter is gone from the harness interface.
+  ([#65](https://github.com/Facets-cloud/flow/pull/65) by
+  [@rr0hit](https://github.com/rr0hit))
 
 ## [0.1.0-alpha.16] — 2026-05-28
 
