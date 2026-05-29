@@ -446,8 +446,8 @@ func stubAllRunners(t *testing.T) runnerFlags {
 	oldITerm := iterm.Runner
 	iterm.Runner = func(args []string) error {
 		itermCalled = true
-		if len(args) >= 2 && !strings.Contains(args[1], "iTerm2") {
-			t.Errorf("iterm script does not target iTerm2: %s", args[1])
+		if len(args) >= 2 && !strings.Contains(args[1], `"iTerm"`) {
+			t.Errorf("iterm script does not target iTerm: %s", args[1])
 		}
 		return nil
 	}
