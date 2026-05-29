@@ -7,6 +7,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.17] — 2026-05-29
+
+### Fixed
+
+- **`flow transcript` elided pre-bind work on retrospective `--here`
+  binds, silently starving the close-out KB sweep.** `flow transcript`
+  filtered out every jsonl entry before `tasks.session_started`, on the
+  assumption that `session_started` ≈ the conversation's start. That
+  holds for `flow do` spawns (the UUID is pre-allocated, so the first
+  message lands just after `session_started`) but breaks for a
+  retrospective `flow do --here` bind: there `session_started` is
+  stamped at *bind time*, after all the real work. The cutoff then
+  dropped the entire conversation, so the `flow done` close-out sweep
+  mined an empty tail and wrote nothing to the KB — silent knowledge
+  loss. Hit live on 2026-05-29 (task `cp-mgmt-skill`), whose whole
+  session had to be hand-distilled into the KB. The fix removes the
+  time cutoff entirely: `flow transcript` (and therefore the sweep)
+  now always renders the full session. An over-inclusive sweep was
+  already the documented preference over silent data loss; the
+  dispatch-chatter-stripping the cutoff bought for early binds was
+  deemed not worth the failure mode. `RenderTranscript`'s `cutoff`
+  parameter is gone from the harness interface.
+  ([#65](https://github.com/Facets-cloud/flow/pull/65) by
+  [@rr0hit](https://github.com/rr0hit))
+
 ## [0.1.0-alpha.16] — 2026-05-28
 
 ### Fixed
@@ -288,7 +313,9 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.15...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.17...HEAD
+[0.1.0-alpha.17]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.17
+[0.1.0-alpha.16]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.16
 [0.1.0-alpha.15]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.15
 [0.1.0-alpha.14]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.14
 [0.1.0-alpha.8]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.8
