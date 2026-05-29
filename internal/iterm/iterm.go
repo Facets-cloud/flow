@@ -59,16 +59,24 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		}
 		envPrefix = strings.Join(parts, " ") + " "
 	}
-	fullCommand := fmt.Sprintf(" cd %s && %s%s", ShellQuote(cwd), envPrefix, command)
-	safeCommand := escapeAppleScriptString(fullCommand)
-	safeTitle := escapeAppleScriptString(title)
+	// Raise the file descriptor limit before launching `claude`. macOS
+	// gives shells a default soft limit of 256, which trips Claude under
+	// heavy tool use ("possibly due to low max file descriptors"). Some
+	// terminal apps (Warp) raise it on their own; iTerm does not.
+	fullCommand := fmt.Sprintf(" cd %s && ulimit -n 65536 && %s%s", ShellQuote(cwd), envPrefix, command)
+	safeCommand := quoteAppleScriptString(fullCommand)
+	safeTitle := quoteAppleScriptString(title)
 
-	script := fmt.Sprintf(`tell application "iTerm2"
+	script := fmt.Sprintf(`tell application "iTerm"
+  activate
+  if (count of windows) is 0 then
+    create window with default profile
+  end if
   tell current window
     set newTab to (create tab with default profile)
     tell current session of newTab
-      set name to "%s"
-      write text "%s"
+      set name to %s
+      write text %s
     end tell
   end tell
 end tell
@@ -190,4 +198,27 @@ func escapeAppleScriptString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return s
+}
+
+// quoteAppleScriptString returns an AppleScript expression that evaluates
+// to s. Lines are emitted as separate quoted strings joined with
+// `& linefeed &`, because AppleScript double-quoted strings cannot
+// contain literal newlines and there are no \n escape sequences inside
+// the quotes. Tabs are similarly handled with `& tab &`.
+func quoteAppleScriptString(s string) string {
+	// Split on newlines; for each line, also split on tabs.
+	lines := strings.Split(s, "\n")
+	parts := make([]string, 0, len(lines))
+	for i, line := range lines {
+		// Split each line on tabs, escape pieces, join with `& tab &`.
+		segs := strings.Split(line, "\t")
+		quoted := make([]string, len(segs))
+		for j, seg := range segs {
+			quoted[j] = `"` + escapeAppleScriptString(seg) + `"`
+		}
+		joined := strings.Join(quoted, " & tab & ")
+		parts = append(parts, joined)
+		_ = i
+	}
+	return strings.Join(parts, " & linefeed & ")
 }
