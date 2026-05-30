@@ -6,10 +6,16 @@ INSTALL_DIR := $(HOME)/.local/bin
 VERSION  ?= dev
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: build install uninstall test clean
+.PHONY: build ui install uninstall test clean
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
+
+# Rebuild the web UI assets (esbuild + Preact) into internal/server/static/assets.
+# Built assets are committed and go:embed'd, so plain `make build` / `go build`
+# stay Node-free; run `make ui` only after editing UI source under internal/server/ui.
+ui:
+	cd internal/server/ui && pnpm install && node build.mjs
 
 test:
 	go test ./...

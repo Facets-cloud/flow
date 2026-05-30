@@ -1752,7 +1752,9 @@ func TestProjectBriefCanBeUpdatedFromUI(t *testing.T) {
 }
 
 func TestStaticActionPayloadForwardsProvider(t *testing.T) {
-	data, err := staticFS.ReadFile("static/index.html")
+	// The app shell / action-router logic moved out of index.html's inline
+	// <script> into the build source ui/src/main.jsx (transpiled to app.main.js).
+	data, err := os.ReadFile(filepath.Join("ui", "src", "main.jsx"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1890,7 +1892,8 @@ func TestStaticActionPayloadForwardsProvider(t *testing.T) {
 }
 
 func TestStaticMemorySourcesHydration(t *testing.T) {
-	index, err := staticFS.ReadFile("static/index.html")
+	// App-shell hydration logic now lives in ui/src/main.jsx (built to app.main.js).
+	index, err := os.ReadFile(filepath.Join("ui", "src", "main.jsx"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2215,7 +2218,8 @@ func TestStaticSessionUIHasFreshRestartDropdown(t *testing.T) {
 	if strings.Contains(js, "New session") {
 		t.Fatal("fresh restart should live in the restart dropdown, not as a separate New session button")
 	}
-	shell, err := os.ReadFile(filepath.Join("static", "index.html"))
+	// app-shell action router moved to ui/src/main.jsx (built to app.main.js)
+	shell, err := os.ReadFile(filepath.Join("ui", "src", "main.jsx"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,3 +17,9 @@
 
 # flow-managed agent worktrees
 /.claude/worktrees/
+
+# Superpowers brainstorming companion (local mockups)
+.superpowers/
+
+# UI build toolchain deps (built assets under static/ stay committed)
+/internal/server/ui/node_modules/

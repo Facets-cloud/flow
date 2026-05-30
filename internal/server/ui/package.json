@@ -1,0 +1,16 @@
+{
+  "name": "flow-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Build pipeline for the flow Mission Control web UI (esbuild + Preact).",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "preact": "^10.25.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  }
+}
