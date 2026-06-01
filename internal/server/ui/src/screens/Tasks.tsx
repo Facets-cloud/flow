@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useLocation } from 'wouter'
-import { Archive, CornerLeftUp, GitFork, Loader2, Pencil } from 'lucide-react'
+import { Archive, CornerLeftUp, GitFork, Loader2, Pencil, Trash2 } from 'lucide-react'
 import { useAction, useTasks, type TaskFilters } from '../lib/query'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { confirmAction } from '../lib/confirm'
 import { EmptyState, ErrorNote, Loading, ProviderIcon, StatusDot } from '../components/ui'
-import { ago } from '../lib/format'
+import { ago, dueTone } from '../lib/format'
 import type { TaskView } from '../lib/types'
 
 const STATUSES = [
@@ -20,12 +20,18 @@ const PRIOS = [
   { v: 'medium', label: 'Medium' },
   { v: 'low', label: 'Low' },
 ]
+const SORTS = [
+  { v: 'recent', label: 'Recent' },
+  { v: 'due', label: 'Due' },
+] as const
+type SortKey = (typeof SORTS)[number]['v']
 
 export function Tasks() {
   useDocumentTitle('Tasks')
   const [, navigate] = useLocation()
   const [status, setStatus] = useState('')
   const [priority, setPriority] = useState('')
+  const [sort, setSort] = useState<SortKey>('recent')
 
   const filters: TaskFilters = {
     status: status || undefined,
@@ -33,11 +39,19 @@ export function Tasks() {
     include_done: status === 'done',
   }
   const { data, isLoading, error } = useTasks(filters)
-  // Recently-created tasks first.
   const tasks = (data ?? [])
     .filter((t) => t.kind !== 'playbook_run' || status === 'done')
     .slice()
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .sort((a, b) => {
+      // Due sort: dated tasks first by soonest due (overdue = earliest date,
+      // sorts first), undated last; recent sort: newest-created first.
+      if (sort === 'due') {
+        if (a.due_date && b.due_date) return a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0
+        if (a.due_date) return -1
+        if (b.due_date) return 1
+      }
+      return Date.parse(b.created_at) - Date.parse(a.created_at)
+    })
 
   return (
     <div className="page">
@@ -63,6 +77,13 @@ export function Tasks() {
             </button>
           ))}
         </div>
+        <div className="segmented">
+          {SORTS.map((s) => (
+            <button key={s.v} className={sort === s.v ? 'active' : ''} onClick={() => setSort(s.v)}>
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
@@ -77,13 +98,14 @@ export function Tasks() {
             <colgroup>
               <col style={{ width: 28 }} />
               <col />
-              <col style={{ width: 168 }} />
-              <col style={{ width: 104 }} />
-              <col style={{ width: 70 }} />
-              <col style={{ width: 40 }} />
-              <col style={{ width: 116 }} />
+              <col style={{ width: 152 }} />
+              <col style={{ width: 100 }} />
               <col style={{ width: 64 }} />
-              <col style={{ width: 36 }} />
+              <col style={{ width: 108 }} />
+              <col style={{ width: 38 }} />
+              <col style={{ width: 104 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 60 }} />
             </colgroup>
             <thead>
               <tr>
@@ -92,6 +114,7 @@ export function Tasks() {
                 <th>Dependencies</th>
                 <th>Project</th>
                 <th>Priority</th>
+                <th>Due</th>
                 <th>Agent</th>
                 <th>Tags</th>
                 <th style={{ textAlign: 'right' }}>Updated</th>
@@ -142,6 +165,17 @@ function TaskRow({ task, onOpen }: { task: TaskView; onOpen: () => void }) {
     if (ok) action.mutate({ kind: 'archive', target: task.slug })
   }
 
+  const trash = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const ok = await confirmAction({
+      title: 'Move this task to trash?',
+      body: `"${task.name}" will be soft-deleted and hidden from your lists. You can restore it from Trash later.`,
+      confirmLabel: 'Move to trash',
+      danger: true,
+    })
+    if (ok) action.mutate({ kind: 'delete', target: task.slug, entity_kind: 'task' })
+  }
+
   const childCount = task.children?.length ?? 0
   const parentName = task.parent?.name || task.parent_slug
 
@@ -186,7 +220,9 @@ function TaskRow({ task, onOpen }: { task: TaskView; onOpen: () => void }) {
             </button>
           </div>
         )}
-        <div className="mono faint clip" style={{ fontSize: 11 }}>{task.slug}</div>
+        <div className="mono faint clip" style={{ fontSize: 11 }}>
+          {task.slug}{task.assignee ? ` · @${task.assignee}` : ''}
+        </div>
       </td>
       <td>
         {parentName || childCount > 0 ? (
@@ -208,6 +244,19 @@ function TaskRow({ task, onOpen }: { task: TaskView; onOpen: () => void }) {
       </td>
       <td className="dim clip">{task.project_slug || <span className="faint">—</span>}</td>
       <td><span className={`prio ${task.priority}`}>{task.priority}</span></td>
+      <td>
+        {task.due_info ? (
+          <span
+            className={`badge ${dueTone(task.due_date, task.due_info)}`}
+            style={{ whiteSpace: 'nowrap', height: 'auto', padding: '2px 7px', fontSize: 11 }}
+            title={task.due_date ? `Due ${task.due_date}` : undefined}
+          >
+            {task.due_info}
+          </span>
+        ) : (
+          <span className="faint">—</span>
+        )}
+      </td>
       <td><ProviderIcon provider={task.session_provider} size={14} /></td>
       <td>
         <div className="cell-tags">
@@ -224,6 +273,15 @@ function TaskRow({ task, onOpen }: { task: TaskView; onOpen: () => void }) {
           onClick={archive}
         >
           <Archive size={13} />
+        </button>
+        <button
+          className="btn icon ghost sm row-action"
+          title="Move to trash"
+          aria-label="Move to trash"
+          disabled={action.isPending}
+          onClick={trash}
+        >
+          <Trash2 size={13} />
         </button>
       </td>
     </tr>

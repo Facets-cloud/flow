@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useLocation } from 'wouter'
 import {
+  AlertTriangle,
   Archive,
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  Ban,
+  BellOff,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -25,6 +28,8 @@ import {
   RotateCcw,
   Sparkles,
   TerminalSquare,
+  Trash2,
+  Wrench,
   X as XIcon,
 } from 'lucide-react'
 import {
@@ -216,10 +221,12 @@ export function SessionDetail({ slug }: { slug: string }) {
                 {task.project_slug ? ` · ${task.project_slug}` : ''}
               </div>
               {(agent?.branch || task.worktree_path) && (
-                <div className="detail-branch" title="Current git branch">
-                  <GitBranch size={12} />
-                  <span className="mono clip">{agent?.branch || '—'}</span>
-                </div>
+                <BranchPicker
+                  current={agent?.branch || '—'}
+                  branches={agent?.branches}
+                  busy={busy === 'switch-branch'}
+                  onSwitch={(b) => run('switch-branch', { branch: b })}
+                />
               )}
             </div>
             {agent && agent.tokens_session > 0 && (
@@ -325,10 +332,36 @@ export function SessionDetail({ slug }: { slug: string }) {
                     <Pause size={14} /> Pause session
                   </button>
                 )}
-                <button className="menu-item" disabled title="Fork task — coming soon">
+                {task.waiting_on && (
+                  <button className="menu-item" onClick={(e) => { closeMenu(e); run('clear-waiting') }}>
+                    <BellOff size={14} /> Clear waiting
+                    <span className="menu-item-note clip" style={{ maxWidth: 130 }}>{task.waiting_on}</span>
+                  </button>
+                )}
+                <button
+                  className="menu-item"
+                  disabled={busy === 'fork'}
+                  onClick={(e) => { closeMenu(e); run('fork') }}
+                >
                   <GitFork size={14} /> Fork task
-                  <span className="menu-item-note">coming soon</span>
                 </button>
+                {agent?.status === 'running' && (agent?.session_id || task.session_id) && (
+                  <button
+                    className="menu-item danger"
+                    onClick={async (e) => {
+                      closeMenu(e)
+                      const ok = await confirmAction({
+                        title: 'Force-stop this session?',
+                        body: `Sends SIGTERM to the live ${provider} process for "${task.name}". The session stays bound to the task, so you can resume it afterward.`,
+                        confirmLabel: 'Force-stop',
+                        danger: true,
+                      })
+                      if (ok) run('kill', { session_id: agent?.session_id || task.session_id }, { close: true })
+                    }}
+                  >
+                    <Ban size={14} /> Force-stop session
+                  </button>
+                )}
                 <button
                   className="menu-item danger"
                   onClick={async (e) => {
@@ -343,6 +376,21 @@ export function SessionDetail({ slug }: { slug: string }) {
                   }}
                 >
                   <Archive size={14} /> Archive
+                </button>
+                <button
+                  className="menu-item danger"
+                  onClick={async (e) => {
+                    closeMenu(e)
+                    const ok = await confirmAction({
+                      title: 'Move this task to trash?',
+                      body: `"${task.name}" will be soft-deleted and hidden from your lists. You can restore it from Trash later.`,
+                      confirmLabel: 'Move to trash',
+                      danger: true,
+                    })
+                    if (ok) run('delete', { entity_kind: 'task' }, { goto: 'home' })
+                  }}
+                >
+                  <Trash2 size={14} /> Move to trash
                 </button>
               </div>
             </details>
@@ -607,6 +655,98 @@ function Seg({
   )
 }
 
+// Branch label that doubles as a switch-branch dropdown when the work_dir has
+// other local branches. `switch-branch` shells `git switch`, so git itself
+// rejects a switch that would clobber uncommitted changes — that error surfaces
+// as a toast via run(). With no alternates it renders as the plain static label.
+function BranchPicker({
+  current,
+  branches,
+  busy,
+  onSwitch,
+}: {
+  current: string
+  branches?: string[]
+  busy: boolean
+  onSwitch: (branch: string) => void
+}) {
+  const others = (branches ?? []).filter((b) => b && b !== current)
+  if (others.length === 0) {
+    return (
+      <div className="detail-branch" title="Current git branch">
+        <GitBranch size={12} />
+        <span className="mono clip">{current}</span>
+      </div>
+    )
+  }
+  return (
+    <details className="menu">
+      <summary className="detail-branch as-button" title="Switch git branch">
+        <GitBranch size={12} />
+        <span className="mono clip">{current}</span>
+        {busy ? <Loader2 size={11} className="spin" /> : <ChevronDown size={11} />}
+      </summary>
+      <div className="menu-pop">
+        {others.map((b) => (
+          <button
+            key={b}
+            className="menu-item"
+            onClick={(e) => {
+              ;(e.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
+              onSwitch(b)
+            }}
+          >
+            <GitBranch size={13} /> <span className="mono clip">{b}</span>
+          </button>
+        ))}
+      </div>
+    </details>
+  )
+}
+
+// Diagnostics the backend already computes per agent but the UI used to drop:
+// hook_health explains why a status can look stale (Codex hook wiring), next_step
+// is the agent's stated plan, and recent_tools is its latest tool activity.
+function AgentDiagnostics({ agent }: { agent: UiAgent }) {
+  const tools = agent.recent_tools ?? []
+  if (!agent.hook_health && !agent.next_step && tools.length === 0) return null
+  return (
+    <div className="col" style={{ gap: 10, marginTop: 12 }}>
+      {agent.hook_health && (
+        <div
+          className="badge warn"
+          style={{ height: 'auto', padding: '7px 9px', whiteSpace: 'normal', textAlign: 'left', alignItems: 'flex-start', gap: 7 }}
+          title={agent.hook_health.action}
+        >
+          <AlertTriangle size={13} style={{ flex: 'none', marginTop: 1 }} />
+          <span>
+            {agent.hook_health.message}
+            {agent.hook_health.action ? ` ${agent.hook_health.action}` : ''}
+          </span>
+        </div>
+      )}
+      {agent.next_step && (
+        <div className="meta-cell">
+          <div className="meta-k">next step</div>
+          <div className="meta-v">{agent.next_step}</div>
+        </div>
+      )}
+      {tools.length > 0 && (
+        <div className="col" style={{ gap: 6 }}>
+          <div className="meta-k">recent tools</div>
+          <div className="row gap wrap" style={{ gap: 6 }}>
+            {tools.map((t, i) => (
+              <span key={i} className="tag" title={t.s} style={{ gap: 5 }}>
+                <Wrench size={11} /> {t.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SideInfo({ task, agent }: { task: ReturnType<typeof useTask>['data']; agent?: UiAgent }) {
   if (!task) return null
   return (
@@ -637,6 +777,7 @@ function SideInfo({ task, agent }: { task: ReturnType<typeof useTask>['data']; a
           </span>
         </div>
       )}
+      {agent && <AgentDiagnostics agent={agent} />}
       {task.tags?.length > 0 && (
         <div className="row gap wrap" style={{ gap: 6, marginTop: 12 }}>
           {task.tags.map((t) => <span key={t} className="tag">{t}</span>)}

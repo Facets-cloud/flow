@@ -229,6 +229,8 @@ export interface UiAgent {
   tags: string[]
   summary: string
   next_step: string
+  recent_tools?: { name: string; s: string }[]
+  hook_health?: { status: string; message: string; action?: string }
   transcript?: UiTranscript[]
   brief?: string
   diff_files?: DiffFile[]

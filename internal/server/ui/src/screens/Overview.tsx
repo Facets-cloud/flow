@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'wouter'
 import { ArrowRight, Activity, Repeat, AlertTriangle, Snowflake, TerminalSquare, Flame, Inbox as InboxIcon } from 'lucide-react'
-import { useInbox, useQuote, useUiData } from '../lib/query'
+import { useInbox, useOverview, useQuote, useUiData } from '../lib/query'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { AgentCard } from '../components/AgentCard'
 import { EmptyState, ErrorNote, Loading, ProviderIcon, SourceIcon, Sparkline } from '../components/ui'
 import { useFloatTip } from '../components/FloatTip'
-import { ago, compact, compactTokens, fromMinutes } from '../lib/format'
-import type { ActivityDay, InboxFeedEntry, PlaybookRun, UiStats } from '../lib/types'
+import { ago, compact, compactTokens, dueTone } from '../lib/format'
+import type { ActivityDay, InboxFeedEntry, PlaybookRun, TaskView, UiStats } from '../lib/types'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -300,9 +300,25 @@ export function Overview() {
   useDocumentTitle('Mission Control')
   const [, navigate] = useLocation()
   const { data: ui, isLoading, error } = useUiData()
+  const { data: overview } = useOverview()
   const { data: inbox } = useInbox()
   const { text: greeting, hourKey } = useGreeting()
   const { data: quote } = useQuote(hourKey)
+
+  // High-priority backlog, sourced from /api/overview so the rows carry
+  // due_info / assignee / stale_days (the UiData BACKLOG bucket drops them).
+  // The endpoint returns them unsorted, so order by soonest-due here: overdue
+  // first (earlier YYYY-MM-DD sorts first), undated last, newest as tie-break.
+  const backlog = useMemo(() => {
+    const rows = (overview?.high_priority_backlog ?? []).slice()
+    rows.sort((a, b) => {
+      if (a.due_date && b.due_date) return a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0
+      if (a.due_date) return -1
+      if (b.due_date) return 1
+      return Date.parse(b.updated_at) - Date.parse(a.updated_at)
+    })
+    return rows
+  }, [overview])
 
   // One row per thread (task), newest message first — Slack AND GitHub.
   const inboxThreads = useMemo(() => {
@@ -453,23 +469,39 @@ export function Overview() {
           <section>
             <div className="section-head">
               <span className="eyebrow">High-priority backlog</span>
-              <span className="section-count">{ui.BACKLOG.length}</span>
+              <span className="section-count">{backlog.length}</span>
               <div className="spacer" />
               <Link href="/tasks" className="btn ghost sm">Tasks <ArrowRight size={14} /></Link>
             </div>
             <div className="rows">
-              {ui.BACKLOG.slice(0, 8).map((t) => (
-                <div key={t.slug} className="lrow" onClick={() => navigate(`/session/${t.slug}`)}>
-                  <span className={`prio ${t.priority}`} />
-                  <ProviderIcon provider={t.provider} size={14} />
-                  <div className="lrow-main">
-                    <div className="lrow-title clip">{t.name}</div>
-                    <div className="lrow-sub clip">{t.project} · {fromMinutes(t.started_min)} old</div>
+              {backlog.slice(0, 8).map((t) => {
+                const tone = dueTone(t.due_date, t.due_info)
+                return (
+                  <div key={t.slug} className="lrow" onClick={() => navigate(`/session/${t.slug}`)}>
+                    <span className={`prio ${t.priority}`} />
+                    <ProviderIcon provider={t.session_provider} size={14} />
+                    <div className="lrow-main">
+                      <div className="lrow-title clip">{t.name}</div>
+                      <div className="lrow-sub clip">
+                        {t.project_slug || 'no project'}
+                        {t.assignee ? ` · @${t.assignee}` : ''}
+                        {t.stale_days != null && t.stale_days > 0 ? ` · stale ${t.stale_days}d` : ''}
+                      </div>
+                    </div>
+                    {t.due_info && (
+                      <span
+                        className={`badge ${tone}`}
+                        style={{ whiteSpace: 'nowrap', height: 'auto', padding: '3px 8px' }}
+                        title={t.due_date ? `Due ${t.due_date}` : undefined}
+                      >
+                        {t.due_info}
+                      </span>
+                    )}
+                    {t.tags?.slice(0, 2).map((tag) => <span key={tag} className="tag">{tag}</span>)}
                   </div>
-                  {t.tags?.slice(0, 2).map((tag) => <span key={tag} className="tag">{tag}</span>)}
-                </div>
-              ))}
-              {ui.BACKLOG.length === 0 && <div className="lrow"><span className="faint">Backlog is clear.</span></div>}
+                )
+              })}
+              {backlog.length === 0 && <div className="lrow"><span className="faint">No high-priority backlog.</span></div>}
             </div>
           </section>
         </div>

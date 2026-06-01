@@ -1,23 +1,50 @@
+import { useEffect, useState } from 'react'
 import { useLocation } from 'wouter'
-import { Archive, Play, Repeat } from 'lucide-react'
-import { usePlaybooks, useAction } from '../lib/query'
+import { Archive, ChevronDown, Play, Repeat, Trash2 } from 'lucide-react'
+import { usePlaybooks, useAction, useUiData } from '../lib/query'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { confirmAction } from '../lib/confirm'
+import { AgentPicker, PermissionPicker } from '../components/pickers'
 import { EmptyState, ErrorNote, Loading, Sparkline } from '../components/ui'
 import { ago } from '../lib/format'
+import type { ToolCapability } from '../lib/types'
 
 export function Playbooks() {
   useDocumentTitle('Playbooks')
   const [, navigate] = useLocation()
   const { data, isLoading, error } = usePlaybooks()
+  const { data: ui } = useUiData()
   const action = useAction()
+  const providers = ui?.CAPABILITIES?.providers ?? []
 
-  const run = (slug: string, e: React.MouseEvent) => {
-    e.stopPropagation()
+  // Close any open run-options popover when clicking outside it (same idiom as
+  // the SessionDetail more-actions menu — native <details> won't self-close).
+  useEffect(() => {
+    const onDown = (e: globalThis.MouseEvent) => {
+      document.querySelectorAll('details.menu[open]').forEach((d) => {
+        if (!d.contains(e.target as Node)) d.removeAttribute('open')
+      })
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [])
+
+  const runWith = (slug: string, opts: { provider?: string; permission_mode?: string }) => {
     action.mutate(
-      { kind: 'spawn-run', target: slug },
+      { kind: 'spawn-run', target: slug, ...opts },
       { onSuccess: (d) => d.agent && navigate(`/session/${d.agent.slug}`) },
     )
+  }
+
+  const trash = async (e: React.MouseEvent, slug: string, name: string) => {
+    e.stopPropagation()
+    const ok = await confirmAction({
+      title: 'Move this playbook to trash?',
+      body: `"${name}" will be soft-deleted and hidden from your lists. Past runs are unaffected and you can restore it from Trash later.`,
+      confirmLabel: 'Move to trash',
+      danger: true,
+    })
+    if (ok) action.mutate({ kind: 'delete', target: slug, entity_kind: 'playbook' })
   }
 
   const archive = async (e: React.MouseEvent, slug: string, name: string) => {
@@ -56,9 +83,11 @@ export function Playbooks() {
                   <div className="acard-title clip">{p.name}</div>
                   <div className="acard-ref clip">{p.project_slug || 'no project'}</div>
                 </div>
-                <button className="btn primary sm" onClick={(e) => run(p.slug, e)} disabled={action.isPending}>
-                  <Play size={13} /> Run
-                </button>
+                <PlaybookRunControl
+                  providers={providers}
+                  pending={action.isPending}
+                  onRun={(opts) => runWith(p.slug, opts)}
+                />
                 <button
                   className="btn icon ghost sm row-action"
                   title="Archive playbook"
@@ -66,6 +95,14 @@ export function Playbooks() {
                   onClick={(e) => archive(e, p.slug, p.name)}
                 >
                   <Archive size={14} />
+                </button>
+                <button
+                  className="btn icon ghost sm row-action"
+                  title="Move to trash"
+                  aria-label="Move playbook to trash"
+                  onClick={(e) => trash(e, p.slug, p.name)}
+                >
+                  <Trash2 size={14} />
                 </button>
               </div>
               <div className="acard-foot" style={{ borderTop: 'none', paddingTop: 0 }}>
@@ -82,6 +119,56 @@ export function Playbooks() {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// Split "Run" button: a plain click spawns a run with the stored defaults
+// (claude / default), the caret opens a popover to pick agent + permission mode
+// before launching — surfacing spawn-run's Provider/PermissionMode inputs the
+// quick button hard-defaulted. stopPropagation keeps clicks off the card's
+// navigate-to-detail handler.
+function PlaybookRunControl({
+  providers,
+  pending,
+  onRun,
+}: {
+  providers: ToolCapability[]
+  pending: boolean
+  onRun: (opts: { provider?: string; permission_mode?: string }) => void
+}) {
+  const [provider, setProvider] = useState('claude')
+  const [perm, setPerm] = useState('default')
+  return (
+    <div className="split-run" onClick={(e) => e.stopPropagation()}>
+      <button className="btn primary sm split-main" onClick={() => onRun({})} disabled={pending}>
+        <Play size={13} /> Run
+      </button>
+      <details className="menu">
+        <summary className="btn primary sm split-caret" title="Run options">
+          <ChevronDown size={13} />
+        </summary>
+        <div className="menu-pop right run-opts">
+          <div className="run-opts-row">
+            <span className="eyebrow">Agent</span>
+            <AgentPicker value={provider} onChange={setProvider} providers={providers} />
+          </div>
+          <div className="run-opts-row">
+            <span className="eyebrow">Permissions</span>
+            <PermissionPicker value={perm} onChange={setPerm} />
+          </div>
+          <button
+            className="btn primary sm"
+            disabled={pending}
+            onClick={(e) => {
+              ;(e.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
+              onRun({ provider, permission_mode: perm })
+            }}
+          >
+            <Play size={13} /> Run with options
+          </button>
+        </div>
+      </details>
     </div>
   )
 }

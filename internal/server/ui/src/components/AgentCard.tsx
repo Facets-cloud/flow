@@ -1,5 +1,5 @@
 import { useLocation } from 'wouter'
-import { GitBranch, Clock3, Radar, Coins } from 'lucide-react'
+import { GitBranch, Clock3, Radar, Coins, AlertTriangle } from 'lucide-react'
 import type { UiAgent } from '../lib/types'
 import { fromMinutes, fromSeconds, compact, compactTokens } from '../lib/format'
 import { ProviderIcon, Sparkline, StatusDot, TokenBar } from './ui'
@@ -33,6 +33,15 @@ export function AgentCard({ agent }: { agent: UiAgent }) {
           <div className="acard-title clip">{agent.name}</div>
           <div className="acard-ref clip">{agent.slug}</div>
         </div>
+        {agent.hook_health && (
+          <span
+            className="acard-mon"
+            style={{ color: 'var(--warn)' }}
+            title={`${agent.hook_health.message}${agent.hook_health.action ? ' — ' + agent.hook_health.action : ''}`}
+          >
+            <AlertTriangle size={14} />
+          </span>
+        )}
         {agent.monitored && (
           <span className="acard-mon" title="Background monitor active">
             <Radar size={14} />

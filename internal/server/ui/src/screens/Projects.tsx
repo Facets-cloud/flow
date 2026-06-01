@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useLocation } from 'wouter'
-import { Archive, FolderGit2, Plus } from 'lucide-react'
+import { Archive, FolderGit2, Plus, Trash2 } from 'lucide-react'
 import { useAction, useProjects } from '../lib/query'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { confirmAction } from '../lib/confirm'
@@ -35,6 +35,17 @@ export function Projects() {
       danger: true,
     })
     if (ok) action.mutate({ kind: 'archive', target: slug, entity_kind: 'project' })
+  }
+
+  const trash = async (e: React.MouseEvent, slug: string, name: string) => {
+    e.stopPropagation()
+    const ok = await confirmAction({
+      title: 'Move this project to trash?',
+      body: `"${name}" will be soft-deleted and hidden from your lists. Its tasks and files remain, and you can restore it from Trash later.`,
+      confirmLabel: 'Move to trash',
+      danger: true,
+    })
+    if (ok) action.mutate({ kind: 'delete', target: slug, entity_kind: 'project' })
   }
 
   return (
@@ -74,6 +85,14 @@ export function Projects() {
                   onClick={(e) => archive(e, p.slug, p.name)}
                 >
                   <Archive size={14} />
+                </button>
+                <button
+                  className="btn icon ghost sm row-action"
+                  title="Move to trash"
+                  aria-label="Move project to trash"
+                  onClick={(e) => trash(e, p.slug, p.name)}
+                >
+                  <Trash2 size={14} />
                 </button>
               </div>
               <div className="row gap" style={{ gap: 18, fontSize: 12.5 }}>

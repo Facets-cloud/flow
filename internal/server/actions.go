@@ -1577,7 +1577,10 @@ func (s *Server) forkTask(req actionRequest) (actionResponse, int) {
 	if err != nil {
 		return actionResponse{OK: false, Message: err.Error(), Output: out}, http.StatusInternalServerError
 	}
-	return actionResponse{OK: true, Message: "forked " + target + " to " + slug, Output: out}, http.StatusOK
+	// Return the freshly-created fork as Agent so the UI can navigate straight
+	// to its session (SessionDetail keys its post-fork navigation off resp.agent).
+	agent, _ := s.agentForTask(slug)
+	return actionResponse{OK: true, Message: "forked " + target + " to " + slug, Output: out, Agent: agent}, http.StatusOK
 }
 
 func (s *Server) editPlaybook(target string) (actionResponse, int) {

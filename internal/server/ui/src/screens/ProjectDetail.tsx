@@ -1,10 +1,13 @@
+import { useState } from 'react'
 import { useLocation } from 'wouter'
-import { ArrowLeft } from 'lucide-react'
-import { useProject, useProjectTasks } from '../lib/query'
+import { ArrowLeft, FileText } from 'lucide-react'
+import { useMarkdown, useProject, useProjectTasks } from '../lib/query'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { BriefPanel } from '../components/BriefPanel'
+import { Md } from '../components/Markdown'
 import { ErrorNote, Loading, ProviderIcon, StatusDot } from '../components/ui'
-import { ago } from '../lib/format'
+import { ago, dateTime } from '../lib/format'
+import type { FileRef } from '../lib/types'
 
 export function ProjectDetail({ slug }: { slug: string }) {
   const [, navigate] = useLocation()
@@ -71,6 +74,64 @@ export function ProjectDetail({ slug }: { slug: string }) {
           </div>
         </section>
       </div>
+
+      <section className="section" style={{ marginTop: 24 }}>
+        <div className="section-head">
+          <span className="eyebrow">Updates</span>
+          <span className="section-count">{project.updates?.length ?? 0}</span>
+        </div>
+        <ProjectUpdates slug={slug} updates={project.updates ?? []} />
+        {project.aux_files?.length > 0 && (
+          <div className="row gap wrap" style={{ gap: 8, marginTop: 12 }}>
+            <span className="eyebrow" style={{ marginRight: 4 }}>files</span>
+            {project.aux_files.map((f) => (
+              <span key={f.filename} className="tag" title={`${f.path} · ${f.size} bytes`}>
+                <FileText size={11} /> {f.filename}
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
+}
+
+// Collapsible project update log — same shape as the SessionDetail UpdatesTab
+// (the brief flags [[entity-detail-shared-component]] as the eventual shared
+// primitive; until then this mirrors that pattern). The newest update opens by
+// default; markdown is fetched per-file on expand.
+function ProjectUpdates({ slug, updates }: { slug: string; updates: FileRef[] }) {
+  const [openFile, setOpenFile] = useState<string | null>(updates[0]?.filename ?? null)
+  if (updates.length === 0) {
+    return <div className="rows"><div className="lrow"><span className="faint">No updates logged for this project.</span></div></div>
+  }
+  return (
+    <div className="col" style={{ gap: 8 }}>
+      {updates.map((u) => (
+        <div key={u.filename} className="card" style={{ overflow: 'hidden' }}>
+          <button
+            className="row gap"
+            style={{ width: '100%', padding: '9px 12px', justifyContent: 'flex-start' }}
+            onClick={() => setOpenFile(openFile === u.filename ? null : u.filename)}
+          >
+            <span className="mono clip" style={{ flex: 1, fontSize: 12, textAlign: 'left' }}>{u.filename}</span>
+            <span className="faint" style={{ fontSize: 11 }}>{dateTime(u.mtime)}</span>
+          </button>
+          {openFile === u.filename && (
+            <div style={{ padding: '4px 12px 12px', borderTop: '1px solid var(--border-faint)' }}>
+              <ProjectUpdateBody slug={slug} filename={u.filename} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ProjectUpdateBody({ slug, filename }: { slug: string; filename: string }) {
+  const { data, isLoading } = useMarkdown(
+    `/api/projects/${encodeURIComponent(slug)}/updates/${encodeURIComponent(filename)}`,
+  )
+  if (isLoading) return <Loading label="update" />
+  return <Md source={data || ''} />
 }

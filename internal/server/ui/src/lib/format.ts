@@ -71,6 +71,24 @@ export function titleCase(s: string): string {
   return s.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+// Local YYYY-MM-DD for "today". Due dates are YYYY-MM-DD, so plain string
+// comparison against this is chronological (and treats the date as local, not
+// UTC midnight).
+export function todayISO(): string {
+  const n = new Date()
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
+}
+
+// Badge tone for a due-date pill: danger when overdue, warn when due
+// today/tomorrow, neutral otherwise. Takes primitives so both the Tasks table
+// and the Overview backlog rows can share it.
+export function dueTone(dueDate: string | null, dueInfo: string | null): '' | 'warn' | 'danger' {
+  if (!dueDate) return ''
+  if (dueDate < todayISO()) return 'danger'
+  if (dueInfo === 'today' || dueInfo === 'tomorrow') return 'warn'
+  return ''
+}
+
 export const PROVIDER_LABEL: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
