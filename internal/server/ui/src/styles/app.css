@@ -759,21 +759,23 @@ select.input {
      .xterm-host would make it over-measure and clip the right column. */
   padding: 12px 14px;
 }
-/* The element xterm.js renders into. No padding (see above); it just fills the
-   padded content area of .flow-term, and FitAddon measures it exactly.
-   overflow:hidden + the bounded .xterm height below guarantee the grid can never
-   spill past the host — so even if a fit lags a layout change, the prompt stays
-   inside the scrollable viewport instead of being pushed off-screen (the
-   "can't reach the input box until I zoom/refresh" bug). */
+/* The element xterm.js renders into. position:relative so the absolutely-filled
+   .xterm below has a stable box for FitAddon to measure (no padding here — see
+   above). */
 .flow-term .xterm-host {
   flex: 1;
   min-height: 0;
   min-width: 0;
+  position: relative;
   overflow: hidden;
 }
-.flow-term .xterm,
-.flow-term .xterm .xterm-viewport {
-  height: 100% !important;
+/* Absolutely fill the host so FitAddon always measures the same box and xterm
+   manages its OWN viewport/screen heights. (Forcing .xterm-viewport height:100%
+   fought xterm's rows×cellHeight sizing and left the prompt sitting above the
+   fold — the "input box not visible until I zoom/refresh" bug.) */
+.flow-term .xterm {
+  position: absolute;
+  inset: 0;
 }
 /* Let the panel background show through; xterm paints cell backgrounds itself. */
 .flow-term .xterm .xterm-viewport {
