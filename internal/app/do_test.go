@@ -84,7 +84,7 @@ func stubITerm(t *testing.T) (*int64, func() string) {
 // seedTask creates a minimal task row (floating, workspace work_dir).
 func seedTask(t *testing.T, slug string) {
 	t.Helper()
-	if rc := cmdAdd([]string{"task", slug}); rc != 0 {
+	if rc := cmdAdd([]string{"task", slug, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("seed task rc=%d", rc)
 	}
 }

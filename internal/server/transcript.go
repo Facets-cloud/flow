@@ -140,12 +140,28 @@ func resolveSessionJSONLPath(task *flowdb.Task) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
 	}
-	encoded := encodeCwdForClaude(task.WorkDir)
-	path := filepath.Join(home, ".claude", "projects", encoded, task.SessionID.String+".jsonl")
-	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("session file not found: %s", path)
+	// Claude derives its project dir from the cwd it was launched in. When the
+	// task runs in a git worktree (flow do --worktree), that cwd is the worktree
+	// path, NOT work_dir — so the jsonl lives under the worktree-encoded dir.
+	// Try the worktree first, then fall back to work_dir. (Missing this is why a
+	// worktree session's token count fell through to the 1.2k estimate floor:
+	// the usage parse couldn't find the transcript.)
+	candidates := make([]string, 0, 2)
+	if wt := strings.TrimSpace(task.WorktreePath.String); task.WorktreePath.Valid && wt != "" {
+		candidates = append(candidates, wt)
 	}
-	return path, nil
+	if wd := strings.TrimSpace(task.WorkDir); wd != "" {
+		candidates = append(candidates, wd)
+	}
+	var lastPath string
+	for _, cwd := range candidates {
+		path := filepath.Join(home, ".claude", "projects", encodeCwdForClaude(cwd), task.SessionID.String+".jsonl")
+		lastPath = path
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("session file not found: %s", lastPath)
 }
 
 func encodeCwdForClaude(cwd string) string {
@@ -186,6 +202,12 @@ type transcriptUsageStats struct {
 	// window).
 	TokensUsed int
 	TokensMax  int
+	// TokensSession is the cumulative tokens CONSUMED this session — new work
+	// only, EXCLUDING cache re-reads (which would double-count the whole context
+	// every turn and balloon a long session into the hundreds of millions, e.g.
+	// 538M). Accumulated per turn via freshTotal(). This is the header pill
+	// ("tokens used this session").
+	TokensSession int
 	Model         string
 	LastTimestamp string
 }
@@ -235,8 +257,10 @@ func sessionTranscriptUsageStats(path string) transcriptUsageStats {
 			stats.Model = m
 		}
 		if used := rec.Message.Usage.total(); used > 0 {
-			stats.TokensUsed = used
+			stats.TokensUsed = used // context occupancy = latest turn's full total
 		}
+		// Session usage = cumulative NEW work, EXCLUDING cache re-reads.
+		stats.TokensSession += rec.Message.Usage.freshTotal()
 		if rec.Payload != nil {
 			var payload struct {
 				Type string `json:"type"`
@@ -251,6 +275,9 @@ func sessionTranscriptUsageStats(path string) transcriptUsageStats {
 					stats.TokensUsed = used
 				} else if used := payload.Info.TotalTokenUsage.total(); used > 0 {
 					stats.TokensUsed = used
+				}
+				if total := payload.Info.TotalTokenUsage.total(); total > 0 {
+					stats.TokensSession = total // Codex: reported running total
 				}
 				if payload.Info.ModelContextWindow > 0 {
 					stats.TokensMax = payload.Info.ModelContextWindow
@@ -271,6 +298,22 @@ func (u transcriptTokenUsage) total() int {
 		u.CacheReadInputTokens +
 		u.OutputTokens +
 		u.ReasoningOutputTokens
+}
+
+// freshTotal counts only NEW work for a turn — it EXCLUDES cache *reads*
+// (re-reading context already counted on earlier turns). Summing total() per
+// turn double-counts the cached context every turn, ballooning a session into
+// the hundreds of millions (e.g. 218k context × thousands of turns ≈ 538M);
+// freshTotal is the accurate "tokens consumed this session" figure. Claude
+// reports new input in InputTokens with cache reads separate in
+// CacheReadInputTokens; Codex bundles the cached portion into InputTokens,
+// exposed as CachedInputTokens, so subtract it.
+func (u transcriptTokenUsage) freshTotal() int {
+	in := u.InputTokens - u.CachedInputTokens
+	if in < 0 {
+		in = 0
+	}
+	return in + u.CacheCreationInputTokens + u.OutputTokens + u.ReasoningOutputTokens
 }
 
 func parseTranscriptLine(line []byte, offset int64) []TranscriptEntry {

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/copy-wasm.mjs && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -15,9 +15,9 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/plus-jakarta-sans": "^5.2.8",
     "@tanstack/react-query": "^5.59.0",
-    "@wterm/core": "^0.3.0",
-    "@wterm/dom": "^0.3.0",
-    "@wterm/react": "^0.3.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-unicode11": "^0.8.0",
+    "@xterm/xterm": "^5.5.0",
     "highlight.js": "^11.10.0",
     "lucide-react": "^0.460.0",
     "motion": "^11.13.0",

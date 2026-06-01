@@ -164,7 +164,7 @@ func TestCmdAddProjectBadPriority(t *testing.T) {
 func TestCmdAddTaskFloating(t *testing.T) {
 	root := setupFlowRoot(t)
 
-	rc := cmdAdd([]string{"task", "Fix bug"})
+	rc := cmdAdd([]string{"task", "Fix bug", "--agent", "claude"})
 	if rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
@@ -195,7 +195,7 @@ func TestCmdAddTaskFloating(t *testing.T) {
 func TestCmdAddTaskPermissionMode(t *testing.T) {
 	setupFlowRoot(t)
 
-	rc := cmdAdd([]string{"task", "Bypass task", "--permission-mode", "bypass"})
+	rc := cmdAdd([]string{"task", "Bypass task", "--permission-mode", "bypass", "--agent", "claude"})
 	if rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
@@ -212,7 +212,7 @@ func TestCmdAddTaskPermissionMode(t *testing.T) {
 func TestCmdAddTaskDefaultsPermissionModeAuto(t *testing.T) {
 	setupFlowRoot(t)
 
-	rc := cmdAdd([]string{"task", "Auto default task"})
+	rc := cmdAdd([]string{"task", "Auto default task", "--agent", "claude"})
 	if rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
@@ -246,6 +246,31 @@ func TestCmdAddTaskSessionProviderCodex(t *testing.T) {
 	}
 }
 
+func TestCmdAddTaskRequiresAgent(t *testing.T) {
+	setupFlowRoot(t)
+
+	// No --agent / --codex / --claude → usage error, no task created.
+	if rc := cmdAdd([]string{"task", "No Agent Task"}); rc != 2 {
+		t.Fatalf("rc=%d, want 2 (agent required)", rc)
+	}
+	db := openFlowDB(t)
+	if _, err := flowdb.GetTask(db, "no-agent-task"); err == nil {
+		t.Fatal("task should not exist when agent is omitted")
+	}
+
+	// The --claude shortcut satisfies the requirement.
+	if rc := cmdAdd([]string{"task", "Claude Task", "--claude"}); rc != 0 {
+		t.Fatalf("rc=%d with --claude, want 0", rc)
+	}
+	task, err := flowdb.GetTask(db, "claude-task")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.SessionProvider != "claude" {
+		t.Fatalf("session provider = %q, want claude", task.SessionProvider)
+	}
+}
+
 func TestCmdAddTaskHelpDoesNotCreateTask(t *testing.T) {
 	setupFlowRoot(t)
 
@@ -275,7 +300,7 @@ func TestCmdAddTaskInheritsProjectWorkDir(t *testing.T) {
 	if rc := cmdAdd([]string{"project", "Parent", "--work-dir", wd}); rc != 0 {
 		t.Fatalf("add project rc=%d", rc)
 	}
-	if rc := cmdAdd([]string{"task", "Child Task", "--project", "parent"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Child Task", "--project", "parent", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
 	db := openFlowDB(t)
@@ -299,7 +324,7 @@ func TestCmdAddTaskOverridesProjectWorkDir(t *testing.T) {
 	if rc := cmdAdd([]string{"project", "P", "--work-dir", projWD}); rc != 0 {
 		t.Fatalf("add project rc=%d", rc)
 	}
-	if rc := cmdAdd([]string{"task", "Child", "--project", "p", "--work-dir", overrideWD}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Child", "--project", "p", "--work-dir", overrideWD, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
 	db := openFlowDB(t)
@@ -317,7 +342,7 @@ func TestCmdAddTaskRegistersExplicitGitRemote(t *testing.T) {
 	wd := t.TempDir()
 	writeFakeGitConfig(t, wd, "https://github.com/facets/task-repo.git")
 
-	if rc := cmdAdd([]string{"task", "Remote Task", "--work-dir", wd}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Remote Task", "--work-dir", wd, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	db := openFlowDB(t)
@@ -332,7 +357,7 @@ func TestCmdAddTaskRegistersExplicitGitRemote(t *testing.T) {
 
 func TestCmdAddTaskInvalidProject(t *testing.T) {
 	setupFlowRoot(t)
-	if rc := cmdAdd([]string{"task", "X", "--project", "nope"}); rc == 0 {
+	if rc := cmdAdd([]string{"task", "X", "--project", "nope", "--agent", "claude"}); rc == 0 {
 		t.Error("expected rc!=0 for unknown project")
 	}
 }
@@ -340,7 +365,7 @@ func TestCmdAddTaskInvalidProject(t *testing.T) {
 func TestCmdAddTaskCollisionAvoidance(t *testing.T) {
 	setupFlowRoot(t)
 	for i := 0; i < 3; i++ {
-		if rc := cmdAdd([]string{"task", "Dup Task"}); rc != 0 {
+		if rc := cmdAdd([]string{"task", "Dup Task", "--agent", "claude"}); rc != 0 {
 			t.Fatalf("add task iter %d rc=%d", i, rc)
 		}
 	}
@@ -356,7 +381,7 @@ func TestCmdAddTaskWorkDirMkdir(t *testing.T) {
 	setupFlowRoot(t)
 	parent := t.TempDir()
 	missing := filepath.Join(parent, "fresh-subdir")
-	if rc := cmdAdd([]string{"task", "Task", "--work-dir", missing, "--mkdir"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Task", "--work-dir", missing, "--mkdir", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	if _, err := os.Stat(missing); err != nil {
@@ -376,7 +401,7 @@ func TestCmdAddUnknownSubcommand(t *testing.T) {
 
 func TestCmdAddTaskWithDueDate(t *testing.T) {
 	setupFlowRoot(t)
-	if rc := cmdAdd([]string{"task", "Due Task", "--due", "2026-06-01"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Due Task", "--due", "2026-06-01", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	db := openFlowDB(t)
@@ -395,14 +420,14 @@ func TestCmdAddTaskWithDueDate(t *testing.T) {
 
 func TestCmdAddTaskWithBadDueDate(t *testing.T) {
 	setupFlowRoot(t)
-	if rc := cmdAdd([]string{"task", "Bad Due", "--due", "garble"}); rc != 2 {
+	if rc := cmdAdd([]string{"task", "Bad Due", "--due", "garble", "--agent", "claude"}); rc != 2 {
 		t.Errorf("rc=%d, want 2", rc)
 	}
 }
 
 func TestCmdAddTaskWithoutDueDate(t *testing.T) {
 	setupFlowRoot(t)
-	if rc := cmdAdd([]string{"task", "No Due"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "No Due", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	db := openFlowDB(t)

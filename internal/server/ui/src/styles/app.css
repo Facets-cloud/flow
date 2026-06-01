@@ -751,29 +751,41 @@ select.input {
   border-radius: var(--r);
   overflow: hidden;
   /* Always dark, regardless of app theme — a dark terminal panel reads as
-     intentional in light mode (IDE convention) and avoids re-theming the
-     wterm grid (which broke scroll/layout). */
+     intentional in light mode (IDE convention). Matches TERMINAL_THEME.background
+     in Terminal.tsx so there's no seam between chrome and the xterm grid. */
   background: #0a0b0e;
-}
-.flow-term .wterm {
-  flex: 1;
-  height: 100%;
-  border-radius: var(--r);
-  box-shadow: none;
+  /* Gutter lives on the flex CONTAINER, not on .xterm-host. FitAddon measures
+     .xterm-host's box but only subtracts .xterm's own padding (0) — padding on
+     .xterm-host would make it over-measure and clip the right column. */
   padding: 12px 14px;
-  --term-font-family: var(--font-mono);
-  --term-font-size: 12.5px;
-  --term-bg: #0a0b0e;
-  --term-fg: #d7d4cd;
 }
-/* wterm 0.3.0 derives the grid + trailing-row backdrop from the bottom-right
-   cell, which its lightweight core can mis-mark with a stray palette colour
-   (e.g. green) even when the PTY stream sets no background. Pin the backdrop to
-   the real terminal background; individual cell <span>s keep their own
-   backgrounds, so legitimate colours still render. */
-.flow-term .term-grid,
-.flow-term .term-row {
-  background: var(--term-bg) !important;
+/* The element xterm.js renders into. No padding (see above); it just fills the
+   padded content area of .flow-term, and FitAddon measures it exactly. */
+.flow-term .xterm-host {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.flow-term .xterm {
+  height: 100%;
+}
+/* Let the panel background show through; xterm paints cell backgrounds itself. */
+.flow-term .xterm .xterm-viewport {
+  background: transparent !important;
+}
+/* Slim, unobtrusive scrollbar for the scrollback viewport. */
+.flow-term .xterm .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+.flow-term .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(215, 212, 205, 0.18);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.flow-term .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(215, 212, 205, 0.32);
+  background-clip: content-box;
 }
 
 /* ----------------------------- palette ---------------------------------- */

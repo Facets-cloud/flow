@@ -225,6 +225,8 @@ func (s *Server) runAction(req actionRequest) (actionResponse, int) {
 		return s.updatePermissionMode(req)
 	case "update-priority":
 		return s.updatePriority(req)
+	case "update-provider":
+		return s.updateProvider(req)
 	case "update-task-name":
 		return s.updateTaskName(req)
 	case "pause":
@@ -516,10 +518,9 @@ func (s *Server) createFlow(req actionRequest) (actionResponse, int) {
 		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
 	}
 
-	args := []string{"add", "task", name, "--slug", slug, "--priority", priority}
-	if provider != "claude" {
-		args = append(args, "--agent", provider)
-	}
+	// `flow add task` now requires an explicit agent (no silent claude default),
+	// so always pass the resolved provider — claude included.
+	args := []string{"add", "task", name, "--slug", slug, "--priority", priority, "--agent", provider}
 	args = append(args, "--permission-mode", permissionMode)
 	if project != "" {
 		args = append(args, "--project", project)
@@ -762,6 +763,31 @@ func (s *Server) updatePermissionMode(req actionRequest) (actionResponse, int) {
 		msg += "; current session terminated, reattach to apply"
 	}
 	return actionResponse{OK: true, Message: msg, AlreadyLive: terminatedNative}, http.StatusOK
+}
+
+// updateProvider switches a not-yet-started task's agent (claude ↔ codex). The
+// provider is sticky on the task row; the browser/native terminal launch reads
+// tasks.session_provider when it spawns (see terminal_bridge.startSessionLocked
+// and buildTerminalLaunch), so persisting the choice is all that's needed — the
+// spawn path is unchanged. applyBacklogProviderChoice enforces the same
+// "only before a session starts" guard and provider-availability check the
+// new-task form relies on, so a session that has already launched is rejected.
+func (s *Server) updateProvider(req actionRequest) (actionResponse, int) {
+	target := firstNonEmpty(req.Target, req.Slug)
+	if err := validateSlug(target); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	provider, err := flowdb.NormalizeSessionProvider(req.Provider)
+	if err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	if err := s.applyBacklogProviderChoice(target, provider); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return actionResponse{OK: false, Message: "task not found: " + target}, http.StatusNotFound
+		}
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	return actionResponse{OK: true, Message: "agent set to " + provider}, http.StatusOK
 }
 
 func (s *Server) updatePriority(req actionRequest) (actionResponse, int) {
@@ -1524,7 +1550,20 @@ func (s *Server) forkTask(req actionRequest) (actionResponse, int) {
 	if priority == "" {
 		priority = "medium"
 	}
-	args := []string{"add", "task", name + " fork", "--slug", slug, "--priority", priority}
+	// `flow add task` requires an explicit agent. Inherit the source task's
+	// provider when the caller didn't specify one; availableProvider falls back
+	// to an installed provider when both are empty.
+	forkProvider := strings.TrimSpace(req.Provider)
+	if forkProvider == "" {
+		if src, serr := flowdb.GetTask(s.cfg.DB, target); serr == nil {
+			forkProvider = strings.TrimSpace(src.SessionProvider)
+		}
+	}
+	provider, err := s.availableProvider(forkProvider)
+	if err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	args := []string{"add", "task", name + " fork", "--slug", slug, "--priority", priority, "--agent", provider}
 	if req.Project != "" && req.Project != "__adhoc" {
 		if err := validateSlug(req.Project); err != nil {
 			return actionResponse{OK: false, Message: "project: " + err.Error()}, http.StatusBadRequest

@@ -806,6 +806,61 @@ func TestSpawnActionRefusesBlockedTaskBeforeProviderChoice(t *testing.T) {
 	}
 }
 
+// stubProviderBins puts no-op executables named after each provider on PATH so
+// detectCapabilities (which calls exec.LookPath fresh, uncached) reports them
+// available. Host-independent: the test passes whether or not the real claude /
+// codex CLIs are installed.
+func stubProviderBins(t *testing.T, names ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestUpdateProviderActionSwitchesBacklogThenLocks(t *testing.T) {
+	root, db := testRootDB(t)
+	insertProjectTask(t, db, root) // build-ui: backlog, no session, provider NULL
+	stubProviderBins(t, "claude", "codex")
+	srv := New(Config{DB: db, FlowRoot: root, CommandPath: "/bin/false"})
+
+	// An unknown provider is rejected up front, before any mutation.
+	if resp, status := srv.runAction(actionRequest{Kind: "update-provider", Slug: "build-ui", Provider: "gpt"}); status != http.StatusBadRequest || resp.OK {
+		t.Fatalf("invalid provider: status=%d resp=%+v", status, resp)
+	}
+
+	// A not-yet-started backlog task can switch to codex; the choice is sticky.
+	resp, status := srv.runAction(actionRequest{Kind: "update-provider", Slug: "build-ui", Provider: "codex"})
+	if status != http.StatusOK || !resp.OK {
+		t.Fatalf("switch to codex: status=%d resp=%+v", status, resp)
+	}
+	task, err := flowdb.GetTask(db, "build-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionProvider != "codex" {
+		t.Fatalf("session_provider = %q, want codex", task.SessionProvider)
+	}
+
+	// Once a session has started, the provider is locked.
+	if _, err := db.Exec(`UPDATE tasks SET session_started = ? WHERE slug = ?`, flowdb.NowISO(), "build-ui"); err != nil {
+		t.Fatal(err)
+	}
+	resp, status = srv.runAction(actionRequest{Kind: "update-provider", Slug: "build-ui", Provider: "claude"})
+	if status != http.StatusBadRequest || resp.OK || !strings.Contains(resp.Message, "before a session starts") {
+		t.Fatalf("locked switch: status=%d resp=%+v", status, resp)
+	}
+	if task, err = flowdb.GetTask(db, "build-ui"); err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionProvider != "codex" {
+		t.Fatalf("provider after rejected switch = %q, want codex (unchanged)", task.SessionProvider)
+	}
+}
+
 func TestWorkdirActionsAddRenameRemove(t *testing.T) {
 	root, db := testRootDB(t)
 	workDir := t.TempDir()

@@ -10,7 +10,7 @@ import (
 func TestCmdSearchFindsBriefsAndUpdates(t *testing.T) {
 	root := setupFlowRoot(t)
 	wd := t.TempDir()
-	if rc := cmdAdd([]string{"task", "Build UI", "--slug", "build-ui", "--work-dir", wd}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Build UI", "--slug", "build-ui", "--work-dir", wd, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("cmdAdd task rc=%d", rc)
 	}
 	if err := os.WriteFile(filepath.Join(root, "tasks", "build-ui", "brief.md"), []byte("brief search marker\n"), 0o644); err != nil {
@@ -41,7 +41,7 @@ func TestCmdSearchFindsBriefsAndUpdates(t *testing.T) {
 func TestCmdSearchTranscriptsAreOptIn(t *testing.T) {
 	root := setupFlowRoot(t)
 	wd := t.TempDir()
-	if rc := cmdAdd([]string{"task", "Investigate", "--slug", "investigate", "--work-dir", wd}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Investigate", "--slug", "investigate", "--work-dir", wd, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("cmdAdd task rc=%d", rc)
 	}
 	transcriptPath := filepath.Join(root, "session.jsonl")

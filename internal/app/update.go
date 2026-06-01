@@ -133,19 +133,38 @@ func cmdUpdateTask(args []string) int {
 	var removeTags stringSliceFlag
 	fs.Var(&removeTags, "remove-tag", "remove a tag (repeatable)")
 	clearTags := fs.Bool("clear-tags", false, "remove all tags from the task")
+	agentFlag := fs.String("agent", "", "change session agent: claude or codex (backlog tasks only)")
+	codexAgent := fs.Bool("codex", false, "shortcut for --agent codex")
+	claudeAgent := fs.Bool("claude", false, "shortcut for --agent claude")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
+	agentRequested := *agentFlag != "" || *codexAgent || *claudeAgent
 	anyField := *newSlug != "" || *newName != "" ||
 		*workDir != "" || *status != "" || *priority != "" ||
 		*assignee != "" || *clearAssignee || *dueDate != "" || *clearDue ||
 		len(addParents) > 0 || len(removeParents) > 0 || *clearParent ||
 		*waiting != "" || *clearWaiting ||
 		*project != "" || *clearProject ||
-		len(addTags) > 0 || len(removeTags) > 0 || *clearTags
+		len(addTags) > 0 || len(removeTags) > 0 || *clearTags ||
+		agentRequested
 	if !anyField {
-		fmt.Fprintln(os.Stderr, "error: give at least one of --slug, --name, --work-dir, --status, --priority, --assignee, --clear-assignee, --due-date, --clear-due, --parent, --remove-parent, --clear-parent, --waiting, --clear-waiting, --project, --clear-project, --tag, --remove-tag, --clear-tags")
+		fmt.Fprintln(os.Stderr, "error: give at least one of --slug, --name, --work-dir, --status, --priority, --agent, --assignee, --clear-assignee, --due-date, --clear-due, --parent, --remove-parent, --clear-parent, --waiting, --clear-waiting, --project, --clear-project, --tag, --remove-tag, --clear-tags")
 		return 2
+	}
+
+	// Resolve the requested agent from explicit flags only (not env) — env
+	// fallbacks belong to creation/spawn, not in-place edits. At least one agent
+	// flag is set whenever agentRequested is true, so requestedSessionProvider
+	// never reaches its env branch here.
+	var newProvider string
+	if agentRequested {
+		p, err := requestedSessionProvider(*agentFlag, *codexAgent, *claudeAgent)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 2
+		}
+		newProvider = p
 	}
 
 	if *newSlug != "" {
@@ -309,6 +328,31 @@ func cmdUpdateTask(args []string) int {
 			return 1
 		}
 		fmt.Printf("priority → %s\n", *priority)
+	}
+	if newProvider != "" {
+		// The agent is locked once a session exists — running, idle, or done all
+		// carry a session_id / session_started. Only a never-started backlog task
+		// can switch claude ↔ codex (the UI's inline picker and the server's
+		// update-provider action enforce the same rule).
+		if task.Status != "backlog" || task.SessionID.Valid || task.SessionStarted.Valid {
+			fmt.Fprintf(os.Stderr,
+				"error: the agent can only be changed while a task is in backlog (before its session starts); %s is %s\n",
+				task.Slug, task.Status)
+			return 1
+		}
+		if task.SessionProvider == newProvider {
+			fmt.Printf("agent unchanged (%s)\n", newProvider)
+		} else {
+			if _, err := db.Exec(
+				`UPDATE tasks SET session_provider=?, updated_at=?
+				 WHERE slug=? AND status='backlog' AND session_id IS NULL AND session_started IS NULL`,
+				newProvider, now, task.Slug,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "error: update agent: %v\n", err)
+				return 1
+			}
+			fmt.Printf("agent → %s\n", newProvider)
+		}
 	}
 	for _, p := range addParents {
 		parentTask, err := ResolveTask(db, p, true)

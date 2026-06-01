@@ -45,7 +45,7 @@ func TestCmdDoCreatesWorktreeForGitRepo(t *testing.T) {
 	stubITerm(t)
 	repo := initGitRepoForWorktreeTest(t)
 
-	if rc := cmdAdd([]string{"task", "Worktree Demo", "--work-dir", repo}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Worktree Demo", "--work-dir", repo, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	if rc := cmdDo([]string{"worktree-demo"}); rc != 0 {
@@ -81,7 +81,7 @@ func TestCmdDoNoWorktreeFlagIsRejected(t *testing.T) {
 	stubITerm(t)
 	repo := initGitRepoForWorktreeTest(t)
 
-	if rc := cmdAdd([]string{"task", "Skip Worktree", "--work-dir", repo}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Skip Worktree", "--work-dir", repo, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	if rc := cmdDo([]string{"skip-worktree", "--no-worktree"}); rc != 2 {
@@ -108,7 +108,7 @@ func TestCmdDoNonRepoFallsThrough(t *testing.T) {
 	setupFlowRoot(t)
 	stubITerm(t)
 	// Floating task -> auto-workspace, not a git repo.
-	if rc := cmdAdd([]string{"task", "Non Repo"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Non Repo", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	if rc := cmdDo([]string{"non-repo"}); rc != 0 {

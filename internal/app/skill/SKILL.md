@@ -181,9 +181,10 @@ Setup
 
 Create
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
-  flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
+  flow add task    "<name>" --agent claude|codex   (--agent is REQUIRED — no default)
+                           [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
-                           [--agent claude|codex] [--permission-mode default|auto|bypass]
+                           [--permission-mode default|auto|bypass]   (--codex / --claude are shortcuts)
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
@@ -354,10 +355,18 @@ question: ..." in the brief and move on.
 4. **Where?** — work_dir for the task. Use the §6 recipe. If a project is
    selected, default to that project's `work_dir`.
 5. **Priority** — High / Medium / Low via AskUserQuestion. Default Medium.
+6. **Agent (MANDATORY — never skip)** — claude or codex via
+   AskUserQuestion. There is **no default**: `flow add task` now *requires*
+   `--agent` and exits with a usage error if it is missing, so this question
+   must always be asked, whether a human or an agent is creating the task.
+   Ask "Which agent runs this task's sessions?" with options "Claude Code" /
+   "Codex", and pass the answer as `--agent claude` / `--agent codex` (or the
+   `--codex` / `--claude` shortcut). This is as non-negotiable as Name —
+   you cannot save a task without it.
 
 **Optional sections (offered, can be deferred):**
 
-After the four required fields, use AskUserQuestion:
+After the required fields above, use AskUserQuestion:
 
 > "Want to capture more detail now (Why, Done when, Out of scope, Open
 > questions), or defer until you start the task?"
@@ -397,6 +406,15 @@ acceptance criteria.
   first. Do not silently create floating tasks.
 - **Priority.** Use `AskUserQuestion` with "High", "Medium (Recommended)",
   "Low". Skip if the user already stated priority.
+- **Agent (REQUIRED).** Use `AskUserQuestion` (header: "Agent", options:
+  "Claude Code" / "Codex") to choose the session agent, then pass it as
+  `--agent claude` / `--agent codex`. **You must include `--agent` in the
+  `flow add task` invocation** — the binary rejects the command without it.
+  Skip the question only if the user already named the agent in their
+  request ("add a codex task for X"); never skip the flag. The agent can be
+  changed later only while the task is still in backlog (via
+  `flow update task <slug> --agent claude|codex`); once a session starts it
+  is locked.
 - **`--mkdir`** if the `work_dir` doesn't exist yet. Use `AskUserQuestion`
   with "Yes, create it" / "No, I'll fix the path".
 
@@ -1927,7 +1945,9 @@ instead.
   explicitly with user consent).
 - **Do not skip the interview on "quick adds".** Even when the user
   says "just add a task for X, nothing fancy", ask at minimum: What?
-  Why? Where? You can compress the other sections to "TBD" if they
+  Why? Where? **Agent (claude|codex)?** — the agent is mandatory and
+  `flow add task` refuses to run without `--agent`. You can compress the
+  other sections to "TBD" if they
   push back, but `What/Why/Where` are non-negotiable.
 - **Do not overwrite an existing `brief.md` without checking what's
   there.** `flow add task` writes a stub. You overwrite that stub
@@ -2104,6 +2124,7 @@ flow update task <ref>
     [--work-dir <path>] [--mkdir]
     [--status backlog|in-progress|done]
     [--priority high|medium|low]
+    [--agent claude|codex]   (backlog tasks only — locked once a session starts)
     [--assignee <name>] [--clear-assignee]
     [--due-date <date>]   [--clear-due]
     [--parent <task>] [--clear-parent]
@@ -2135,6 +2156,11 @@ When to use which flag:
   is a no-op.
 - **`--priority <p>`** — change a task or project priority. Same enum
   as creation: high|medium|low.
+- **`--agent claude|codex`** (or `--codex` / `--claude`) — change the
+  session agent. Allowed **only while the task is in backlog and no
+  session has started**; once a session exists (running, idle, or done)
+  the agent is locked and the command errors. This is the CLI twin of
+  the UI's inline agent picker, which only appears for backlog tasks.
 - **`--assignee <name>` / `--clear-assignee`** — set or clear the task
   assignee. Convention: NULL = "self" (default); any other value =
   "assigned to that name". The list/show output surfaces the assignee

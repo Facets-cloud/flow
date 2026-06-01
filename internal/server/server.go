@@ -22,10 +22,10 @@ import (
 var staticFS embed.FS
 
 func init() {
-	// The web UI ships a WebAssembly terminal core (wterm). Browsers want
-	// the correct MIME for streaming compilation; Go's default table omits
-	// .wasm on some platforms, so register it explicitly. handleStatic and
-	// the RPC bridge both resolve types via mime.TypeByExtension.
+	// Register MIME types Go's default table omits on some platforms, so
+	// handleStatic and the RPC bridge (which both resolve via
+	// mime.TypeByExtension) always serve embedded assets with the right type.
+	// Harmless when an extension isn't currently emitted by the UI build.
 	_ = mime.AddExtensionType(".wasm", "application/wasm")
 	_ = mime.AddExtensionType(".mjs", "text/javascript")
 }

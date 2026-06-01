@@ -191,7 +191,7 @@ func TestTranscriptCmdNoSession(t *testing.T) {
 	t.Cleanup(func() { iterm.Runner = oldOsa })
 
 	cmdInit(nil)
-	cmdAdd([]string{"task", "No Session Task", "--slug", "no-session"})
+	cmdAdd([]string{"task", "No Session Task", "--slug", "no-session", "--agent", "claude"})
 
 	rc := cmdTranscript([]string{"no-session"})
 	if rc != 1 {
@@ -213,7 +213,7 @@ func TestTranscriptCmdWithSession(t *testing.T) {
 
 	repo := filepath.Join(tmp, "code", "myrepo")
 	os.MkdirAll(repo, 0o755)
-	cmdAdd([]string{"task", "Transcript Test", "--slug", "tx-test", "--work-dir", repo})
+	cmdAdd([]string{"task", "Transcript Test", "--slug", "tx-test", "--work-dir", repo, "--agent", "claude"})
 
 	// Simulate session bootstrap.
 	dbPath, _ := flowDBPath()

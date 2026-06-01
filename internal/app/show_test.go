@@ -519,7 +519,7 @@ func TestShowTaskListsAuxFiles(t *testing.T) {
 	root := setupFlowRoot(t)
 	wd := t.TempDir()
 
-	if rc := cmdAdd([]string{"task", "Foo task", "--slug", "foo", "--work-dir", wd}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Foo task", "--slug", "foo", "--work-dir", wd, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("cmdAdd rc=%d", rc)
 	}
 
@@ -551,7 +551,7 @@ func TestShowTaskListsAuxFiles(t *testing.T) {
 func TestShowTaskNoAuxFiles(t *testing.T) {
 	setupFlowRoot(t)
 	wd := t.TempDir()
-	if rc := cmdAdd([]string{"task", "Bar", "--slug", "bar", "--work-dir", wd}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Bar", "--slug", "bar", "--work-dir", wd, "--agent", "claude"}); rc != 0 {
 		t.Fatal()
 	}
 	out := captureShowStdout(t, func() {

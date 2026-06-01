@@ -208,12 +208,12 @@ func TestEnsureSharedTerminalSessionSetsMaxHistoryBeforeNewWindow(t *testing.T) 
 	}
 
 	got := strings.TrimSpace(commandLog(commands))
-	want := "set-option -g mouse on ; set-option -g set-clipboard on ; " +
+	want := "set-option -g mouse on ; set-option -g status off ; set-option -g set-clipboard on ; " +
 		"bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel ; " +
 		"bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel ; " +
 		"set-window-option -g history-limit 2147483647 ; new-session"
 	if !strings.Contains(got, want) {
-		t.Fatalf("tmux creation command must apply mouse + OSC 52 clipboard + copy bindings + max history before new-session; missing %q in:\n%s", want, got)
+		t.Fatalf("tmux creation command must apply mouse + status-off + OSC 52 clipboard + copy bindings + max history before new-session; missing %q in:\n%s", want, got)
 	}
 }
 

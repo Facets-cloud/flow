@@ -60,12 +60,12 @@ export function AgentCard({ agent }: { agent: UiAgent }) {
         <span className="row" style={{ gap: 5 }}>
           <Clock3 size={12} /> {fromMinutes(agent.started_min)}
         </span>
-        {agent.tokens_used > 0 && (
+        {agent.tokens_session > 0 && (
           <span
             className="tag tok-pill"
-            title={`${agent.tokens_used.toLocaleString()} / ${agent.tokens_max.toLocaleString()} context tokens in use`}
+            title={`${agent.tokens_session.toLocaleString()} tokens used this session · context ${agent.tokens_used.toLocaleString()} / ${agent.tokens_max.toLocaleString()}`}
           >
-            <Coins size={11} /> {compact(agent.tokens_used)} tok
+            <Coins size={11} /> {compact(agent.tokens_session)} tok
           </span>
         )}
       </div>

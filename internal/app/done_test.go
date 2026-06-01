@@ -33,7 +33,7 @@ func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 func TestCmdDoneHappyPath(t *testing.T) {
 	setupFlowRoot(t)
 	stubClaudeRunner(t, nil)
-	if rc := cmdAdd([]string{"task", "Some Task"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Some Task", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	// Session-id invariant: done requires a session_id. Pre-seed one
@@ -63,7 +63,7 @@ func TestCmdDoneLinksCurrentBranchPR(t *testing.T) {
 	setupFlowRoot(t)
 	stubClaudeRunner(t, nil)
 	workDir := t.TempDir()
-	if rc := cmdAdd([]string{"task", "Review Task", "--work-dir", workDir}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Review Task", "--work-dir", workDir, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	db := openFlowDB(t)
@@ -115,7 +115,7 @@ func TestCmdDoneUnknownRef(t *testing.T) {
 func TestCmdDoneIdempotent(t *testing.T) {
 	setupFlowRoot(t)
 	stubClaudeRunner(t, nil)
-	if rc := cmdAdd([]string{"task", "Idem"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Idem", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	// Pre-seed a session_id so done is legal under the invariant.
@@ -152,7 +152,7 @@ func TestCmdDoneNoArgs(t *testing.T) {
 func TestCmdDoneRefusesTaskWithoutSession(t *testing.T) {
 	setupFlowRoot(t)
 	calls := stubClaudeRunner(t, errors.New("should not be called"))
-	if rc := cmdAdd([]string{"task", "No Session Task"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "No Session Task", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	if rc := cmdDone([]string{"no-session-task"}); rc != 1 {
@@ -259,7 +259,7 @@ func TestCmdDoneRefusesPendingCodexSessionWithoutCapture(t *testing.T) {
 func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
 	setupFlowRoot(t)
 	calls := stubClaudeRunner(t, nil)
-	if rc := cmdAdd([]string{"task", "Has Session"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Has Session", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	// Manually populate session_id so the sweep gate fires.
@@ -306,7 +306,7 @@ func TestCmdDoneCloseoutSweepIncludesProjectStep(t *testing.T) {
 	if rc := cmdAdd([]string{"project", "Some Proj", "--slug", "sp", "--work-dir", wd}); rc != 0 {
 		t.Fatalf("add project rc=%d", rc)
 	}
-	if rc := cmdAdd([]string{"task", "Has Proj", "--project", "sp"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Has Proj", "--project", "sp", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
 
@@ -346,7 +346,7 @@ func TestCmdDoneCloseoutSweepSkipsProjectStepForFloating(t *testing.T) {
 	setupFlowRoot(t)
 	calls := stubClaudeRunner(t, nil)
 
-	if rc := cmdAdd([]string{"task", "Floating"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Floating", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
 	db := openFlowDB(t)
@@ -381,7 +381,7 @@ func TestCmdDoneCloseoutSweepSkipsProjectStepForFloating(t *testing.T) {
 func TestCmdDoneSweepFailureStillSucceeds(t *testing.T) {
 	setupFlowRoot(t)
 	stubClaudeRunner(t, errors.New("exec: claude: executable file not found in $PATH"))
-	if rc := cmdAdd([]string{"task", "Sweep Fail"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Sweep Fail", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
 	db := openFlowDB(t)

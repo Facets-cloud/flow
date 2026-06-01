@@ -151,7 +151,7 @@ func addTask(args []string) int {
 	dueFlag := fs.String("due", "", "due date (YYYY-MM-DD, today, tomorrow, monday, 3d)")
 	assigneeFlag := fs.String("assignee", "", "optional assignee (default: self)")
 	permissionModeFlag := fs.String("permission-mode", flowdb.DefaultPermissionMode, "agent permission mode: default|auto|bypass")
-	agentFlag := fs.String("agent", "", "session agent: claude or codex")
+	agentFlag := fs.String("agent", "", "session agent: claude or codex (REQUIRED)")
 	codexAgent := fs.Bool("codex", false, "shortcut for --agent codex")
 	claudeAgent := fs.Bool("claude", false, "shortcut for --agent claude")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
@@ -182,8 +182,13 @@ func addTask(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
 	}
+	// The agent is mandatory — every task must declare whether its session runs
+	// on claude or codex. There is no silent default; a human or an agent
+	// creating a task is forced to choose (the flow skill asks via the intake
+	// interview, scripts pass --agent / --codex / --claude or set FLOW_AGENT).
 	if sessionProvider == "" {
-		sessionProvider = sessionProviderClaude
+		fmt.Fprintln(os.Stderr, "error: an agent is required — pass --agent claude|codex (or the --codex / --claude shortcut)")
+		return 2
 	}
 
 	dbPath, err := flowDBPath()

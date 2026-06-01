@@ -162,6 +162,7 @@ type uiAgent struct {
 	Diff            uiDiff         `json:"diff"`
 	TokensUsed      int            `json:"tokens_used"`
 	TokensMax       int            `json:"tokens_max"`
+	TokensSession   int            `json:"tokens_session"`
 	Activity        []int          `json:"activity"`
 	Tags            []string       `json:"tags"`
 	Summary         string         `json:"summary"`
@@ -761,6 +762,7 @@ func (s *Server) uiAgent(tv TaskView, live map[string]bool) uiAgent {
 		DiffFiles:       files,
 		TokensUsed:      tokensUsed,
 		TokensMax:       tokensMax,
+		TokensSession:   insights.TokensSession,
 		Activity:        toolCallActivitySeries(fullTranscript, time.Now()),
 		Tags:            tv.Tags,
 		Summary:         summary,
@@ -790,6 +792,7 @@ func (s *Server) codexTranscriptWaitingFor(tv TaskView, provider string) *uiWait
 	task := &flowdb.Task{
 		Slug:            tv.Slug,
 		WorkDir:         tv.WorkDir,
+		WorktreePath:    nullStringFromPtr(tv.WorktreePath),
 		SessionProvider: provider,
 		SessionID:       sql.NullString{String: *tv.SessionID, Valid: true},
 		SessionPath:     nullStringFromPtr(tv.SessionPath),
@@ -819,10 +822,11 @@ func withTaskWorkDir(tv TaskView, workDir string) TaskView {
 }
 
 type taskSessionInsights struct {
-	ActivityAt string
-	LastAction string
-	TokensUsed int // current context-window occupancy (latest turn)
-	TokensMax  int
+	ActivityAt    string
+	LastAction    string
+	TokensUsed    int // current context-window occupancy (latest turn)
+	TokensMax     int
+	TokensSession int // cumulative tokens used this session (the CLI's Σ)
 }
 
 func (s *Server) sessionInsightsForTask(tv TaskView, provider string, transcript []uiTranscript) taskSessionInsights {
@@ -836,6 +840,7 @@ func (s *Server) sessionInsightsForTask(tv TaskView, provider string, transcript
 	task := &flowdb.Task{
 		Slug:            tv.Slug,
 		WorkDir:         tv.WorkDir,
+		WorktreePath:    nullStringFromPtr(tv.WorktreePath),
 		SessionProvider: provider,
 		SessionID:       sql.NullString{String: *tv.SessionID, Valid: true},
 		SessionPath:     nullStringFromPtr(tv.SessionPath),
@@ -853,6 +858,9 @@ func (s *Server) sessionInsightsForTask(tv TaskView, provider string, transcript
 	insights.ActivityAt = laterTimestamp(insights.ActivityAt, stats.LastTimestamp)
 	if stats.TokensUsed > 0 {
 		insights.TokensUsed = stats.TokensUsed
+	}
+	if stats.TokensSession > 0 {
+		insights.TokensSession = stats.TokensSession
 	}
 	if stats.TokensMax > 0 {
 		insights.TokensMax = stats.TokensMax
@@ -1133,6 +1141,7 @@ func (s *Server) uiTranscriptForTaskLimit(tv TaskView, limit int) []uiTranscript
 	t := &flowdb.Task{
 		Slug:            tv.Slug,
 		WorkDir:         tv.WorkDir,
+		WorktreePath:    nullStringFromPtr(tv.WorktreePath),
 		SessionProvider: provider,
 		SessionID:       sql.NullString{String: *tv.SessionID, Valid: true},
 		SessionPath:     nullStringFromPtr(tv.SessionPath),

@@ -30,11 +30,13 @@ import (
 )
 
 // terminalScrollbackBytes caps the per-session in-memory scrollback we retain
-// for replay when a browser (re)attaches. It was originally 1 GiB — effectively
-// "never trim" — which let a long-lived or chatty agent session balloon the
-// server's RSS and pay ever-larger append reallocations. 2 MiB is ~10k lines of
-// dense output: more than enough replay context while keeping the server light.
-const terminalScrollbackBytes = 2 * 1024 * 1024
+// for replay when a browser (re)attaches. Restored to the pre-rewrite 1 GiB so
+// the browser terminal can scroll back to the start of a session, matching the
+// old xterm UI (which kept ~unlimited history). This is a cap, not a
+// preallocation — memory tracks actual output, which for normal sessions stays
+// MB-scale; only a genuinely gigabyte-chatty session approaches it. (The rewrite
+// had cut this to 2 MiB to bound RSS, which silently broke scroll-to-start.)
+const terminalScrollbackBytes = 1024 * 1024 * 1024
 
 // terminalScrollbackHeadroom lets the buffer overshoot the cap before we trim,
 // so the O(cap) trim copy happens once per headroom-worth of output instead of
@@ -709,6 +711,15 @@ func (s *Server) ensureSharedTerminalSession(launch terminalLaunch, cols, rows i
 		"mouse",
 		"on",
 		";",
+		// Disable tmux's status bar. flow's own UI already shows the session
+		// name/status/branch in its chrome, so the bar is redundant — and the
+		// status row's periodic repaints otherwise leak into the browser
+		// terminal's scrollback as a stranded "[flow-...]" bar. Off = no bar.
+		"set-option",
+		"-g",
+		"status",
+		"off",
+		";",
 		// Make tmux's own copy commands forward selections to the outer
 		// terminal via OSC 52. Without this, dragging-to-select in the
 		// browser terminal puts text into tmux's internal paste buffer
@@ -1203,6 +1214,7 @@ func (s *terminalSession) addClient(client *terminalClient, replay bool) {
 	closed := s.closed
 	provider := s.provider
 	sessionID := s.sessionID
+	sharedName := s.sharedName
 	s.mu.Unlock()
 
 	if provider == "" {
@@ -1215,10 +1227,27 @@ func (s *terminalSession) addClient(client *terminalClient, replay bool) {
 		message += " session pending capture"
 	}
 	client.queue(terminalWSMessage{Type: "status", Message: message})
-	if replay && len(scrollback) > 0 {
-		scrollback = stripTerminalAltScreenControls(scrollback)
-		if len(scrollback) > 0 {
-			client.queue(terminalWSMessage{Type: "output", Data: string(scrollback)})
+	if replay {
+		// For tmux-backed sessions, replay a FRESH rendered capture-pane of the
+		// pane history rather than flow's raw accumulated byte stream. The raw
+		// stream is a sequence of tmux redraws + status-bar paints; dumping it
+		// into the browser terminal strands stacked "[flow-…]" status bars and
+		// reflow garble in scrollback. capture-pane is the final rendered state
+		// of every history line — clean, and it spans tmux's full (effectively
+		// unlimited) history so the browser can scroll to the start. Fall back to
+		// the accumulated scrollback (the non-tmux/direct-PTY path) if capture is
+		// unavailable.
+		var replayData []byte
+		if sharedName != "" {
+			if captured, err := sharedTerminalCaptureHistory(sharedName); err == nil {
+				replayData = captured
+			}
+		}
+		if replayData == nil && len(scrollback) > 0 {
+			replayData = stripTerminalAltScreenControls(scrollback)
+		}
+		if len(replayData) > 0 {
+			client.queue(terminalWSMessage{Type: "output", Data: string(replayData)})
 		}
 	}
 	if closed {
@@ -1346,8 +1375,25 @@ func (s *terminalSession) appendScrollback(data []byte) {
 	// Trim in bulk once we overshoot the cap by the headroom, dropping back to
 	// the cap — amortizes the copy to ~once per headroom bytes (see consts).
 	if len(s.scrollback) > terminalScrollbackBytes+terminalScrollbackHeadroom {
-		s.scrollback = append([]byte(nil), s.scrollback[len(s.scrollback)-terminalScrollbackBytes:]...)
+		s.scrollback = trimScrollbackToLineBoundary(s.scrollback, terminalScrollbackBytes)
 	}
+}
+
+// trimScrollbackToLineBoundary drops buf back to the last capBytes, then advances
+// the cut to just past the next newline so a replay never begins mid-line or
+// mid-escape-sequence. A raw byte-offset slice can otherwise land inside a CSI
+// sequence (e.g. "\x1b[3" | "2m"), which corrupts the client terminal's parser
+// for the rest of the replay — the leading bytes are consumed as bogus
+// parameters and everything after shifts/overlaps.
+func trimScrollbackToLineBoundary(buf []byte, capBytes int) []byte {
+	if len(buf) <= capBytes {
+		return buf
+	}
+	cut := len(buf) - capBytes
+	if nl := bytes.IndexByte(buf[cut:], '\n'); nl >= 0 {
+		cut += nl + 1
+	}
+	return append([]byte(nil), buf[cut:]...)
 }
 
 func (s *terminalSession) broadcast(msg terminalWSMessage) {

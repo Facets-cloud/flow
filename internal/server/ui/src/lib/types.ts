@@ -224,6 +224,7 @@ export interface UiAgent {
   diff: DiffCount
   tokens_used: number
   tokens_max: number
+  tokens_session: number
   activity: number[]
   tags: string[]
   summary: string

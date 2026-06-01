@@ -54,6 +54,12 @@ set -g set-clipboard on
 bind-key -T copy-mode    MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 
+# Hide tmux's status bar. flow's web UI already shows the session name,
+# status, and branch in its own chrome, so the bar is redundant — and the
+# browser terminal renders tmux's status-row repaints imperfectly, leaving
+# the green status bar stranded in the scrollback.
+set -g status off
+
 # History buffer per pane. tmux does not expose a true "unlimited"
 # history switch; this uses the largest value accepted by tmux so
 # flow-spawned terminals can scroll back to the beginning of practical
@@ -115,6 +121,12 @@ func ensureSharedTerminalScrollOptions(name string) error {
 	}
 	if out, err := sharedTerminalCommand("set-option", "-t", name, "mouse", "on"); err != nil {
 		return fmt.Errorf("enable tmux mouse for %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	// Hide the status bar on already-running sessions too (new sessions get it
+	// via the creation args). flow's UI shows session info in its own chrome,
+	// and the bar otherwise leaks into the browser terminal's scrollback.
+	if out, err := sharedTerminalCommand("set-option", "-t", name, "status", "off"); err != nil {
+		return fmt.Errorf("disable tmux status bar for %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	if out, err := sharedTerminalCommand("set-option", "-t", name, "set-clipboard", "on"); err != nil {
 		return fmt.Errorf("enable tmux OSC 52 clipboard for %s: %w: %s", name, err, strings.TrimSpace(string(out)))

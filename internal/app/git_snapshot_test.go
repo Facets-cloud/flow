@@ -16,7 +16,7 @@ func TestCmdDoCapturesGitStartSnapshot(t *testing.T) {
 	repo, head := initGitRepoForSnapshotTest(t)
 	stubITerm(t)
 
-	if rc := cmdAdd([]string{"task", "Git Start", "--work-dir", repo}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Git Start", "--work-dir", repo, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
 	if rc := cmdDo([]string{"git-start"}); rc != 0 {
@@ -63,7 +63,7 @@ func TestCmdDoneWritesGitCloseoutSnapshotUpdate(t *testing.T) {
 	stubClaudeRunner(t, nil)
 	repo, startHead := initGitRepoForSnapshotTest(t)
 
-	if rc := cmdAdd([]string{"task", "Git Close", "--work-dir", repo}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "Git Close", "--work-dir", repo, "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
 	db := openFlowDB(t)

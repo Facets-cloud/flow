@@ -174,7 +174,7 @@ func TestCmdUpdateTaskProjectKeepsDeliberateWorkDir(t *testing.T) {
 		t.Fatalf("add project rc=%d", rc)
 	}
 	taskRepo := filepath.Join(t.TempDir(), "task-repo")
-	if rc := cmdAdd([]string{"task", "ut-keep", "--work-dir", taskRepo, "--mkdir"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "ut-keep", "--work-dir", taskRepo, "--mkdir", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("add task rc=%d", rc)
 	}
 	db := openFlowDB(t)
@@ -563,7 +563,7 @@ func TestCmdUpdateProjectRenameSlugCascades(t *testing.T) {
 	if rc := cmdAdd([]string{"project", "Old Name", "--slug", "old-proj", "--work-dir", wd}); rc != 0 {
 		t.Fatalf("seed project rc=%d", rc)
 	}
-	if rc := cmdAdd([]string{"task", "child task", "--slug", "child-task", "--project", "old-proj"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "child task", "--slug", "child-task", "--project", "old-proj", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("seed task rc=%d", rc)
 	}
 	if rc := cmdAdd([]string{"playbook", "child pb", "--slug", "child-pb", "--project", "old-proj", "--work-dir", wd}); rc != 0 {
@@ -790,7 +790,7 @@ func TestCmdUpdateTaskSetProjectReassigns(t *testing.T) {
 	if rc := cmdAdd([]string{"project", "B", "--slug", "proj-b", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
 	}
-	if rc := cmdAdd([]string{"task", "swap me", "--slug", "up-swap", "--project", "proj-a"}); rc != 0 {
+	if rc := cmdAdd([]string{"task", "swap me", "--slug", "up-swap", "--project", "proj-a", "--agent", "claude"}); rc != 0 {
 		t.Fatalf("seed rc=%d", rc)
 	}
 
@@ -950,5 +950,44 @@ func TestCmdUpdatePlaybookProjectUnknown(t *testing.T) {
 	}
 	if rc := cmdUpdate([]string{"playbook", "pb-noproj", "--project", "ghost"}); rc != 1 {
 		t.Errorf("rc=%d, want 1 for unknown project", rc)
+	}
+}
+
+func TestUpdateTaskAgentBacklogOnly(t *testing.T) {
+	setupFlowRoot(t)
+	repo := t.TempDir()
+	if rc := cmdAdd([]string{"task", "Agent Switch", "--slug", "agent-switch", "--work-dir", repo, "--agent", "claude"}); rc != 0 {
+		t.Fatalf("add rc=%d", rc)
+	}
+	db := openFlowDB(t)
+
+	// A backlog task with no session can switch agents.
+	if rc := cmdUpdate([]string{"task", "agent-switch", "--agent", "codex"}); rc != 0 {
+		t.Fatalf("switch to codex rc=%d", rc)
+	}
+	task, err := flowdb.GetTask(db, "agent-switch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionProvider != "codex" {
+		t.Fatalf("provider = %q, want codex", task.SessionProvider)
+	}
+
+	// Once a session has started, the agent is locked (running/idle/done).
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug=?`,
+		"11111111-1111-4111-8111-111111111111", now, "agent-switch",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdUpdate([]string{"task", "agent-switch", "--claude"}); rc != 1 {
+		t.Fatalf("switch on started task rc=%d, want 1 (locked)", rc)
+	}
+	if task, err = flowdb.GetTask(db, "agent-switch"); err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionProvider != "codex" {
+		t.Fatalf("provider after rejected switch = %q, want codex (unchanged)", task.SessionProvider)
 	}
 }

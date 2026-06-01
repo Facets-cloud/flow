@@ -83,14 +83,14 @@ func TestE2EFullRoundtrip(t *testing.T) {
 
 	// 3. add task under the project
 	step("add task", cmdAdd([]string{"task", "Fix Auth Token Expiry",
-		"--project", "budgeting-app-revamp"}))
+		"--project", "budgeting-app-revamp", "--agent", "claude"}))
 	taskDir := filepath.Join(flowRoot, "tasks", "fix-auth-token-expiry")
 	if _, err := os.Stat(filepath.Join(taskDir, "brief.md")); err != nil {
 		t.Fatalf("task brief.md not created: %v", err)
 	}
 
 	// 4. add a floating task (auto workspace)
-	step("add floating task", cmdAdd([]string{"task", "Scratch Investigation"}))
+	step("add floating task", cmdAdd([]string{"task", "Scratch Investigation", "--agent", "claude"}))
 	scratchDir := filepath.Join(flowRoot, "tasks", "scratch-investigation", "workspace")
 	if _, err := os.Stat(scratchDir); err != nil {
 		t.Fatalf("floating task workspace not created: %v", err)

@@ -43,7 +43,7 @@ import type { DiffFile, TranscriptEntry, UiAgent } from '../lib/types'
 import { TaskTerminal } from '../components/Terminal'
 import { Md } from '../components/Markdown'
 import { Modal } from '../components/Modal'
-import { PermissionPicker } from '../components/pickers'
+import { AgentPicker, PermissionPicker } from '../components/pickers'
 import { TerminalIcon } from '../components/TerminalIcon'
 import { ErrorNote, Loading, ProviderIcon, StatusBadge, TokenBar } from '../components/ui'
 import { compact, dateTime, fromMinutes, fromSeconds } from '../lib/format'
@@ -164,6 +164,14 @@ export function SessionDetail({ slug }: { slug: string }) {
   const status = agent?.status || task.status
   const monitored = !!agent?.monitored
 
+  // The agent is locked once a session exists (running, idle, or done all carry
+  // a session) — the backend rejects the change. Only a never-started backlog
+  // task can still switch claude ↔ codex via the inline toolbar picker. The WS
+  // terminal reads tasks.session_provider at launch, so Start just uses whatever
+  // the picker last persisted.
+  const providers = ui?.CAPABILITIES?.providers ?? []
+  const canChooseAgent = task.status === 'backlog' && !task.session_id && !task.session_started
+
   return (
     <div className="page flush">
       <div className={`session${side ? '' : ' no-side'}`}>
@@ -214,12 +222,12 @@ export function SessionDetail({ slug }: { slug: string }) {
                 </div>
               )}
             </div>
-            {agent && agent.tokens_used > 0 && (
+            {agent && agent.tokens_session > 0 && (
               <span
                 className="tag tok-pill"
-                title={`${agent.tokens_used.toLocaleString()} / ${agent.tokens_max.toLocaleString()} context tokens in use`}
+                title={`${agent.tokens_session.toLocaleString()} tokens used this session · context ${agent.tokens_used.toLocaleString()} / ${agent.tokens_max.toLocaleString()}`}
               >
-                <Coins size={12} /> {compact(agent.tokens_used)} tok
+                <Coins size={12} /> {compact(agent.tokens_session)} tok
               </span>
             )}
             {monitored && (
@@ -237,6 +245,13 @@ export function SessionDetail({ slug }: { slug: string }) {
               </button>
             )}
             <div className="spacer" />
+            {canChooseAgent && (
+              <AgentPicker
+                value={task.session_provider || 'claude'}
+                onChange={(v) => run('update-provider', { provider: v })}
+                providers={providers}
+              />
+            )}
             <PermissionPicker
               value={task.permission_mode || 'default'}
               onChange={(v) => run('update-permission-mode', { permission_mode: v })}
