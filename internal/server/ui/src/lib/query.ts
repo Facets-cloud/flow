@@ -5,6 +5,7 @@ import { events } from './events'
 import { pushToast } from './toast'
 import type {
   ActionRequest,
+  HealthView,
   InboxConversation,
   InboxFeed,
   KBFileView,
@@ -69,6 +70,9 @@ export function useUiData() {
     queryFn: () => apiGet<UiData>('/api/ui-data'),
     refetchInterval: 5000,
   })
+}
+export function useHealth() {
+  return useQuery({ queryKey: ['health'], queryFn: () => apiGet<HealthView>('/api/health') })
 }
 export function useOverview() {
   return useQuery({ queryKey: ['overview'], queryFn: () => apiGet<OverviewView>('/api/overview') })

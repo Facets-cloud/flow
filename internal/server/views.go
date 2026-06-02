@@ -415,11 +415,29 @@ func BuildKBFileView(path string) KBFileView {
 func kbFiles(root string) []string {
 	names := []string{"user.md", "org.md", "products.md", "processes.md", "business.md"}
 	out := make([]string, 0, len(names))
+	seen := map[string]bool{}
 	for _, name := range names {
 		path := filepath.Join(root, "kb", name)
 		if _, err := os.Stat(path); err == nil {
 			out = append(out, path)
+			seen[name] = true
 		}
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "kb"))
+	if err != nil {
+		return out
+	}
+	var extra []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || seen[name] || filepath.Ext(name) != ".md" || !validFilename(name) {
+			continue
+		}
+		extra = append(extra, name)
+	}
+	sort.Strings(extra)
+	for _, name := range extra {
+		out = append(out, filepath.Join(root, "kb", name))
 	}
 	return out
 }

@@ -232,6 +232,51 @@ func TestInboxFeedEnrichesSourceAndLive(t *testing.T) {
 	}
 }
 
+func TestInboxMarkReadActionClearsBacklogUnread(t *testing.T) {
+	root, db := testRootDB(t)
+	t.Setenv("FLOW_ROOT", root)
+	srv := New(Config{DB: db, FlowRoot: root, Version: "test"})
+	insertBacklogTask(t, srv, "slack-thread", "slack thread")
+	mustAppend(t, "slack-thread", monitor.InboundEvent{
+		Kind: "message", ChannelType: "slack", Channel: "C1", TS: "1.0", UserID: "U1", Text: "hello",
+	})
+
+	handler := srv.Handler()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/inbox", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pre-read status = %d", rec.Code)
+	}
+	var before InboxFeed
+	if err := json.Unmarshal(rec.Body.Bytes(), &before); err != nil {
+		t.Fatal(err)
+	}
+	if before.UnreadCount != 1 {
+		t.Fatalf("pre-read unread = %d, want 1", before.UnreadCount)
+	}
+
+	resp, status := srv.runAction(actionRequest{Kind: "mark-read", Target: "slack-thread"})
+	if status != http.StatusOK || !resp.OK {
+		t.Fatalf("mark-read status = %d resp = %+v", status, resp)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/inbox", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post-read status = %d", rec.Code)
+	}
+	var after InboxFeed
+	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.UnreadCount != 0 {
+		t.Fatalf("post-read unread = %d, want 0", after.UnreadCount)
+	}
+	if len(after.Entries) != 1 || after.Entries[0].Unread {
+		t.Fatalf("post-read entries = %+v, want unread cleared", after.Entries)
+	}
+}
+
 func TestScrubSlackIDsInTaskName(t *testing.T) {
 	root, db := testRootDB(t)
 	t.Setenv("FLOW_ROOT", root)
@@ -243,11 +288,11 @@ func TestScrubSlackIDsInTaskName(t *testing.T) {
 	ctx := context.Background()
 
 	cases := []struct{ in, want string }{
-		{"U01RKJ5J9EK", "Rohit"},                                                   // whole name is a bare user id
+		{"U01RKJ5J9EK", "Rohit"}, // whole name is a bare user id
 		{"#test-kv - @U03HNAFLVAN what happened?", "#test-kv - @unknown what happened?"}, // mention, unresolved → @unknown (no id)
-		{"C0B3L0D8QG1 thread", "#internal-migrations thread"},                       // channel id → #name
-		{"coinswitch slack thread", "coinswitch slack thread"},                     // clean name untouched
-		{"UPDATED the GCP module", "UPDATED the GCP module"},                        // all-caps words (no digit) untouched
+		{"C0B3L0D8QG1 thread", "#internal-migrations thread"},                            // channel id → #name
+		{"coinswitch slack thread", "coinswitch slack thread"},                           // clean name untouched
+		{"UPDATED the GCP module", "UPDATED the GCP module"},                             // all-caps words (no digit) untouched
 	}
 	for _, c := range cases {
 		if got := srv.scrubSlackIDs(ctx, c.in); got != c.want {

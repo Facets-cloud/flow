@@ -418,6 +418,200 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
   )
 }
 
+export function CreatePlaybookModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [, navigate] = useLocation()
+  const { data: projects } = useProjects()
+  const [name, setName] = useState('')
+  const [project, setProject] = useState('__none')
+  const [workDir, setWorkDir] = useState('')
+  const [definition, setDefinition] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const projectWorkdir = projects?.find((p) => p.slug === project)?.work_dir
+  const effectiveWorkdir = workDir.trim() || projectWorkdir || ''
+
+  const reset = () => {
+    setName('')
+    setProject('__none')
+    setWorkDir('')
+    setDefinition('')
+    setBusy(false)
+  }
+
+  const submit = async () => {
+    const slug = slugify(name)
+    if (!slug) {
+      pushToast('error', 'A playbook name is required')
+      return
+    }
+    if (!effectiveWorkdir) {
+      pushToast('error', 'Pick a project or set a working directory')
+      return
+    }
+    setBusy(true)
+    try {
+      const resp = await apiAction({
+        kind: 'create-playbook',
+        name: name.trim(),
+        slug,
+        project: project === '__none' ? '' : project,
+        work_dir: effectiveWorkdir,
+        description: definition,
+      })
+      pushToast('ok', resp.message || `created playbook ${slug}`)
+      queryClient.invalidateQueries()
+      onClose()
+      reset()
+      navigate(`/playbook/${slug}`)
+    } catch (e) {
+      pushToast('error', e instanceof Error ? e.message : 'create failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New playbook"
+      width={620}
+      footer={
+        <>
+          <div className="spacer" />
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn primary" disabled={busy} onClick={submit}>
+            {busy ? <Loader2 size={15} className="spin" /> : null}
+            Create playbook
+          </button>
+        </>
+      }
+    >
+      <div className="col" style={{ gap: 14 }}>
+        <Field label="Playbook name">
+          <input
+            className="input"
+            aria-label="Playbook name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </Field>
+        <Field label="Project">
+          <Select
+            value={project}
+            onChange={setProject}
+            options={[
+              { value: '__none', label: 'No project' },
+              ...(projects ?? []).map((p) => ({ value: p.slug, label: p.name })),
+            ]}
+          />
+        </Field>
+        <Field label="Working directory" hint="Defaults to the selected project's directory when available.">
+          <WorkdirPicker value={workDir || projectWorkdir || ''} onChange={setWorkDir} />
+        </Field>
+        <Field label="Definition">
+          <textarea
+            className="textarea"
+            aria-label="Playbook definition"
+            value={definition}
+            placeholder={'## Each run does\n- Inspect the queue\n- Capture decisions back into the playbook'}
+            onChange={(e) => setDefinition(e.target.value)}
+          />
+        </Field>
+      </div>
+    </Modal>
+  )
+}
+
+export function CreateKBModal({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated?: (filename: string) => void
+}) {
+  const [name, setName] = useState('')
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const reset = () => {
+    setName('')
+    setBody('')
+    setBusy(false)
+  }
+
+  const submit = async () => {
+    const slug = slugify(name)
+    if (!slug) {
+      pushToast('error', 'A document name is required')
+      return
+    }
+    const filename = `${slug}.md`
+    setBusy(true)
+    try {
+      const resp = await apiAction({
+        kind: 'create-kb',
+        name: name.trim(),
+        slug: filename,
+        description: body,
+      })
+      pushToast('ok', resp.message || `created ${filename}`)
+      await queryClient.invalidateQueries({ queryKey: ['kb'] })
+      onClose()
+      reset()
+      onCreated?.(filename)
+    } catch (e) {
+      pushToast('error', e instanceof Error ? e.message : 'create failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New KB document"
+      width={560}
+      footer={
+        <>
+          <div className="spacer" />
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn primary" disabled={busy} onClick={submit}>
+            {busy ? <Loader2 size={15} className="spin" /> : null}
+            Create document
+          </button>
+        </>
+      }
+    >
+      <div className="col" style={{ gap: 14 }}>
+        <Field label="Document name">
+          <input
+            className="input"
+            aria-label="Document name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </Field>
+        <Field label="Body">
+          <textarea
+            className="textarea"
+            aria-label="Document body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+        </Field>
+      </div>
+    </Modal>
+  )
+}
+
 export function AddWorkdirModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [path, setPath] = useState('')
   const [name, setName] = useState('')

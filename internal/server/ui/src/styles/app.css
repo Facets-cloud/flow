@@ -303,6 +303,104 @@
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
 }
 
+/* ----------------------------- settings -------------------------------- */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+.settings-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.settings-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 42px;
+  padding: 0 14px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.settings-card-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.settings-card-body {
+  padding: 12px 14px;
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 38px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-faint);
+}
+.setting-row:last-child {
+  border-bottom: 0;
+}
+.setting-row.compact {
+  align-items: baseline;
+}
+.setting-label {
+  flex: none;
+  min-width: 92px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: uppercase;
+}
+.setting-value {
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.cap-list {
+  display: grid;
+  gap: 2px;
+}
+.cap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-faint);
+}
+.cap-row:last-child {
+  border-bottom: 0;
+}
+.cap-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-3);
+  flex: none;
+}
+.cap-dot.on {
+  background: var(--ok);
+}
+.cap-dot.off {
+  background: var(--danger);
+}
+.cap-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.cap-sub {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 /* ----------------------------- stat row --------------------------------- */
 .stat-row {
   display: grid;
@@ -769,6 +867,129 @@ select.input {
   position: relative;
   overflow: hidden;
 }
+.floating-terminal {
+  position: fixed;
+  z-index: 90;
+  width: min(720px, calc(100vw - 24px));
+  height: min(460px, calc(100vh - 96px));
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  background: #0f1015;
+  border: 1px solid color-mix(in srgb, var(--accent-line) 68%, #111);
+  border-radius: 8px;
+  box-shadow: 0 22px 60px -22px rgba(8, 10, 18, 0.58), 0 6px 18px -10px rgba(8, 10, 18, 0.55);
+  overflow: hidden;
+}
+.floating-terminal.minimized {
+  width: min(520px, calc(100vw - 24px));
+  height: 43px;
+  min-height: 43px;
+}
+.floating-terminal-head {
+  height: 43px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  color: #f2f0eb;
+  background: #151720;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: grab;
+  user-select: none;
+}
+.floating-terminal-head:active {
+  cursor: grabbing;
+}
+.floating-terminal-title,
+.floating-terminal-meta,
+.provider-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.floating-terminal-title {
+  gap: 8px;
+  font-weight: 650;
+  font-size: 13px;
+}
+.floating-terminal-title .dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  background: #8e95a8;
+}
+.floating-terminal-title .dot.running {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+.floating-terminal-meta {
+  gap: 8px;
+  max-width: 260px;
+  color: #a8adbd;
+  font-size: 11.5px;
+}
+.floating-terminal-meta .mono {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-chip {
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #e8e7ef;
+  font-size: 11.5px;
+  text-transform: capitalize;
+}
+.floating-terminal-head .btn {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e8e7ef;
+}
+.floating-terminal-head .btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.floating-terminal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: #0a0b0e;
+}
+.floating-terminal-body .flow-term {
+  flex: 1;
+  height: 100%;
+  border-radius: 0;
+  padding: 10px 12px;
+}
+@media (max-width: 720px) {
+  .floating-terminal {
+    left: 12px !important;
+    right: 12px;
+    top: auto !important;
+    bottom: 12px;
+    width: auto;
+    height: 58vh;
+    min-height: 280px;
+  }
+  .floating-terminal.minimized {
+    width: auto;
+    min-height: 43px;
+    height: 43px;
+  }
+  .floating-terminal-head {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .floating-terminal-meta {
+    display: none;
+  }
+}
 /* Absolutely fill the host so FitAddon always measures the same box and xterm
    manages its OWN viewport/screen heights. (Forcing .xterm-viewport height:100%
    fought xterm's rows×cellHeight sizing and left the prompt sitting above the
@@ -1109,6 +1330,18 @@ select.input {
   border-radius: 50%;
   background: var(--accent);
   flex: none;
+}
+.inbox-reply {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.inbox-reply .nudge {
+  margin-top: 9px;
+  padding-top: 0;
+  border-top: 0;
 }
 
 /* ----------------------------- detail header ---------------------------- */
@@ -2290,6 +2523,25 @@ select.input {
   border-bottom: 1px solid var(--border-faint);
   margin-bottom: 4px;
 }
+.notif-permission {
+  width: calc(100% - 6px);
+  margin: 3px 3px 6px;
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--accent-hi);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+}
+.notif-permission:not(.muted):hover {
+  background: var(--surface-hover);
+}
+.notif-permission.muted {
+  color: var(--text-3);
+  background: var(--bg-2);
+  border-color: var(--border);
+}
 .notif-empty {
   padding: 22px 12px;
   text-align: center;
@@ -2973,6 +3225,79 @@ summary.detail-branch.as-button:hover {
   gap: 7px;
   justify-content: flex-end;
   max-width: 460px;
+}
+.ask-flow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 13px;
+  margin: 0 0 18px;
+  padding: 13px 14px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 55%, transparent), transparent 72%),
+    var(--bg-1);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+}
+.ask-flow-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  color: var(--accent-hi);
+  background: var(--bg-2);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+}
+.ask-flow-main {
+  min-width: 0;
+}
+.ask-flow-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  margin-top: 2px;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+.ask-flow-input::placeholder {
+  color: var(--text-3);
+}
+.ask-flow-input:disabled {
+  opacity: 0.65;
+}
+.ask-flow-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.ask-flow-actions .agent-seg {
+  max-width: 250px;
+}
+@media (max-width: 720px) {
+  .ask-flow {
+    grid-template-columns: 1fr;
+  }
+  .ask-flow-mark {
+    display: none;
+  }
+  .ask-flow .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .ask-flow-actions .agent-seg {
+    width: 100%;
+  }
+  .ask-flow-actions .agent-seg button {
+    flex: 1;
+  }
 }
 .env-pill {
   display: inline-flex;

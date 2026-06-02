@@ -381,6 +381,12 @@ export interface UiData {
   USER: { name: string; full_name: string; username: string }
 }
 
+export interface HealthView {
+  ok: boolean
+  version: string
+  flow_root: string
+}
+
 export interface TranscriptEntry {
   type: string
   text?: string
@@ -464,6 +470,11 @@ export interface ActionResponse {
   message: string
   output?: string
   agent?: UiAgent
+  floating_terminal?: {
+    id: string
+    provider: string
+    title: string
+  }
   bridge?: boolean
   already_live?: boolean
 }

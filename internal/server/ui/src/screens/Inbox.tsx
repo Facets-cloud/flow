@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'wouter'
-import { Inbox as InboxIcon, ExternalLink, Play } from 'lucide-react'
-import { useInbox, useInboxConversation } from '../lib/query'
+import { Inbox as InboxIcon, CheckCheck, ExternalLink, Play } from 'lucide-react'
+import { useAction, useInbox, useInboxConversation } from '../lib/query'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
+import { NudgeComposer } from '../components/NudgeComposer'
 import { EmptyState, ErrorNote, Loading, ProviderIcon, SourceIcon, StatusDot } from '../components/ui'
 import { Md } from '../components/Markdown'
 import { ago, dateTime } from '../lib/format'
@@ -132,16 +133,21 @@ export function InboxScreen() {
           ))}
         </div>
         <div className="pane-detail">
-          {selected && <Conversation slug={selected} />}
+          {selected && <Conversation slug={selected} unread={convos.find((c) => c.slug === selected)?.unread ?? 0} />}
         </div>
       </div>
     </div>
   )
 }
 
-function Conversation({ slug }: { slug: string }) {
+function Conversation({ slug, unread }: { slug: string; unread: number }) {
   const [, navigate] = useLocation()
   const { data, isLoading, error } = useInboxConversation(slug)
+  const action = useAction()
+  const markRead = () => {
+    if (unread <= 0 || action.isPending) return
+    action.mutate({ kind: 'mark-read', target: slug })
+  }
   if (isLoading) return <div style={{ padding: 24 }}><Loading rows={4} /></div>
   if (error) return <div style={{ padding: 24 }}><ErrorNote error={error} /></div>
   if (!data) return null
@@ -156,9 +162,22 @@ function Conversation({ slug }: { slug: string }) {
           <div className="detail-title">{data.name}</div>
           <div className="detail-ref">{data.slug}</div>
         </div>
-        <button className="btn primary sm" onClick={() => navigate(`/session/${slug}`)}>
+        {unread > 0 && (
+          <button type="button" className="btn ghost sm" disabled={action.isPending} onClick={markRead}>
+            <CheckCheck size={13} /> Mark read
+          </button>
+        )}
+        <button type="button" className="btn primary sm" onClick={() => navigate(`/session/${slug}`)}>
           <Play size={13} /> Open session
         </button>
+      </div>
+
+      <div className="inbox-reply">
+        <div className="eyebrow row gap" style={{ gap: 7 }}>
+          <ProviderIcon provider={data.provider} size={13} />
+          Respond
+        </div>
+        <NudgeComposer slug={slug} />
       </div>
 
       <div className="col" style={{ gap: 14, marginTop: 8 }}>

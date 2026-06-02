@@ -1551,6 +1551,85 @@ func TestCreateProjectRejectsDuplicateSlug(t *testing.T) {
 	}
 }
 
+func TestCreatePlaybookCreatesPlaybook(t *testing.T) {
+	root, db := testRootDB(t)
+	t.Setenv("FLOW_ROOT", root)
+	insertProjectTask(t, db, root)
+	srv := New(Config{DB: db, FlowRoot: root, CommandPath: testFlowBinary(t)})
+
+	resp, status := srv.runAction(actionRequest{
+		Kind:        "create-playbook",
+		Slug:        "daily-triage",
+		Name:        "Daily Triage",
+		Project:     "flow",
+		WorkDir:     root,
+		Description: "## Each run does\n- Review waiting sessions\n- Route new inbox messages",
+	})
+	if status != http.StatusOK || !resp.OK {
+		t.Fatalf("status = %d, resp = %+v", status, resp)
+	}
+	pb, err := flowdb.GetPlaybook(db, "daily-triage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pb.Name != "Daily Triage" || pb.WorkDir != root || !pb.ProjectSlug.Valid || pb.ProjectSlug.String != "flow" {
+		t.Fatalf("playbook not persisted as expected: %+v", pb)
+	}
+	brief, err := os.ReadFile(filepath.Join(root, "playbooks", "daily-triage", "brief.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(brief), "# Daily Triage") || !strings.Contains(string(brief), "Review waiting sessions") {
+		t.Fatalf("brief did not capture definition: %q", brief)
+	}
+	if _, err := os.Stat(filepath.Join(root, "playbooks", "daily-triage", "updates")); err != nil {
+		t.Fatalf("updates dir missing: %v", err)
+	}
+}
+
+func TestCreateKBActionCreatesDocument(t *testing.T) {
+	root, db := testRootDB(t)
+	srv := New(Config{DB: db, FlowRoot: root, Version: "test"})
+
+	resp, status := srv.runAction(actionRequest{
+		Kind:        "create-kb",
+		Slug:        "runbooks.md",
+		Name:        "Runbooks",
+		Description: "Ops notes and escalation commands.",
+	})
+	if status != http.StatusOK || !resp.OK {
+		t.Fatalf("status = %d, resp = %+v", status, resp)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "kb", "runbooks.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(body), "# Runbooks") || !strings.Contains(string(body), "Ops notes") {
+		t.Fatalf("kb body did not capture content: %q", body)
+	}
+
+	handler := srv.Handler()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/kb", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("kb list status = %d", rec.Code)
+	}
+	var files []KBFileView
+	if err := json.Unmarshal(rec.Body.Bytes(), &files); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, file := range files {
+		if file.Filename == "runbooks.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("created kb doc missing from list: %+v", files)
+	}
+}
+
 func TestUpdatePermissionModeStoresMode(t *testing.T) {
 	root, db := testRootDB(t)
 	insertProjectTask(t, db, root)
@@ -1908,107 +1987,82 @@ func TestProjectBriefCanBeUpdatedFromUI(t *testing.T) {
 	}
 }
 
-func TestOverviewTaskUsesFlowRootAndFreshPrompt(t *testing.T) {
+func TestOverviewChatPreparesFloatingLaunchWithoutTask(t *testing.T) {
 	root, db := testRootDB(t)
 	insertProjectTask(t, db, root)
-	wrongDir := t.TempDir()
-	sessionID := "99999999-9999-4999-8999-999999999999"
-	now := "2026-05-12T10:00:00+05:30"
-	if _, err := db.Exec(
-		`INSERT INTO tasks (
-			slug, name, project_slug, status, kind, priority, work_dir,
-			session_id, session_started, status_changed_at, created_at, updated_at
-		) VALUES (?, ?, 'flow', 'in-progress', 'regular', 'high', ?, ?, ?, ?, ?, ?)`,
-		overviewTaskSlug, "Old overview", wrongDir, sessionID, now, now, now, now,
-	); err != nil {
-		t.Fatal(err)
-	}
 
 	srv := New(Config{DB: db, FlowRoot: root, CommandPath: "/bin/false"})
-	if err := srv.prepareOverviewTask("What should I do today?"); err != nil {
-		t.Fatal(err)
-	}
-	task, err := flowdb.GetTask(db, overviewTaskSlug)
+	launch, err := srv.prepareOverviewFloatingLaunch(actionRequest{
+		Prompt:   "What should I do today?",
+		Provider: "codex",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.WorkDir != root {
-		t.Fatalf("overview work_dir = %q, want %q", task.WorkDir, root)
+	if launch.Slug == overviewTaskSlug || !strings.HasPrefix(launch.Slug, "overview-") {
+		t.Fatalf("floating launch slug = %q", launch.Slug)
 	}
-	if task.ProjectSlug.Valid {
-		t.Fatalf("overview project should be adhoc, got %q", task.ProjectSlug.String)
+	if launch.WorkDir != root || launch.Provider != "codex" || launch.PermissionMode != flowdb.DefaultPermissionMode {
+		t.Fatalf("floating launch = %+v", launch)
 	}
-	if task.Status != "backlog" || task.SessionID.Valid || task.SessionStarted.Valid || task.SessionLastResumed.Valid {
-		t.Fatalf("overview task should be reset before launch: %+v", task)
+	if !launch.Created || launch.NeedsCapture {
+		t.Fatalf("floating launch lifecycle fields = %+v", launch)
 	}
-	brief, err := os.ReadFile(filepath.Join(root, "tasks", overviewTaskSlug, "brief.md"))
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(strings.Join(launch.Args, "\n"), "What should I do today?") {
+		t.Fatalf("overview prompt missing from args = %#v", launch.Args)
 	}
-	if !strings.Contains(string(brief), "What should I do today?") {
-		t.Fatalf("brief = %q", brief)
+	if _, err := flowdb.GetTask(db, overviewTaskSlug); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("overview task should not exist, err = %v", err)
 	}
-	launch, err := srv.prepareTerminalLaunch(overviewTaskSlug)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !launch.Created || launch.WorkDir != root {
-		t.Fatalf("overview launch = %+v", launch)
-	}
-	if len(launch.Args) != 5 || strings.TrimSpace(launch.Args[4]) != "What should I do today?" {
-		t.Fatalf("overview prompt args = %#v", launch.Args)
-	}
-	if launch.Args[2] != "--permission-mode" || launch.Args[3] != "auto" {
-		t.Fatalf("default permission args = %#v", launch.Args)
+	if _, err := os.Stat(filepath.Join(root, "tasks", overviewTaskSlug)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("overview task directory should not exist, err = %v", err)
 	}
 }
 
-func TestPrepareTerminalLaunchResetsStaleOverviewSession(t *testing.T) {
+func TestOverviewChatActionReturnsFloatingTerminal(t *testing.T) {
 	root, db := testRootDB(t)
 	insertProjectTask(t, db, root)
-	wrongDir := t.TempDir()
-	sessionID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	now := "2026-05-12T10:00:00+05:30"
-	if _, err := db.Exec(
-		`INSERT INTO tasks (
-			slug, name, project_slug, status, kind, priority, work_dir,
-			session_id, session_started, status_changed_at, created_at, updated_at
-		) VALUES (?, ?, 'flow', 'in-progress', 'regular', 'high', ?, ?, ?, ?, ?, ?)`,
-		overviewTaskSlug, "Old overview", wrongDir, sessionID, now, now, now, now,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "tasks", overviewTaskSlug), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(root, "tasks", overviewTaskSlug, "brief.md"),
-		[]byte("# Flow overview command center\n\nLatest user request:\nCheck my inbox"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
 
 	srv := New(Config{DB: db, FlowRoot: root, CommandPath: "/bin/false"})
-	launch, err := srv.prepareTerminalLaunch(overviewTaskSlug)
-	if err != nil {
-		t.Fatal(err)
+	resp, status := srv.runAction(actionRequest{
+		Kind:     "overview-chat",
+		Prompt:   "Inspect stalled sessions",
+		Provider: "codex",
+	})
+	if status != http.StatusOK || !resp.OK {
+		t.Fatalf("overview action status=%d resp=%+v", status, resp)
 	}
-	if !launch.Created || launch.WorkDir != root || launch.SessionID == sessionID {
-		t.Fatalf("overview launch = %+v", launch)
+	if resp.Agent != nil || resp.Bridge {
+		t.Fatalf("overview action should not return task agent bridge: %+v", resp)
 	}
-	if len(launch.Args) != 5 || strings.TrimSpace(launch.Args[4]) != "Check my inbox" {
-		t.Fatalf("overview prompt args = %#v", launch.Args)
+	if resp.FloatingTerminal == nil {
+		t.Fatalf("overview action missing floating terminal: %+v", resp)
 	}
-	if launch.Args[2] != "--permission-mode" || launch.Args[3] != "auto" {
-		t.Fatalf("default permission args = %#v", launch.Args)
+	if !strings.HasPrefix(resp.FloatingTerminal.ID, "overview-") || resp.FloatingTerminal.Provider != "codex" {
+		t.Fatalf("floating terminal = %+v", resp.FloatingTerminal)
 	}
-	task, err := flowdb.GetTask(db, overviewTaskSlug)
-	if err != nil {
-		t.Fatal(err)
+	srv.terminals.mu.Lock()
+	launch, ok := srv.terminals.floatingLaunches[resp.FloatingTerminal.ID]
+	srv.terminals.mu.Unlock()
+	if !ok || !launch.FreeAgent {
+		t.Fatalf("floating launch not registered as free agent: ok=%v launch=%+v", ok, launch)
 	}
-	if task.WorkDir != root || !task.SessionID.Valid || task.SessionID.String != launch.SessionID {
-		t.Fatalf("overview task after launch = %+v", task)
+	if _, err := flowdb.GetTask(db, overviewTaskSlug); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("overview task should not exist, err = %v", err)
+	}
+}
+
+func TestFloatingTerminalEnvOmitsFlowTask(t *testing.T) {
+	env := terminalEnvMap("", "", "", "overview-abc", "codex", flowdb.DefaultPermissionMode, true)
+	if _, ok := env["FLOW_TASK"]; ok {
+		t.Fatalf("free agent env should not include FLOW_TASK: %+v", env)
+	}
+	if env["FLOW_FREE_AGENT"] != "1" {
+		t.Fatalf("free agent marker missing: %+v", env)
+	}
+	taskEnv := terminalEnvMap("", "", "", "build-ui", "claude", flowdb.DefaultPermissionMode, false)
+	if taskEnv["FLOW_TASK"] != "build-ui" || taskEnv["FLOW_FREE_AGENT"] != "" {
+		t.Fatalf("task env = %+v", taskEnv)
 	}
 }
 

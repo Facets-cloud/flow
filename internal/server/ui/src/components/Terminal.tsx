@@ -5,7 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import '@xterm/xterm/css/xterm.css'
 import { pushToast } from '../lib/toast'
 
-// Live PTY terminal powered by xterm.js, bound to flow's /ws/terminal JSON
+// Live PTY terminal powered by xterm.js, bound to flow's terminal JSON
 // protocol: server pushes {type:"output"|"status"|"error"}, client sends
 // {type:"input"|"resize"}. Sessions run inside tmux, so on (re)attach the
 // server resizes the pane to our URL cols/rows and replays a fresh
@@ -74,18 +74,19 @@ const TERMINAL_THEME: ITheme = {
 
 interface Props {
   slug: string
+  kind?: 'task' | 'floating'
   restartKey?: number
   onStatus?: (kind: 'status' | 'error' | 'closed' | 'open', message: string) => void
 }
 
-function termWsURL(slug: string, cols: number, rows: number): string {
+function termWsURL(slug: string, cols: number, rows: number, kind: 'task' | 'floating'): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}/ws/terminal?slug=${encodeURIComponent(
-    slug,
-  )}&cols=${cols}&rows=${rows}`
+  const key = kind === 'floating' ? 'id' : 'slug'
+  const path = kind === 'floating' ? '/ws/floating-terminal' : '/ws/terminal'
+  return `${proto}//${location.host}${path}?${key}=${encodeURIComponent(slug)}&cols=${cols}&rows=${rows}`
 }
 
-export function TaskTerminal({ slug, restartKey = 0, onStatus }: Props) {
+export function TaskTerminal({ slug, kind = 'task', restartKey = 0, onStatus }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -347,7 +348,7 @@ export function TaskTerminal({ slug, restartKey = 0, onStatus }: Props) {
         term.clear()
         sawFirstOutput = false
       }
-      const sock = new WebSocket(termWsURL(slug, term.cols, term.rows))
+      const sock = new WebSocket(termWsURL(slug, term.cols, term.rows, kind))
       ws = sock
       sock.onopen = () => {
         clearReconnect()
@@ -472,7 +473,7 @@ export function TaskTerminal({ slug, restartKey = 0, onStatus }: Props) {
       term.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug, restartKey])
+  }, [slug, kind, restartKey])
 
   return (
     <div className="flow-term">

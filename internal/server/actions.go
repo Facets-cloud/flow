@@ -48,12 +48,19 @@ type actionRequest struct {
 }
 
 type actionResponse struct {
-	OK          bool     `json:"ok"`
-	Message     string   `json:"message"`
-	Output      string   `json:"output,omitempty"`
-	Agent       *uiAgent `json:"agent,omitempty"`
-	Bridge      bool     `json:"bridge,omitempty"`
-	AlreadyLive bool     `json:"already_live,omitempty"`
+	OK               bool                      `json:"ok"`
+	Message          string                    `json:"message"`
+	Output           string                    `json:"output,omitempty"`
+	Agent            *uiAgent                  `json:"agent,omitempty"`
+	FloatingTerminal *floatingTerminalResponse `json:"floating_terminal,omitempty"`
+	Bridge           bool                      `json:"bridge,omitempty"`
+	AlreadyLive      bool                      `json:"already_live,omitempty"`
+}
+
+type floatingTerminalResponse struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+	Title    string `json:"title"`
 }
 
 var (
@@ -221,6 +228,10 @@ func (s *Server) runAction(req actionRequest) (actionResponse, int) {
 		return s.createFlow(req)
 	case "create-project":
 		return s.createProject(req)
+	case "create-playbook":
+		return s.createPlaybook(req)
+	case "create-kb":
+		return s.createKB(req)
 	case "update-permission-mode":
 		return s.updatePermissionMode(req)
 	case "update-priority":
@@ -233,6 +244,8 @@ func (s *Server) runAction(req actionRequest) (actionResponse, int) {
 		return s.pauseTask(target)
 	case "clear-waiting":
 		return s.clearWaiting(target)
+	case "mark-read":
+		return s.markInboxRead(target)
 	case "kill":
 		return s.killSession(req)
 	case "approve", "deny":
@@ -705,6 +718,83 @@ func (s *Server) createProject(req actionRequest) (actionResponse, int) {
 	return actionResponse{OK: true, Message: "created project " + slug, Output: out}, http.StatusOK
 }
 
+func (s *Server) createPlaybook(req actionRequest) (actionResponse, int) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return actionResponse{OK: false, Message: "name is required"}, http.StatusBadRequest
+	}
+	slug := firstNonEmpty(req.Slug, req.Target)
+	if err := validateSlug(slug); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	workDir := strings.TrimSpace(req.WorkDir)
+	if workDir == "" {
+		return actionResponse{OK: false, Message: "work_dir is required"}, http.StatusBadRequest
+	}
+	if _, err := flowdb.GetPlaybook(s.cfg.DB, slug); err == nil {
+		return actionResponse{OK: false, Message: "playbook " + slug + " already exists"}, http.StatusConflict
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+
+	args := []string{"add", "playbook", name, "--slug", slug, "--work-dir", workDir}
+	if req.Project != "" {
+		if err := validateSlug(req.Project); err != nil {
+			return actionResponse{OK: false, Message: "project: " + err.Error()}, http.StatusBadRequest
+		}
+		args = append(args, "--project", req.Project)
+	}
+	if req.Mkdir {
+		args = append(args, "--mkdir")
+	}
+	out, err := s.runFlowCommand(args...)
+	if err != nil {
+		return actionResponse{OK: false, Message: err.Error(), Output: out}, http.StatusInternalServerError
+	}
+	definition := firstNonEmpty(req.Description, req.Prompt)
+	if definition != "" {
+		if err := s.writePlaybookBrief(slug, name, definition); err != nil {
+			return actionResponse{OK: false, Message: err.Error(), Output: out}, http.StatusInternalServerError
+		}
+	}
+	return actionResponse{OK: true, Message: "created playbook " + slug, Output: out}, http.StatusOK
+}
+
+func (s *Server) createKB(req actionRequest) (actionResponse, int) {
+	filename := strings.TrimSpace(firstNonEmpty(req.Slug, req.Target, req.Path))
+	if filename == "" {
+		return actionResponse{OK: false, Message: "filename is required"}, http.StatusBadRequest
+	}
+	if !strings.HasSuffix(strings.ToLower(filename), ".md") {
+		filename += ".md"
+	}
+	if !validFilename(filename) {
+		return actionResponse{OK: false, Message: "invalid KB filename"}, http.StatusBadRequest
+	}
+	title := strings.TrimSpace(req.Name)
+	if title == "" {
+		title = strings.TrimSuffix(filename, filepath.Ext(filename))
+	}
+	path := filepath.Join(s.cfg.FlowRoot, "kb", filename)
+	cleanBase := filepath.Join(filepath.Clean(s.cfg.FlowRoot), "kb") + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(path), cleanBase) {
+		return actionResponse{OK: false, Message: "invalid KB path"}, http.StatusBadRequest
+	}
+	if _, err := os.Stat(path); err == nil {
+		return actionResponse{OK: false, Message: "KB document " + filename + " already exists"}, http.StatusConflict
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	body := markdownWithHeading(title, firstNonEmpty(req.Description, req.Prompt))
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	return actionResponse{OK: true, Message: "created KB document " + filename}, http.StatusOK
+}
+
 func (s *Server) updatePermissionMode(req actionRequest) (actionResponse, int) {
 	target := firstNonEmpty(req.Target, req.Slug)
 	if err := validateSlug(target); err != nil {
@@ -882,6 +972,23 @@ func (s *Server) clearWaiting(target string) (actionResponse, int) {
 		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
 	}
 	return actionResponse{OK: true, Message: "cleared waiting block for " + target, Agent: agent}, http.StatusOK
+}
+
+func (s *Server) markInboxRead(target string) (actionResponse, int) {
+	if err := validateSlug(target); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusBadRequest
+	}
+	if _, err := flowdb.GetTask(s.cfg.DB, target); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return actionResponse{OK: false, Message: "task not found: " + target}, http.StatusNotFound
+		}
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	now := flowdb.NowISO()
+	if _, err := s.cfg.DB.Exec(`UPDATE tasks SET inbox_seen_at = ?, updated_at = ? WHERE slug = ?`, now, now, target); err != nil {
+		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
+	}
+	return actionResponse{OK: true, Message: "marked inbox read for " + target}, http.StatusOK
 }
 
 func (s *Server) killSession(req actionRequest) (actionResponse, int) {
@@ -1603,68 +1710,12 @@ func (s *Server) overviewChat(req actionRequest) (actionResponse, int) {
 	if prompt == "" {
 		return actionResponse{OK: false, Message: "prompt is required"}, http.StatusBadRequest
 	}
-	slug := overviewTaskSlug
-	s.terminals.stop(slug)
-	if err := s.prepareOverviewTask(prompt); err != nil {
+	launch, err := s.prepareOverviewFloatingLaunch(req)
+	if err != nil {
 		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
 	}
-	if _, err := s.terminals.attach(slug, 120, 32); err != nil {
-		return actionResponse{OK: false, Message: err.Error()}, http.StatusInternalServerError
-	}
-	agent, _ := s.agentForTask(slug)
-	return actionResponse{OK: true, Message: "opened overview agent", Agent: agent, Bridge: true}, http.StatusOK
-}
-
-func (s *Server) prepareOverviewTask(prompt string) error {
-	flowRoot := strings.TrimSpace(s.cfg.FlowRoot)
-	if flowRoot == "" {
-		return errors.New("flow root is not configured")
-	}
-	absRoot, err := filepath.Abs(flowRoot)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Join(absRoot, "tasks", overviewTaskSlug, "updates"), 0o755); err != nil {
-		return err
-	}
-	if err := flowdb.UpsertWorkdir(s.cfg.DB, absRoot, "flow root", "", ""); err != nil {
-		return err
-	}
-	now := flowdb.NowISO()
-	_, err = flowdb.GetTask(s.cfg.DB, overviewTaskSlug)
-	if errors.Is(err, sql.ErrNoRows) {
-		_, err = s.cfg.DB.Exec(
-			`INSERT INTO tasks (
-				slug, name, status, kind, priority, work_dir, permission_mode, status_changed_at, created_at, updated_at
-			) VALUES (?, ?, 'backlog', 'regular', 'medium', ?, ?, ?, ?, ?)`,
-			overviewTaskSlug, overviewTaskName, absRoot, flowdb.DefaultPermissionMode, now, now, now,
-		)
-	} else if err == nil {
-		_, err = s.cfg.DB.Exec(
-			`UPDATE tasks SET
-				name = ?,
-				project_slug = NULL,
-				status = 'backlog',
-				kind = 'regular',
-				playbook_slug = NULL,
-				priority = 'medium',
-				work_dir = ?,
-				waiting_on = NULL,
-				permission_mode = ?,
-				session_provider = 'claude',
-				session_id = NULL,
-				session_started = NULL,
-				session_last_resumed = NULL,
-				status_changed_at = ?,
-				updated_at = ?
-			 WHERE slug = ?`,
-			overviewTaskName, absRoot, flowdb.DefaultPermissionMode, now, now, overviewTaskSlug,
-		)
-	}
-	if err != nil {
-		return err
-	}
-	return s.writeTaskBrief(overviewTaskSlug, overviewTaskName, overviewBrief(prompt))
+	terminal := s.terminals.registerFloatingLaunch(launch, "Ask Flow")
+	return actionResponse{OK: true, Message: "opened floating overview agent", FloatingTerminal: &terminal}, http.StatusOK
 }
 
 func overviewBrief(prompt string) string {
@@ -1711,6 +1762,28 @@ func (s *Server) writeProjectBrief(slug, name, description string) error {
 	}
 	body := fmt.Sprintf("# %s\n\n%s\n", name, strings.TrimSpace(description))
 	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+func (s *Server) writePlaybookBrief(slug, name, definition string) error {
+	path := filepath.Join(s.cfg.FlowRoot, "playbooks", slug, "brief.md")
+	if !strings.HasPrefix(filepath.Clean(path), filepath.Join(s.cfg.FlowRoot, "playbooks")+string(os.PathSeparator)) {
+		return errors.New("invalid playbook brief path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create playbook brief dir: %w", err)
+	}
+	return os.WriteFile(path, []byte(markdownWithHeading(name, definition)), 0o644)
+}
+
+func markdownWithHeading(title, body string) string {
+	text := strings.TrimSpace(body)
+	if text == "" {
+		return fmt.Sprintf("# %s\n", strings.TrimSpace(title))
+	}
+	if strings.HasPrefix(text, "# ") {
+		return text + "\n"
+	}
+	return fmt.Sprintf("# %s\n\n%s\n", strings.TrimSpace(title), text)
 }
 
 func claudePIDForSession(sessionID string) (int, error) {

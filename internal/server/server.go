@@ -112,6 +112,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.registerAPIRoutes(mux)
 	mux.HandleFunc("/ws/terminal", s.handleTerminalWebSocket)
+	mux.HandleFunc("/ws/floating-terminal", s.handleFloatingTerminalWebSocket)
 	mux.HandleFunc("/ws/events", s.handleEventWebSocket)
 	mux.HandleFunc("/ws/rpc", s.handleRPCWebSocket)
 	mux.HandleFunc("/ws", s.handleWebSocketPlaceholder)

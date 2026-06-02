@@ -53,9 +53,10 @@ var terminalUpgrader = websocket.Upgrader{
 }
 
 type terminalHub struct {
-	server   *Server
-	mu       sync.Mutex
-	sessions map[string]*terminalSession
+	server           *Server
+	mu               sync.Mutex
+	sessions         map[string]*terminalSession
+	floatingLaunches map[string]terminalLaunch
 	// sharedRunningCache backs sharedRunning, which is invoked once per task
 	// per SSE tick (every 2s). Each raw call forks `tmux has-session` — with
 	// N tasks visible that's N forks per tick. The cache collapses repeats
@@ -71,6 +72,7 @@ type terminalLaunch struct {
 	PermissionMode string
 	WorkDir        string
 	Args           []string
+	FreeAgent      bool
 	Created        bool
 	NeedsCapture   bool
 	StartedAt      time.Time
@@ -114,6 +116,7 @@ func newTerminalHub(s *Server) *terminalHub {
 	return &terminalHub{
 		server:             s,
 		sessions:           map[string]*terminalSession{},
+		floatingLaunches:   map[string]terminalLaunch{},
 		sharedRunningCache: newTTLCache[string, bool](2500 * time.Millisecond),
 	}
 }
@@ -136,6 +139,38 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 	}
 
 	sess, err := s.terminals.attach(slug, cols, rows)
+	if err != nil {
+		_ = conn.WriteJSON(terminalWSMessage{Type: "error", Message: err.Error()})
+		_ = conn.Close()
+		return
+	}
+
+	client := &terminalClient{conn: conn, send: make(chan terminalWSMessage, 128), done: make(chan struct{})}
+	sess.addClient(client, true)
+
+	go client.writeLoop()
+	client.readLoop(sess)
+	sess.removeClient(client)
+}
+
+func (s *Server) handleFloatingTerminalWebSocket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if err := validateSlug(id); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	cols := intQueryDefault(r, "cols", 120)
+	rows := intQueryDefault(r, "rows", 32)
+	conn, err := terminalUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+
+	sess, err := s.terminals.attachFloating(id, cols, rows)
 	if err != nil {
 		_ = conn.WriteJSON(terminalWSMessage{Type: "error", Message: err.Error()})
 		_ = conn.Close()
@@ -187,6 +222,36 @@ func (h *terminalHub) attach(slug string, cols, rows int) (*terminalSession, err
 	if h.server != nil && h.server.inboxMonitors != nil {
 		h.server.inboxMonitors.start(slug)
 	}
+	return sess, nil
+}
+
+func (h *terminalHub) registerFloatingLaunch(launch terminalLaunch, title string) floatingTerminalResponse {
+	h.mu.Lock()
+	h.floatingLaunches[launch.Slug] = launch
+	h.mu.Unlock()
+	return floatingTerminalResponse{
+		ID:       launch.Slug,
+		Provider: launch.Provider,
+		Title:    strings.TrimSpace(title),
+	}
+}
+
+func (h *terminalHub) attachFloating(id string, cols, rows int) (*terminalSession, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if sess := h.sessions[id]; sess != nil && sess.running() {
+		_ = sess.resize(cols, rows)
+		return sess, nil
+	}
+	launch, ok := h.floatingLaunches[id]
+	if !ok {
+		return nil, fmt.Errorf("floating terminal not found: %s", id)
+	}
+	sess, err := h.startSessionLocked(launch, cols, rows)
+	if err != nil {
+		return nil, err
+	}
+	h.sessions[id] = sess
 	return sess, nil
 }
 
@@ -346,8 +411,13 @@ func (h *terminalHub) startSessionLocked(launch terminalLaunch, cols, rows int) 
 		cmd = exec.Command(bin, launch.Args...)
 	}
 	cmd.Dir = launch.WorkDir
-	cmd.Env = append(terminalEnvWithHook(h.server.cfg.FlowRoot, h.server.cfg.CommandPath, h.server.cfg.HookURL),
-		"FLOW_TASK="+launch.Slug,
+	env := terminalEnvWithHook(h.server.cfg.FlowRoot, h.server.cfg.CommandPath, h.server.cfg.HookURL)
+	if launch.FreeAgent {
+		env = append(env, "FLOW_FREE_AGENT=1")
+	} else {
+		env = append(env, "FLOW_TASK="+launch.Slug)
+	}
+	cmd.Env = append(env,
 		"FLOW_SESSION_PROVIDER="+provider,
 		"FLOW_PERMISSION_MODE="+normalizedTerminalPermissionMode(launch.PermissionMode),
 	)
@@ -434,7 +504,7 @@ func terminalEnvWithHook(flowRoot, commandPath, hookURL string) []string {
 	return env
 }
 
-func terminalEnvMap(flowRoot, commandPath, hookURL, slug, provider, permissionMode string) map[string]string {
+func terminalEnvMap(flowRoot, commandPath, hookURL, slug, provider, permissionMode string, freeAgent bool) map[string]string {
 	env := terminalEnvWithHook(flowRoot, commandPath, hookURL)
 	out := map[string]string{
 		"TERM":                      "xterm-256color",
@@ -446,9 +516,13 @@ func terminalEnvMap(flowRoot, commandPath, hookURL, slug, provider, permissionMo
 		"LANG":                      "en_US.UTF-8",
 		"LC_CTYPE":                  "en_US.UTF-8",
 		"FLOW_HOOK_OWNED":           "1",
-		"FLOW_TASK":                 slug,
 		"FLOW_SESSION_PROVIDER":     provider,
 		"FLOW_PERMISSION_MODE":      normalizedTerminalPermissionMode(permissionMode),
+	}
+	if freeAgent {
+		out["FLOW_FREE_AGENT"] = "1"
+	} else {
+		out["FLOW_TASK"] = slug
 	}
 	for _, key := range []string{"PATH", "FLOW_ROOT", "FLOW_HOOK_URL", "GH_TOKEN"} {
 		if value := envValueLocal(env, key); value != "" {
@@ -694,7 +768,7 @@ func (s *Server) ensureSharedTerminalSession(launch terminalLaunch, cols, rows i
 		provider = agents.ProviderClaude
 	}
 	command := agentShellCommand(provider, launch.Args)
-	env := terminalEnvMap(s.cfg.FlowRoot, s.cfg.CommandPath, s.cfg.HookURL, launch.Slug, provider, launch.PermissionMode)
+	env := terminalEnvMap(s.cfg.FlowRoot, s.cfg.CommandPath, s.cfg.HookURL, launch.Slug, provider, launch.PermissionMode, launch.FreeAgent)
 	// Prepend `-f <flowRoot>/tmux.conf` so the tmux server we're about
 	// to start picks up flow's defaults (mouse scroll + larger
 	// scrollback). The user's ~/.tmux.conf is sourced from inside our
@@ -984,6 +1058,43 @@ func (s *Server) prepareTerminalLaunch(slug string) (terminalLaunch, error) {
 		WorkDir:        task.WorkDir,
 		Args:           args,
 		Created:        created,
+	}, nil
+}
+
+func (s *Server) prepareOverviewFloatingLaunch(req actionRequest) (terminalLaunch, error) {
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		return terminalLaunch{}, errors.New("prompt is required")
+	}
+	flowRoot := strings.TrimSpace(s.cfg.FlowRoot)
+	if flowRoot == "" {
+		return terminalLaunch{}, errors.New("flow root is not configured")
+	}
+	absRoot, err := filepath.Abs(flowRoot)
+	if err != nil {
+		return terminalLaunch{}, err
+	}
+	provider, err := flowdb.NormalizeSessionProvider(req.Provider)
+	if err != nil {
+		return terminalLaunch{}, err
+	}
+	permissionMode, err := flowdb.NormalizePermissionMode(req.PermissionMode)
+	if err != nil {
+		return terminalLaunch{}, err
+	}
+	sessionID := uuid.NewString()
+	args := agentTerminalArgs(provider, true, sessionID, absRoot, absRoot, overviewBrief(prompt), permissionMode)
+	return terminalLaunch{
+		Slug:           "overview-" + uuid.NewString(),
+		SessionID:      sessionID,
+		Provider:       provider,
+		PermissionMode: permissionMode,
+		WorkDir:        absRoot,
+		Args:           args,
+		FreeAgent:      true,
+		Created:        true,
+		NeedsCapture:   false,
+		StartedAt:      time.Now().Add(-2 * time.Second),
 	}, nil
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'wouter'
 import {
   Bell,
@@ -15,6 +15,7 @@ import {
   Radar,
   Repeat,
   Search,
+  Settings,
   Sun,
   TerminalSquare,
   Trash2,
@@ -39,20 +40,40 @@ interface NavDef {
   tone?: string
 }
 
+type NotificationItem = { key: string; title: string; sub: string }
+type BrowserNotificationPermission = NotificationPermission | 'unsupported'
+
+function currentBrowserNotificationPermission(): BrowserNotificationPermission {
+  if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported'
+  return Notification.permission
+}
+
 // Pops a toast the moment a new notification arrives (a session starts waiting,
 // or an unread inbox message lands) — so you notice without watching the bell.
 // Seeds on first load so pre-existing items don't toast on page open.
 function useNotificationToasts(ui?: ReturnType<typeof useUiData>['data'], inbox?: ReturnType<typeof useInbox>['data']) {
   const seen = useRef<Set<string> | null>(null)
+  const notifyDesktop = useCallback((it: NotificationItem) => {
+    if (currentBrowserNotificationPermission() !== 'granted' || typeof document === 'undefined' || !document.hidden) return
+    try {
+      new Notification(`flow: ${it.title}`, { body: it.sub, tag: it.key })
+    } catch {
+      // Browser notification availability can change under us; keep in-app
+      // toasts as the reliable fallback.
+    }
+  }, [])
   useEffect(() => {
-    const items = [
-      ...(ui?.AGENTS ?? [])
-        .filter((a) => a.status === 'waiting')
-        .map((a) => ({ key: `w:${a.slug}`, title: a.name, sub: a.waiting_for?.why || 'Awaiting your input' })),
-      ...(inbox?.entries ?? [])
-        .filter((e) => e.unread)
-        .map((e) => ({ key: `u:${e.task_slug}:${e.timestamp}`, title: e.task_name, sub: e.body_snippet || 'New message' })),
-    ]
+    const items: NotificationItem[] = []
+    for (const a of ui?.AGENTS ?? []) {
+      if (a.status === 'waiting') {
+        items.push({ key: `w:${a.slug}`, title: a.name, sub: a.waiting_for?.why || 'Awaiting your input' })
+      }
+    }
+    for (const e of inbox?.entries ?? []) {
+      if (e.unread) {
+        items.push({ key: `u:${e.task_slug}:${e.timestamp}`, title: e.task_name, sub: e.body_snippet || 'New message' })
+      }
+    }
     if (seen.current === null) {
       // first observation — remember what's already there, don't toast it
       seen.current = new Set(items.map((i) => i.key))
@@ -62,9 +83,10 @@ function useNotificationToasts(ui?: ReturnType<typeof useUiData>['data'], inbox?
       if (!seen.current.has(it.key)) {
         seen.current.add(it.key)
         pushToast('info', `${it.title} — ${it.sub}`)
+        notifyDesktop(it)
       }
     }
-  }, [ui, inbox])
+  }, [ui, inbox, notifyDesktop])
 }
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -140,6 +162,7 @@ export function Shell({ children }: { children: ReactNode }) {
       label: 'System',
       items: [
         { to: '/workdirs', label: 'Workdirs', icon: <HardDrive size={16} />, match: (p) => p === '/workdirs' },
+        { to: '/settings', label: 'Settings', icon: <Settings size={16} />, match: (p) => p === '/settings' },
         { to: '/trash', label: 'Trash', icon: <Trash2 size={16} />, match: (p) => p === '/trash' },
       ],
     },
@@ -192,6 +215,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </div>
             <div className="spacer" />
             <button
+              type="button"
               className="btn icon ghost sm theme-toggle"
               onClick={(e) => {
                 // Center of the button is the origin of the circular theme wipe.
@@ -216,7 +240,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <h1 className="topbar-h">{title}</h1>
           </div>
           <div className="spacer" />
-          <button className="searchbtn" onClick={() => setPaletteOpen(true)}>
+          <button type="button" className="searchbtn" onClick={() => setPaletteOpen(true)}>
             <Search size={15} className="dim" />
             <span className="dim">Search…</span>
             <span className="kbd">⌘K</span>
@@ -226,7 +250,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="conn-label">{connLabel}</span>
           </div>
           <NotificationsBell />
-          <button className="btn primary" onClick={() => setCreateOpen(true)}>
+          <button type="button" className="btn primary" onClick={() => setCreateOpen(true)}>
             <Plus size={16} /> New task
           </button>
         </header>
@@ -247,6 +271,7 @@ function NotificationsBell() {
   const [, navigate] = useLocation()
   const { data: ui } = useUiData()
   const { data: inbox } = useInbox()
+  const [desktopPermission, setDesktopPermission] = useState<BrowserNotificationPermission>(currentBrowserNotificationPermission)
   const waiting = (ui?.AGENTS ?? []).filter((a) => a.status === 'waiting')
   const unread = (inbox?.entries ?? []).filter((e) => e.unread).slice(0, 10)
   const count = waiting.length + unread.length
@@ -263,6 +288,14 @@ function NotificationsBell() {
 
   const close = (e: { currentTarget: EventTarget & HTMLElement }) =>
     e.currentTarget.closest('details')?.removeAttribute('open')
+  const enableDesktop = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setDesktopPermission('unsupported')
+      return
+    }
+    const next = await Notification.requestPermission()
+    setDesktopPermission(next)
+  }
 
   return (
     <details className="menu">
@@ -274,9 +307,17 @@ function NotificationsBell() {
         <div className="notif-head">
           Notifications {count > 0 && <span className="faint">· {count}</span>}
         </div>
+        {desktopPermission === 'default' && (
+          <button type="button" className="notif-permission" onClick={enableDesktop}>
+            Enable desktop alerts
+          </button>
+        )}
+        {desktopPermission === 'denied' && (
+          <div className="notif-permission muted">Desktop alerts blocked in browser settings.</div>
+        )}
         {count === 0 && <div className="notif-empty">You're all caught up.</div>}
         {waiting.map((a) => (
-          <button key={`w-${a.slug}`} className="notif-item" onClick={(e) => { close(e); navigate(`/session/${a.slug}`) }}>
+          <button type="button" key={`w-${a.slug}`} className="notif-item" onClick={(e) => { close(e); navigate(`/session/${a.slug}`) }}>
             <span className="dot waiting" style={{ marginTop: 4 }} />
             <div className="lrow-main">
               <div className="notif-title clip">{a.name}</div>
@@ -285,7 +326,7 @@ function NotificationsBell() {
           </button>
         ))}
         {unread.map((m, i) => (
-          <button key={`u-${m.task_slug}-${i}`} className="notif-item" onClick={(e) => { close(e); navigate('/inbox') }}>
+          <button type="button" key={`u-${m.task_slug}-${i}`} className="notif-item" onClick={(e) => { close(e); navigate('/inbox') }}>
             <span style={{ marginTop: 2 }}><SourceIcon source={m.source} size={13} /></span>
             <div className="lrow-main">
               <div className="notif-title clip">{m.task_name}</div>

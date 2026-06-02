@@ -13,6 +13,7 @@ import { KnowledgeBase } from './screens/KB'
 import { Memories } from './screens/Memories'
 import { Workdirs } from './screens/Workdirs'
 import { Trash } from './screens/Trash'
+import { Settings } from './screens/Settings'
 import { EmptyState } from './components/ui'
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
         <Route path="/kb" component={KnowledgeBase} />
         <Route path="/memories" component={Memories} />
         <Route path="/workdirs" component={Workdirs} />
+        <Route path="/settings" component={Settings} />
         <Route path="/trash" component={Trash} />
         <Route>
           <div className="page">
