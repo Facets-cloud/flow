@@ -90,7 +90,7 @@ func openConcurrentDB(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// cmdDo flips a task to in-progress, bootstraps a Claude session if
+// cmdDo flips a task to in-progress, bootstraps a harness session if
 // needed (race-free via atomic UPDATE ... WHERE session_id IS ?), and
 // spawns an iTerm tab to resume it. See spec §6 for the full protocol.
 func cmdDo(args []string) int {
@@ -101,8 +101,8 @@ func cmdDo(args []string) int {
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
-	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
-	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
+	force := fs.Bool("force", false, "open even if the task's harness session is already running elsewhere")
+	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires running inside a known harness session")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
 	// Two-pass parse so the slug positional may appear before OR after
@@ -566,13 +566,12 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 }
 
 // cmdDoHere is the `--here` branch of `flow do`. Instead of spawning
-// a new tab with a fresh Claude session, it binds the CURRENT Claude
+// a new tab with a fresh harness session, it binds the CURRENT harness
 // session (discovered via $CLAUDE_CODE_SESSION_ID) to the named task
 // and flips the task to in-progress.
 //
 // Safety:
-//   - Refuses if not running inside a Claude Code session
-//     (CLAUDE_CODE_SESSION_ID unset).
+//   - Refuses if not running inside a known harness session.
 //   - Refuses if the target task already has a different session_id
 //     bound. The constraint guards against silent overwrites that
 //     would orphan the prior session. --force overrides.
@@ -661,7 +660,7 @@ func cmdDoHere(query string, force bool) int {
 	priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
 	if lookupErr == nil && priorBinding.Slug != task.Slug {
 		fmt.Fprintf(os.Stderr,
-			"error: this Claude session is already bound to task %q. binding it to %q would orphan %q's transcript and is rejected by the session_id uniqueness invariant. --force does not override this.\n"+
+			"error: this harness session is already bound to task %q. binding it to %q would orphan %q's transcript and is rejected by the session_id uniqueness invariant. --force does not override this.\n"+
 				"  to start work on %q in a separate session: flow do %s\n",
 			priorBinding.Slug, task.Slug, priorBinding.Slug, task.Slug, task.Slug)
 		return 1

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/codex"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
 	"io"
@@ -587,6 +588,47 @@ func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 	}
 	if strings.Contains(script, "flowde") {
 		t.Errorf("resume spawn should not invoke flowde, got:\n%s", script)
+	}
+}
+
+func TestCmdDoCodexFreshAndResumeUseHarness(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "ambient-codex-session")
+	seedTask(t, "codex-task")
+	_, getScript := stubITerm(t)
+
+	oldRunner := codex.ExecRunner
+	codex.ExecRunner = func(args []string) ([]byte, error) {
+		return []byte(`{"session_id":"codex-task-sid"}`), nil
+	}
+	t.Cleanup(func() { codex.ExecRunner = oldRunner })
+
+	if rc := cmdDo([]string{"codex-task"}); rc != 0 {
+		t.Fatalf("codex fresh rc=%d", rc)
+	}
+	script := getScript()
+	if !strings.Contains(script, " codex resume codex-task-sid ") || strings.Contains(script, "--session-id") {
+		t.Fatalf("fresh codex spawn should resume the preallocated Codex session, got:\n%s", script)
+	}
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "codex-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != "codex-task-sid" {
+		t.Fatalf("codex fresh session_id = %+v, want codex-task-sid", task.SessionID)
+	}
+	if !task.Harness.Valid || task.Harness.String != "codex" {
+		t.Fatalf("codex fresh harness = %+v, want codex", task.Harness)
+	}
+
+	if rc := cmdDo([]string{"codex-task"}); rc != 0 {
+		t.Fatalf("codex resume rc=%d", rc)
+	}
+	script = getScript()
+	if !strings.Contains(script, " codex resume codex-task-sid") {
+		t.Fatalf("codex resume should run codex resume, got:\n%s", script)
 	}
 }
 

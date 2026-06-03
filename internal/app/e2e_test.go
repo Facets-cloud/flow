@@ -3,12 +3,17 @@ package app
 import (
 	"flow/internal/flowdb"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/codex"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+const sampleCodexSessionJSONL = `{"timestamp":"2026-05-25T10:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"start codex task"}]}}
+{"timestamp":"2026-05-25T10:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}
+`
 
 // TestE2EFullRoundtrip exercises the full command surface in the order a
 // user would hit it for a realistic session: init, add project, add task
@@ -24,6 +29,9 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	flowRoot := filepath.Join(tmp, "flow")
 	t.Setenv("FLOW_ROOT", flowRoot)
 	t.Setenv("HOME", tmp)
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
 
 	// Fake repo that serves as the project's work_dir.
 	repo := filepath.Join(tmp, "code", "budgeting-app")
@@ -237,5 +245,66 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	}
 	if wd == nil {
 		t.Fatal("GetWorkdir returned nil for auto-registered path")
+	}
+}
+
+func TestE2ECodexRoundtrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
+	t.Setenv("HOME", tmp)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "ambient-codex-session")
+
+	repo := filepath.Join(tmp, "code", "codex-app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldOsa := iterm.Runner
+	iterm.Runner = func(args []string) error { return nil }
+	t.Cleanup(func() { iterm.Runner = oldOsa })
+	oldCodexExec := codex.ExecRunner
+	codex.ExecRunner = func(args []string) ([]byte, error) {
+		return []byte(`{"session_id":"codex-rt-sid"}`), nil
+	}
+	t.Cleanup(func() { codex.ExecRunner = oldCodexExec })
+	oldCodexSkip := codex.SkipPermissionsRunner
+	codex.SkipPermissionsRunner = func(prompt string) error { return nil }
+	t.Cleanup(func() { codex.SkipPermissionsRunner = oldCodexSkip })
+
+	step := func(name string, rc int) {
+		t.Helper()
+		if rc != 0 {
+			t.Fatalf("%s: rc=%d", name, rc)
+		}
+	}
+	step("init", cmdInit(nil))
+	step("add", cmdAdd([]string{"task", "Codex roundtrip", "--slug", "codex-rt", "--work-dir", repo}))
+	step("do fresh", cmdDo([]string{"codex-rt"}))
+
+	transcriptDir := filepath.Join(tmp, ".codex", "sessions")
+	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcriptPath := filepath.Join(transcriptDir, "codex-rt-sid.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(sampleCodexSessionJSONL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	step("transcript", cmdTranscript([]string{"codex-rt"}))
+	step("do resume", cmdDo([]string{"codex-rt"}))
+	step("done", cmdDone([]string{"codex-rt"}))
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "codex-rt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "done" {
+		t.Fatalf("status = %q, want done", task.Status)
+	}
+	if !task.Harness.Valid || task.Harness.String != "codex" {
+		t.Fatalf("harness = %+v, want codex", task.Harness)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != "codex-rt-sid" {
+		t.Fatalf("session = %+v, want codex-rt-sid", task.SessionID)
 	}
 }

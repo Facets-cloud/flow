@@ -8,6 +8,7 @@ import (
 	"flow/internal/flowdb"
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/codex"
 )
 
 // allHarnesses returns every implemented harness adapter. The slice
@@ -16,7 +17,7 @@ import (
 func allHarnesses() []harness.Harness {
 	return []harness.Harness{
 		claude.New(),
-		// codex.New(),    // wired when the codex adapter lands
+		codex.New(),
 		// gemini.New(),   // wired when the gemini adapter lands
 	}
 }

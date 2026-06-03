@@ -7,7 +7,6 @@ import (
 
 	"flow/internal/flowdb"
 	"flow/internal/harness"
-	"flow/internal/harness/claude"
 )
 
 // TestAmbientHarness covers the env-var probe: returns the matching
@@ -30,6 +29,21 @@ func TestAmbientHarness(t *testing.T) {
 	if got.Name() != harness.NameClaude {
 		t.Errorf("ambientHarness = %v, want claude", got.Name())
 	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "codex-session")
+	got = ambientHarness()
+	if got == nil {
+		t.Fatal("ambientHarness with $CODEX_THREAD_ID set = nil, want codex")
+	}
+	if got.Name() != harness.NameCodex {
+		t.Errorf("ambientHarness = %v, want codex", got.Name())
+	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "658bf2be-5ae3-4842-a8a4-e0d0b785514d")
+	if got := ambientHarness(); got != nil {
+		t.Errorf("ambientHarness with multiple envs = %v, want nil", got.Name())
+	}
 }
 
 // TestHarnessForTask covers the column → adapter lookup. NULL and
@@ -46,6 +60,7 @@ func TestHarnessForTask(t *testing.T) {
 		{"null column → claude", sql.NullString{}, harness.NameClaude, false},
 		{"empty string → claude", sql.NullString{Valid: true, String: ""}, harness.NameClaude, false},
 		{"claude pin", sql.NullString{Valid: true, String: "claude"}, harness.NameClaude, false},
+		{"codex pin", sql.NullString{Valid: true, String: "codex"}, harness.NameCodex, false},
 		{"unknown name → error", sql.NullString{Valid: true, String: "future"}, "", true},
 	}
 	for _, tc := range cases {
@@ -124,7 +139,7 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 
 	// Simulate a future build having pinned the task.
 	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET harness='codex' WHERE slug='future-pin'`); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET harness='future' WHERE slug='future-pin'`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -135,7 +150,7 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 		t.Fatalf("cmdDo rc=%d, want non-zero (unsupported pin should refuse)", rc)
 	}
 	got := stderr()
-	if !strings.Contains(got, "codex") || !strings.Contains(got, "isn't supported") {
+	if !strings.Contains(got, "future") || !strings.Contains(got, "isn't supported") {
 		t.Errorf("stderr should name the unsupported harness; got:\n%s", got)
 	}
 
@@ -144,8 +159,8 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Harness.String != "codex" {
-		t.Errorf("refusal should preserve the pin; got %q, want codex",
+	if task.Harness.String != "future" {
+		t.Errorf("refusal should preserve the pin; got %q, want future",
 			task.Harness.String)
 	}
 	if task.SessionID.Valid {
@@ -195,8 +210,7 @@ func TestCmdDoHereRejectsCrossHarness(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "pinned-elsewhere")
 
-	// Pin the task to a fictional "codex" harness by writing
-	// directly to the column.
+	// Pin the task to codex by writing directly to the column.
 	db := openFlowDB(t)
 	if _, err := db.Exec(`UPDATE tasks SET harness='codex' WHERE slug='pinned-elsewhere'`); err != nil {
 		t.Fatal(err)
@@ -272,19 +286,7 @@ func TestCmdDoHereForceSwitchesHarness(t *testing.T) {
 	}
 }
 
-// TestHarnessForSpawn_AllPathsLandOnClaudeToday smoke-tests every
-// branch of harnessForSpawn under the single-harness registry
-// (claude is the only adapter today). Each of the three branches
-// — null pin + no ambient, null pin + claude ambient, claude pin —
-// lands on claude, which is the only assertion the test can make
-// without a second registered adapter.
-//
-// The actual *precedence* properties (pinned > ambient > default)
-// can't be exercised here: when ambient is claude and pin is empty,
-// "matches ambient" and "fell through to default" are
-// indistinguishable. Add real coverage once codex/gemini registers
-// and a non-claude ambient is possible.
-func TestHarnessForSpawn_AllPathsLandOnClaudeToday(t *testing.T) {
+func TestHarnessForSpawnPrecedence(t *testing.T) {
 	for _, h := range allHarnesses() {
 		t.Setenv(h.SessionIDEnvVar(), "")
 	}
@@ -312,16 +314,20 @@ func TestHarnessForSpawn_AllPathsLandOnClaudeToday(t *testing.T) {
 		t.Errorf("ambient claude + null pin = %v, want claude", got)
 	}
 
-	// Branch 3: claude pin → claude. Doesn't prove pinned is
-	// *preferred over* ambient (same as above).
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "codex-session")
+	if got := mustResolve(t, task).Name(); got != harness.NameCodex {
+		t.Errorf("ambient codex + null pin = %v, want codex", got)
+	}
+
+	// Pinned harness wins over ambient.
 	task.Harness = sql.NullString{Valid: true, String: "claude"}
 	if got := mustResolve(t, task).Name(); got != harness.NameClaude {
-		t.Errorf("pinned claude = %v, want claude", got)
+		t.Errorf("pinned claude + ambient codex = %v, want claude", got)
 	}
 
 	// Sanity: returned value satisfies harness.Harness.
 	if _, ok := mustResolve(t, task).(harness.Harness); !ok {
 		t.Error("harnessForSpawn return doesn't satisfy harness.Harness")
 	}
-	_ = claude.New() // import-keep
 }

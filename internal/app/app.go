@@ -1,4 +1,4 @@
-// Package app implements the flow CLI — personal task and Claude session
+// Package app implements the flow CLI — personal task and harness session
 // manager backed by SQLite.
 package app
 
@@ -75,7 +75,7 @@ func Run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Println(`flow — personal task and Claude session manager
+	fmt.Println(`flow — personal task and Claude/Codex execution-session manager
 
 Setup:
   flow init
@@ -90,12 +90,12 @@ Create:
 Sessions:
   flow do                <ref> [--fresh] [--dangerously-skip-permissions]
   flow done              <ref>
-  flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  flow hook session-start                      (SessionStart hook handler — wire via Claude/Codex hook config)
 
 Read:
   flow show task       [<ref>]
   flow show project    [<ref>]
-  flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
+  flow transcript      [<ref>] [--compact]             (readable transcript from session jsonl)
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
   flow list tags                                            (every tag in use, with per-tag task counts)
@@ -110,7 +110,7 @@ Edit / mutate:
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
   flow update project <ref> [--priority h|m|l]
   flow do        <ref> [--fresh] [--dangerously-skip-permissions] [--force]   (spawn a new tab; --force overrides the live-session guard)
-  flow do --here <ref> [--force]                                              (bind THIS Claude session to the task; --force overwrites a prior binding)
+  flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>
 
@@ -123,7 +123,7 @@ Workdirs:
 Playbooks:
   flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
   flow run playbook   <slug> [--dangerously-skip-permissions]   (spawn a new tab)
-  flow run playbook   <slug> --here                              (bind THIS Claude session to the new run; no new tab)
+  flow run playbook   <slug> --here                              (bind THIS harness session to the new run; no new tab)
   flow show playbook  <ref>
   flow list playbooks [--project <slug>] [--include-archived]`)
 }

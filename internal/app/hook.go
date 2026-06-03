@@ -9,11 +9,9 @@ import (
 
 // cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
 //
-//   - session-start: wired as a Claude Code SessionStart hook so that
+//   - session-start: wired as a harness SessionStart hook so that
 //     every session start (fresh spawn AND resume) re-injects the
-//     "load your task context" instruction. Without it, resumed
-//     sessions never re-read briefs and updates that may have been
-//     edited since the previous session.
+//     "load your task context" instruction.
 //
 //   - user-prompt-submit: kept as a permanent no-op for forward
 //     compatibility with stale settings.json entries.

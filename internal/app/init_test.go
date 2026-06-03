@@ -19,11 +19,21 @@ func initTempFlowRoot(t *testing.T) string {
 
 	oldRoot := os.Getenv("FLOW_ROOT")
 	oldHome := os.Getenv("HOME")
+	oldHarnessEnv := map[string]string{}
+	for _, h := range allHarnesses() {
+		oldHarnessEnv[h.SessionIDEnvVar()] = os.Getenv(h.SessionIDEnvVar())
+	}
 	os.Setenv("FLOW_ROOT", root)
 	os.Setenv("HOME", home)
+	for _, h := range allHarnesses() {
+		os.Setenv(h.SessionIDEnvVar(), "")
+	}
 	t.Cleanup(func() {
 		os.Setenv("FLOW_ROOT", oldRoot)
 		os.Setenv("HOME", oldHome)
+		for k, v := range oldHarnessEnv {
+			os.Setenv(k, v)
+		}
 	})
 	return root
 }

@@ -23,6 +23,9 @@ func withTempFlowRoot(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("FLOW_ROOT", dir)
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
 	return dir
 }
 
