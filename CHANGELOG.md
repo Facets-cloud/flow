@@ -7,6 +7,45 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.18] — 2026-06-08
+
+### Added
+
+- **`flow do --auto` / `flow run playbook --auto` — autonomous, headless
+  background runs.** Instead of opening a terminal tab for a human to
+  drive, `--auto` launches a detached supervisor (`flow __auto-exec`,
+  hidden) that runs the task's harness headlessly — pinned to the
+  pre-allocated session id, cwd at `work_dir`, stdout/stderr captured to
+  `tasks/<slug>/auto-runs/<timestamp>.log` — and returns immediately. The
+  session works end to end on best judgment (no `AskUserQuestion`,
+  persisting toward a closeable state rather than giving up early) and
+  calls `flow done` on **itself** when the brief's *Done when* is met,
+  which still fires the close-out KB/project sweep. `--auto` implies
+  `--dangerously-skip-permissions` (no human to approve tool calls) and
+  accepts `--with` / `--with-file` for a one-off directive layered on the
+  brief; `--auto` + `--here` is rejected. The headless-with-session-id
+  invocation is a third harness execution shape, added to the harness
+  interface as `AutoRunArgv` — claude implements it; codex/gemini inherit
+  auto mode by implementing the one method. A per-run status —
+  `running → completed | dead`, with read-time pid reconciliation so a
+  crashed supervisor surfaces as `dead` — shows in `flow show task` and a
+  dedicated `AUTO` column in `flow list tasks` (a running row shows the
+  pid). New nullable `tasks` columns: `auto_run_status`, `auto_run_pid`,
+  `auto_run_started`, `auto_run_finished`, `auto_run_log` (additive
+  migration). Non-blocking hardening follow-ups are tracked in
+  [#68](https://github.com/Facets-cloud/flow/issues/68).
+  ([#67](https://github.com/Facets-cloud/flow/pull/67) by
+  [@anshulsao](https://github.com/anshulsao))
+
+### Changed
+
+- **Hardened iTerm2 tab spawning.** Raises the file-descriptor `ulimit`
+  before spawning and uses more robust AppleScript quoting, preventing
+  tab-spawn failures under constrained descriptor limits or when the
+  command contains characters that tripped the previous quoting.
+  ([#64](https://github.com/Facets-cloud/flow/pull/64) by
+  [@ishaankalra](https://github.com/ishaankalra))
+
 ## [0.1.0-alpha.17] — 2026-05-29
 
 ### Fixed
