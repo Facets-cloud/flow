@@ -1,38 +1,29 @@
-// Package spawner picks a terminal backend (zellij, kitty, Warp, iTerm2,
-// Ghostty, or macOS Terminal.app) at runtime and forwards SpawnTab to it.
+// Package spawner picks a terminal backend at runtime and forwards
+// SpawnTab / FocusSession calls to it.
 //
-// Selection priority (highest first):
+// Backend selection differs by OS — see spawner_darwin.go,
+// spawner_windows.go, and spawner_unix.go for the per-OS Detect()
+// implementations. Common to all platforms:
 //
 //	$ZELLIJ set                                    → internal/zellij
 //	$KITTY_WINDOW_ID set or $TERM=xterm-kitty      → internal/kitty
 //	$FLOW_TERM=<valid backend>                     → that backend (user override)
-//	TERM_PROGRAM=WarpTerminal                      → internal/warp
-//	TERM_PROGRAM=Apple_Terminal                    → internal/terminal
-//	TERM_PROGRAM=iTerm.app                         → internal/iterm
-//	TERM_PROGRAM=ghostty                           → internal/ghostty
-//	anything else (or unset)                       → internal/iterm  (historical default)
 //
-// $ZELLIJ and kitty's per-window markers win over $FLOW_TERM because if
-// the user is inside a session-manager terminal, that's where their
-// workflow lives — the host terminal is a substrate detail. $FLOW_TERM
-// lets users on non-standard hosts (tmux inside Warp, shell-script
-// invocations, Hyper, wezterm, etc.) opt into a specific backend
-// without relying on TERM_PROGRAM. Unknown values silently fall
-// through to TERM_PROGRAM detection.
+// Beyond those shared rules, each OS has its own native defaults:
+//
+//   - darwin: TERM_PROGRAM detection (iTerm.app, Apple_Terminal,
+//     WarpTerminal, ghostty) with iterm as the historical fallback.
+//   - windows: defaults to Windows Terminal (internal/wt) when no
+//     cross-platform marker is set.
+//   - other (linux/bsd): zellij/kitty only; falls back to zellij if
+//     no marker is set. (Native linux terminal backends are a future
+//     extension.)
 //
 // The Override var lets tests pin the backend deterministically without
 // having to set env vars via t.Setenv.
 package spawner
 
-import (
-	"flow/internal/ghostty"
-	"flow/internal/iterm"
-	"flow/internal/kitty"
-	"flow/internal/terminal"
-	"flow/internal/warp"
-	"flow/internal/zellij"
-	"os"
-)
+import "strings"
 
 // Backend identifies which terminal app a SpawnTab call targets.
 type Backend string
@@ -44,99 +35,18 @@ const (
 	BackendKitty    Backend = "kitty"
 	BackendWarp     Backend = "warp"
 	BackendGhostty  Backend = "ghostty"
+	BackendWT       Backend = "wt" // Windows Terminal
 )
 
 // Override, if non-empty, forces a backend regardless of env vars.
 // Used by tests; production code should leave it as "".
 var Override Backend
 
-// Detect returns the backend that SpawnTab will use for the current
-// process environment. Exposed so callers (and tests) can inspect the
-// choice without spawning.
-func Detect() Backend {
-	if Override != "" {
-		return Override
-	}
-	if os.Getenv("ZELLIJ") != "" {
-		return BackendZellij
-	}
-	if os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("TERM") == "xterm-kitty" {
-		return BackendKitty
-	}
-	if v := os.Getenv("FLOW_TERM"); v != "" {
-		switch Backend(v) {
-		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty:
-			return Backend(v)
-		}
-		// Unknown value falls through to TERM_PROGRAM detection.
-	}
-	switch os.Getenv("TERM_PROGRAM") {
-	case "Apple_Terminal":
-		return BackendTerminal
-	case "iTerm.app":
-		return BackendITerm
-	case "WarpTerminal":
-		return BackendWarp
-	case "ghostty":
-		return BackendGhostty
-	default:
-		return BackendITerm
-	}
-}
-
-// SpawnTab opens a tab in the auto-detected backend. The contract
-// matches every backend's SpawnTab.
-func SpawnTab(title, cwd, command string, envVars map[string]string) error {
-	switch Detect() {
-	case BackendZellij:
-		return zellij.SpawnTab(title, cwd, command, envVars)
-	case BackendKitty:
-		return kitty.SpawnTab(title, cwd, command, envVars)
-	case BackendTerminal:
-		return terminal.SpawnTab(title, cwd, command, envVars)
-	case BackendWarp:
-		return warp.SpawnTab(title, cwd, command, envVars)
-	case BackendGhostty:
-		return ghostty.SpawnTab(title, cwd, command, envVars)
-	default:
-		return iterm.SpawnTab(title, cwd, command, envVars)
-	}
-}
-
-// FocusSession tries to focus an existing tab/pane that is already
-// running the named harness binary with the given session UUID. The
-// `binary` arg is the harness's executable name (e.g. "claude",
-// "codex", "gemini") — backends use it to filter the process table
-// down to relevant rows. Returns (true, nil) on focus, (false, nil)
-// if no matching tab was found in the active backend, and
-// (false, err) only on a backend failure.
-//
-// Callers should treat (false, nil) as "fall through" — typically by
-// surfacing the existing "session running elsewhere" error so the
-// user knows to switch manually or pass --force.
-//
-// Backend dispatch mirrors SpawnTab:
-//   - Zellij: list-panes JSON match on pane_command + focus-pane-id
-//   - Kitty: `kitty @ ls` JSON match on foreground_processes cmdline + focus-window
-//   - Terminal.app: pid → tty via ps, then osascript walk
-//   - iTerm2 (default): pid → tty via ps, then osascript walk
-func FocusSession(sessionID, binary string) (bool, error) {
-	switch Detect() {
-	case BackendZellij:
-		return zellij.FocusSession(sessionID, binary)
-	case BackendKitty:
-		return kitty.FocusSession(sessionID, binary)
-	case BackendTerminal:
-		return terminal.FocusSession(sessionID, binary)
-	default:
-		return iterm.FocusSession(sessionID, binary)
-	}
-}
-
-// ShellQuote is re-exported so callers don't need to import the chosen
-// backend just to quote a value before handing it to SpawnTab. All
-// backends quote identically (POSIX single-quote with embedded-quote
-// escape), so we delegate to iterm's implementation.
+// ShellQuote wraps s in POSIX single-quotes with proper escaping.
+// Used by callers that need to quote a value before handing it to
+// SpawnTab. Every POSIX-shell backend quotes identically; the
+// Windows Terminal backend ignores quoting because it builds its
+// own argv slice rather than typing into a shell.
 func ShellQuote(s string) string {
-	return iterm.ShellQuote(s)
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

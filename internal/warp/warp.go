@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package warp provides Warp terminal tab spawning on macOS.
 //
 // Warp has no AppleScript dictionary, no `-e` flag, and no CLI for

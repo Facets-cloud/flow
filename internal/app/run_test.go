@@ -1,3 +1,11 @@
+//go:build darwin
+
+// Playbook-run tests drive cmdRunPlaybook end-to-end and rely on the
+// iterm spawn stubs from do_test.go (stubITerm, stubClaudeStatOK).
+// Tagged darwin because those stubs are darwin-only — the Windows /
+// Linux equivalents would stub internal/wt or zellij/kitty Runners
+// instead, but the cmdRunPlaybook logic itself is platform-agnostic
+// and the darwin coverage is representative.
 package app
 
 import (

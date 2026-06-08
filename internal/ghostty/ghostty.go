@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package ghostty provides Ghostty tab spawning via osascript.
 //
 // Mirrors the contract of internal/iterm — same SpawnTab signature,
