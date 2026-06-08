@@ -125,6 +125,27 @@ type Harness interface {
 	// only the exit code matters.
 	SkipPermissionsRun(prompt string) error
 
+	// AutoRunArgv builds the argv for a headless, self-completing
+	// autonomous run (`flow do --auto`) pinned to sessionID. This is a
+	// third execution shape distinct from the two above:
+	//
+	//   - LaunchCmd/ResumeCmd build a SHELL STRING for an interactive
+	//     terminal tab (a human drives it).
+	//   - SkipPermissionsRun is sessionless and discards output (the
+	//     fire-and-forget close-out sweep).
+	//   - AutoRunArgv is headless like the sweep BUT pins the session
+	//     id — so a transcript exists for the run's own `flow done`
+	//     close-out sweep and for `flow transcript` — and returns argv
+	//     (not a shell string) so the detached supervisor can set the
+	//     process cwd and redirect stdout/stderr to the run log itself.
+	//
+	// opts.Inject (if any) is appended to the prompt behind
+	// InjectionMarker, exactly as LaunchCmd does. opts.SkipPermissions
+	// is honored via the harness's own flag (auto runs always set it —
+	// there is no human to approve tool calls). argv[0] is the binary
+	// name; the supervisor execs it via PATH lookup.
+	AutoRunArgv(sessionID, prompt string, opts LaunchOpts) []string
+
 	// Live-session detection -------------------------------------------
 
 	// LiveSessionIDs returns the count of running processes per

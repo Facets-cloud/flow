@@ -245,12 +245,12 @@ func listTasksCmd(args []string) int {
 		return 1
 	}
 
-	headers := []string{"STATUS", "PRIORITY", "SLUG", "PROJECT", "AGE", "DUE", "NOTES"}
+	headers := []string{"STATUS", "PRIORITY", "SLUG", "PROJECT", "AGE", "DUE", "AUTO", "NOTES"}
 	tsvHeaders := []string{
 		"slug", "status", "priority", "project",
 		"age_days", "due_in_days", "due_label",
 		"stale", "stale_days", "waiting_on", "assignee", "live",
-		"archived", "tags",
+		"auto_run", "auto_run_pid", "archived", "tags",
 	}
 	if len(tasks) == 0 {
 		return emptyResult(fmtKind, "tasks", tsvHeaders)
@@ -327,6 +327,14 @@ func listTasksCmd(args []string) int {
 		if t.SessionID.Valid && live[strings.ToLower(t.SessionID.String)] > 0 {
 			r.Live = true
 		}
+		if t.AutoRunStatus.Valid && t.AutoRunStatus.String != "" {
+			// Reconcile a crashed 'running' supervisor to 'dead' before display.
+			reconcileAutoRun(db, t)
+			r.AutoRun = t.AutoRunStatus.String
+			if t.AutoRunPID.Valid {
+				r.AutoRunPID = int(t.AutoRunPID.Int64)
+			}
+		}
 		if tags, ok := tagsByTask[t.Slug]; ok {
 			r.Tags = tags
 		}
@@ -352,6 +360,8 @@ func listTasksCmd(args []string) int {
 				r.WaitingOn,
 				r.Assignee,
 				boolStr(r.Live),
+				r.AutoRun,
+				intOrEmpty(r.AutoRunPID),
 				boolStr(r.Archived),
 				strings.Join(r.Tags, ","),
 			}
@@ -371,6 +381,7 @@ func listTasksCmd(args []string) int {
 			projectCell(r.Project),
 			ageString(r.AgeDays),
 			painter.Wrap(r.DueLabel, dueColor(r)),
+			autoCell(painter, r),
 			notesCell(painter, r, opts.waitMax()),
 		}
 	}
@@ -424,20 +435,50 @@ func boolStr(b bool) string {
 // taskListRow is the row shape that feeds table, JSON, and TSV rendering
 // for `flow list tasks`. Field order matters for JSON output stability.
 type taskListRow struct {
-	Slug      string   `json:"slug"`
-	Status    string   `json:"status"`
-	Priority  string   `json:"priority"`
-	Project   string   `json:"project,omitempty"`
-	AgeDays   int      `json:"age_days,omitempty"`
-	DueInDays *int     `json:"due_in_days,omitempty"`
-	DueLabel  string   `json:"due_label,omitempty"`
-	Stale     bool     `json:"stale,omitempty"`
-	StaleDays int      `json:"stale_days,omitempty"`
-	WaitingOn string   `json:"waiting_on,omitempty"`
-	Assignee  string   `json:"assignee,omitempty"`
-	Live      bool     `json:"live,omitempty"`
-	Archived  bool     `json:"archived,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
+	Slug       string   `json:"slug"`
+	Status     string   `json:"status"`
+	Priority   string   `json:"priority"`
+	Project    string   `json:"project,omitempty"`
+	AgeDays    int      `json:"age_days,omitempty"`
+	DueInDays  *int     `json:"due_in_days,omitempty"`
+	DueLabel   string   `json:"due_label,omitempty"`
+	Stale      bool     `json:"stale,omitempty"`
+	StaleDays  int      `json:"stale_days,omitempty"`
+	WaitingOn  string   `json:"waiting_on,omitempty"`
+	Assignee   string   `json:"assignee,omitempty"`
+	Live       bool     `json:"live,omitempty"`
+	AutoRun    string   `json:"auto_run,omitempty"`
+	AutoRunPID int      `json:"auto_run_pid,omitempty"`
+	Archived   bool     `json:"archived,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+}
+
+// autoCell builds the AUTO column in table output: the run status, with
+// the supervisor pid appended for a running run (so the user can see /
+// act on it at a glance). Empty for tasks never launched with --auto.
+func autoCell(p listfmt.Painter, r taskListRow) string {
+	if r.AutoRun == "" {
+		return ""
+	}
+	label := r.AutoRun
+	if r.AutoRun == "running" && r.AutoRunPID > 0 {
+		label += fmt.Sprintf(" %d", r.AutoRunPID)
+	}
+	return p.Wrap(label, autoRunColor(r.AutoRun))
+}
+
+// autoRunColor maps an autonomous-run status to a display color:
+// running → cyan (in flight), completed → green, dead → red (needs eyes).
+func autoRunColor(status string) string {
+	switch status {
+	case "running":
+		return listfmt.Cyan
+	case "completed":
+		return listfmt.Green
+	case "dead":
+		return listfmt.Red
+	}
+	return ""
 }
 
 func dueColor(r taskListRow) string {

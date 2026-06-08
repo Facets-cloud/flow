@@ -785,6 +785,76 @@ func TestCmdListTasksFormatJSON(t *testing.T) {
 	}
 }
 
+// TestCmdListTasksAutoColumn: `flow list tasks` has a dedicated, always-on
+// AUTO column. A running run shows "running <pid>"; terminal runs show the
+// status word. The AUTO marker no longer lives in NOTES. TSV exposes
+// auto_run + auto_run_pid as first-class columns.
+func TestCmdListTasksAutoColumn(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "run-task", "Running", "in-progress", "high", filepath.Join(root, "x"), nil)
+	insertTask(t, db, "dead-task", "Dead", "in-progress", "high", filepath.Join(root, "y"), nil)
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=18148 WHERE slug='run-task'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='dead', auto_run_finished=? WHERE slug='dead-task'`, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep the running pid "alive" so reconcile doesn't flip it to dead.
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return true }
+	t.Cleanup(func() { processAlive = oldAlive })
+
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--no-color"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "AUTO") {
+		t.Errorf("table should have an AUTO column header; out=%q", out)
+	}
+	if !strings.Contains(out, "running 18148") {
+		t.Errorf("running task should show 'running <pid>' in AUTO column; out=%q", out)
+	}
+	if !strings.Contains(out, "dead") {
+		t.Errorf("dead task should show 'dead' in AUTO column; out=%q", out)
+	}
+	if strings.Contains(out, "[auto:") {
+		t.Errorf("AUTO marker should no longer appear in NOTES; out=%q", out)
+	}
+
+	// TSV exposes auto_run + auto_run_pid as first-class columns.
+	tsv := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--format", "tsv"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	lines := strings.Split(strings.TrimRight(tsv, "\n"), "\n")
+	header := strings.Split(lines[0], "\t")
+	col := func(name string) int {
+		for i, h := range header {
+			if h == name {
+				return i
+			}
+		}
+		return -1
+	}
+	if col("auto_run") < 0 || col("auto_run_pid") < 0 {
+		t.Fatalf("auto_run/auto_run_pid headers missing: %v", header)
+	}
+	for _, ln := range lines[1:] {
+		row := strings.Split(ln, "\t")
+		if row[col("slug")] == "run-task" {
+			if row[col("auto_run")] != "running" {
+				t.Errorf("run-task auto_run = %q, want running", row[col("auto_run")])
+			}
+			if row[col("auto_run_pid")] != "18148" {
+				t.Errorf("run-task auto_run_pid = %q, want 18148", row[col("auto_run_pid")])
+			}
+		}
+	}
+}
+
 func TestCmdListTasksFormatTSV(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "only-one", "Only", "in-progress", "high", filepath.Join(root, "x"), nil)

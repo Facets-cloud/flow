@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     session_started       TEXT,
     session_last_resumed  TEXT,
     harness               TEXT,
+    auto_run_status       TEXT,
+    auto_run_pid          INTEGER,
+    auto_run_started      TEXT,
+    auto_run_finished     TEXT,
+    auto_run_log          TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
     archived_at           TEXT,
@@ -138,10 +143,20 @@ type Task struct {
 	// back-compat convention so pre-harness-column DBs Just Work.
 	// Set on first `flow do` or `flow do --here` from the ambient
 	// harness's session env var; immutable afterward.
-	Harness            sql.NullString
-	CreatedAt          string
-	UpdatedAt          string
-	ArchivedAt         sql.NullString
+	Harness sql.NullString
+	// Autonomous-run bookkeeping (set by `flow do --auto`). AutoRunStatus
+	// is NULL for tasks that were never run in --auto mode; otherwise one
+	// of 'running' | 'completed' | 'dead'. AutoRunPID is the detached
+	// supervisor process's PID (used for read-time liveness reconciliation
+	// while status='running'); cleared on finalize.
+	AutoRunStatus   sql.NullString
+	AutoRunPID      sql.NullInt64
+	AutoRunStarted  sql.NullString
+	AutoRunFinished sql.NullString
+	AutoRunLog      sql.NullString
+	CreatedAt       string
+	UpdatedAt       string
+	ArchivedAt      sql.NullString
 }
 
 // Workdir mirrors the workdirs convenience registry.
@@ -303,6 +318,30 @@ func runMigrations(db *sql.DB) error {
 	// Adds a CHECK to the tasks table; old DBs need a table rebuild.
 	if err := migrateTasksSessionInvariant(db); err != nil {
 		return fmt.Errorf("migrate session invariant: %w", err)
+	}
+
+	// Autonomous-run bookkeeping columns (feat: flow do --auto). Added
+	// AFTER the session-invariant rebuild so that rebuild (which only
+	// copies the pre-existing column set) doesn't need to know about
+	// them — they land here via plain ALTER on the rebuilt table. All
+	// nullable, no CHECK (SQLite can't add CHECK via ALTER; status enum
+	// is validated in application code).
+	for _, col := range []struct{ name, ddl string }{
+		{"auto_run_status", "ALTER TABLE tasks ADD COLUMN auto_run_status TEXT"},
+		{"auto_run_pid", "ALTER TABLE tasks ADD COLUMN auto_run_pid INTEGER"},
+		{"auto_run_started", "ALTER TABLE tasks ADD COLUMN auto_run_started TEXT"},
+		{"auto_run_finished", "ALTER TABLE tasks ADD COLUMN auto_run_finished TEXT"},
+		{"auto_run_log", "ALTER TABLE tasks ADD COLUMN auto_run_log TEXT"},
+	} {
+		has, err := columnExists(db, "tasks", col.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(col.ddl); err != nil {
+				return fmt.Errorf("add tasks.%s: %w", col.name, err)
+			}
+		}
 	}
 
 	// Indexes that depend on columns added above. Safe to run after every
@@ -650,7 +689,7 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
@@ -659,6 +698,7 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 		&t.Priority, &t.WorkDir,
 		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.StatusChangedAt, &t.SessionID,
 		&t.SessionStarted, &t.SessionLastResumed, &t.Harness,
+		&t.AutoRunStatus, &t.AutoRunPID, &t.AutoRunStarted, &t.AutoRunFinished, &t.AutoRunLog,
 		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)
 	if err != nil {

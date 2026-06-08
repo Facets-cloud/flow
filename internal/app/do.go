@@ -103,6 +103,7 @@ func cmdDo(args []string) int {
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
 	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
+	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
 	// Two-pass parse so the slug positional may appear before OR after
@@ -127,6 +128,20 @@ func cmdDo(args []string) int {
 	if injectionText != "" && *here {
 		fmt.Fprintln(os.Stderr, "error: --with/--with-file cannot be used with --here (no session is spawned to inject into)")
 		return 2
+	}
+
+	if *auto && *here {
+		fmt.Fprintln(os.Stderr, "error: --auto cannot be used with --here (--auto launches its own detached session; --here binds the current one)")
+		return 2
+	}
+	// --auto + --with IS allowed: the instruction is forwarded to the
+	// detached supervisor and appended (behind withMarker) to the
+	// autonomous prompt — useful for one-off directives on a scheduled
+	// playbook run or an unattended task.
+	// --auto runs headlessly with no human to approve tool calls, so it
+	// implies --dangerously-skip-permissions.
+	if *auto {
+		*dangerSkip = true
 	}
 
 	if *here {
@@ -173,7 +188,11 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if !*force && task.SessionID.Valid && task.SessionID.String != "" {
+	// The focus-an-existing-tab behavior only makes sense for the
+	// interactive path. For --auto there is no tab to focus; the
+	// equivalent "already in flight" guard is the auto_run_status check
+	// below, so skip this block entirely when *auto.
+	if !*force && !*auto && task.SessionID.Valid && task.SessionID.String != "" {
 		if live, err := h.LiveSessionIDs(); err == nil {
 			if n := live[strings.ToLower(task.SessionID.String)]; n > 0 {
 				if n > 1 {
@@ -194,6 +213,20 @@ func cmdDo(args []string) int {
 					task.Slug, h.Binary(), task.SessionID.String)
 				return 1
 			}
+		}
+	}
+
+	// Auto "already in flight" guard: refuse a second --auto launch while a
+	// prior autonomous run is still running (reconciling a dead supervisor
+	// to 'dead' first). --force overrides — it abandons tracking of the
+	// prior run and launches a fresh supervisor.
+	if *auto && !*force {
+		reconcileAutoRun(db, task)
+		if task.AutoRunStatus.Valid && task.AutoRunStatus.String == "running" {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q already has an autonomous run in progress (pid %d) — wait for it to finish, or pass --force to launch another\n",
+				task.Slug, task.AutoRunPID.Int64)
+			return 1
 		}
 	}
 
@@ -315,6 +348,49 @@ func cmdDo(args []string) int {
 
 	if *fresh && curSessionID.Valid {
 		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
+	}
+
+	// --auto: instead of spawning an interactive tab, launch a detached
+	// headless supervisor that runs claude to completion in the
+	// background. The status flip above already committed (in-progress +
+	// session_id), so we only need to start the supervisor and record the
+	// run bookkeeping.
+	if *auto {
+		root, err := flowRoot()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if task.WorkDir == "" {
+			fmt.Fprintf(os.Stderr, "error: task %q has no work_dir\n", task.Slug)
+			return 1
+		}
+		pid, logPath, err := launchAutoRun(task, root, injectionText)
+		if err != nil {
+			// Launch failed before claude could write its jsonl. Mirror the
+			// spawn-failure recovery: undo a fresh bootstrap's pre-allocated
+			// session + status flip so the next attempt retries cleanly.
+			if needsBootstrap {
+				if _, undoErr := db.Exec(
+					`UPDATE tasks SET session_id=NULL, session_started=NULL,
+						status='backlog', status_changed_at=NULL, updated_at=?
+					 WHERE slug=? AND session_id=?`,
+					flowdb.NowISO(), task.Slug, sessionID,
+				); undoErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: rollback after auto-launch failure: %v\n", undoErr)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if err := recordAutoRunLaunched(db, task.Slug, pid, logPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: record auto run: %v\n", err)
+		}
+		if _, err := db.Exec(`UPDATE workdirs SET last_used_at = ? WHERE path = ?`, flowdb.NowISO(), task.WorkDir); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
+		}
+		fmt.Printf("Launched autonomous run for %s (pid %d)\n  log: %s\n", task.Slug, pid, logPath)
+		return 0
 	}
 
 	// Look up project (may be nil).

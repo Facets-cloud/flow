@@ -25,7 +25,7 @@ func Run(args []string) int {
 	// and `--version` — those manage the skill themselves or need to
 	// run before any install state exists. See maybeAutoUpgradeSkill.
 	switch cmd {
-	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help":
+	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec":
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
@@ -41,6 +41,10 @@ func Run(args []string) int {
 		return cmdAdd(rest)
 	case "do":
 		return cmdDo(rest)
+	case "__auto-exec":
+		// Hidden: the detached supervisor entry point for `flow do --auto`.
+		// Not listed in usage; invoked only by autoLauncher.
+		return cmdAutoExec(rest)
 	case "run":
 		return cmdRun(rest)
 	case "done":
@@ -89,6 +93,7 @@ Create:
 
 Sessions:
   flow do                <ref> [--fresh] [--dangerously-skip-permissions]
+  flow do --auto         <ref>                 (run headlessly in the background; self-completes via flow done)
   flow done              <ref>
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
@@ -124,6 +129,7 @@ Playbooks:
   flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
   flow run playbook   <slug> [--dangerously-skip-permissions]   (spawn a new tab)
   flow run playbook   <slug> --here                              (bind THIS Claude session to the new run; no new tab)
+  flow run playbook   <slug> --auto                              (run the playbook headlessly in the background)
   flow show playbook  <ref>
   flow list playbooks [--project <slug>] [--include-archived]`)
 }

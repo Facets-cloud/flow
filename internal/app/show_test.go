@@ -111,6 +111,43 @@ func TestCmdShowTaskHappyPath(t *testing.T) {
 	}
 }
 
+// TestCmdShowTaskAutoRunStatus: `flow show task` surfaces the autonomous
+// run status for a task that was launched with --auto.
+func TestCmdShowTaskAutoRunStatus(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "auto-task", "Auto", "in-progress", "high", filepath.Join(root, "repo"), nil)
+	now := flowdb.NowISO()
+	if _, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='running', auto_run_pid=4242, auto_run_started=?, auto_run_log='/x/run.log' WHERE slug='auto-task'`,
+		now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep the pid "alive" so reconcile doesn't flip it to dead.
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return true }
+	t.Cleanup(func() { processAlive = oldAlive })
+
+	out := captureStdout(t, func() {
+		if rc := cmdShow([]string{"task", "auto-task"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "auto_run:") {
+		t.Errorf("missing auto_run line; out=%q", out)
+	}
+	if !strings.Contains(out, "running") {
+		t.Errorf("auto_run line should show running; out=%q", out)
+	}
+	if !strings.Contains(out, "4242") {
+		t.Errorf("auto_run line should show pid; out=%q", out)
+	}
+	if !strings.Contains(out, "/x/run.log") {
+		t.Errorf("auto_run log path should show; out=%q", out)
+	}
+}
+
 func TestCmdShowTaskFloating(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "readme-pass", "Read", "backlog", "low", filepath.Join(root, "tasks", "readme-pass", "workspace"), nil)

@@ -218,6 +218,52 @@ func TestMigrationAddsAssignee(t *testing.T) {
 	}
 }
 
+// TestMigrationAddsAutoRunColumns verifies the autonomous-run bookkeeping
+// columns land on the tasks table and round-trip through ScanTask.
+func TestMigrationAddsAutoRunColumns(t *testing.T) {
+	db := openTempDB(t)
+	for _, col := range []string{
+		"auto_run_status", "auto_run_pid", "auto_run_started",
+		"auto_run_finished", "auto_run_log",
+	} {
+		has, err := columnExists(db, "tasks", col)
+		if err != nil {
+			t.Fatalf("columnExists(%s): %v", col, err)
+		}
+		if !has {
+			t.Errorf("column %s should exist after migration", col)
+		}
+	}
+
+	// Round-trip: write the auto-run fields, scan them back via GetTask.
+	now := NowISO()
+	wd := t.TempDir()
+	if _, err := db.Exec(
+		`INSERT INTO tasks (slug, name, status, priority, work_dir, session_id, created_at, updated_at,
+		 auto_run_status, auto_run_pid, auto_run_started, auto_run_log)
+		 VALUES (?, ?, 'in-progress', 'medium', ?, 'sess-1', ?, ?, 'running', 4242, ?, '/tmp/run.log')`,
+		"auto1", "Auto run", wd, now, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetTask(db, "auto1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.AutoRunStatus.String != "running" {
+		t.Errorf("AutoRunStatus = %q, want running", got.AutoRunStatus.String)
+	}
+	if !got.AutoRunPID.Valid || got.AutoRunPID.Int64 != 4242 {
+		t.Errorf("AutoRunPID = %+v, want 4242", got.AutoRunPID)
+	}
+	if got.AutoRunLog.String != "/tmp/run.log" {
+		t.Errorf("AutoRunLog = %q, want /tmp/run.log", got.AutoRunLog.String)
+	}
+	if got.AutoRunFinished.Valid {
+		t.Errorf("AutoRunFinished should be NULL while running; got %q", got.AutoRunFinished.String)
+	}
+}
+
 // TestOpenDBOnPreMigrationDB simulates an existing user upgrading from a
 // pre-feat/playbooks flow.db: tasks table exists but lacks the kind and
 // playbook_slug columns. OpenDB must apply migrations cleanly without

@@ -188,12 +188,17 @@ Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
                               [--with "<instruction>" | --with-file <path>]
   flow do --here        <ref> [--force]   (bind THIS Claude session to the task — no new tab)
+  flow do --auto        <ref> [--with "<instruction>" | --with-file <path>]
+                              (run headlessly in the background — no tab, no human; the
+                               session does the work and self-completes via `flow done`.
+                               Implies --dangerously-skip-permissions. Cannot combine with --here.)
   flow done             <ref>
 
 Playbook runs
   flow run playbook <slug> [--with "<instr>" | --with-file <path>]
                                     spawn a fresh run session (new task with kind=playbook_run)
   flow run playbook <slug> --here   bind THIS Claude session to the new run (no new tab)
+  flow run playbook <slug> --auto   run the playbook headlessly in the background (no tab, no human)
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
 Read
@@ -549,6 +554,13 @@ its own, it's the start of a two-or-more-step workflow.
 - "start X" / "start on X" / "begin X" / "get going on X"
 - A bare "`flow do X`" typed as command-like input
 
+**Autonomous-mode triggers — these mean `flow do --auto <ref>`** (a
+headless background run with no human at the keyboard):
+- "run X autonomously" / "run X unattended" / "run X headlessly"
+- "do X in the background" / "kick off X and walk away" / "fire and forget X"
+- "have X run on its own" / "let X complete by itself"
+- A bare "`flow do --auto X`" typed as command-like input
+
 **Recipe:**
 
 1. **Ask the user which session mode they want** before running anything.
@@ -560,8 +572,9 @@ its own, it's the start of a two-or-more-step workflow.
        question: "Which session mode for <task-slug>?",
        header: "Session mode",
        options: [
-         { label: "Regular",          description: "Normal Claude session with tool-approval prompts (safer)" },
-         { label: "Skip permissions", description: "Pass --dangerously-skip-permissions (faster, no prompts)" }
+         { label: "Regular",                description: "Normal Claude session with tool-approval prompts (safer)" },
+         { label: "Skip permissions",        description: "Pass --dangerously-skip-permissions (faster, no prompts)" },
+         { label: "Autonomous (background)", description: "flow do --auto — headless, no tab, no human. The session does the work and self-completes via flow done. Implies skip-permissions." }
        ],
        multiSelect: false
      }]
@@ -569,14 +582,47 @@ its own, it's the start of a two-or-more-step workflow.
    ```
 
    If the user already specified a mode in their request (e.g. "do X
-   with skip permissions", "do X normally"), use that — don't re-ask.
+   with skip permissions", "do X normally", "run X autonomously"), use
+   that — don't re-ask.
 2. Run: `flow do <user's ref>`. Pass the slug the user gave as one
    positional argument. Resolution is exact slug match. Append
-   `--dangerously-skip-permissions` if the user chose skip-permissions.
+   `--dangerously-skip-permissions` if the user chose skip-permissions,
+   or `--auto` if the user chose Autonomous (background) — `--auto`
+   already implies skip-permissions, so don't add both.
 3. If the command errors with "no task matching", ask the user to clarify
    or offer `flow add task` instead.
 4. Pass `--fresh` ONLY if the user explicitly asked for a fresh session
    (e.g. "start over", "fresh session", "--fresh"). Never on your own.
+
+**Autonomous mode (`--auto`) — how it differs:**
+
+- `flow do --auto <slug>` launches a **detached, headless** Claude run
+  in the background instead of opening a terminal tab. It returns
+  **immediately** — there is no tab to focus and no human drives it.
+  The run does the work end to end on best judgment and calls
+  `flow done` on **itself** when the brief's "Done when" is met, which
+  still triggers the close-out KB/project sweep.
+- `--auto` **implies `--dangerously-skip-permissions`** (no human to
+  approve tool calls) and **cannot be combined with `--here`**
+  (`--here` binds the current session; `--auto` spawns its own).
+- `--auto` **can** take `--with "<instruction>"` / `--with-file <path>`:
+  a one-off directive is forwarded to the run and layered on top of the
+  brief — useful for an unattended task or a scheduled playbook run that
+  today should also check something specific.
+- **Run status.** An autonomous run carries its own lifecycle, surfaced
+  on the task: `running` → `completed` (it self-`flow done`d) or `dead`
+  (it crashed or exited without marking done). `flow show task` shows
+  `auto_run: running (pid …) | completed | dead` and a log path under
+  `tasks/<slug>/auto-runs/`; `flow list tasks` has a dedicated `AUTO`
+  column (a running row shows `running <pid>`). When the user asks "how
+  did the autonomous run go?", read those — a `dead` run means it needs
+  a human's eyes (check the log), `completed` means it finished and
+  closed itself out.
+- **After `flow do --auto` succeeds**, report that the background run
+  was launched (mention the run is headless and will self-complete) and
+  stop. Do NOT poll the run, tail its log on a timer, or try to peek at
+  its separate session — it's an independent process. The user can ask
+  for status later (read `auto_run` then).
 
 **After `flow do` succeeds** it has already spawned a terminal tab and
 exported the env vars. Your job is done. Report "opened tab: <title>"
@@ -1172,6 +1218,8 @@ stop.
 - "run the X playbook" / "trigger X" / "fire the X playbook"
 - "fire the X agent" (legacy term users may use — playbook is the canonical name)
 - "start a run of X" / "kick off X"
+- "run X autonomously / unattended / in the background" → the `--auto`
+  run mode below
 - A bare `flow run playbook X` typed as command
 
 **Recipe:**
@@ -1181,7 +1229,7 @@ stop.
    in-session bind option is available. If it resolves a task, this
    session is already bound; only the new-tab path is available.
 
-2. Use AskUserQuestion to pick the run mode. **Unbound session — three
+2. Use AskUserQuestion to pick the run mode. **Unbound session — four
    options** (header: "Run mode?"):
 
    - **In this session (bind here)** — runs `flow run playbook <slug> --here`.
@@ -1195,16 +1243,24 @@ stop.
    - **New tab — skip permissions** — runs `flow run playbook <slug>
      --dangerously-skip-permissions`. Spawns a fresh tab without
      approval prompts (faster).
+   - **Autonomous (background)** — runs `flow run playbook <slug>
+     --auto`. Headless, no tab, no human: the run does the work and
+     self-completes via `flow done`. Implies skip-permissions; cannot
+     combine with `--here`. Pick this for unattended / scheduled runs.
+     Returns immediately — report that the run was launched and stop
+     (don't poll it). Run status surfaces as `auto_run: running |
+     completed | dead` on the run-task (see §4.4's autonomous-mode notes).
 
-   **Bound session — two options** (header: "Run mode?", same options
+   **Bound session — three options** (header: "Run mode?", same options
    minus "In this session"): the binary refuses `--here` when the
    current session is already bound (session_id uniqueness invariant;
    `--force` does not override). Offering it would surface an option
-   the binary will reject — bad UX.
+   the binary will reject — bad UX. (Autonomous still applies — it
+   spawns its own detached run, independent of the current binding.)
 
 3. Run the chosen invocation. Skip the session-mode question entirely
    if the user already specified a mode in their request (e.g. "fire X
-   in this session", "run X in a new tab").
+   in this session", "run X in a new tab", "run X autonomously").
 
 4. The command creates a kind=playbook_run task and snapshots the brief
    in both paths. On the new-tab path it spawns a terminal tab that

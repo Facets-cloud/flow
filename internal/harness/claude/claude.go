@@ -158,6 +158,24 @@ func (c *claude) SkipPermissionsRun(prompt string) error {
 	return SkipPermissionsRunner(prompt)
 }
 
+// AutoRunArgv builds `claude --session-id <uuid> -p <prompt>
+// [--dangerously-skip-permissions]` as argv (not a shell string) so the
+// `flow do --auto` supervisor can set cwd + redirect stdout/stderr to
+// the run log. Pinning --session-id (unlike SkipPermissionsRun) makes
+// claude write its transcript at the deterministic (cwd, sid) path, so
+// the run's own `flow done` sweep and `flow transcript` can find it.
+// opts.Inject is appended behind InjectionMarker, mirroring LaunchCmd.
+func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []string {
+	if opts.Inject != "" {
+		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
+	}
+	argv := []string{"claude", "--session-id", sessionID, "-p", prompt}
+	if opts.SkipPermissions {
+		argv = append(argv, "--dangerously-skip-permissions")
+	}
+	return argv
+}
+
 // runSkipPermissions is the default SkipPermissionsRunner — execs
 // `claude -p <prompt> --dangerously-skip-permissions`. Stdout/stderr
 // are discarded because the sweep prompt instructs claude to write

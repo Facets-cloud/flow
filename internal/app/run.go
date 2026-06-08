@@ -37,6 +37,7 @@ func cmdRunPlaybook(args []string) int {
 	fs := flagSet("run playbook")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness (ignored when --here is set)")
 	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
+	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via `flow done`")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -51,6 +52,13 @@ func cmdRunPlaybook(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --with/--with-file cannot be used with --here (no session is spawned to inject into)")
 		return 2
 	}
+	if *auto && *here {
+		fmt.Fprintln(os.Stderr, "error: --auto cannot be used with --here (--auto launches its own detached session)")
+		return 2
+	}
+	// --auto + --with/--with-file IS allowed: the instruction rides along to
+	// the detached run (e.g. a scheduled playbook that today should also
+	// double-check something). The delegation below forwards both flags.
 
 	dbPath, err := flowDBPath()
 	if err != nil {
@@ -174,8 +182,12 @@ func cmdRunPlaybook(args []string) int {
 		return cmdDoHere(runSlug, false)
 	}
 
-	// Default path: delegate to cmdDo to spawn the session in a new tab.
+	// Default path: delegate to cmdDo to spawn the session in a new tab,
+	// or to launch a detached headless supervisor when --auto is set.
 	doArgs := []string{runSlug}
+	if *auto {
+		doArgs = append(doArgs, "--auto")
+	}
 	if *dangerSkip {
 		doArgs = append(doArgs, "--dangerously-skip-permissions")
 	}

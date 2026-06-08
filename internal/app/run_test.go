@@ -66,7 +66,7 @@ func TestRunSlugSecondCollision(t *testing.T) {
 
 func TestRunSlugUTCNormalization(t *testing.T) {
 	db := openTempDB(t)
-	loc, _ := time.LoadLocation("Asia/Kolkata") // UTC+5:30
+	loc, _ := time.LoadLocation("Asia/Kolkata")        // UTC+5:30
 	local := time.Date(2026, 4, 30, 16, 0, 45, 0, loc) // 10:30 UTC
 	got, err := generateRunSlug(db, "p", local)
 	if err != nil {
@@ -140,6 +140,47 @@ func TestCmdRunPlaybookCreatesRunTask(t *testing.T) {
 	script := lastScript()
 	if !strings.Contains(script, "claude --session-id ") {
 		t.Errorf("expected claude session-id in spawn script, got: %q", script)
+	}
+}
+
+// TestCmdRunPlaybookAutoForwards: `flow run playbook <slug> --auto`
+// creates the run task and launches it headlessly via the detached
+// supervisor — no terminal tab.
+func TestCmdRunPlaybookAutoForwards(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"playbook", "Triage", "--slug", "tri", "--work-dir", wd}); rc != 0 {
+		t.Fatal()
+	}
+
+	itermCount, _ := stubITerm(t)
+	calls, gotSlug, _, _, _ := stubAutoLauncher(t, 7777)
+
+	if rc := cmdRun([]string{"playbook", "tri", "--auto"}); rc != 0 {
+		t.Fatalf("run playbook --auto rc=%d, want 0", rc)
+	}
+	if *itermCount != 0 {
+		t.Errorf("iterm spawn count = %d, want 0 (--auto must not open a tab)", *itermCount)
+	}
+	if *calls != 1 {
+		t.Fatalf("autoLauncher calls = %d, want 1", *calls)
+	}
+	if !strings.HasPrefix(*gotSlug, "tri--") {
+		t.Errorf("launcher slug = %q, want a tri-- run slug", *gotSlug)
+	}
+
+	db := openFlowDB(t)
+	var status, autoStatus string
+	if err := db.QueryRow(
+		`SELECT status, auto_run_status FROM tasks WHERE slug=?`, *gotSlug,
+	).Scan(&status, &autoStatus); err != nil {
+		t.Fatal(err)
+	}
+	if status != "in-progress" {
+		t.Errorf("run status = %q, want in-progress", status)
+	}
+	if autoStatus != "running" {
+		t.Errorf("auto_run_status = %q, want running", autoStatus)
 	}
 }
 

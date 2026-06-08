@@ -300,6 +300,31 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	}
 	fmt.Printf("session_last_resumed:  %s\n", slast)
 
+	// Autonomous-run status (only for tasks ever launched with --auto).
+	// Reconcile a stale 'running' whose supervisor died before printing.
+	if t.AutoRunStatus.Valid && t.AutoRunStatus.String != "" {
+		reconcileAutoRun(db, t)
+		line := t.AutoRunStatus.String
+		switch t.AutoRunStatus.String {
+		case "running":
+			if t.AutoRunPID.Valid {
+				line += fmt.Sprintf(" (pid %d", t.AutoRunPID.Int64)
+				if t.AutoRunStarted.Valid && t.AutoRunStarted.String != "" {
+					line += ", since " + t.AutoRunStarted.String
+				}
+				line += ")"
+			}
+		case "completed", "dead":
+			if t.AutoRunFinished.Valid && t.AutoRunFinished.String != "" {
+				line += " (" + t.AutoRunFinished.String + ")"
+			}
+		}
+		fmt.Printf("auto_run:              %s\n", line)
+		if t.AutoRunLog.Valid && t.AutoRunLog.String != "" {
+			fmt.Printf("auto_run_log:          %s\n", t.AutoRunLog.String)
+		}
+	}
+
 	fmt.Printf("created:       %s\n", t.CreatedAt)
 	fmt.Printf("updated:       %s\n", t.UpdatedAt)
 	if t.ArchivedAt.Valid {

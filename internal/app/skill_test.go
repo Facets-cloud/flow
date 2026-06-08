@@ -403,6 +403,21 @@ func TestSkillIntakeMinimal(t *testing.T) {
 	}
 }
 
+func TestSkillMentionsAutoMode(t *testing.T) {
+	got := string(embeddedSkill)
+	for _, want := range []string{
+		"flow do --auto",
+		"flow run playbook <slug> --auto",
+		"Autonomous (background)",
+		"self-completes via `flow done`",
+		"cannot be combined with `--here`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill missing %q", want)
+		}
+	}
+}
+
 func TestSkillUsesAskUserQuestionConsistently(t *testing.T) {
 	got := string(embeddedSkill)
 	// The skill should have many AskUserQuestion references — at least one

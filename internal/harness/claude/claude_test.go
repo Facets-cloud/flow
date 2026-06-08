@@ -126,6 +126,35 @@ func TestLaunchCmd_PreservesByteIdentity(t *testing.T) {
 	}
 }
 
+func TestAutoRunArgv(t *testing.T) {
+	h := New()
+	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
+	prompt := "do the thing"
+
+	// Headless auto run: --session-id pinned, -p print mode, skip-perms.
+	got := h.AutoRunArgv(sessionID, prompt, harness.LaunchOpts{SkipPermissions: true})
+	want := []string{"claude", "--session-id", sessionID, "-p", prompt, "--dangerously-skip-permissions"}
+	if len(got) != len(want) {
+		t.Fatalf("AutoRunArgv len=%d %v, want %d %v", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("AutoRunArgv[%d]=%q, want %q", i, got[i], want[i])
+		}
+	}
+
+	// Without SkipPermissions the flag is omitted.
+	if a := h.AutoRunArgv(sessionID, prompt, harness.LaunchOpts{}); a[len(a)-1] == "--dangerously-skip-permissions" {
+		t.Errorf("AutoRunArgv should omit skip-perms flag when not requested: %v", a)
+	}
+
+	// Injection is appended to the prompt (argv[4]) behind the marker.
+	inj := h.AutoRunArgv(sessionID, prompt, harness.LaunchOpts{Inject: "extra instr"})
+	if !strings.Contains(inj[4], "\n\n"+harness.InjectionMarker+"\nextra instr") {
+		t.Errorf("AutoRunArgv inject: missing marker+text in prompt arg %q", inj[4])
+	}
+}
+
 func TestResumeCmd_PreservesByteIdentity(t *testing.T) {
 	h := New()
 	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
