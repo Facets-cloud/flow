@@ -319,11 +319,15 @@ func TestAutoRunnerUsesHarnessArgv(t *testing.T) {
 }
 
 // TestBuildAutoBootstrapPrompt sanity-checks that the autonomous prompt
-// tells the session it is headless, forbids interactive prompting, and
-// instructs self-closure via flow done.
+// tells the session it is headless, forbids interactive prompting,
+// instructs self-closure via flow done, AND insists on persisting toward
+// a closeable state (giving up only as a last resort).
 func TestBuildAutoBootstrapPrompt(t *testing.T) {
 	p := buildAutoBootstrapPrompt("my-task", "regular", "")
-	for _, want := range []string{"my-task", "flow done", "AskUserQuestion", "autonomous"} {
+	for _, want := range []string{
+		"my-task", "flow done", "AskUserQuestion", "autonomous",
+		"PERSIST", "LAST RESORT", "EXHAUST",
+	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("auto prompt missing %q", want)
 		}
