@@ -328,6 +328,19 @@ func TestOwnerTickManualInteractiveSpawnsTab(t *testing.T) {
 	if !strings.Contains(spawnedPrompt, "o1") {
 		t.Errorf("interactive prompt should name the owner")
 	}
+
+	// An interactive tick must be recorded on the owner (it ran), so
+	// `flow owner show` doesn't report "last tick: (never)".
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.LastTickAt.Valid || o.LastTickAt.String == "" {
+		t.Errorf("interactive tick should record last_tick_at")
+	}
+	if o.LastTickStatus.String != "interactive" {
+		t.Errorf("interactive tick status = %q, want interactive", o.LastTickStatus.String)
+	}
 }
 
 func TestOwnerTickManualAutoRunsHeadless(t *testing.T) {

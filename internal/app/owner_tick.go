@@ -164,6 +164,16 @@ func ownerTickManual(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: spawn interactive tick: %v\n", err)
 		return 1
 	}
+	// Record that an interactive tick was launched. We can't track its
+	// completion (the user drives the tab, there's no process we wait on),
+	// so we mark last_tick now with status 'interactive' — enough that
+	// `flow owner show` reflects a tick ran instead of "(never)". The
+	// session itself self-paces (`flow owner next`) and journals.
+	o.LastTickAt = sql.NullString{String: flowdb.NowISO(), Valid: true}
+	o.LastTickStatus = sql.NullString{String: "interactive", Valid: true}
+	if err := flowdb.UpdateOwner(db, o); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: record interactive tick for %q: %v\n", slug, err)
+	}
 	fmt.Printf("opened an interactive tick for owner %q — drive it in the new tab\n", slug)
 	return 0
 }
