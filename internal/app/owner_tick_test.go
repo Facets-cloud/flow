@@ -82,6 +82,93 @@ func TestOwnerTickDueRecordsRunningPID(t *testing.T) {
 	}
 }
 
+// A tick that finishes BEFORE the scheduler records its pid must not have
+// its result clobbered. The scheduler dispatch write must touch only the
+// running-tick + schedule columns, never last_tick_*. Regression for the
+// dispatch-vs-finish race (full-row UpdateOwner overwrote the child's
+// last_tick_status with the stale pre-tick value).
+func TestOwnerTickDueFastFinishingChildKeepsResult(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	past := sql.NullString{String: time.Now().Add(-time.Hour).Format(time.RFC3339), Valid: true}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "active", NextWakeAt: past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) {
+		// Simulate the detached child completing (recording 'ok' and
+		// clearing its pid) before the parent's dispatch write lands.
+		if _, err := db.Exec(
+			`UPDATE owners SET last_tick_at=?, last_tick_status='ok', tick_pid=NULL, tick_started=NULL WHERE slug=?`,
+			flowdb.NowISO(), slug,
+		); err != nil {
+			t.Fatal(err)
+		}
+		return 7777, nil
+	}
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("tick-due rc=%d", rc)
+	}
+
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.LastTickStatus.String != "ok" {
+		t.Errorf("LastTickStatus = %q, want ok (child result clobbered by dispatch write)", o.LastTickStatus.String)
+	}
+	// The schedule must still advance (the dispatch did its own job).
+	next, perr := time.Parse(time.RFC3339, o.NextWakeAt.String)
+	if perr != nil || !next.After(time.Now()) {
+		t.Errorf("next_wake_at = %q not advanced", o.NextWakeAt.String)
+	}
+}
+
+// A tick that self-paces mid-run (sets next_wake_at via `flow owner next`)
+// must keep that value — the finish write must not overwrite next_wake_at
+// with the stale value loaded when the tick started.
+func TestCmdOwnerTickPreservesSelfPacedNextWake(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	initial := time.Now().Add(30 * time.Minute).UTC().Format(time.RFC3339)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		NextWakeAt: sql.NullString{String: initial, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	selfPaced := time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
+
+	old := ownerTickRunner
+	ownerTickRunner = func(h harness.Harness, prompt string) error {
+		// Simulate the tick calling `flow owner next o1 --in 5m`.
+		if _, err := db.Exec(`UPDATE owners SET next_wake_at=? WHERE slug=?`, selfPaced, "o1"); err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	}
+	t.Cleanup(func() { ownerTickRunner = old })
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.NextWakeAt.String != selfPaced {
+		t.Errorf("next_wake_at = %q, want self-paced %q (finish write clobbered it)", o.NextWakeAt.String, selfPaced)
+	}
+	if o.LastTickStatus.String != "ok" {
+		t.Errorf("LastTickStatus = %q, want ok", o.LastTickStatus.String)
+	}
+}
+
 func TestCmdOwnerTickClearsTickPID(t *testing.T) {
 	setupFlowRoot(t)
 	db := openFlowDB(t)

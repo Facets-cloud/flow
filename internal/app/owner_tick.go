@@ -151,9 +151,7 @@ func ownerTickManual(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-		o.TickPID = sql.NullInt64{Int64: int64(pid), Valid: true}
-		o.TickStarted = sql.NullString{String: now.Format(time.RFC3339), Valid: true}
-		if err := flowdb.UpdateOwner(db, o); err != nil {
+		if err := recordOwnerTickStarted(db, slug, pid, now.Format(time.RFC3339)); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: record tick for %q: %v\n", slug, err)
 		}
 		fmt.Printf("dispatched a headless tick for owner %q (pid %d)\n", slug, pid)
@@ -167,11 +165,11 @@ func ownerTickManual(args []string) int {
 	// Record that an interactive tick was launched. We can't track its
 	// completion (the user drives the tab, there's no process we wait on),
 	// so we mark last_tick now with status 'interactive' — enough that
-	// `flow owner show` reflects a tick ran instead of "(never)". The
-	// session itself self-paces (`flow owner next`) and journals.
-	o.LastTickAt = sql.NullString{String: flowdb.NowISO(), Valid: true}
-	o.LastTickStatus = sql.NullString{String: "interactive", Valid: true}
-	if err := flowdb.UpdateOwner(db, o); err != nil {
+	// `flow owner show` reflects a tick ran instead of "(never)". Targeted
+	// update (last_tick_* only) so it never overwrites next_wake_at — the
+	// interactive session self-paces via `flow owner next` and that write
+	// must win regardless of ordering.
+	if err := recordOwnerInteractiveTick(db, slug); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: record interactive tick for %q: %v\n", slug, err)
 	}
 	fmt.Printf("opened an interactive tick for owner %q — drive it in the new tab\n", slug)
@@ -237,11 +235,12 @@ func ownerTickDue(args []string) int {
 			continue
 		}
 		// Advance the schedule (so the next scan doesn't re-dispatch) and
-		// record the running tick (pid + start) in one write.
-		o.NextWakeAt = sql.NullString{String: now.Add(dur).Format(time.RFC3339), Valid: true}
-		o.TickPID = sql.NullInt64{Int64: int64(pid), Valid: true}
-		o.TickStarted = sql.NullString{String: now.Format(time.RFC3339), Valid: true}
-		if err := flowdb.UpdateOwner(db, o); err != nil {
+		// record the running tick (pid + start). Targeted column update —
+		// NOT a full-row write — so it can't clobber last_tick_* if the
+		// detached tick has already finished and recorded its result (the
+		// dispatch-vs-finish race).
+		if err := recordOwnerTickDispatched(db, o.Slug, pid,
+			now.Format(time.RFC3339), now.Add(dur).Format(time.RFC3339)); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: record tick for %q: %v\n", o.Slug, err)
 			continue
 		}
@@ -286,7 +285,7 @@ func cmdOwnerTick(args []string) int {
 	h, herr := harnessByName(hname)
 	if herr != nil {
 		fmt.Fprintf(os.Stderr, "error: resolve harness for %q: %v\n", slug, herr)
-		_ = recordOwnerTick(db, o, "error")
+		_ = recordOwnerTick(db, slug, "error")
 		return 1
 	}
 
@@ -297,7 +296,7 @@ func cmdOwnerTick(args []string) int {
 	if runErr != nil {
 		status = "error"
 	}
-	if err := recordOwnerTick(db, o, status); err != nil {
+	if err := recordOwnerTick(db, slug, status); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: record tick for %q: %v\n", slug, err)
 	}
 	if runErr != nil {
@@ -308,14 +307,65 @@ func cmdOwnerTick(args []string) int {
 	return 0
 }
 
-// recordOwnerTick stamps last_tick_at + last_tick_status on the owner and
-// clears the running-tick bookkeeping (the tick is over).
-func recordOwnerTick(db *sql.DB, o *flowdb.Owner, status string) error {
-	o.LastTickAt = sql.NullString{String: flowdb.NowISO(), Valid: true}
-	o.LastTickStatus = sql.NullString{String: status, Valid: true}
-	o.TickPID = sql.NullInt64{}
-	o.TickStarted = sql.NullString{}
-	return flowdb.UpdateOwner(db, o)
+// The tick-bookkeeping writes below are deliberately TARGETED column
+// updates rather than the full-row flowdb.UpdateOwner. The scheduler
+// (parent) and the detached tick (child) write the owner row
+// concurrently — a full-row write of either's stale in-memory struct
+// clobbers the other's columns. By having each writer touch only the
+// columns it owns, the writes commute:
+//
+//	dispatch/start → tick_pid, tick_started (+ next_wake_at for the scheduler)
+//	finish         → last_tick_at, last_tick_status, clear tick_pid/tick_started
+//	self-pace      → next_wake_at (written by the tick via `flow owner next`)
+//
+// The one remaining overlap is tick_pid: a tick that finishes before the
+// scheduler records the pid leaves a stale (dead) pid set, which the
+// dead-pid reconcile (reconcileOwnerTick / DueOwners overlap guard) heals
+// on the next read or scan. No durable result is lost.
+
+// recordOwnerTickStarted stamps the running-tick bookkeeping (pid + start)
+// for a hand-triggered headless tick. It does not advance the schedule.
+func recordOwnerTickStarted(db *sql.DB, slug string, pid int, started string) error {
+	_, err := db.Exec(
+		`UPDATE owners SET tick_pid=?, tick_started=?, updated_at=? WHERE slug=?`,
+		pid, started, flowdb.NowISO(), slug,
+	)
+	return err
+}
+
+// recordOwnerTickDispatched is recordOwnerTickStarted plus advancing the
+// schedule floor (next_wake_at) — the scheduler dispatch path.
+func recordOwnerTickDispatched(db *sql.DB, slug string, pid int, started, nextWakeAt string) error {
+	_, err := db.Exec(
+		`UPDATE owners SET tick_pid=?, tick_started=?, next_wake_at=?, updated_at=? WHERE slug=?`,
+		pid, started, nextWakeAt, flowdb.NowISO(), slug,
+	)
+	return err
+}
+
+// recordOwnerInteractiveTick marks a hand-triggered interactive tick as
+// having run (last_tick_* only). It leaves next_wake_at untouched so the
+// interactive session's own `flow owner next` self-pacing wins.
+func recordOwnerInteractiveTick(db *sql.DB, slug string) error {
+	now := flowdb.NowISO()
+	_, err := db.Exec(
+		`UPDATE owners SET last_tick_at=?, last_tick_status='interactive', updated_at=? WHERE slug=?`,
+		now, now, slug,
+	)
+	return err
+}
+
+// recordOwnerTick stamps last_tick_at + last_tick_status and clears the
+// running-tick bookkeeping (the tick is over). Targeted update — it never
+// touches next_wake_at, so a next-wake the tick set mid-run via
+// `flow owner next` survives.
+func recordOwnerTick(db *sql.DB, slug, status string) error {
+	now := flowdb.NowISO()
+	_, err := db.Exec(
+		`UPDATE owners SET last_tick_at=?, last_tick_status=?, tick_pid=NULL, tick_started=NULL, updated_at=? WHERE slug=?`,
+		now, status, now, slug,
+	)
+	return err
 }
 
 // reconcileOwnerTick promotes a stale running tick to 'dead' when its
@@ -330,13 +380,25 @@ func reconcileOwnerTick(db *sql.DB, o *flowdb.Owner) {
 	if processAlive(int(o.TickPID.Int64)) {
 		return // genuinely running
 	}
+	now := flowdb.NowISO()
+	// Targeted + guarded: only promote to 'dead' while a tick_pid is still
+	// recorded. If a real finish (recordOwnerTick) lands between the
+	// processAlive check and this write, it clears tick_pid first and the
+	// WHERE no longer matches — so we never overwrite a genuine 'ok'/'error'
+	// result with 'dead'.
+	if _, err := db.Exec(
+		`UPDATE owners SET last_tick_status='dead', last_tick_at=COALESCE(last_tick_at, ?),
+		 tick_pid=NULL, tick_started=NULL, updated_at=? WHERE slug=? AND tick_pid IS NOT NULL`,
+		now, now, o.Slug,
+	); err != nil {
+		return
+	}
 	o.LastTickStatus = sql.NullString{String: "dead", Valid: true}
 	if !o.LastTickAt.Valid {
-		o.LastTickAt = sql.NullString{String: flowdb.NowISO(), Valid: true}
+		o.LastTickAt = sql.NullString{String: now, Valid: true}
 	}
 	o.TickPID = sql.NullInt64{}
 	o.TickStarted = sql.NullString{}
-	_ = flowdb.UpdateOwner(db, o)
 }
 
 // buildOwnerTickPromptInteractive is the prompt for a hand-triggered tick
