@@ -37,6 +37,8 @@ func cmdAdd(args []string) int {
 		return addTask(args[1:])
 	case "playbook":
 		return addPlaybook(args[1:])
+	case "owner":
+		return addOwner(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown add subcommand %q\n", args[0])
 	return 2
@@ -150,6 +152,8 @@ func addTask(args []string) int {
 	priority := fs.String("priority", "medium", "high|medium|low")
 	dueFlag := fs.String("due", "", "due date (YYYY-MM-DD, today, tomorrow, monday, 3d)")
 	assigneeFlag := fs.String("assignee", "", "optional assignee (default: self)")
+	var tags stringSliceFlag
+	fs.Var(&tags, "tag", "attach a tag (repeatable: --tag foo --tag bar)")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
@@ -275,6 +279,13 @@ func addTask(args []string) int {
 	if err := flowdb.UpsertWorkdir(db, absWorkDir, "", "", ""); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+
+	for _, tg := range tags {
+		if err := flowdb.AddTaskTag(db, slug, tg); err != nil {
+			fmt.Fprintf(os.Stderr, "error: add tag %q: %v\n", tg, err)
+			return 1
+		}
 	}
 
 	if projectSlug == nil {

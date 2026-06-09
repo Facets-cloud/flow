@@ -1,0 +1,250 @@
+package app
+
+import (
+	"database/sql"
+	"flow/internal/flowdb"
+	"flow/internal/harness"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestOwnerTickDueDispatchesAndReschedules(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+
+	past := sql.NullString{String: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339), Valid: true}
+	future := sql.NullString{String: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), Valid: true}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "due", Name: "D", WorkDir: "/x", Every: "30m", NextWakeAt: past}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "later", Name: "L", WorkDir: "/y", Every: "30m", NextWakeAt: future}); err != nil {
+		t.Fatal(err)
+	}
+
+	var dispatched []string
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) {
+		dispatched = append(dispatched, slug)
+		return 0, nil
+	}
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("tick-due rc=%d", rc)
+	}
+
+	if len(dispatched) != 1 || dispatched[0] != "due" {
+		t.Fatalf("dispatched = %v, want [due]", dispatched)
+	}
+
+	// The dispatched owner's next tick must be advanced into the future so
+	// the next scan doesn't re-fire it.
+	o, err := flowdb.GetOwner(db, "due")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := time.Parse(time.RFC3339, o.NextWakeAt.String)
+	if err != nil {
+		t.Fatalf("parse next_wake_at %q: %v", o.NextWakeAt.String, err)
+	}
+	if !next.After(time.Now()) {
+		t.Errorf("next_wake_at = %q not advanced into the future", o.NextWakeAt.String)
+	}
+}
+
+func TestOwnerTickDueRecordsRunningPID(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	past := sql.NullString{String: time.Now().Add(-time.Hour).Format(time.RFC3339), Valid: true}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "active", NextWakeAt: past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) { return 4242, nil }
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.TickPID.Int64 != 4242 {
+		t.Errorf("TickPID = %+v, want 4242 recorded on dispatch", o.TickPID)
+	}
+	if !o.TickStarted.Valid {
+		t.Errorf("TickStarted should be set on dispatch")
+	}
+}
+
+func TestCmdOwnerTickClearsTickPID(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickPID: sql.NullInt64{Int64: 999, Valid: true}, TickStarted: sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := ownerTickRunner
+	ownerTickRunner = func(h harness.Harness, prompt string) error { return nil }
+	t.Cleanup(func() { ownerTickRunner = old })
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.TickPID.Valid {
+		t.Errorf("TickPID should be cleared when the tick finishes, got %+v", o.TickPID)
+	}
+	if o.LastTickStatus.String != "ok" {
+		t.Errorf("LastTickStatus = %q, want ok", o.LastTickStatus.String)
+	}
+}
+
+func TestOwnerShowShowsRunningTick(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickPID: sql.NullInt64{Int64: 4242, Valid: true}, TickStarted: sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return pid == 4242 }
+	t.Cleanup(func() { processAlive = oldAlive })
+
+	out := captureStdout(t, func() {
+		if rc := cmdOwner([]string{"show", "o1"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "running") || !strings.Contains(out, "4242") {
+		t.Errorf("expected a running tick line with pid 4242; got:\n%s", out)
+	}
+}
+
+func TestOwnerShowReconcilesDeadTick(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickPID: sql.NullInt64{Int64: 4242, Valid: true}, TickStarted: sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return false } // the tick pid is dead
+	t.Cleanup(func() { processAlive = oldAlive })
+
+	out := captureStdout(t, func() {
+		if rc := cmdOwner([]string{"show", "o1"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if strings.Contains(out, "running") {
+		t.Errorf("a dead tick pid must not display as running; got:\n%s", out)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.TickPID.Valid {
+		t.Errorf("dead tick pid should be reconciled (cleared), got %+v", o.TickPID)
+	}
+	if o.LastTickStatus.String != "dead" {
+		t.Errorf("reconciled status = %q, want dead", o.LastTickStatus.String)
+	}
+}
+
+func TestCmdOwnerTickRecordsOkStatus(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotPrompt string
+	old := ownerTickRunner
+	ownerTickRunner = func(h harness.Harness, prompt string) error {
+		gotPrompt = prompt
+		return nil
+	}
+	t.Cleanup(func() { ownerTickRunner = old })
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
+		t.Fatalf("tick rc=%d", rc)
+	}
+
+	if !strings.Contains(gotPrompt, "o1") {
+		t.Errorf("tick prompt should name the owner; got:\n%s", gotPrompt)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.LastTickAt.Valid || o.LastTickAt.String == "" {
+		t.Errorf("LastTickAt not recorded")
+	}
+	if o.LastTickStatus.String != "ok" {
+		t.Errorf("LastTickStatus = %q, want ok", o.LastTickStatus.String)
+	}
+}
+
+func TestCmdOwnerTickRecordsErrorStatus(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	old := ownerTickRunner
+	ownerTickRunner = func(h harness.Harness, prompt string) error {
+		return errTickBoom
+	}
+	t.Cleanup(func() { ownerTickRunner = old })
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 1 {
+		t.Errorf("tick rc=%d, want 1 on runner error", rc)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.LastTickStatus.String != "error" {
+		t.Errorf("LastTickStatus = %q, want error", o.LastTickStatus.String)
+	}
+}
+
+func TestBuildOwnerTickPromptRoutesWorkThroughTasksAndPlaybooks(t *testing.T) {
+	p := strings.ToLower(buildOwnerTickPrompt("desk"))
+	// A tick is sessionless and gets no `flow done` KB sweep, so it must
+	// route substantive work through tasks/playbooks (which self-close with
+	// the sweep) rather than doing the work inline.
+	for _, want := range []string{
+		"do not do substantive work", // the core rule
+		"flow run playbook",          // recurring → playbook
+		"flow do --auto",             // one-time → task run that self-flow-dones
+		"flow done",                  // the rationale: the sweep
+		"owner:desk",                 // tag work to the owner
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("tick prompt must mention %q (orchestrate-don't-execute); prompt:\n%s", want, p)
+		}
+	}
+}
+
+var errTickBoom = &tickTestErr{}
+
+type tickTestErr struct{}
+
+func (*tickTestErr) Error() string { return "boom" }

@@ -101,6 +101,16 @@ an intent, follow the matching recipe instead of re-asking via §1a.
   own session, its own snapshotted `brief.md`, and its own
   `updates/`. Editing a playbook's `brief.md` does not affect past
   runs; runs are reproducible.
+- **Owners** are durable, named, repo-scoped *self-prompting controllers*
+  that take ongoing responsibility for an outcome (e.g. "keep all PRs in
+  repo X green"; "maintain repo Y: fix bugs → PR → merge → deploy → verify").
+  An owner is NOT a single Claude session — it is state (a `charter.md`
+  operating manual + a ledger) plus a clock: it wakes on a fixed interval
+  (`--every`), runs a *fresh headless tick* (a brand-new session each time),
+  acts, then schedules its next tick. Each owner has a slug, work_dir,
+  optional `project_slug`, a status (`active`/`paused`/`retired`), and an
+  interval. The tasks an owner creates or manages are tagged `owner:<slug>`;
+  a task it parks for a human decision is also tagged `question`. See §4.17.
 - **Workdirs** is a convenience registry of known local repo paths. It
   exists so this skill can match repo intent ("the budgeting app")
   to a path on disk. It is not the source of truth for any task's
@@ -182,7 +192,9 @@ Create
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
+                           [--tag <t> ...]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
+  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
@@ -200,6 +212,13 @@ Playbook runs
   flow run playbook <slug> --here   bind THIS Claude session to the new run (no new tab)
   flow run playbook <slug> --auto   run the playbook headlessly in the background (no tab, no human)
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
+
+Owners (autonomous ownership — see §4.17)
+  flow owner list                   all owners with status + next tick
+  flow owner show   <slug>          charter + what it owns (in-flight / playbook runs / questions) + next tick
+  flow owner start  <slug>          begin ticking (first tick due now, then every <dur>)
+  flow owner pause  <slug>          stop ticking, keep all state
+  (ticks run headlessly on a launchd timer — you never invoke them by hand)
 
 Read
   flow show task    [<ref>]     (no arg → reverse-lookup via $CLAUDE_CODE_SESSION_ID)
@@ -1685,6 +1704,104 @@ session start. Bash subprocess cwd is irrelevant. `cd
   in another tab.** The env var is per-process; `--here` always
   attaches the *current* session. To attach a session in another
   tab, switch to that tab and run `flow do --here` there.
+
+### 4.17 Owners (autonomous ownership)
+
+An **owner** takes durable, ongoing responsibility for an outcome and
+drives it *itself* — re-waking on an interval, re-evaluating the world,
+and acting — instead of being a one-shot run. It is the self-perpetuating
+layer above tasks/playbooks. An owner is **not a single Claude session**:
+it is a `charter.md` (its operating manual) + a ledger + a clock. Each
+interval it runs a **fresh headless tick** (a new session) that reads the
+charter, reviews what it owns, acts, and exits — then the next tick is
+scheduled automatically.
+
+**Triggers (create an owner):** "create an owner for X", "have something
+keep X true", "automate maintenance of <repo>", "keep all PRs green",
+"own <repo>'s bug-fixing", "run this on a loop forever".
+
+**Creating an owner — interview (operational, like task intake):** the
+charter is the owner's operating manual, so the interview is about *how to
+operate*, not just what. Ask, one at a time:
+1. **What it owns** — the outcome/responsibility in one sentence.
+2. **Where** — work_dir (use the §6 recipe).
+3. **How to observe & act** — what to look at (open PRs, CI, prod health)
+   and what to do when something is off-target. Bootstrap from what flow
+   already knows — the repo's `CLAUDE.md`, the KB (`processes.md` etc.),
+   the workdir registry, `gh` — and only ask the gaps.
+4. **When to ask vs. act** — which decisions need a human (approvals,
+   ambiguous calls) vs. what it may just do.
+5. **Interval** — `--every` (e.g. `30m`, `1h`).
+Then `flow add owner "<name>" --work-dir <p> --every <dur> [--project <s>] [--slug <s>]`,
+and write the gathered operating manual into the owner's `charter.md`
+(overwrite the stub — Read once, then Write). Offer to **start** it
+(`flow owner start <slug>`) so it begins ticking.
+
+**The tag contract — this is how everything an owner touches is tracked:**
+- Every task an owner creates or manages is tagged **`owner:<slug>`**.
+  That makes the owner's ledger just `flow list tasks --tag owner:<slug>`,
+  and the tag renders on `flow show task` so any task shows which owner
+  owns it (bidirectional visibility). Playbook *runs* an owner triggers
+  are tasks too — tag them `owner:<slug>` and they appear in the ledger.
+- A task an owner parks for a human decision is **also tagged `question`**
+  (and assigned to the user). It is a normal task — **never run with
+  `--auto`** — that surfaces in the user's `flow list tasks` queue.
+
+**If you are running as an owner tick** (your bootstrap prompt says "You
+are the autonomous OWNER …"): **you orchestrate; you NEVER execute work
+inline.** A tick is a *sessionless* run that never calls `flow done`, so
+any substantive work you do directly is **lost to the KB and leaves no
+transcript** — the `flow done` close-out sweep (KB entries + project
+update) is what captures learnings, and a tick doesn't get it. So route
+EVERY piece of work through a unit that runs as its own session and
+self-closes with the sweep:
+- **recurring work → a playbook**: create it if needed (`flow add playbook
+  …`), then `flow run playbook <slug> --auto`; tag the run `owner:<slug>`.
+- **one-time work → a task**: `flow add task "<what>" --tag owner:<slug>`,
+  then `flow do --auto <task>` (it self-`flow done`s → the sweep runs).
+- **a human decision → a question task**: `flow add task "<the question>"
+  --tag question --tag owner:<slug>`, assigned to the user.
+
+Each tick: read `owners/<slug>/charter.md`, review what you own via `flow
+list tasks --tag owner:<slug>` (advance/check on in-flight units; never
+duplicate work already tracked), observe per the charter, **dispatch** the
+needed playbook-runs / tasks / questions, and exit. Keep ticks SHORT —
+spin work out, never perform it inline. Do **not** use AskUserQuestion and
+do **not** block. Be conservative with irreversible/outward-facing actions
+unless the charter explicitly authorizes them.
+
+**Answering an owner's question (the human side):** an owner question is a
+normal task tagged `question` + `owner:<slug>`. Answer it **in context** —
+read it (`flow show task <q>`), or `flow do` it for a real back-and-forth,
+capture the answer on the task (a note or the session), then **mark it
+done**. The owner reads the answer on its next tick, resumes the parked
+work, and remembers it (so it won't ask again). Surface these to the user
+when they ask "what does <owner> need from me?" — list
+`flow list tasks --tag owner:<slug> --tag question`.
+
+**Visibility / status:** "how is <owner> doing?" → `flow owner show <slug>`
+(charter, status, next tick, and what it owns split into in-flight /
+playbook runs / questions). "what owners do I have?" → `flow owner list`
+(status + next tick per owner).
+
+**Lifecycle:** `flow owner start` begins ticking; `flow owner pause` stops
+ticking but keeps all state; `flow owner edit` (charter) and retire/archive
+come later. Pausing is the safe "stop it for now" — it never deletes the
+charter, ledger, or owned tasks.
+
+**Anti-patterns:**
+- **Do not auto-create owners.** Like playbooks, owners are created only on
+  an explicit request — they run unattended, so the user must opt in.
+- **Do not let an owner execute work inline in a tick.** Ticks are
+  *sessionless* — no `flow done` KB/project sweep, no transcript. Owners
+  must orchestrate: recurring work becomes a playbook (`flow run playbook
+  … --auto`), one-time work becomes a task (`flow do --auto`), so each unit
+  self-closes with the sweep. Inline work silently loses the learnings the
+  user installed flow to capture.
+- **Do not run a `question`-tagged task with `--auto`.** It is *for* the
+  human; running it autonomously defeats the purpose.
+- **Do not invoke `flow __owner-tick` or `flow owner tick-due` by hand** —
+  those are the scheduler's internal entry points.
 
 ## 6. The `work_dir` question — rules
 

@@ -25,7 +25,7 @@ func Run(args []string) int {
 	// and `--version` — those manage the skill themselves or need to
 	// run before any install state exists. See maybeAutoUpgradeSkill.
 	switch cmd {
-	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec":
+	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec", "__owner-tick":
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
@@ -45,6 +45,10 @@ func Run(args []string) int {
 		// Hidden: the detached supervisor entry point for `flow do --auto`.
 		// Not listed in usage; invoked only by autoLauncher.
 		return cmdAutoExec(rest)
+	case "__owner-tick":
+		// Hidden: the detached owner-tick supervisor. Invoked only by
+		// ownerTickLauncher (via `flow owner tick-due`).
+		return cmdOwnerTick(rest)
 	case "run":
 		return cmdRun(rest)
 	case "done":
@@ -57,6 +61,8 @@ func Run(args []string) int {
 		return cmdEdit(rest)
 	case "update":
 		return cmdUpdate(rest)
+	case "owner":
+		return cmdOwner(rest)
 	case "archive":
 		return cmdArchive(rest)
 	case "unarchive":
