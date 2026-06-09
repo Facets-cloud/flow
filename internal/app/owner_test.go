@@ -107,6 +107,64 @@ func TestCmdOwnerListShowsNextTick(t *testing.T) {
 	}
 }
 
+// flow list owners is a verb-first alias for `flow owner list` — both
+// render the same listing (the surface owners share with task/project/
+// playbook). Only list and show are dual-formed; lifecycle verbs stay
+// grouped under `flow owner`.
+func TestCmdListOwnersAlias(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "started", Name: "S", WorkDir: "/x", Every: "30m",
+		NextWakeAt: sql.NullString{String: "2026-06-08T13:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	grouped := captureStdout(t, func() {
+		if rc := cmdOwner([]string{"list"}); rc != 0 {
+			t.Fatalf("owner list rc=%d", rc)
+		}
+	})
+	alias := captureStdout(t, func() {
+		if rc := cmdList([]string{"owners"}); rc != 0 {
+			t.Fatalf("list owners rc=%d", rc)
+		}
+	})
+	if alias != grouped {
+		t.Errorf("`flow list owners` must match `flow owner list`\n--- owner list ---\n%s\n--- list owners ---\n%s", grouped, alias)
+	}
+	if !strings.Contains(alias, "started") {
+		t.Errorf("expected owner in `flow list owners` output, got:\n%s", alias)
+	}
+}
+
+// flow show owner <slug> is a verb-first alias for `flow owner show <slug>`.
+func TestCmdShowOwnerAlias(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	grouped := captureStdout(t, func() {
+		if rc := cmdOwner([]string{"show", "o1"}); rc != 0 {
+			t.Fatalf("owner show rc=%d", rc)
+		}
+	})
+	alias := captureStdout(t, func() {
+		if rc := cmdShow([]string{"owner", "o1"}); rc != 0 {
+			t.Fatalf("show owner rc=%d", rc)
+		}
+	})
+	if alias != grouped {
+		t.Errorf("`flow show owner o1` must match `flow owner show o1`\n--- owner show ---\n%s\n--- show owner ---\n%s", grouped, alias)
+	}
+	if !strings.Contains(alias, "o1") {
+		t.Errorf("expected owner slug in `flow show owner` output, got:\n%s", alias)
+	}
+}
+
 func TestCmdOwnerStartSchedulesTick(t *testing.T) {
 	setupFlowRoot(t)
 	db := openFlowDB(t)

@@ -44,10 +44,10 @@ func (o listOpts) waitMax() int {
 	return waitingMaxRunes
 }
 
-// cmdList dispatches `flow list tasks|projects|playbooks|runs|tags`.
+// cmdList dispatches `flow list tasks|projects|playbooks|runs|tags|owners`.
 func cmdList(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', 'runs', or 'tags'")
+		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', 'runs', 'tags', or 'owners'")
 		return 2
 	}
 	switch args[0] {
@@ -61,6 +61,12 @@ func cmdList(args []string) int {
 		return listRunsCmd(args[1:])
 	case "tags":
 		return listTagsCmd(args[1:])
+	case "owners":
+		// Verb-first alias for `flow owner list` — owners share the
+		// list/show surface with the other top-level objects. Lifecycle
+		// verbs (start/pause/tick/next/retire) stay grouped under
+		// `flow owner`.
+		return ownerList(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2

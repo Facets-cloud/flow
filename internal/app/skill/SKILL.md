@@ -214,8 +214,8 @@ Playbook runs
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
 Owners (autonomous ownership — see §4.17)
-  flow owner list                   all owners with status + next tick
-  flow owner show   <slug>          charter + what it owns (in-flight / playbook runs / questions) + next tick
+  flow owner list                   all owners with status + next tick   (alias: flow list owners)
+  flow owner show   <slug>          charter + what it owns (in-flight / playbook runs / questions) + next tick   (alias: flow show owner <slug>)
   flow owner start  <slug>          begin ticking (first tick due now, then every <dur>)
   flow owner pause  <slug>          stop ticking, keep all state
   flow owner tick   <slug>          wake the owner NOW, interactively (a tab you drive); --auto = headless now

@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-// cmdShow dispatches `flow show task|project|playbook`. Per spec §5.4.
+// cmdShow dispatches `flow show task|project|playbook|owner`. Per spec §5.4.
 func cmdShow(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: show requires 'task', 'project', or 'playbook'")
+		fmt.Fprintln(os.Stderr, "error: show requires 'task', 'project', 'playbook', or 'owner'")
 		return 2
 	}
 	switch args[0] {
@@ -25,6 +25,10 @@ func cmdShow(args []string) int {
 		return showProjectCmd(args[1:])
 	case "playbook":
 		return showPlaybookCmd(args[1:])
+	case "owner":
+		// Verb-first alias for `flow owner show <slug>` — see cmdList's
+		// "owners" case for the rationale.
+		return ownerShow(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown show subcommand %q\n", args[0])
 	return 2
