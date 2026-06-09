@@ -50,6 +50,23 @@ const (
 // Used by tests; production code should leave it as "".
 var Override Backend
 
+// BackgroundOverride, if non-nil, forces IsBackground's result
+// regardless of $FLOW_TERM. Used by tests; production code leaves it nil.
+var BackgroundOverride *bool
+
+// IsBackground reports whether flow should spawn this session as a
+// terminal-free background agent ($FLOW_TERM=bg) rather than opening a
+// terminal tab. bg mode is NOT a terminal backend — it bypasses SpawnTab
+// entirely (see do.go's bg branch), so it lives in its own predicate
+// rather than as a Detect() case. The match is exact and case-sensitive,
+// mirroring Detect's $FLOW_TERM handling.
+func IsBackground() bool {
+	if BackgroundOverride != nil {
+		return *BackgroundOverride
+	}
+	return os.Getenv("FLOW_TERM") == "bg"
+}
+
 // Detect returns the backend that SpawnTab will use for the current
 // process environment. Exposed so callers (and tests) can inspect the
 // choice without spawning.

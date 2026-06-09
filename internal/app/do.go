@@ -188,6 +188,20 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+
+	// Background-agent mode ($FLOW_TERM=bg): spawn a terminal-free
+	// background session via the harness's BackgroundLauncher instead of
+	// opening a tab. Checked BEFORE the spawn machinery (parallel to the
+	// --auto branch). bg can't combine with --auto (different spawn
+	// shapes) or --here (binds the current session, no spawn).
+	if spawner.IsBackground() {
+		if *auto {
+			fmt.Fprintln(os.Stderr, "error: $FLOW_TERM=bg cannot be combined with --auto (both spawn their own session; pick one)")
+			return 2
+		}
+		return cmdDoBackground(db, task, h, *fresh, *dangerSkip, injectionText)
+	}
+
 	// The focus-an-existing-tab behavior only makes sense for the
 	// interactive path. For --auto there is no tab to focus; the
 	// equivalent "already in flight" guard is the auto_run_status check
@@ -514,6 +528,169 @@ func cmdDo(args []string) int {
 		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
 	}
 	return 0
+}
+
+// backgroundLauncherFor returns the harness's BackgroundLauncher
+// capability, or a clean error if the harness can't host background
+// sessions. This is the capability gate for $FLOW_TERM=bg: flow never
+// silently falls back to a terminal tab when the pinned harness lacks
+// the capability.
+func backgroundLauncherFor(h harness.Harness) (harness.BackgroundLauncher, error) {
+	bg, ok := h.(harness.BackgroundLauncher)
+	if !ok {
+		return nil, fmt.Errorf(
+			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (only claude does today) — unset FLOW_TERM to open a terminal tab instead",
+			h.Name())
+	}
+	return bg, nil
+}
+
+// bgSessionAlive reports whether sessionID is currently in the harness's
+// background-agent registry. A registry-query error is propagated so the
+// caller can decide (the resume path treats "can't tell" as "not alive"
+// and attempts a resume).
+func bgSessionAlive(bg harness.BackgroundLauncher, sessionID string) (bool, error) {
+	agents, err := bg.BackgroundAgents()
+	if err != nil {
+		return false, err
+	}
+	for _, a := range agents {
+		if strings.EqualFold(a.SessionID, sessionID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// cmdDoBackground is the $FLOW_TERM=bg branch of `flow do`. It spawns (or
+// resumes) a terminal-free background agent via the harness's
+// BackgroundLauncher and captures the harness-minted session id. Unlike
+// the interactive path, the session id is NOT pre-allocated — a
+// backgrounding harness manages its own id, so flow records the REAL id
+// returned after spawn (fixing the phantom-id leak the user's `--bg`
+// alias caused).
+//
+// Resume/already-running protocol:
+//   - no session yet (or --fresh) → spawn fresh + capture id
+//   - session bound AND alive in the registry → report, don't double-spawn
+//   - session bound but gone → resume by id (transcript preserved)
+func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, skipPerms bool, inject string) int {
+	bg, err := backgroundLauncherFor(h)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if task.WorkDir == "" {
+		fmt.Fprintf(os.Stderr, "error: task %q has no work_dir\n", task.Slug)
+		return 1
+	}
+	if task.Status == "done" {
+		fmt.Fprintf(os.Stderr,
+			"error: task %q is done; reopen it (flow update task %s --status in-progress) before running it in the background\n",
+			task.Slug, task.Slug)
+		return 1
+	}
+
+	// Project lookup is only for the display title (same as the tab path).
+	var project *flowdb.Project
+	if task.ProjectSlug.Valid {
+		p, perr := flowdb.GetProject(db, task.ProjectSlug.String)
+		if perr != nil && !errors.Is(perr, sql.ErrNoRows) {
+			fmt.Fprintf(os.Stderr, "error: get project: %v\n", perr)
+			return 1
+		}
+		project = p
+	}
+	title := buildTabTitle(project, task)
+	opts := harness.LaunchOpts{SkipPermissions: skipPerms, Inject: inject}
+
+	hasSession := task.SessionID.Valid && task.SessionID.String != ""
+
+	if hasSession && !fresh {
+		sid := task.SessionID.String
+		if alive, _ := bgSessionAlive(bg, sid); alive {
+			fmt.Printf("Already running in background: %s (session %s) — check your Agent View (`claude agents`)\n",
+				task.Slug, sid)
+			return 0
+		}
+		// Bound but no longer running: resume the same id.
+		if err := bg.ResumeBackground(sid, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		now := flowdb.NowISO()
+		if _, err := db.Exec(
+			`UPDATE tasks SET status='in-progress',
+			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+			 session_last_resumed=?, updated_at=? WHERE slug=?`,
+			now, now, now, task.Slug,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "error: record resume: %v\n", err)
+			return 1
+		}
+		bumpWorkdirUsed(db, task.WorkDir)
+		fmt.Printf("Resumed %s in background (session %s) — check your Agent View (`claude agents`)\n",
+			task.Slug, sid)
+		return 0
+	}
+
+	// Fresh spawn (no session, or --fresh discards the old one).
+	if fresh && hasSession {
+		fmt.Printf("--fresh: discarding old session %s\n", task.SessionID.String)
+	}
+	playbookSlug, isFirstRun := bgPlaybookContext(db, task)
+	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+
+	agent, err := bg.SpawnBackground(title, prompt, opts)
+	if err != nil {
+		// Nothing was written to the DB yet — clean failure, next attempt retries.
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	now := flowdb.NowISO()
+	// Record the harness-minted REAL session id alongside status + harness.
+	// COALESCE on harness mirrors the interactive bootstrap: set-once.
+	if _, err := db.Exec(
+		`UPDATE tasks SET status='in-progress',
+		 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+		 session_id=?, session_started=?,
+		 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
+		 updated_at=? WHERE slug=?`,
+		now, agent.SessionID, now, string(h.Name()), now, task.Slug,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "error: record session: %v\n", err)
+		return 1
+	}
+	bumpWorkdirUsed(db, task.WorkDir)
+	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  check your Agent View: `claude agents`\n",
+		task.Slug, agent.SessionID, agent.ShortID, title)
+	return 0
+}
+
+// bgPlaybookContext computes (playbookSlug, isFirstRun) for a task's
+// bootstrap prompt, mirroring the interactive bootstrap path. Returns
+// ("", false) for regular tasks.
+func bgPlaybookContext(db *sql.DB, task *flowdb.Task) (string, bool) {
+	if !task.PlaybookSlug.Valid {
+		return "", false
+	}
+	playbookSlug := task.PlaybookSlug.String
+	var runCount int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM tasks WHERE playbook_slug = ? AND kind = 'playbook_run' AND archived_at IS NULL`,
+		playbookSlug,
+	).Scan(&runCount); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: count playbook runs: %v\n", err)
+	}
+	return playbookSlug, runCount <= 1
+}
+
+// bumpWorkdirUsed updates workdirs.last_used_at, best-effort.
+func bumpWorkdirUsed(db *sql.DB, path string) {
+	if _, err := db.Exec(`UPDATE workdirs SET last_used_at = ? WHERE path = ?`, flowdb.NowISO(), path); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
+	}
 }
 
 // buildBootstrapPromptForKind dispatches to the right prompt variant

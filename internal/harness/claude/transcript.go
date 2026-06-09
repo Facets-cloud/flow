@@ -24,21 +24,43 @@ func (c *claude) RenderTranscript(cwd, sessionID string, compact bool, w io.Writ
 	if err != nil {
 		return fmt.Errorf("no home dir: %w", err)
 	}
-	encoded := EncodeCwd(cwd)
-	p := filepath.Join(home, ".claude", "projects", encoded, sessionID+".jsonl")
+	p, err := resolveTranscriptPath(home, cwd, sessionID)
+	if err != nil {
+		return err
+	}
 	f, err := os.Open(p)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf(
-				"claude transcript not found at %s (cwd=%q maps to project dir %q). "+
-					"the file might be under a different project dir if claude was started elsewhere",
-				p, cwd, encoded,
-			)
-		}
 		return fmt.Errorf("open claude transcript %s: %w", p, err)
 	}
 	defer f.Close()
 	return RenderJSONL(f, compact, w)
+}
+
+// resolveTranscriptPath locates a session's jsonl under
+// ~/.claude/projects. It first tries the deterministic cwd-encoded path
+// (~/.claude/projects/<EncodeCwd(cwd)>/<sid>.jsonl) — the fast, exact
+// hit for ordinary sessions. If that file is absent it falls back to a
+// glob on the globally-unique session id (~/.claude/projects/*/<sid>.jsonl).
+//
+// The glob fallback is what makes bg/worktree sessions resolvable: a
+// `claude --bg` session can auto-move into a git worktree and key its
+// jsonl under the PARENT repo's project dir rather than the worktree
+// cwd, so neither work_dir nor the agent's reported cwd reliably encodes
+// the path. Since the session id is unique, the glob is unambiguous.
+func resolveTranscriptPath(home, cwd, sessionID string) (string, error) {
+	projects := filepath.Join(home, ".claude", "projects")
+	det := filepath.Join(projects, EncodeCwd(cwd), sessionID+".jsonl")
+	if _, err := os.Stat(det); err == nil {
+		return det, nil
+	}
+	matches, _ := filepath.Glob(filepath.Join(projects, "*", sessionID+".jsonl"))
+	if len(matches) > 0 {
+		return matches[0], nil
+	}
+	return "", fmt.Errorf(
+		"claude transcript not found: no %s.jsonl under %s (tried cwd-encoded path %s and a glob on the session id)",
+		sessionID, projects, det,
+	)
 }
 
 // RenderJSONL renders a claude session jsonl byte-stream to w. Exposed

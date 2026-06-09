@@ -11,6 +11,54 @@ import (
 	"testing"
 )
 
+// TestIsBackground verifies the bg-mode selector. $FLOW_TERM=bg means
+// "spawn as a terminal-free background agent" — distinct from the
+// terminal backends Detect() returns, so it lives in its own predicate
+// that do.go checks before any SpawnTab.
+func TestIsBackground(t *testing.T) {
+	cases := []struct {
+		flowTerm string
+		want     bool
+	}{
+		{"bg", true},
+		{"", false},
+		{"iterm", false},
+		{"BG", false}, // case-sensitive, mirrors Detect's exact match
+		{"background", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flowTerm, func(t *testing.T) {
+			t.Setenv("FLOW_TERM", tc.flowTerm)
+			BackgroundOverride = nil
+			if got := IsBackground(); got != tc.want {
+				t.Errorf("IsBackground() with FLOW_TERM=%q: got %v, want %v",
+					tc.flowTerm, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBackgroundOverrideBeatsEnv confirms the test escape hatch: setting
+// BackgroundOverride pins IsBackground regardless of $FLOW_TERM, so tests
+// can force bg mode on or off without env mutation.
+func TestBackgroundOverrideBeatsEnv(t *testing.T) {
+	t.Cleanup(func() { BackgroundOverride = nil })
+
+	t.Setenv("FLOW_TERM", "iterm")
+	tru := true
+	BackgroundOverride = &tru
+	if !IsBackground() {
+		t.Errorf("BackgroundOverride=true: IsBackground()=false, want true")
+	}
+
+	t.Setenv("FLOW_TERM", "bg")
+	fls := false
+	BackgroundOverride = &fls
+	if IsBackground() {
+		t.Errorf("BackgroundOverride=false: IsBackground()=true, want false")
+	}
+}
+
 // TestDetectFromEnv verifies the TERM_PROGRAM → backend mapping. The
 // Override knob and the ZELLIJ / kitty / FLOW_TERM checks have higher
 // precedence and are checked separately below.

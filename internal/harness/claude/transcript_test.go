@@ -2,6 +2,8 @@ package claude
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -125,5 +127,75 @@ func TestRendersEntriesWithoutTimestamp(t *testing.T) {
 
 	if !strings.Contains(out, "NO TIMESTAMP entry") {
 		t.Errorf("entry without timestamp dropped:\n%s", out)
+	}
+}
+
+// TestResolveTranscriptPathPrefersDeterministic: when the cwd-encoded
+// path exists, it wins — no glob needed.
+func TestResolveTranscriptPathPrefersDeterministic(t *testing.T) {
+	home := t.TempDir()
+	cwd := "/Users/x/code/app"
+	sid := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+	det := filepath.Join(home, ".claude", "projects", EncodeCwd(cwd), sid+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(det), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(det, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A decoy under a different project dir must NOT be chosen.
+	decoyDir := filepath.Join(home, ".claude", "projects", "-Users-x-other")
+	if err := os.MkdirAll(decoyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(decoyDir, sid+".jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveTranscriptPath(home, cwd, sid)
+	if err != nil {
+		t.Fatalf("resolveTranscriptPath: %v", err)
+	}
+	if got != det {
+		t.Errorf("got %q, want deterministic path %q", got, det)
+	}
+}
+
+// TestResolveTranscriptPathGlobFallback simulates the bg/worktree gotcha:
+// the session ran with cwd under a git worktree but its jsonl is keyed
+// under the PARENT repo's project dir. The cwd-encoded path doesn't
+// exist, so resolution must fall back to a glob on the globally-unique
+// session id.
+func TestResolveTranscriptPathGlobFallback(t *testing.T) {
+	home := t.TempDir()
+	worktreeCwd := "/Users/x/flow/.claude/worktrees/bg-spawn-backend"
+	sid := "48d287d9-1ef0-4738-84b9-3110beb988c4"
+
+	// jsonl lives under the parent-repo project dir, not the worktree's.
+	parentDir := filepath.Join(home, ".claude", "projects", "-Users-x-flow")
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	actual := filepath.Join(parentDir, sid+".jsonl")
+	if err := os.WriteFile(actual, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveTranscriptPath(home, worktreeCwd, sid)
+	if err != nil {
+		t.Fatalf("resolveTranscriptPath (glob fallback): %v", err)
+	}
+	if got != actual {
+		t.Errorf("got %q, want globbed path %q", got, actual)
+	}
+}
+
+// TestResolveTranscriptPathNotFound: neither deterministic nor glob hits.
+func TestResolveTranscriptPathNotFound(t *testing.T) {
+	home := t.TempDir()
+	_, err := resolveTranscriptPath(home, "/Users/x/code/app", "ffffffff-0000-4000-8000-000000000000")
+	if err == nil {
+		t.Fatalf("resolveTranscriptPath: want error when no jsonl exists")
 	}
 }

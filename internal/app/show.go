@@ -300,6 +300,22 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	}
 	fmt.Printf("session_last_resumed:  %s\n", slast)
 
+	// Live background-agent status (claude --bg): a per-render
+	// `claude agents --json` lookup. Only prints when the bound session
+	// is currently a running background agent.
+	if a := bgAgentStatus(t); a != nil {
+		line := a.Status
+		if a.State != "" {
+			line += " / " + a.State
+		}
+		line += fmt.Sprintf(" (pid %d", a.PID)
+		if a.ShortID != "" {
+			line += ", id " + a.ShortID
+		}
+		line += ")"
+		fmt.Printf("bg_status:             %s\n", line)
+	}
+
 	// Autonomous-run status (only for tasks ever launched with --auto).
 	// Reconcile a stale 'running' whose supervisor died before printing.
 	if t.AutoRunStatus.Valid && t.AutoRunStatus.String != "" {
