@@ -782,6 +782,11 @@ that…", "record that I…", "document that I just…".
      ("noticed flaky output when X", "next iteration should consolidate
      steps 2 and 3"). Use this when capturing things that should inform
      the playbook itself, not a single run.
+   - For an **owner**, notes go under `~/.flow/owners/<slug>/updates/` —
+     this is the owner's cross-tick **journal** (§4.17). Each headless
+     tick reads the recent notes here to recover what it dispatched and
+     what to check, and appends a new note before exiting. Same `updates/`
+     convention as tasks and playbooks.
 5. Use the `Write` tool to create
    `~/.flow/tasks/<slug>/updates/<filename>.md` with the confirmed
    content. If the user is noting project-level progress, use
@@ -1762,13 +1767,23 @@ self-closes with the sweep:
 - **a human decision → a question task**: `flow add task "<the question>"
   --tag question --tag owner:<slug>`, assigned to the user.
 
-Each tick: read `owners/<slug>/charter.md`, review what you own via `flow
-list tasks --tag owner:<slug>` (advance/check on in-flight units; never
-duplicate work already tracked), observe per the charter, **dispatch** the
-needed playbook-runs / tasks / questions, and exit. Keep ticks SHORT —
-spin work out, never perform it inline. Do **not** use AskUserQuestion and
-do **not** block. Be conservative with irreversible/outward-facing actions
-unless the charter explicitly authorizes them.
+Each tick: (1) read `owners/<slug>/charter.md`; (2) **read your recent
+notes under `owners/<slug>/updates/`** — that's your *journal* from prior
+ticks (what you dispatched, what you're waiting on, what to check now), the
+same `updates/` convention tasks and playbooks use; (3) review everything
+you own with **`flow owner show <slug>`** — it lists in-flight tasks,
+**playbook runs**, and open questions with status (use this, NOT `flow list
+tasks`, which hides playbook runs); (4) observe per the charter and
+**dispatch** the needed playbook-runs / tasks / questions; (5) **before
+exiting, append a short note to `owners/<slug>/updates/<date>-tick.md`**
+recording what you observed, what you dispatched (with slugs), and what the
+next tick should check. That journal note is the owner's memory — the next
+tick starts from a *blank session* and knows only what's in the journal
+plus the task records. Keep ticks SHORT — spin work out, never perform it
+inline. Do **not** use AskUserQuestion and do **not** block. Be
+conservative with irreversible/outward-facing actions unless the charter
+explicitly authorizes them. Never duplicate work already tracked or
+re-spawn a run that's still in progress.
 
 **Answering an owner's question (the human side):** an owner question is a
 normal task tagged `question` + `owner:<slug>`. Answer it **in context** —

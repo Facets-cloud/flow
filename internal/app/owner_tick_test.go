@@ -243,6 +243,25 @@ func TestBuildOwnerTickPromptRoutesWorkThroughTasksAndPlaybooks(t *testing.T) {
 	}
 }
 
+func TestBuildOwnerTickPromptReadsAndWritesJournal(t *testing.T) {
+	p := strings.ToLower(buildOwnerTickPrompt("desk"))
+	for _, want := range []string{
+		"flow owner show desk", // review via owner show (includes runs), not list-tasks
+		"owners/desk/updates",  // journal location (like playbook/task updates)
+		"write a short note",   // record what it did for the next tick
+		"this is your memory",  // rationale
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("tick prompt must mention %q (read/write journal + owner show); prompt:\n%s", want, p)
+		}
+	}
+	// The review step must NOT use the runs-blind `flow list tasks --tag`
+	// (it excludes playbook_run, so the owner would miss its own runs).
+	if strings.Contains(p, "flow list tasks --tag owner:desk") {
+		t.Errorf("review step should use `flow owner show` (includes playbook runs), not `flow list tasks --tag`")
+	}
+}
+
 var errTickBoom = &tickTestErr{}
 
 type tickTestErr struct{}

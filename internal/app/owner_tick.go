@@ -235,10 +235,11 @@ func buildOwnerTickPrompt(slug string) string {
 			"Do these in order:\n"+
 			"1. Invoke the flow skill via the Skill tool.\n"+
 			"2. Read your charter at owners/%s/charter.md — your operating manual (what you own, how to observe, when to ask, when to escalate).\n"+
-			"3. Review what you already own: `flow list tasks --tag owner:%s` — in-flight work units, runs, and open questions. Advance/check on them; never duplicate work already tracked.\n"+
+			"3. Catch up on yourself: read the most recent note(s) under owners/%s/updates/ — that is your JOURNAL from prior ticks (what you dispatched, what you were waiting on, what to check now). Then review everything you own with `flow owner show %s` — it lists your in-flight tasks, playbook runs, AND open questions with their current status (do NOT use `flow list tasks`, which hides playbook runs). Advance or check on what's there; never duplicate work already tracked and never re-spawn a run that is still in progress.\n"+
 			"4. Observe the world per your charter, then DISPATCH what needs doing as playbook-runs / tasks / questions per the rule above. Keep the tick SHORT — spin work out, never perform it inline.\n"+
 			"5. Be conservative with irreversible or outward-facing actions (push, PR, deploy, messaging) unless your charter EXPLICITLY authorizes them.\n"+
-			"6. When you've dispatched this tick's work, exit. Your next tick is scheduled automatically. Do not loop or wait.\n",
-		slug, slug, slug, slug, slug, slug,
+			"6. Before you exit, WRITE a short note to owners/%s/updates/<today>-tick.md recording what you observed, what you dispatched (with the task/run slugs), and what your NEXT tick should check. This is your memory — the next tick starts from a blank session and knows only what you write here plus the task records.\n"+
+			"7. Then exit. Your next tick is scheduled automatically. Do not loop or wait.\n",
+		slug, slug, slug, slug, slug, slug, slug, slug,
 	)
 }
