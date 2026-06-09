@@ -294,6 +294,14 @@ func ownerNext(args []string) int {
 		next = t
 	}
 
+	// Reject a wake time in the past: it would leave the owner perpetually
+	// due (ticking every scheduler pass). A tick self-paces FORWARD, so a
+	// past time is always a mistake (stale --at or negative --in).
+	if next.Before(time.Now()) {
+		fmt.Fprintf(os.Stderr, "error: next tick %s is in the past — pick a future time (ticks self-pace forward)\n", next.Format(time.RFC3339))
+		return 2
+	}
+
 	dbPath, err := flowDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -506,6 +514,16 @@ func addOwner(args []string) int {
 	var slug string
 	if *slugFlag != "" {
 		slug = *slugFlag
+		// An explicit slug is taken as-is (not auto-mangled like the
+		// generated path). Pre-check for a collision so the user gets a
+		// friendly message instead of a raw UNIQUE-constraint error.
+		if _, err := flowdb.GetOwner(db, slug); err == nil {
+			fmt.Fprintf(os.Stderr, "error: owner slug %q already exists — pick another --slug\n", slug)
+			return 1
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	} else {
 		baseSlug, err := Slugify(name)
 		if err != nil {

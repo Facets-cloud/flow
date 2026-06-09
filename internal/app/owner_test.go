@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCmdAddOwnerHappyPath(t *testing.T) {
@@ -48,6 +49,60 @@ func TestCmdAddOwnerHappyPath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "owners", "af-maint", "updates")); err != nil {
 		t.Errorf("updates/ dir missing: %v", err)
+	}
+}
+
+// `flow owner next` must reject a wake time already in the past — a stale
+// --at (or a negative --in) would leave the owner perpetually due, ticking
+// every scheduler pass.
+func TestCmdOwnerNextRejectsPastTime(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		NextWakeAt: sql.NullString{String: future, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdOwner([]string{"next", "o1", "--at", "2020-01-01T00:00:00Z"}); rc == 0 {
+		t.Fatalf("expected non-zero rc for a past --at, got 0")
+	}
+	// A negative --in must be rejected the same way.
+	if rc := cmdOwner([]string{"next", "o1", "--in", "-5m"}); rc == 0 {
+		t.Fatalf("expected non-zero rc for a negative --in, got 0")
+	}
+
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.NextWakeAt.String != future {
+		t.Errorf("next_wake_at = %q, want unchanged %q (past time should not be written)", o.NextWakeAt.String, future)
+	}
+}
+
+// An explicit --slug that collides with an existing owner should fail with
+// a friendly message, not a raw SQL UNIQUE-constraint error.
+func TestCmdAddOwnerDuplicateSlugFriendlyError(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"owner", "first", "--work-dir", wd, "--slug", "dup"}); rc != 0 {
+		t.Fatalf("seed owner rc=%d", rc)
+	}
+
+	read := captureStderr(t)
+	rc := cmdAdd([]string{"owner", "second", "--work-dir", wd, "--slug", "dup"})
+	stderr := read()
+	if rc == 0 {
+		t.Fatalf("expected non-zero rc for a duplicate --slug, got 0")
+	}
+	if strings.Contains(stderr, "UNIQUE") || strings.Contains(stderr, "constraint") {
+		t.Errorf("expected a friendly message, got raw SQL error:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "dup") || !strings.Contains(strings.ToLower(stderr), "exists") {
+		t.Errorf("expected message naming the slug and 'exists', got:\n%s", stderr)
 	}
 }
 

@@ -105,9 +105,10 @@ an intent, follow the matching recipe instead of re-asking via §1a.
   that take ongoing responsibility for an outcome (e.g. "keep all PRs in
   repo X green"; "maintain repo Y: fix bugs → PR → merge → deploy → verify").
   An owner is NOT a single Claude session — it is state (a `charter.md`
-  operating manual + a ledger) plus a clock: it wakes on a fixed interval
-  (`--every`), runs a *fresh headless tick* (a brand-new session each time),
-  acts, then schedules its next tick. Each owner has a slug, work_dir,
+  operating manual + a ledger) plus a clock: each tick it runs a *fresh
+  headless tick* (a brand-new session each time), acts, then **self-paces**
+  its next wake (`flow owner next`); `--every` is only the fallback
+  heartbeat floor, not a fixed schedule. Each owner has a slug, work_dir,
   optional `project_slug`, a status (`active`/`paused`/`retired`), and an
   interval. The tasks an owner creates or manages are tagged `owner:<slug>`;
   a task it parks for a human decision is also tagged `question`. See §4.17.

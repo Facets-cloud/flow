@@ -169,6 +169,59 @@ func TestCmdOwnerTickPreservesSelfPacedNextWake(t *testing.T) {
 	}
 }
 
+// The detached tick (`flow __owner-tick`) must not run the harness for a
+// non-active owner (paused/retired) — a guard for the window between
+// dispatch and execution, and for any manual --auto on a paused owner.
+func TestCmdOwnerTickDetachedSkipsNonActive(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "paused",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	old := ownerTickRunner
+	ownerTickRunner = func(h harness.Harness, prompt string) error { ran = true; return nil }
+	t.Cleanup(func() { ownerTickRunner = old })
+
+	cmdOwnerTick([]string{"o1"})
+
+	if ran {
+		t.Errorf("harness should NOT run for a paused owner")
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.LastTickStatus.Valid {
+		t.Errorf("no tick should be recorded for a skipped paused owner, got %q", o.LastTickStatus.String)
+	}
+}
+
+// The hand-triggered `flow owner tick` must refuse a non-active owner with
+// guidance rather than silently spawning a session.
+func TestCmdOwnerTickManualRefusesNonActive(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "paused",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spawned := false
+	old := ownerInteractiveLauncher
+	ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error { spawned = true; return nil }
+	t.Cleanup(func() { ownerInteractiveLauncher = old })
+
+	if rc := ownerTickManual([]string{"o1"}); rc == 0 {
+		t.Errorf("expected non-zero rc for a paused owner, got 0")
+	}
+	if spawned {
+		t.Errorf("should NOT spawn an interactive tick for a paused owner")
+	}
+}
+
 func TestCmdOwnerTickClearsTickPID(t *testing.T) {
 	setupFlowRoot(t)
 	db := openFlowDB(t)

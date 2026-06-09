@@ -133,6 +133,16 @@ func ownerTickManual(args []string) int {
 		return 1
 	}
 
+	// A paused/retired owner does not tick. Refuse the hand-triggered tick
+	// with guidance rather than silently spawning a session that
+	// contradicts the owner's state.
+	if o.Status != "active" {
+		fmt.Fprintf(os.Stderr,
+			"error: owner %q is %s — resume it first with `flow owner start %s` (a paused/retired owner does not tick)\n",
+			slug, o.Status, slug)
+		return 1
+	}
+
 	if *auto {
 		root, err := flowRoot()
 		if err != nil {
@@ -276,6 +286,16 @@ func cmdOwnerTick(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: load owner %q: %v\n", slug, err)
 		return 1
+	}
+
+	// Status guard: only active owners tick. The scheduler already filters
+	// via DueOwners, but an owner can be paused/retired in the window
+	// between dispatch and this detached run (or a manual --auto on a
+	// paused owner). Skip cleanly without running the harness or recording
+	// a tick.
+	if o.Status != "active" {
+		fmt.Printf("owner %q is %s (not active) — skipping tick\n", slug, o.Status)
+		return 0
 	}
 
 	var hname string

@@ -8,9 +8,10 @@ import (
 )
 
 // Owner mirrors the owners table. An owner is a durable, named,
-// repo-scoped self-prompting controller: it wakes on a time interval
-// (Every), runs a headless tick, and schedules its NextWakeAt. It is
-// not a single Claude session — each tick is a fresh run. See
+// repo-scoped self-prompting controller: each tick runs a headless run
+// and self-paces its NextWakeAt; Every is only the fallback heartbeat
+// floor, not a fixed schedule. It is not a single Claude session — each
+// tick is a fresh run. See
 // docs/superpowers/specs/2026-06-08-autonomous-owner-harness-design.md.
 type Owner struct {
 	Slug           string
