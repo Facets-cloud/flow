@@ -9,5 +9,6 @@ Thanks to everyone who has contributed to flow.
 - [Swapnil Dahiphale](https://github.com/swapnildahiphale) (@swapnildahiphale)
 - [Vishnu Kadavarath Viswambharan](https://github.com/vishnukv-facets) (@vishnukv-facets)
 - [Ashish Chaturvedi](https://github.com/cyphernext) (@cyphernext)
+- [Sanmesh Kakade](https://github.com/sanmesh-kakade) (@sanmesh-kakade)
 
 To add yourself, open a PR — see [CONTRIBUTING.md](CONTRIBUTING.md).

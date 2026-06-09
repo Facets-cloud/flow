@@ -22,7 +22,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   gap where flow injects context at `SessionStart` but nothing prompts for
   the `updates/` notes a future `flow do` reads back on resume — so on
   heavy days they go unwritten and the next resume reads a stale brief.
-  ([#72](https://github.com/Facets-cloud/flow/issues/72))
+  ([#73](https://github.com/Facets-cloud/flow/pull/73) by
+  [@sanmesh-kakade](https://github.com/sanmesh-kakade), closes
+  [#72](https://github.com/Facets-cloud/flow/issues/72))
 
 ## [0.1.0-alpha.21] — 2026-06-11
 
