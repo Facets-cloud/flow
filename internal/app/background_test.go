@@ -66,17 +66,20 @@ func stubBGMode(t *testing.T) {
 }
 
 type bgCalls struct {
-	spawn, resume, agents int
-	lastSpawn, lastResume []string
+	spawn, resume, agents     int
+	lastSpawn, lastResume     []string
+	spawnBanner, resumeBanner string
 }
 
 // stubBGCommand swaps claude.BGCommandRunner with a recorder that
-// dispatches on args: `agents --json` returns *agentsJSON (mutable so a
-// test can change registry state mid-run), `--resume` is a resume, the
-// rest are spawns (returning bgBanner).
+// dispatches on args: `agents` returns *agentsJSON (mutable so a test can
+// change registry state mid-run), `--resume` returns resumeBanner, the
+// rest are spawns (returning spawnBanner). Both banners default to
+// bgBanner; tests set resumeBanner to simulate the new id --bg mints on
+// resume.
 func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 	t.Helper()
-	c := &bgCalls{}
+	c := &bgCalls{spawnBanner: bgBanner, resumeBanner: bgBanner}
 	old := claude.BGCommandRunner
 	claude.BGCommandRunner = func(args []string) ([]byte, error) {
 		if len(args) >= 1 && args[0] == "agents" {
@@ -87,12 +90,12 @@ func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 			if a == "--resume" {
 				c.resume++
 				c.lastResume = args
-				return []byte(""), nil
+				return []byte(c.resumeBanner), nil
 			}
 		}
 		c.spawn++
 		c.lastSpawn = args
-		return []byte(bgBanner), nil
+		return []byte(c.spawnBanner), nil
 	}
 	t.Cleanup(func() { claude.BGCommandRunner = old })
 	return c
@@ -162,8 +165,9 @@ func TestCmdDoBackgroundAlreadyRunning(t *testing.T) {
 	}
 }
 
-// TestCmdDoBackgroundResumeWhenGone: a bound session absent from the
-// registry is resumed (same id), not re-spawned.
+// TestCmdDoBackgroundResumeWhenGone: a bound session ABSENT from the
+// registry is brought back via --bg --resume <oldid>, and because --bg
+// mints a fresh id, flow re-records the NEW captured id (not the dead one).
 func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "bgt")
@@ -175,18 +179,32 @@ func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 	if rc := cmdDo([]string{"bgt"}); rc != 0 { // fresh spawn, binds bgFullSID
 		t.Fatalf("first cmdDo rc=%d", rc)
 	}
-	reg = "[]" // session no longer running
+
+	// Old session removed; resume forks a new id (99aabbcc…), which must
+	// be the only thing in the registry at capture time.
+	const newSID = "99aabbcc-0000-4000-8000-000000000000"
+	reg = bgAgentsJSON(newSID)
+	c.resumeBanner = "backgrounded · 99aabbcc · bgt\n"
+
 	if rc := cmdDo([]string{"bgt"}); rc != 0 {
 		t.Fatalf("resume cmdDo rc=%d", rc)
 	}
 	if c.spawn != 1 {
-		t.Errorf("spawn calls = %d, want 1 (resume must not re-spawn)", c.spawn)
+		t.Errorf("spawn calls = %d, want 1 (resume must not re-spawn fresh)", c.spawn)
 	}
 	if c.resume != 1 {
 		t.Fatalf("resume calls = %d, want 1", c.resume)
 	}
 	if !pairArg(c.lastResume, "--resume", bgFullSID) {
-		t.Errorf("resume argv wrong: %v", c.lastResume)
+		t.Errorf("resume must --resume the OLD id; argv: %v", c.lastResume)
+	}
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "bgt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionID.String != newSID {
+		t.Errorf("session_id after resume = %q, want re-recorded new id %q", task.SessionID.String, newSID)
 	}
 }
 

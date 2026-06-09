@@ -89,14 +89,24 @@ type BackgroundLauncher interface {
 	// BackgroundAgent.SessionID is what flow records on the task.
 	SpawnBackground(name, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
-	// ResumeBackground resumes an existing background session by full
-	// session id (transcript preserved, same id). opts.Inject, if set,
-	// is delivered as the first message after resume.
-	ResumeBackground(sessionID string, opts LaunchOpts) error
+	// ResumeBackground brings a no-longer-tracked background session's
+	// conversation back as a fresh background agent, seeded from the
+	// prior session's transcript. NOTE: a backgrounding harness manages
+	// its own id, so this MINTS A NEW session id (the prior history is
+	// inherited, but `claude --bg --resume <id>` does not preserve the
+	// id — verified against the CLI and documented behavior). The
+	// returned BackgroundAgent carries the NEW id, which flow re-records
+	// on the task. opts.Inject, if set, is delivered as the first
+	// message after resume.
+	ResumeBackground(sessionID string, opts LaunchOpts) (BackgroundAgent, error)
 
-	// BackgroundAgents returns the current background-agent registry.
-	// Used to decide spawn-vs-resume-vs-already-running and to surface
-	// live status in `flow show` / `flow list`.
+	// BackgroundAgents returns the current background-agent registry
+	// (claude: `claude agents --json --all`, so exited / failed /
+	// completed sessions are included, not just live ones). Used to
+	// decide spawn-vs-attach-vs-resume and to surface status in
+	// `flow show` / `flow list`. A registry entry with a zero PID is
+	// not currently running (its process exited) but is still
+	// recoverable by attaching in the Agent View.
 	BackgroundAgents() ([]BackgroundAgent, error)
 }
 

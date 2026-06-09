@@ -173,18 +173,26 @@ func TestSpawnBackgroundShortIDNotInRegistry(t *testing.T) {
 	}
 }
 
-func TestResumeBackgroundArgv(t *testing.T) {
+// ResumeBackground resumes the OLD id under --bg but, because --bg mints
+// a fresh id, must return the NEW captured agent (history inherited).
+func TestResumeBackgroundCapturesNewID(t *testing.T) {
 	argv := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
-	sid := "48d287d9-1ef0-4738-84b9-3110beb988c4"
-	if err := h.ResumeBackground(sid, harness.LaunchOpts{SkipPermissions: true}); err != nil {
+	oldSID := "00000000-1111-4222-8333-444444444444"
+	agent, err := h.ResumeBackground(oldSID, harness.LaunchOpts{SkipPermissions: true})
+	if err != nil {
 		t.Fatalf("ResumeBackground: %v", err)
 	}
-	if !contains(*argv, "--bg") || !containsPair(*argv, "--resume", sid) {
+	// argv resumes the OLD id under --bg ...
+	if !contains(*argv, "--bg") || !containsPair(*argv, "--resume", oldSID) {
 		t.Errorf("resume argv wrong: %v", *argv)
 	}
 	if !contains(*argv, "--dangerously-skip-permissions") {
 		t.Errorf("resume argv missing skip flag: %v", *argv)
+	}
+	// ... but returns the NEW id minted by --bg (captured via banner + registry).
+	if agent.SessionID != "48d287d9-1ef0-4738-84b9-3110beb988c4" {
+		t.Errorf("ResumeBackground returned %q, want the newly-minted id", agent.SessionID)
 	}
 }
 
@@ -197,6 +205,21 @@ func TestBackgroundAgentsList(t *testing.T) {
 	}
 	if len(agents) != 2 {
 		t.Fatalf("BackgroundAgents: got %d, want 2", len(agents))
+	}
+}
+
+// BackgroundAgents must query with --all so exited/failed/completed
+// sessions are visible (needed to tell "removed" from "present, idle").
+func TestBackgroundAgentsUsesAll(t *testing.T) {
+	var gotArgs []string
+	old := BGCommandRunner
+	BGCommandRunner = func(args []string) ([]byte, error) { gotArgs = args; return []byte("[]"), nil }
+	t.Cleanup(func() { BGCommandRunner = old })
+	if _, err := New().(harness.BackgroundLauncher).BackgroundAgents(); err != nil {
+		t.Fatalf("BackgroundAgents: %v", err)
+	}
+	if !contains(gotArgs, "agents") || !contains(gotArgs, "--json") || !contains(gotArgs, "--all") {
+		t.Errorf("BackgroundAgents args = %v, want agents --json --all", gotArgs)
 	}
 }
 

@@ -167,7 +167,11 @@ func liveSessionsForTasks(tasks []*flowdb.Task) map[string]int {
 		if bg, ok := h.(harness.BackgroundLauncher); ok {
 			if agents, err := bg.BackgroundAgents(); err == nil {
 				for _, a := range agents {
-					if a.SessionID != "" {
+					// Only a running process counts as "live". --all
+					// surfaces exited/failed/done sessions too (pid 0);
+					// those are recoverable but not currently running, so
+					// they must not light up the [live] marker.
+					if a.SessionID != "" && a.PID > 0 {
 						merged[strings.ToLower(a.SessionID)]++
 					}
 				}

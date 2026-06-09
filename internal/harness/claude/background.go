@@ -83,32 +83,29 @@ func parseBackgroundAgents(raw []byte) ([]harness.BackgroundAgent, error) {
 	return out, nil
 }
 
-// BackgroundAgents runs `claude agents --json` and decodes the registry.
+// BackgroundAgents runs `claude agents --json --all` and decodes the
+// registry. --all includes exited / failed / completed sessions (not
+// just live ones) so flow can tell "session removed" apart from "session
+// present but not currently running" — the former needs a resume, the
+// latter just needs the user to attach in the Agent View.
 func (c *claude) BackgroundAgents() ([]harness.BackgroundAgent, error) {
-	out, err := BGCommandRunner([]string{"agents", "--json"})
+	out, err := BGCommandRunner([]string{"agents", "--json", "--all"})
 	if err != nil {
-		return nil, fmt.Errorf("claude agents --json: %w", err)
+		return nil, fmt.Errorf("claude agents --json --all: %w", err)
 	}
 	return parseBackgroundAgents(out)
 }
 
-// SpawnBackground runs `claude --bg --name <name> <prompt>
-// [--dangerously-skip-permissions]`, parses the short id from the banner,
-// then resolves the full session id by matching that short id in the
-// agent registry (one deterministic lookup — no polling, no race, since
-// the banner only prints after the session is registered). opts.Inject is
-// appended to the prompt behind InjectionMarker, mirroring LaunchCmd.
-func (c *claude) SpawnBackground(name, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
-	if opts.Inject != "" {
-		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
-	args := []string{"--bg", "--name", name, prompt}
-	if opts.SkipPermissions {
-		args = append(args, "--dangerously-skip-permissions")
-	}
+// launchAndCapture runs a `claude --bg …` command, parses the short id
+// from its banner, and resolves the full session id by matching that
+// short id in the agent registry. One deterministic lookup — no polling,
+// no race — because `--bg` only prints the banner after the session is
+// registered. Shared by SpawnBackground and ResumeBackground (which
+// differ only in their argv; --bg mints a fresh id either way).
+func (c *claude) launchAndCapture(args []string, what string) (harness.BackgroundAgent, error) {
 	out, err := BGCommandRunner(args)
 	if err != nil {
-		return harness.BackgroundAgent{}, fmt.Errorf("claude --bg: %w (output: %s)", err, strings.TrimSpace(string(out)))
+		return harness.BackgroundAgent{}, fmt.Errorf("claude --bg (%s): %w (output: %s)", what, err, strings.TrimSpace(string(out)))
 	}
 	shortID, err := parseBackgroundBanner(string(out))
 	if err != nil {
@@ -124,14 +121,31 @@ func (c *claude) SpawnBackground(name, prompt string, opts harness.LaunchOpts) (
 		}
 	}
 	return harness.BackgroundAgent{}, fmt.Errorf(
-		"spawned background agent %s but it is not in `claude agents --json` — cannot capture its session id", shortID)
+		"backgrounded agent %s but it is not in `claude agents --json --all` — cannot capture its session id", shortID)
+}
+
+// SpawnBackground runs `claude --bg --name <name> <prompt>
+// [--dangerously-skip-permissions]` and captures the minted session id.
+// opts.Inject is appended to the prompt behind InjectionMarker, mirroring
+// LaunchCmd.
+func (c *claude) SpawnBackground(name, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+	if opts.Inject != "" {
+		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
+	}
+	args := []string{"--bg", "--name", name, prompt}
+	if opts.SkipPermissions {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	return c.launchAndCapture(args, "spawn")
 }
 
 // ResumeBackground runs `claude --bg --resume <sessionID>
-// [<injection>] [--dangerously-skip-permissions]`, continuing the same
-// session (id and transcript preserved). Output is ignored — only the
-// exit status matters.
-func (c *claude) ResumeBackground(sessionID string, opts harness.LaunchOpts) error {
+// [<injection>] [--dangerously-skip-permissions]`. `--bg` does not honor
+// `--resume`'s id — it starts a fresh background process that *inherits
+// the prior conversation* under a NEW id (verified against the CLI). So
+// this captures and returns the new id exactly like SpawnBackground; the
+// caller re-records it on the task.
+func (c *claude) ResumeBackground(sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
 	args := []string{"--bg", "--resume", sessionID}
 	if opts.Inject != "" {
 		args = append(args, harness.InjectionMarker+"\n"+opts.Inject)
@@ -139,8 +153,5 @@ func (c *claude) ResumeBackground(sessionID string, opts harness.LaunchOpts) err
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	if out, err := BGCommandRunner(args); err != nil {
-		return fmt.Errorf("claude --bg --resume %s: %w (output: %s)", sessionID, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return c.launchAndCapture(args, "resume")
 }

@@ -545,21 +545,37 @@ func backgroundLauncherFor(h harness.Harness) (harness.BackgroundLauncher, error
 	return bg, nil
 }
 
-// bgSessionAlive reports whether sessionID is currently in the harness's
-// background-agent registry. A registry-query error is propagated so the
-// caller can decide (the resume path treats "can't tell" as "not alive"
-// and attempts a resume).
-func bgSessionAlive(bg harness.BackgroundLauncher, sessionID string) (bool, error) {
+// bgAgentInRegistry returns the registry entry for sessionID (any state:
+// working / blocked / idle / done / failed / stopped), or nil if the
+// session is absent (removed / no longer tracked) or the registry query
+// fails. "Present" means the Agent View still knows it — recoverable by
+// attaching; "absent" means it must be brought back via a resume.
+func bgAgentInRegistry(bg harness.BackgroundLauncher, sessionID string) *harness.BackgroundAgent {
 	agents, err := bg.BackgroundAgents()
 	if err != nil {
-		return false, err
+		return nil
 	}
-	for _, a := range agents {
-		if strings.EqualFold(a.SessionID, sessionID) {
-			return true, nil
+	for i := range agents {
+		if strings.EqualFold(agents[i].SessionID, sessionID) {
+			return &agents[i]
 		}
 	}
-	return false, nil
+	return nil
+}
+
+// bgStateLabel renders a background agent's coarse condition for user
+// messages, e.g. "busy/working" while live or just "stopped" once exited.
+func bgStateLabel(a *harness.BackgroundAgent) string {
+	switch {
+	case a.Status != "" && a.State != "":
+		return a.Status + "/" + a.State
+	case a.State != "":
+		return a.State
+	case a.Status != "":
+		return a.Status
+	default:
+		return "unknown"
+	}
 }
 
 // cmdDoBackground is the $FLOW_TERM=bg branch of `flow do`. It spawns (or
@@ -608,13 +624,29 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 
 	if hasSession && !fresh {
 		sid := task.SessionID.String
-		if alive, _ := bgSessionAlive(bg, sid); alive {
-			fmt.Printf("Already running in background: %s (session %s) — check your Agent View (`claude agents`)\n",
-				task.Slug, sid)
+		// Is the session still known to the Agent View (any state)?
+		if a := bgAgentInRegistry(bg, sid); a != nil {
+			// Present — don't spawn. A bg session is recovered by
+			// attaching in the Agent View (a stopped/failed one restarts
+			// from where it left off, keeping its id), so flow points the
+			// user there rather than re-spawning. The recorded id stays
+			// valid.
+			if a.PID > 0 {
+				fmt.Printf("Already running in background: %s (%s, %s) — attach via your Agent View: `claude attach %s`\n",
+					task.Slug, a.ShortID, bgStateLabel(a), a.ShortID)
+			} else {
+				fmt.Printf("%s is in your Agent View (%s, %s) — attach to resume it (a stopped/failed session restarts on attach): `claude attach %s`\n",
+					task.Slug, a.ShortID, bgStateLabel(a), a.ShortID)
+			}
 			return 0
 		}
-		// Bound but no longer running: resume the same id.
-		if err := bg.ResumeBackground(sid, opts); err != nil {
+
+		// Absent from the registry (removed / no longer tracked): bring the
+		// conversation back as a fresh bg agent seeded from its transcript.
+		// --bg mints a NEW id, so capture and re-record it (otherwise flow
+		// would keep pointing at the dead id — the phantom-id bug).
+		agent, err := bg.ResumeBackground(sid, opts)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
@@ -622,15 +654,16 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		if _, err := db.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
-			 session_last_resumed=?, updated_at=? WHERE slug=?`,
-			now, now, now, task.Slug,
+			 session_id=?, session_started=COALESCE(session_started, ?), session_last_resumed=?, updated_at=?
+			 WHERE slug=?`,
+			now, agent.SessionID, now, now, now, task.Slug,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: record resume: %v\n", err)
 			return 1
 		}
 		bumpWorkdirUsed(db, task.WorkDir)
-		fmt.Printf("Resumed %s in background (session %s) — check your Agent View (`claude agents`)\n",
-			task.Slug, sid)
+		fmt.Printf("Resumed %s in background (prior session was no longer tracked; brought the conversation back as %s · session %s)\n  check your Agent View: `claude agents`\n",
+			task.Slug, agent.ShortID, agent.SessionID)
 		return 0
 	}
 

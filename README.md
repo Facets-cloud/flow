@@ -287,13 +287,18 @@ single `claude agents --json` lookup — then records *that* id on the
 task. (Background-capable harnesses manage their own session id, so
 flow captures the real one after launch rather than pre-allocating it.)
 
-Re-running `flow do <task>` is idempotent: if the session is still live
-in the Agent View, flow reports "already running" instead of spawning a
-duplicate; if it has exited, flow resumes the same id (transcript
-preserved). flow opens nothing — you switch to the session yourself via
-the Agent View (`claude attach <id>` / `claude logs <id>`).
+Re-running `flow do <task>` is idempotent and mirrors how the Agent View
+itself works. If the session is still known to the Agent View — running,
+idle, or even stopped/failed after a shutdown — flow doesn't spawn a
+duplicate; it points you at it (`claude attach <id>`), and attaching a
+stopped or failed session restarts it from where it left off, keeping its
+id. Only when the session has been removed from the Agent View entirely
+does flow bring the conversation back: `claude --bg` starts a fresh
+process seeded from the saved transcript, and because `--bg` manages its
+own id (it does **not** preserve `--resume`'s id), flow captures and
+re-records the new id so the task never points at a dead session.
 `flow show` and `flow list` surface each bg task's live status (busy /
-idle, working / blocked, pid) from the same `claude agents --json`
+idle, working / blocked / done, pid) from a `claude agents --json --all`
 query, and `flow transcript <task>` finds the jsonl by globbing the
 session id (so it resolves even when a bg session relocates into a git
 worktree). Background mode is Claude-only today — pointing `FLOW_TERM=bg`
