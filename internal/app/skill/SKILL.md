@@ -1715,188 +1715,116 @@ session start. Bash subprocess cwd is irrelevant. `cd
 
 ### 4.17 Owners (autonomous ownership)
 
-An **owner** takes durable, ongoing responsibility for an outcome and
-drives it *itself* — re-waking on an interval, re-evaluating the world,
-and acting — instead of being a one-shot run. It is the self-perpetuating
-layer above tasks/playbooks. An owner is **not a single Claude session**:
-it is a `charter.md` (its operating manual) + a ledger + a clock. Each
-interval it runs a **fresh headless tick** (a new session) that reads the
-charter, reviews what it owns, acts, and exits — then the next tick is
-scheduled automatically.
+An **owner** takes durable, ongoing responsibility for an outcome and drives
+it itself — re-waking, re-evaluating, acting — instead of a one-shot run. It
+is **not a single Claude session**: it's a `charter.md` (operating manual) +
+a `updates/` journal + a clock. Each interval it runs a **fresh headless
+tick** (new session) that reads the charter + journal, reviews what it owns,
+orchestrates, self-paces its next wake, and exits.
 
-**Triggers (create an owner):** "create an owner for X", "have something
-keep X true", "automate maintenance of <repo>", "keep all PRs green",
-"own <repo>'s bug-fixing", "run this on a loop forever".
+**Triggers:** "create an owner for X", "keep X true", "automate maintenance
+of <repo>", "own <repo>'s bug-fixing", "run this on a loop".
 
-**Creating an owner — interview (operational, like task intake):** the
-charter is the owner's operating manual, so the interview is about *how to
-operate*, not just what. Ask, one at a time:
-1. **What it owns** — the outcome/responsibility in one sentence.
-2. **Where** — work_dir (use the §6 recipe).
-3. **How to observe & act** — what to look at (open PRs, CI, prod health)
-   and what to do when something is off-target. Bootstrap from what flow
-   already knows — the repo's `CLAUDE.md`, the KB (`processes.md` etc.),
-   the workdir registry, `gh` — and only ask the gaps.
-4. **When to ask vs. act** — which decisions need a human (approvals,
-   ambiguous calls) vs. what it may just do.
-5. **Fallback interval** — `--every` (e.g. `1h`, `24h`; optional, default
-   `24h`). This is NOT a rigid schedule — it's only the *heartbeat floor*.
-   Ticks **self-pace**: each run decides its own next wake. So don't
-   interview for a fixed cron cadence; just pick a loose fallback.
-Then `flow add owner "<name>" --work-dir <p> --every <dur> [--project <s>] [--slug <s>]`,
-and write the gathered operating manual into the owner's `charter.md`
-(overwrite the stub — Read once, then Write). Offer to **start** it
-(`flow owner start <slug>`) so it begins ticking.
+**Creating one — operational interview** (the charter is the *how-to-operate*
+manual). Ask one at a time: (1) **what it owns** (one sentence); (2) **where**
+(work_dir, §6 recipe); (3) **how to observe & act** — what to watch (PRs, CI,
+prod health) and do when off-target, bootstrapping from CLAUDE.md / KB /
+workdir registry / `gh`, asking only the gaps; (4) **when to ask vs. act**;
+(5) **fallback interval** `--every` (optional, default 24h) — NOT a fixed
+schedule, just the heartbeat floor (ticks self-pace). Then `flow add owner
+"<name>" --work-dir <p> [--every <dur>] [--project <s>] [--slug <s>]`, write
+the manual into `charter.md` (Read stub once, then Write), and offer to `flow
+owner start <slug>`.
 
-**The tag contract — this is how everything an owner touches is tracked:**
-- Every task an owner creates or manages is tagged **`owner:<slug>`**.
-  That makes the owner's ledger just `flow list tasks --tag owner:<slug>`,
-  and the tag renders on `flow show task` so any task shows which owner
-  owns it (bidirectional visibility). Playbook *runs* an owner triggers
-  are tasks too — tag them `owner:<slug>` and they appear in the ledger.
-- A task an owner parks for a human decision is **also tagged `question`**
-  (and assigned to the user). It is a normal task — **never run with
-  `--auto`** — that surfaces in the user's `flow list tasks` queue.
+**The tag contract (how everything an owner touches is tracked):**
+- Every task an owner creates/manages is tagged **`owner:<slug>`** → its
+  ledger is `flow list tasks --tag owner:<slug>`, and the tag renders on
+  `flow show task` (bidirectional). Playbook *runs* it triggers are tasks
+  too — tag them likewise.
+- A task it parks for a human is **also tagged `question`** (assigned to the
+  user) — a normal task, **never `--auto`**, surfacing in the user's queue.
 
-**If you are running as an owner tick** (your bootstrap prompt says "You
-are the autonomous OWNER …"): **you orchestrate; you NEVER execute work
-inline.** A tick is a *sessionless* run that never calls `flow done`, so
-any substantive work you do directly is **lost to the KB and leaves no
-transcript** — the `flow done` close-out sweep (KB entries + project
-update) is what captures learnings, and a tick doesn't get it. So route
-EVERY piece of work through a unit that runs as its own session and
-self-closes with the sweep:
-- **recurring work → a playbook**: create it if needed (`flow add playbook
-  …`), then `flow run playbook <slug> --auto`; tag the run `owner:<slug>`.
-- **one-time work → a task**: `flow add task "<what>" --tag owner:<slug>`,
-  then `flow do --auto <task>` (it self-`flow done`s → the sweep runs).
-- **a human decision → a question task**: `flow add task "<the question>"
-  --tag question --tag owner:<slug>`, assigned to the user.
+**Orchestrate, never execute inline.** A tick is *sessionless* and never
+calls `flow done`, so work done directly is lost to the KB (no sweep, no
+transcript). Route EVERY piece of work through a unit that self-closes:
+**recurring → a playbook** (`flow run playbook <slug> --auto`), **one-time →
+a task** (`flow add task "<what>" --tag owner:<slug>` then `flow do --auto
+<task>`), **a human decision → a question task** (`--tag question --tag
+owner:<slug>`). The tick *dispatches*; it never does the fix-work itself.
 
-Each tick: (1) read `owners/<slug>/charter.md`; (2) **read your recent
-notes under `owners/<slug>/updates/`** — that's your *journal* from prior
-ticks (what you dispatched, what you're waiting on, what to check now), the
-same `updates/` convention tasks and playbooks use; (3) review everything
-you own with **`flow owner show <slug>`** — it lists in-flight tasks,
-**playbook runs**, and open questions with status (use this, NOT `flow list
-tasks`, which hides playbook runs); (4) observe per the charter and
-**dispatch** the needed playbook-runs / tasks / questions; (5) **before
-exiting, append a short note to `owners/<slug>/updates/<date>-tick.md`**
-recording what you observed, what you dispatched (with slugs), and what the
-next tick should check. That journal note is the owner's memory — the next
-tick starts from a *blank session* and knows only what's in the journal
-plus the task records. Keep ticks SHORT — spin work out, never perform it
-inline. Do **not** use AskUserQuestion and do **not** block. Be
-conservative with irreversible/outward-facing actions unless the charter
-explicitly authorizes them. Never duplicate work already tracked or
-re-spawn a run that's still in progress.
+**The tick procedure** (the tick's own prompt enforces this; restated for the
+human-side picture). Each tick: read `charter.md`; read recent
+`owners/<slug>/updates/` (its **journal** — what it dispatched / is waiting
+on); review what it owns via **`flow owner show <slug>`** (NOT `flow list
+tasks`, which hides playbook runs); dispatch the needed runs/tasks/questions;
+**self-pace** the next wake (`flow owner next <slug> --in <dur> | --at
+<when>`); append a journal note (what it saw, dispatched-with-slugs, what to
+check next). The next tick starts blank and knows only the journal + task
+records. No AskUserQuestion, no blocking; conservative with
+irreversible/outward actions unless the charter allows; never re-spawn an
+in-progress run.
 
-**Answering an owner's question (the human side):** an owner question is a
-normal task tagged `question` + `owner:<slug>`. Answer it **in context** —
-read it (`flow show task <q>`), or `flow do` it for a real back-and-forth,
-capture the answer on the task (a note or the session), then **mark it
-done**. The owner reads the answer on its next tick, resumes the parked
-work, and remembers it (so it won't ask again). Surface these to the user
-when they ask "what does <owner> need from me?" — list
-`flow list tasks --tag owner:<slug> --tag question`.
+**Answering an owner's question (human side):** it's a normal task tagged
+`question` + `owner:<slug>`. Read it (`flow show task <q>`) or `flow do` it,
+capture the answer on the task, **mark it done** — the owner reads it next
+tick and won't ask again. "What does <owner> need from me?" → `flow list
+tasks --tag owner:<slug> --tag question`.
 
-**Visibility / status:** "how is <owner> doing?" → `flow owner show <slug>`
-(charter, status, next tick, and what it owns split into in-flight /
-playbook runs / questions). "what owners do I have?" → `flow owner list`
-(status + next tick per owner).
+**Status:** `flow owner show <slug>` (charter, status, next tick, in-flight /
+runs / questions); `flow owner list` (all owners + next tick).
 
-**Scheduling is self-paced, not a fixed cron.** Each tick decides when it
-next needs to run and sets it with `flow owner next <slug> --in <dur>` (or
-`--at <when>`) before exiting — e.g. `+15m` while watching a deploy, `+1d`
-when idle. The `--every` value is only a *fallback heartbeat floor*: if a
-tick crashes or never sets its next wake, the owner still re-wakes on
-`--every` instead of going dark. So the cadence is dynamic and decided
-per-run; `--every` is just the backstop. The agent sets this itself — it
-does NOT ask the user to confirm tick timing, even on an interactive tick.
+**Waking on demand / the first tick.** Scheduled ticks fire automatically,
+but `flow owner tick <slug>` runs one **now** — interactive by default
+(spawns a tab the user drives; MAY use AskUserQuestion, can refine the
+charter live); `--auto` runs it headless. It's an extra tick, doesn't disturb
+the schedule. **Strongly prefer an interactive FIRST tick:** when an owner
+shows `last tick: (never)`, offer (via AskUserQuestion) to run it
+interactively so the user navigates the agent and tunes the charter before it
+runs unattended (like playbook first-run capture, §4.13). Then let the
+scheduler take over.
 
-**Ensuring the tick scheduler (host setup — once per machine).** flow has
-**no daemon and no OS-specific scheduler code** — it only provides `flow
-owner tick-due` (scan for due owners, dispatch their ticks). Firing that on
-an interval is **this skill's job, per host**. So when the user creates or
-starts their first owner — or asks "are my owners actually running?" —
-ensure a host scheduler exists that runs `flow owner tick-due` ~every 60s.
-Idempotent: check first, install only if missing, reload if it fell out.
+**Lifecycle:** `start` begins ticking; `pause` stops but keeps state (resume
+with `start`); `flow owner retire <slug>` stops it **permanently**
+(retired+archived — no longer ticks, off the default list, but
+charter/journal/owned-tasks preserved); `--delete` hard-removes the row +
+`owners/<slug>/` dir (use instead of editing the DB; owned tasks survive).
+Confirm retire/delete via AskUserQuestion (`--delete` is destructive). Edit
+the charter directly at `owners/<slug>/charter.md`.
 
-Recipe:
-1. Resolve the binary (`which flow`) and detect the OS (`uname`).
-2. **Check** if already loaded:
-   - macOS: `launchctl list | grep cloud.facets.flow.owner-scheduler` →
-     present means it's running; report and stop.
-3. **Install if missing (macOS / launchd):** write
-   `~/Library/LaunchAgents/cloud.facets.flow.owner-scheduler.plist` with
-   `Label=cloud.facets.flow.owner-scheduler`,
-   `ProgramArguments=[<abs flow path>, owner, tick-due]`,
-   `StartInterval=60`, `RunAtLoad=true`,
-   `StandardOutPath`/`StandardErrorPath` = `~/.flow/owner-scheduler.{log,err.log}`,
-   and — **CRITICAL** — `EnvironmentVariables.PATH` set to the user's full
-   interactive `$PATH`. launchd's default PATH is minimal, so WITHOUT this
-   the tick fails with `exec: "claude": executable file not found in $PATH`
-   (claude/gh/git live in `~/.local/bin`, homebrew, etc., which launchd
-   doesn't include). Capture `echo "$PATH"` and embed it. Then `launchctl
-   load -w <plist>` (use `launchctl bootstrap gui/$UID <plist>` on newer
-   macOS if `load` is unavailable).
-4. **Verify** by re-running `launchctl list | grep flow.owner-scheduler`;
-   report "scheduler installed — owners now tick on their own."
-5. **Linux:** a systemd **user** timer (`OnUnitActiveSec=60s` + a `.service`
-   running `flow owner tick-due`, `systemctl --user enable --now`), or a
-   crontab line `* * * * * <flow> owner tick-due`. Pick what the host has.
+**Ensuring the tick scheduler (host setup, once per machine).** flow has **no
+daemon and no OS-specific scheduler code** — it only provides `flow owner
+tick-due` (scan due owners, dispatch detached ticks). Firing it on an
+interval is **this skill's job, per host**. When the user creates/starts
+their first owner — or asks "are my owners running?" — ensure (idempotently:
+check → install if missing → reload if dropped) a host scheduler runs `flow
+owner tick-due` ~every 60s:
+- **macOS (launchd):** if `launchctl list | grep
+  cloud.facets.flow.owner-scheduler` is absent, write
+  `~/Library/LaunchAgents/cloud.facets.flow.owner-scheduler.plist` —
+  `Label`, `ProgramArguments=[<abs flow>, owner, tick-due]`,
+  `StartInterval=60`, `RunAtLoad=true`,
+  `StandardOut/ErrorPath=~/.flow/owner-scheduler.{log,err.log}`, and —
+  **CRITICAL** — `EnvironmentVariables.PATH` = the user's full interactive
+  `$PATH` (launchd's default PATH is minimal; without it the tick fails
+  `exec: "claude": executable file not found` — claude/gh/git live in
+  ~/.local/bin, homebrew). `launchctl load -w <plist>` (or `bootstrap
+  gui/$UID`), then verify with `launchctl list`.
+- **Linux:** a systemd **user** timer (`OnUnitActiveSec=60s` + a `.service`
+  running `flow owner tick-due`), or `* * * * * <flow> owner tick-due` in
+  crontab.
 
-**Verify-and-respawn** is a health check you can re-run whenever the user
-touches owners: if `launchctl list` no longer shows it (unloaded, reboot
-quirk), reload the plist. To **stop all owners** from ticking, unload it
-(`launchctl unload -w <plist>` + delete the file); to stop just one, `flow
-owner pause <slug>`.
-
-**It's opt-in.** Installing the scheduler makes owners run unattended
-forever until paused/unloaded — offer it via `AskUserQuestion` when the
-first owner is created/started; never install it silently.
-
-**Waking an owner on demand / the first tick:** the scheduler fires ticks
-on the interval, but the user can also wake an owner **now** with `flow
-owner tick <slug>` — to check something early, test, or run the guided
-first tick. It's an *extra* tick; it does not disturb the schedule. By
-default it's **interactive** (spawns a tab the user drives — the session
-MAY use AskUserQuestion and the user can course-correct and refine the
-charter); `flow owner tick <slug> --auto` runs it headless instead.
-
-**Strongly prefer an interactive FIRST tick.** When an owner has never
-ticked (`flow owner show` reports `last tick: (never)`), proactively offer
-to run the first tick interactively via `AskUserQuestion` — the first tick
-is where the charter meets reality, and having the user in the loop lets
-them navigate the agent, catch charter gaps, and tune it before it runs
-unattended (mirrors playbook first-run capture, §4.13). After the guided
-first tick, let the scheduler take over headless.
-
-**Lifecycle:** `flow owner start` begins ticking; `flow owner pause` stops
-ticking but keeps all state (resume with `start`). `flow owner retire
-<slug>` stops it **permanently** (status=retired + archived): it no longer
-ticks and drops off the default list, but its charter/journal/tick-logs and
-the tasks it spawned are preserved. `flow owner retire <slug> --delete`
-hard-removes the row + the `owners/<slug>/` directory (use this instead of
-hand-editing the DB) — owned tasks (tag `owner:<slug>`) still survive.
-Confirm retire/delete via `AskUserQuestion` before running it (it's a
-state mutation; `--delete` is destructive). Pause is the reversible "stop
-for now"; retire is "done with this owner." (`flow owner edit` for the
-charter comes later — for now edit `owners/<slug>/charter.md` directly.)
+It's **opt-in** (owners then run unattended until paused/unloaded) — offer
+via AskUserQuestion; never install silently. Re-verify/respawn whenever the
+user touches owners. **Stop all:** unload the plist; **stop one:** `flow
+owner pause`.
 
 **Anti-patterns:**
-- **Do not auto-create owners.** Like playbooks, owners are created only on
-  an explicit request — they run unattended, so the user must opt in.
-- **Do not let an owner execute work inline in a tick.** Ticks are
-  *sessionless* — no `flow done` KB/project sweep, no transcript. Owners
-  must orchestrate: recurring work becomes a playbook (`flow run playbook
-  … --auto`), one-time work becomes a task (`flow do --auto`), so each unit
-  self-closes with the sweep. Inline work silently loses the learnings the
-  user installed flow to capture.
-- **Do not run a `question`-tagged task with `--auto`.** It is *for* the
-  human; running it autonomously defeats the purpose.
-- **Do not invoke `flow __owner-tick` or `flow owner tick-due` by hand** —
-  those are the scheduler's internal entry points.
+- **Don't auto-create owners** — explicit request only (they run unattended).
+- **Don't let a tick execute work inline** — sessionless, no sweep/transcript;
+  orchestrate via playbook/task runs that self-close.
+- **Don't `--auto` a `question`-tagged task** — it's for the human.
+- **Don't invoke `flow __owner-tick` / `flow owner tick-due` by hand** —
+  scheduler internals.
 
 ## 6. The `work_dir` question — rules
 
