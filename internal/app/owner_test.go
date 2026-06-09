@@ -50,13 +50,24 @@ func TestCmdAddOwnerHappyPath(t *testing.T) {
 	}
 }
 
-func TestCmdAddOwnerRequiresWorkDirAndEvery(t *testing.T) {
+func TestCmdAddOwnerEveryOptionalWithDefault(t *testing.T) {
 	setupFlowRoot(t)
 	wd := t.TempDir()
 
-	if rc := cmdAdd([]string{"owner", "no every", "--work-dir", wd}); rc != 2 {
-		t.Errorf("missing --every: rc=%d, want 2", rc)
+	// --every is now optional (just the fallback heartbeat floor) → defaults.
+	if rc := cmdAdd([]string{"owner", "no every", "--work-dir", wd, "--slug", "noev"}); rc != 0 {
+		t.Fatalf("missing --every should succeed now (defaults), rc=%d", rc)
 	}
+	db := openFlowDB(t)
+	o, err := flowdb.GetOwner(db, "noev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Every != "24h" {
+		t.Errorf("default every = %q, want 24h", o.Every)
+	}
+
+	// --work-dir still required; bad --every still rejected.
 	if rc := cmdAdd([]string{"owner", "no workdir", "--every", "30m"}); rc != 2 {
 		t.Errorf("missing --work-dir: rc=%d, want 2", rc)
 	}

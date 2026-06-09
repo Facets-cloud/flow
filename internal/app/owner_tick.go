@@ -340,8 +340,9 @@ func buildOwnerTickPromptInteractive(slug string) string {
 			"3. Read recent notes under owners/%s/updates/ (your journal), then review what you own with `flow owner show %s` (tasks, playbook runs, and questions with status). Don't duplicate tracked work or re-spawn an in-progress run.\n"+
 			"4. Observe per the charter and, together with the user, DISPATCH the needed playbook-runs / tasks / questions.\n"+
 			"5. Be conservative with irreversible/outward actions unless the charter authorizes them (when unsure, ask the user).\n"+
-			"6. Before finishing, WRITE a short note to owners/%s/updates/<today>-tick.md (what you observed, what you dispatched with slugs, what the next tick should check), and fold any lessons into the charter so headless ticks improve.\n",
-		slug, slug, slug, slug, slug, slug, slug, slug, slug,
+			"6. Before finishing, WRITE a short note to owners/%s/updates/<today>-tick.md (what you observed, what you dispatched with slugs, what the next tick should check), and fold any lessons into the charter so headless ticks improve.\n"+
+			"7. SELF-PACE the next wake: decide when you next need to run and set it with `flow owner next %s --in <duration>` (or --at <time>). You pick the cadence yourself each run — no need to ask the user about timing; --every is only a fallback.\n",
+		slug, slug, slug, slug, slug, slug, slug, slug, slug, slug,
 	)
 }
 
@@ -361,8 +362,9 @@ func buildOwnerTickPrompt(slug string) string {
 			"3. Catch up on yourself: read the most recent note(s) under owners/%s/updates/ — that is your JOURNAL from prior ticks (what you dispatched, what you were waiting on, what to check now). Then review everything you own with `flow owner show %s` — it lists your in-flight tasks, playbook runs, AND open questions with their current status (do NOT use `flow list tasks`, which hides playbook runs). Advance or check on what's there; never duplicate work already tracked and never re-spawn a run that is still in progress.\n"+
 			"4. Observe the world per your charter, then DISPATCH what needs doing as playbook-runs / tasks / questions per the rule above. Keep the tick SHORT — spin work out, never perform it inline.\n"+
 			"5. Be conservative with irreversible or outward-facing actions (push, PR, deploy, messaging) unless your charter EXPLICITLY authorizes them.\n"+
-			"6. Before you exit, WRITE a short note to owners/%s/updates/<today>-tick.md recording what you observed, what you dispatched (with the task/run slugs), and what your NEXT tick should check. This is your memory — the next tick starts from a blank session and knows only what you write here plus the task records.\n"+
-			"7. Then exit. Your next tick is scheduled automatically. Do not loop or wait.\n",
-		slug, slug, slug, slug, slug, slug, slug, slug,
+			"6. WRITE a short note to owners/%s/updates/<today>-tick.md recording what you observed, what you dispatched (with the task/run slugs), and what your NEXT tick should check. This is your memory — the next tick starts from a blank session and knows only what you write here plus the task records.\n"+
+			"7. SELF-PACE: decide when you next need to run and set it with `flow owner next %s --in <duration>` (e.g. +15m if watching a deploy/CI, +1h if a review is pending; use --at <time> for longer/idle gaps). You choose the cadence per-run; if you skip this, the owner falls back to its --every interval.\n"+
+			"8. Then exit. Do not loop or wait.\n",
+		slug, slug, slug, slug, slug, slug, slug, slug, slug,
 	)
 }

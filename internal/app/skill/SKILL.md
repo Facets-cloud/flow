@@ -219,6 +219,7 @@ Owners (autonomous ownership — see §4.17)
   flow owner start  <slug>          begin ticking (first tick due now, then every <dur>)
   flow owner pause  <slug>          stop ticking, keep all state
   flow owner tick   <slug>          wake the owner NOW, interactively (a tab you drive); --auto = headless now
+  flow owner next   <slug> --in <dur> | --at <when>   set the next tick time (how a tick self-paces)
   (scheduled ticks run headlessly; `flow owner tick` is the on-demand / guided-first-run path)
 
 Read
@@ -1737,7 +1738,10 @@ operate*, not just what. Ask, one at a time:
    the workdir registry, `gh` — and only ask the gaps.
 4. **When to ask vs. act** — which decisions need a human (approvals,
    ambiguous calls) vs. what it may just do.
-5. **Interval** — `--every` (e.g. `30m`, `1h`).
+5. **Fallback interval** — `--every` (e.g. `1h`, `24h`; optional, default
+   `24h`). This is NOT a rigid schedule — it's only the *heartbeat floor*.
+   Ticks **self-pace**: each run decides its own next wake. So don't
+   interview for a fixed cron cadence; just pick a loose fallback.
 Then `flow add owner "<name>" --work-dir <p> --every <dur> [--project <s>] [--slug <s>]`,
 and write the gathered operating manual into the owner's `charter.md`
 (overwrite the stub — Read once, then Write). Offer to **start** it
@@ -1799,6 +1803,15 @@ when they ask "what does <owner> need from me?" — list
 (charter, status, next tick, and what it owns split into in-flight /
 playbook runs / questions). "what owners do I have?" → `flow owner list`
 (status + next tick per owner).
+
+**Scheduling is self-paced, not a fixed cron.** Each tick decides when it
+next needs to run and sets it with `flow owner next <slug> --in <dur>` (or
+`--at <when>`) before exiting — e.g. `+15m` while watching a deploy, `+1d`
+when idle. The `--every` value is only a *fallback heartbeat floor*: if a
+tick crashes or never sets its next wake, the owner still re-wakes on
+`--every` instead of going dark. So the cadence is dynamic and decided
+per-run; `--every` is just the backstop. The agent sets this itself — it
+does NOT ask the user to confirm tick timing, even on an interactive tick.
 
 **Waking an owner on demand / the first tick:** the scheduler fires ticks
 on the interval, but the user can also wake an owner **now** with `flow

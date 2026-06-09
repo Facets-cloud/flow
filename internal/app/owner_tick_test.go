@@ -324,6 +324,59 @@ func TestBuildOwnerTickPromptInteractiveAllowsHuman(t *testing.T) {
 	}
 }
 
+func TestCmdOwnerNextSetsNextWake(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "24h"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// --in <dur>: wake this far from now.
+	if rc := cmdOwner([]string{"next", "o1", "--in", "15m"}); rc != 0 {
+		t.Fatalf("--in rc=%d", rc)
+	}
+	o, _ := flowdb.GetOwner(db, "o1")
+	if !o.NextWakeAt.Valid {
+		t.Fatal("next_wake not set by --in")
+	}
+	w, err := time.Parse(time.RFC3339, o.NextWakeAt.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Until(w); d < 14*time.Minute || d > 16*time.Minute {
+		t.Errorf("next wake should be ~15m from now, got %v", d)
+	}
+
+	// --at <ts>: wake at an absolute time.
+	at := time.Now().Add(3 * time.Hour).Format(time.RFC3339)
+	if rc := cmdOwner([]string{"next", "o1", "--at", at}); rc != 0 {
+		t.Fatalf("--at rc=%d", rc)
+	}
+	o, _ = flowdb.GetOwner(db, "o1")
+	if o.NextWakeAt.String != at {
+		t.Errorf("next_wake = %q, want %q", o.NextWakeAt.String, at)
+	}
+
+	// exactly one of --in / --at.
+	if rc := cmdOwner([]string{"next", "o1"}); rc != 2 {
+		t.Errorf("no flag: rc=%d, want 2", rc)
+	}
+	if rc := cmdOwner([]string{"next", "o1", "--in", "1h", "--at", at}); rc != 2 {
+		t.Errorf("both flags: rc=%d, want 2", rc)
+	}
+}
+
+func TestTickPromptsSelfPaceNextWake(t *testing.T) {
+	for label, p := range map[string]string{
+		"headless":    buildOwnerTickPrompt("desk"),
+		"interactive": buildOwnerTickPromptInteractive("desk"),
+	} {
+		if !strings.Contains(strings.ToLower(p), "flow owner next desk") {
+			t.Errorf("%s tick prompt must instruct self-paced scheduling via `flow owner next`; got:\n%s", label, p)
+		}
+	}
+}
+
 func TestBuildOwnerTickPromptReadsAndWritesJournal(t *testing.T) {
 	p := strings.ToLower(buildOwnerTickPrompt("desk"))
 	for _, want := range []string{

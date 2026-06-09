@@ -29,7 +29,7 @@ This owner's operating manual. Edit freely or via a flow skill session.
 // cmdOwner dispatches `flow owner list|show|start|pause`.
 func cmdOwner(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: owner requires a subcommand (list, show, start, pause, tick)")
+		fmt.Fprintln(os.Stderr, "error: owner requires a subcommand (list, show, start, pause, tick, next)")
 		return 2
 	}
 	switch args[0] {
@@ -41,6 +41,8 @@ func cmdOwner(args []string) int {
 		return ownerStart(args[1:])
 	case "pause":
 		return ownerPause(args[1:])
+	case "next":
+		return ownerNext(args[1:])
 	case "tick":
 		return ownerTickManual(args[1:])
 	case "tick-due":
@@ -186,6 +188,86 @@ func printOwnerTaskSection(label string, tasks []*flowdb.Task) {
 	}
 }
 
+// ownerNext implements `flow owner next <slug> --in <dur> | --at <when>`:
+// set the owner's next tick time. This is how a tick SELF-PACES — at the
+// end of each run it decides when it next needs to act and sets it here,
+// overriding the `--every` fallback. Exactly one of --in/--at is required.
+func ownerNext(args []string) int {
+	if len(args) == 0 || args[0] == "" {
+		fmt.Fprintln(os.Stderr, "error: owner next requires an owner slug")
+		return 2
+	}
+	slug := args[0]
+	fs := flagSet("owner next")
+	in := fs.String("in", "", "set next tick this far from now (e.g. 15m, 2h)")
+	at := fs.String("at", "", "set next tick at an absolute time (RFC3339, or YYYY-MM-DD/today/tomorrow)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if (*in == "") == (*at == "") {
+		fmt.Fprintln(os.Stderr, "error: give exactly one of --in or --at")
+		return 2
+	}
+
+	var next time.Time
+	if *in != "" {
+		d, err := time.ParseDuration(*in)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: --in %q is not a valid duration (try 15m, 2h): %v\n", *in, err)
+			return 2
+		}
+		next = time.Now().Add(d)
+	} else {
+		t, err := parseOwnerWhen(*at)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: --at %q: %v\n", *at, err)
+			return 2
+		}
+		next = t
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	o, err := flowdb.GetOwner(db, slug)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(os.Stderr, "error: no owner %q\n", slug)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	o.NextWakeAt = sql.NullString{String: next.Format(time.RFC3339), Valid: true}
+	if err := flowdb.UpdateOwner(db, o); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("owner %q next tick set to %s\n", slug, next.Format(time.RFC3339))
+	return 0
+}
+
+// parseOwnerWhen accepts an RFC3339 timestamp or a date expression
+// (YYYY-MM-DD, today, tomorrow, weekday, Nd) for `flow owner next --at`.
+func parseOwnerWhen(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	d, err := parseDueDate(s, time.Now())
+	if err != nil {
+		return time.Time{}, fmt.Errorf("not an RFC3339 time or a recognizable date: %w", err)
+	}
+	return d, nil
+}
+
 // ownerStart marks an owner active and schedules its first tick now, so
 // the next scheduler pass picks it up. Then it ticks every Every.
 func ownerStart(args []string) int {
@@ -315,7 +397,7 @@ func addOwner(args []string) int {
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	workDir := fs.String("work-dir", "", "absolute path to the owner's work directory (required)")
 	project := fs.String("project", "", "parent project slug (optional)")
-	every := fs.String("every", "", "tick interval, e.g. 30m, 1h (required)")
+	every := fs.String("every", "", "fallback/max tick interval (heartbeat floor), e.g. 1h, 24h; default 24h — ticks self-pace via `flow owner next`")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
@@ -325,12 +407,14 @@ func addOwner(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --work-dir is required for owners")
 		return 2
 	}
-	if *every == "" {
-		fmt.Fprintln(os.Stderr, "error: --every is required (tick interval, e.g. 30m)")
-		return 2
-	}
-	if _, err := time.ParseDuration(*every); err != nil {
-		fmt.Fprintf(os.Stderr, "error: --every %q is not a valid duration (try 30m, 1h): %v\n", *every, err)
+	// --every is optional: it's only the fallback heartbeat floor (so a tick
+	// that never sets its next wake still re-wakes). The tick decides the
+	// real cadence per-run via `flow owner next`.
+	everyVal := *every
+	if everyVal == "" {
+		everyVal = "24h"
+	} else if _, err := time.ParseDuration(everyVal); err != nil {
+		fmt.Fprintf(os.Stderr, "error: --every %q is not a valid duration (try 1h, 24h): %v\n", *every, err)
 		return 2
 	}
 	abs, err := resolveWorkDir(*workDir, *mkdir)
@@ -386,7 +470,7 @@ func addOwner(args []string) int {
 		Name:        name,
 		WorkDir:     abs,
 		ProjectSlug: projectSlug,
-		Every:       *every,
+		Every:       everyVal,
 	}
 	if err := flowdb.CreateOwner(db, o); err != nil {
 		fmt.Fprintf(os.Stderr, "error: create owner: %v\n", err)
@@ -417,6 +501,6 @@ func addOwner(args []string) int {
 	}
 
 	fmt.Printf("Created owner %q at %s\n", slug, ownerDir)
-	fmt.Printf("Next: edit the charter, then start the owner so it begins ticking every %s\n", *every)
+	fmt.Printf("Next: edit the charter, then start the owner (it self-paces; %s is the fallback interval)\n", everyVal)
 	return 0
 }
