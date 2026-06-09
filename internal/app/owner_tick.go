@@ -203,6 +203,13 @@ func ownerTickDue(args []string) int {
 
 	dispatched := 0
 	for _, o := range due {
+		// Overlap guard: if a tick is already running for this owner (a live
+		// tick_pid), don't stack another on top of it. A dead pid (crashed
+		// tick) is not alive, so we fall through and dispatch a fresh one
+		// (which overwrites the stale pid below).
+		if o.TickPID.Valid && processAlive(int(o.TickPID.Int64)) {
+			continue
+		}
 		dur, derr := time.ParseDuration(o.Every)
 		if derr != nil {
 			fmt.Fprintf(os.Stderr, "warning: owner %q has invalid every %q: %v; skipping\n", o.Slug, o.Every, derr)

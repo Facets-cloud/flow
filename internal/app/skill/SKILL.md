@@ -1813,6 +1813,43 @@ tick crashes or never sets its next wake, the owner still re-wakes on
 per-run; `--every` is just the backstop. The agent sets this itself — it
 does NOT ask the user to confirm tick timing, even on an interactive tick.
 
+**Ensuring the tick scheduler (host setup — once per machine).** flow has
+**no daemon and no OS-specific scheduler code** — it only provides `flow
+owner tick-due` (scan for due owners, dispatch their ticks). Firing that on
+an interval is **this skill's job, per host**. So when the user creates or
+starts their first owner — or asks "are my owners actually running?" —
+ensure a host scheduler exists that runs `flow owner tick-due` ~every 60s.
+Idempotent: check first, install only if missing, reload if it fell out.
+
+Recipe:
+1. Resolve the binary (`which flow`) and detect the OS (`uname`).
+2. **Check** if already loaded:
+   - macOS: `launchctl list | grep cloud.facets.flow.owner-scheduler` →
+     present means it's running; report and stop.
+3. **Install if missing (macOS / launchd):** write
+   `~/Library/LaunchAgents/cloud.facets.flow.owner-scheduler.plist` with
+   `Label=cloud.facets.flow.owner-scheduler`,
+   `ProgramArguments=[<abs flow path>, owner, tick-due]`,
+   `StartInterval=60`, `RunAtLoad=true`, and
+   `StandardOutPath`/`StandardErrorPath` = `~/.flow/owner-scheduler.{log,err.log}`.
+   Then `launchctl load -w <plist>` (use `launchctl bootstrap gui/$UID
+   <plist>` on newer macOS if `load` is unavailable).
+4. **Verify** by re-running `launchctl list | grep flow.owner-scheduler`;
+   report "scheduler installed — owners now tick on their own."
+5. **Linux:** a systemd **user** timer (`OnUnitActiveSec=60s` + a `.service`
+   running `flow owner tick-due`, `systemctl --user enable --now`), or a
+   crontab line `* * * * * <flow> owner tick-due`. Pick what the host has.
+
+**Verify-and-respawn** is a health check you can re-run whenever the user
+touches owners: if `launchctl list` no longer shows it (unloaded, reboot
+quirk), reload the plist. To **stop all owners** from ticking, unload it
+(`launchctl unload -w <plist>` + delete the file); to stop just one, `flow
+owner pause <slug>`.
+
+**It's opt-in.** Installing the scheduler makes owners run unattended
+forever until paused/unloaded — offer it via `AskUserQuestion` when the
+first owner is created/started; never install it silently.
+
 **Waking an owner on demand / the first tick:** the scheduler fires ticks
 on the interval, but the user can also wake an owner **now** with `flow
 owner tick <slug>` — to check something early, test, or run the guided

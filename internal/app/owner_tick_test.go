@@ -166,6 +166,56 @@ func TestOwnerShowReconcilesDeadTick(t *testing.T) {
 	}
 }
 
+func TestOwnerTickDueSkipsOwnerWithRunningTick(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	past := sql.NullString{String: time.Now().Add(-time.Hour).Format(time.RFC3339), Valid: true}
+	// Due, but a tick is already running (live pid) → must be skipped.
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "busy", Name: "B", WorkDir: "/x", Every: "30m", Status: "active", NextWakeAt: past,
+		TickPID: sql.NullInt64{Int64: 5555, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Due, with a DEAD tick pid → should still be dispatched.
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "free", Name: "F", WorkDir: "/y", Every: "30m", Status: "active", NextWakeAt: past,
+		TickPID: sql.NullInt64{Int64: 6666, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return pid == 5555 } // 5555 alive, 6666 dead
+	t.Cleanup(func() { processAlive = oldAlive })
+
+	var dispatched []string
+	oldL := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) {
+		dispatched = append(dispatched, slug)
+		return 1, nil
+	}
+	t.Cleanup(func() { ownerTickLauncher = oldL })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	for _, s := range dispatched {
+		if s == "busy" {
+			t.Errorf("an owner with a LIVE tick must be skipped, got dispatched=%v", dispatched)
+		}
+	}
+	free := false
+	for _, s := range dispatched {
+		if s == "free" {
+			free = true
+		}
+	}
+	if !free {
+		t.Errorf("an owner with a DEAD tick pid should be dispatched, got %v", dispatched)
+	}
+}
+
 func TestCmdOwnerTickRecordsOkStatus(t *testing.T) {
 	setupFlowRoot(t)
 	db := openFlowDB(t)
