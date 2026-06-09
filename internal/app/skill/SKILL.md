@@ -1830,10 +1830,15 @@ Recipe:
    `~/Library/LaunchAgents/cloud.facets.flow.owner-scheduler.plist` with
    `Label=cloud.facets.flow.owner-scheduler`,
    `ProgramArguments=[<abs flow path>, owner, tick-due]`,
-   `StartInterval=60`, `RunAtLoad=true`, and
-   `StandardOutPath`/`StandardErrorPath` = `~/.flow/owner-scheduler.{log,err.log}`.
-   Then `launchctl load -w <plist>` (use `launchctl bootstrap gui/$UID
-   <plist>` on newer macOS if `load` is unavailable).
+   `StartInterval=60`, `RunAtLoad=true`,
+   `StandardOutPath`/`StandardErrorPath` = `~/.flow/owner-scheduler.{log,err.log}`,
+   and — **CRITICAL** — `EnvironmentVariables.PATH` set to the user's full
+   interactive `$PATH`. launchd's default PATH is minimal, so WITHOUT this
+   the tick fails with `exec: "claude": executable file not found in $PATH`
+   (claude/gh/git live in `~/.local/bin`, homebrew, etc., which launchd
+   doesn't include). Capture `echo "$PATH"` and embed it. Then `launchctl
+   load -w <plist>` (use `launchctl bootstrap gui/$UID <plist>` on newer
+   macOS if `load` is unavailable).
 4. **Verify** by re-running `launchctl list | grep flow.owner-scheduler`;
    report "scheduler installed — owners now tick on their own."
 5. **Linux:** a systemd **user** timer (`OnUnitActiveSec=60s` + a `.service`
