@@ -220,6 +220,7 @@ Owners (autonomous ownership — see §4.17)
   flow owner pause  <slug>          stop ticking, keep all state
   flow owner tick   <slug>          wake the owner NOW, interactively (a tab you drive); --auto = headless now
   flow owner next   <slug> --in <dur> | --at <when>   set the next tick time (how a tick self-paces)
+  flow owner retire <slug> [--delete]   stop permanently (status=retired+archived); --delete removes row + dir
   (scheduled ticks run headlessly; `flow owner tick` is the on-demand / guided-first-run path)
 
 Read
@@ -1872,9 +1873,16 @@ unattended (mirrors playbook first-run capture, §4.13). After the guided
 first tick, let the scheduler take over headless.
 
 **Lifecycle:** `flow owner start` begins ticking; `flow owner pause` stops
-ticking but keeps all state; `flow owner edit` (charter) and retire/archive
-come later. Pausing is the safe "stop it for now" — it never deletes the
-charter, ledger, or owned tasks.
+ticking but keeps all state (resume with `start`). `flow owner retire
+<slug>` stops it **permanently** (status=retired + archived): it no longer
+ticks and drops off the default list, but its charter/journal/tick-logs and
+the tasks it spawned are preserved. `flow owner retire <slug> --delete`
+hard-removes the row + the `owners/<slug>/` directory (use this instead of
+hand-editing the DB) — owned tasks (tag `owner:<slug>`) still survive.
+Confirm retire/delete via `AskUserQuestion` before running it (it's a
+state mutation; `--delete` is destructive). Pause is the reversible "stop
+for now"; retire is "done with this owner." (`flow owner edit` for the
+charter comes later — for now edit `owners/<slug>/charter.md` directly.)
 
 **Anti-patterns:**
 - **Do not auto-create owners.** Like playbooks, owners are created only on

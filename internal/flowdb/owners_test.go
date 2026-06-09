@@ -2,6 +2,7 @@ package flowdb
 
 import (
 	"database/sql"
+	"errors"
 	"testing"
 )
 
@@ -123,6 +124,56 @@ func TestDueOwnersReturnsOnlyActivePastDue(t *testing.T) {
 			slugs = append(slugs, o.Slug)
 		}
 		t.Fatalf("DueOwners = %v, want only [due-now]", slugs)
+	}
+}
+
+func TestRetireOwner(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "1h", Status: "active",
+		NextWakeAt: sql.NullString{String: "2020-01-01T00:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RetireOwner(db, "o1"); err != nil {
+		t.Fatalf("RetireOwner: %v", err)
+	}
+	o, err := GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Status != "retired" {
+		t.Errorf("status = %q, want retired", o.Status)
+	}
+	if !o.ArchivedAt.Valid {
+		t.Errorf("archived_at should be set on retire")
+	}
+	// Hidden from the default list and never due.
+	if list, _ := ListOwners(db, OwnerFilter{}); len(list) != 0 {
+		t.Errorf("retired owner should be hidden from default list, got %d", len(list))
+	}
+	if due, _ := DueOwners(db, "2099-01-01T00:00:00Z"); len(due) != 0 {
+		t.Errorf("retired owner must never be due, got %d", len(due))
+	}
+	if err := RetireOwner(db, "nope"); err == nil {
+		t.Errorf("retiring an unknown owner should error")
+	}
+}
+
+func TestDeleteOwner(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "1h"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteOwner(db, "o1"); err != nil {
+		t.Fatalf("DeleteOwner: %v", err)
+	}
+	if _, err := GetOwner(db, "o1"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("owner row should be gone, got err=%v", err)
+	}
+	if err := DeleteOwner(db, "o1"); err == nil {
+		t.Errorf("deleting an already-gone owner should error")
 	}
 }
 

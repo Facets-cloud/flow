@@ -125,6 +125,47 @@ func UpdateOwner(db *sql.DB, o *Owner) error {
 	return nil
 }
 
+// RetireOwner permanently stops an owner: sets status='retired' and
+// archives it. It no longer ticks (DueOwners requires active) and is
+// hidden from the default list. On-disk files (charter, journal, tick
+// logs) and any owned tasks are preserved. Errors if no such owner.
+func RetireOwner(db *sql.DB, slug string) error {
+	now := NowISO()
+	res, err := db.Exec(
+		`UPDATE owners SET status='retired', archived_at=COALESCE(archived_at, ?), updated_at=? WHERE slug=?`,
+		now, now, slug,
+	)
+	if err != nil {
+		return fmt.Errorf("retire owner %s: %w", slug, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("retire owner %s: no such owner", slug)
+	}
+	return nil
+}
+
+// DeleteOwner removes the owner row entirely. The caller is responsible
+// for removing the on-disk owners/<slug>/ directory. Errors if no such
+// owner. Owned tasks (tagged owner:<slug>) are independent and untouched.
+func DeleteOwner(db *sql.DB, slug string) error {
+	res, err := db.Exec(`DELETE FROM owners WHERE slug=?`, slug)
+	if err != nil {
+		return fmt.Errorf("delete owner %s: %w", slug, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("delete owner %s: no such owner", slug)
+	}
+	return nil
+}
+
 // DueOwners returns active, non-archived owners whose next_wake_at is
 // set and at or before nowISO — i.e. the owners the scheduler should
 // tick now. Paused/retired owners and owners that have never been

@@ -29,7 +29,7 @@ This owner's operating manual. Edit freely or via a flow skill session.
 // cmdOwner dispatches `flow owner list|show|start|pause`.
 func cmdOwner(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: owner requires a subcommand (list, show, start, pause, tick, next)")
+		fmt.Fprintln(os.Stderr, "error: owner requires a subcommand (list, show, start, pause, tick, next, retire)")
 		return 2
 	}
 	switch args[0] {
@@ -43,6 +43,8 @@ func cmdOwner(args []string) int {
 		return ownerPause(args[1:])
 	case "next":
 		return ownerNext(args[1:])
+	case "retire":
+		return ownerRetire(args[1:])
 	case "tick":
 		return ownerTickManual(args[1:])
 	case "tick-due":
@@ -186,6 +188,72 @@ func printOwnerTaskSection(label string, tasks []*flowdb.Task) {
 	for _, tk := range tasks {
 		fmt.Printf("  - %-30s [%s]\n", tk.Slug, tk.Status)
 	}
+}
+
+// ownerRetire implements `flow owner retire <slug> [--delete]`. Graceful
+// retire (default) marks the owner status='retired' + archived: it stops
+// ticking and disappears from the default list, but its charter, journal,
+// tick logs, and owned tasks are preserved. `--delete` instead hard-removes
+// the row and the owners/<slug>/ directory (the supported replacement for
+// hand-deleting). Either way, owned tasks (tagged owner:<slug>) are left
+// intact — the work the owner spawned outlives it.
+func ownerRetire(args []string) int {
+	if len(args) == 0 || args[0] == "" {
+		fmt.Fprintln(os.Stderr, "error: owner retire requires an owner slug")
+		return 2
+	}
+	slug := args[0]
+	fs := flagSet("owner retire")
+	del := fs.Bool("delete", false, "permanently delete the owner row + its directory (instead of archiving)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	if _, err := flowdb.GetOwner(db, slug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(os.Stderr, "error: no owner %q\n", slug)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	root, err := flowRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	if *del {
+		if err := flowdb.DeleteOwner(db, slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		dir := filepath.Join(root, "owners", slug)
+		if err := os.RemoveAll(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: remove %s: %v\n", dir, err)
+		}
+		fmt.Printf("deleted owner %q (row + %s). Owned tasks (tag owner:%s) are untouched.\n", slug, dir, slug)
+		return 0
+	}
+
+	if err := flowdb.RetireOwner(db, slug); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("retired owner %q — it will no longer tick. Files preserved under owners/%s/. (Use --delete to remove entirely.)\n", slug, slug)
+	return 0
 }
 
 // ownerNext implements `flow owner next <slug> --in <dur> | --at <when>`:

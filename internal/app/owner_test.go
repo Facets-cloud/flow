@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"errors"
 	"flow/internal/flowdb"
 	"os"
 	"path/filepath"
@@ -177,6 +178,51 @@ func TestCmdAddTaskWithTags(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("missing tags %v; got %v", want, tags)
+	}
+}
+
+func TestCmdOwnerRetireGraceful(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "1h"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdOwner([]string{"retire", "o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatalf("owner row should still exist after graceful retire: %v", err)
+	}
+	if o.Status != "retired" || !o.ArchivedAt.Valid {
+		t.Errorf("expected retired+archived, got status=%q archived=%v", o.Status, o.ArchivedAt.Valid)
+	}
+
+	if rc := cmdOwner([]string{"retire", "nope"}); rc != 1 {
+		t.Errorf("retiring unknown owner: rc=%d, want 1", rc)
+	}
+}
+
+func TestCmdOwnerRetireDelete(t *testing.T) {
+	root := setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "1h"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "owners", "o1")
+	if err := os.MkdirAll(filepath.Join(dir, "updates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := cmdOwner([]string{"retire", "o1", "--delete"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if _, err := flowdb.GetOwner(db, "o1"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("owner row should be deleted, got err=%v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("owner directory should be removed")
 	}
 }
 
