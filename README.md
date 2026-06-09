@@ -225,8 +225,10 @@ handles the rest.
   current zellij session (requires zellij ≥ 0.40) — flow picks
   whichever you launched it from. Override with
   `FLOW_TERM=warp|iterm|terminal|zellij|kitty` when you're on a
-  non-standard host. Tomorrow's `flow do <task>` resumes the same
-  conversation.
+  non-standard host — or set `FLOW_TERM=bg` to launch the session as a
+  **terminal-free Claude background agent** (Claude Code's Agent View,
+  `claude agents`) with no tab at all. Tomorrow's `flow do <task>`
+  resumes the same conversation either way.
 - **Interview-driven task capture.** No forms. flow asks
   what / why / where / done-when, then writes a structured brief.
 - **A knowledge base that grows.** Five markdown buckets for
@@ -273,6 +275,30 @@ toggle for "Terminal" if you launched flow from Terminal.app, "iTerm"
 from iTerm2, "Claude" if Claude Code is the host, etc.; add it via the
 + button if it's not listed). After the grant the spawn is silent.
 iTerm2 doesn't need this — it has a native `create tab` verb.
+
+### Background agents (`FLOW_TERM=bg`)
+
+If you live in Claude Code's **Agent View** (`claude agents`), set
+`FLOW_TERM=bg` and `flow do <task>` spawns the session as a
+terminal-free background agent instead of opening a tab. flow runs
+`claude --bg --name "<project>/<task>" <prompt>`, reads the short id
+from the launch banner, and resolves the real, full session id with a
+single `claude agents --json` lookup — then records *that* id on the
+task. (Background-capable harnesses manage their own session id, so
+flow captures the real one after launch rather than pre-allocating it.)
+
+Re-running `flow do <task>` is idempotent: if the session is still live
+in the Agent View, flow reports "already running" instead of spawning a
+duplicate; if it has exited, flow resumes the same id (transcript
+preserved). flow opens nothing — you switch to the session yourself via
+the Agent View (`claude attach <id>` / `claude logs <id>`).
+`flow show` and `flow list` surface each bg task's live status (busy /
+idle, working / blocked, pid) from the same `claude agents --json`
+query, and `flow transcript <task>` finds the jsonl by globbing the
+session id (so it resolves even when a bg session relocates into a git
+worktree). Background mode is Claude-only today — pointing `FLOW_TERM=bg`
+at a task pinned to another harness fails with a clear error rather than
+silently falling back to a tab.
 
 ### One-shot instructions with `--with`
 
@@ -367,8 +393,10 @@ and reinstall the skill + hook.
 ## Where flow runs (and where we'd love help)
 
 Today flow runs on **macOS (iTerm2, Warp, stock Terminal.app, kitty,
-or zellij) + Claude Code only**. That's the stack we use, and that's
-what the session-spawn layer was built and tested against. zellij
+zellij, or Claude Code background agents via `FLOW_TERM=bg`) + Claude
+Code only**. That's the stack we use, and that's what the session-spawn
+layer was built and tested against. The background-agent backend is
+platform-agnostic (no terminal, no AppleScript) but Claude-only. zellij
 and kitty work on Linux too as a side effect — both are
 cross-platform and flow's zellij / kitty backends don't depend on
 any macOS APIs. Kitty needs `allow_remote_control yes` (or
