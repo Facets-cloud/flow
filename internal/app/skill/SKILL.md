@@ -218,7 +218,8 @@ Owners (autonomous ownership — see §4.17)
   flow owner show   <slug>          charter + what it owns (in-flight / playbook runs / questions) + next tick
   flow owner start  <slug>          begin ticking (first tick due now, then every <dur>)
   flow owner pause  <slug>          stop ticking, keep all state
-  (ticks run headlessly on a launchd timer — you never invoke them by hand)
+  flow owner tick   <slug>          wake the owner NOW, interactively (a tab you drive); --auto = headless now
+  (scheduled ticks run headlessly; `flow owner tick` is the on-demand / guided-first-run path)
 
 Read
   flow show task    [<ref>]     (no arg → reverse-lookup via $CLAUDE_CODE_SESSION_ID)
@@ -1798,6 +1799,22 @@ when they ask "what does <owner> need from me?" — list
 (charter, status, next tick, and what it owns split into in-flight /
 playbook runs / questions). "what owners do I have?" → `flow owner list`
 (status + next tick per owner).
+
+**Waking an owner on demand / the first tick:** the scheduler fires ticks
+on the interval, but the user can also wake an owner **now** with `flow
+owner tick <slug>` — to check something early, test, or run the guided
+first tick. It's an *extra* tick; it does not disturb the schedule. By
+default it's **interactive** (spawns a tab the user drives — the session
+MAY use AskUserQuestion and the user can course-correct and refine the
+charter); `flow owner tick <slug> --auto` runs it headless instead.
+
+**Strongly prefer an interactive FIRST tick.** When an owner has never
+ticked (`flow owner show` reports `last tick: (never)`), proactively offer
+to run the first tick interactively via `AskUserQuestion` — the first tick
+is where the charter meets reality, and having the user in the loop lets
+them navigate the agent, catch charter gaps, and tune it before it runs
+unattended (mirrors playbook first-run capture, §4.13). After the guided
+first tick, let the scheduler take over headless.
 
 **Lifecycle:** `flow owner start` begins ticking; `flow owner pause` stops
 ticking but keeps all state; `flow owner edit` (charter) and retire/archive

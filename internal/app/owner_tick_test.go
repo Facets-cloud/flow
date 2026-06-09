@@ -243,6 +243,87 @@ func TestBuildOwnerTickPromptRoutesWorkThroughTasksAndPlaybooks(t *testing.T) {
 	}
 }
 
+func TestOwnerTickManualInteractiveSpawnsTab(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var spawnedOwner, spawnedPrompt string
+	oldI := ownerInteractiveLauncher
+	ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
+		spawnedOwner, spawnedPrompt = o.Slug, prompt
+		return nil
+	}
+	t.Cleanup(func() { ownerInteractiveLauncher = oldI })
+
+	var headlessCalled bool
+	oldH := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) {
+		headlessCalled = true
+		return 1, nil
+	}
+	t.Cleanup(func() { ownerTickLauncher = oldH })
+
+	if rc := cmdOwner([]string{"tick", "o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if spawnedOwner != "o1" {
+		t.Errorf("interactive launcher should run for o1, got %q", spawnedOwner)
+	}
+	if headlessCalled {
+		t.Errorf("a hand-triggered tick must be interactive, not headless")
+	}
+	if !strings.Contains(spawnedPrompt, "o1") {
+		t.Errorf("interactive prompt should name the owner")
+	}
+}
+
+func TestOwnerTickManualAutoRunsHeadless(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var interactiveCalled bool
+	oldI := ownerInteractiveLauncher
+	ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error { interactiveCalled = true; return nil }
+	t.Cleanup(func() { ownerInteractiveLauncher = oldI })
+
+	oldH := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) { return 4242, nil }
+	t.Cleanup(func() { ownerTickLauncher = oldH })
+
+	if rc := cmdOwner([]string{"tick", "o1", "--auto"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if interactiveCalled {
+		t.Errorf("--auto must run headless, not spawn an interactive tab")
+	}
+	o, _ := flowdb.GetOwner(db, "o1")
+	if o.TickPID.Int64 != 4242 {
+		t.Errorf("--auto tick should record a running pid, got %+v", o.TickPID)
+	}
+}
+
+func TestBuildOwnerTickPromptInteractiveAllowsHuman(t *testing.T) {
+	p := strings.ToLower(buildOwnerTickPromptInteractive("desk"))
+	if !strings.Contains(p, "askuserquestion") {
+		t.Errorf("interactive prompt should permit AskUserQuestion (human present)")
+	}
+	if strings.Contains(p, "do not use askuserquestion") {
+		t.Errorf("interactive prompt must NOT forbid AskUserQuestion")
+	}
+	// Still orchestrates + journals like the headless tick.
+	for _, want := range []string{"flow owner show desk", "owners/desk/updates", "never execute work inline"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("interactive prompt missing %q", want)
+		}
+	}
+}
+
 func TestBuildOwnerTickPromptReadsAndWritesJournal(t *testing.T) {
 	p := strings.ToLower(buildOwnerTickPrompt("desk"))
 	for _, want := range []string{

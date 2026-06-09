@@ -2,8 +2,10 @@ package app
 
 import (
 	"database/sql"
+	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/harness"
+	"flow/internal/spawner"
 	"fmt"
 	"os"
 	"os/exec"
@@ -66,6 +68,104 @@ var ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, 
 	pid := cmd.Process.Pid
 	_ = cmd.Process.Release()
 	return pid, nil
+}
+
+// ownerInteractiveLauncher spawns an interactive terminal tab running one
+// owner tick with the human present (the hand-triggered / first-run path).
+// It mints a throwaway session (not bound to the owner) and reuses the same
+// spawn machinery as `flow do`. Overridable in tests.
+var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
+	var hname string
+	if o.Harness.Valid {
+		hname = o.Harness.String
+	}
+	h, err := harnessByName(hname)
+	if err != nil {
+		return err
+	}
+	sid, err := h.NewSessionID()
+	if err != nil {
+		return fmt.Errorf("new session id: %w", err)
+	}
+	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{})
+	var spawnEnv map[string]string
+	if root := os.Getenv("FLOW_ROOT"); root != "" {
+		spawnEnv = map[string]string{"FLOW_ROOT": root}
+	}
+	return spawner.SpawnTab("owner: "+o.Slug, o.WorkDir, command, spawnEnv)
+}
+
+// ownerTickManual implements `flow owner tick <slug>`: a hand-triggered,
+// on-demand tick (wake the owner now, regardless of schedule). Interactive
+// by default — spawns a tab the user drives, ideal for the first tick or
+// to check something early. `--auto` runs it headlessly instead. Neither
+// path advances the owner's schedule; this is an extra tick on top of it.
+func ownerTickManual(args []string) int {
+	if len(args) == 0 || args[0] == "" {
+		fmt.Fprintln(os.Stderr, "error: owner tick requires an owner slug")
+		return 2
+	}
+	slug := args[0]
+	fs := flagSet("owner tick")
+	auto := fs.Bool("auto", false, "run the tick headlessly in the background (no tab, no human)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	o, err := flowdb.GetOwner(db, slug)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(os.Stderr, "error: no owner %q\n", slug)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	if *auto {
+		root, err := flowRoot()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		now := time.Now()
+		ticksDir := filepath.Join(root, "owners", slug, "ticks")
+		if err := os.MkdirAll(ticksDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		logPath := filepath.Join(ticksDir, now.UTC().Format("2006-01-02-150405")+".log")
+		pid, err := ownerTickLauncher(slug, o.WorkDir, logPath, autoChildEnv())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		o.TickPID = sql.NullInt64{Int64: int64(pid), Valid: true}
+		o.TickStarted = sql.NullString{String: now.Format(time.RFC3339), Valid: true}
+		if err := flowdb.UpdateOwner(db, o); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: record tick for %q: %v\n", slug, err)
+		}
+		fmt.Printf("dispatched a headless tick for owner %q (pid %d)\n", slug, pid)
+		return 0
+	}
+
+	if err := ownerInteractiveLauncher(o, buildOwnerTickPromptInteractive(slug)); err != nil {
+		fmt.Fprintf(os.Stderr, "error: spawn interactive tick: %v\n", err)
+		return 1
+	}
+	fmt.Printf("opened an interactive tick for owner %q — drive it in the new tab\n", slug)
+	return 0
 }
 
 // ownerTickDue implements `flow owner tick-due`: the scheduler pass that
@@ -220,6 +320,29 @@ func reconcileOwnerTick(db *sql.DB, o *flowdb.Owner) {
 	o.TickPID = sql.NullInt64{}
 	o.TickStarted = sql.NullString{}
 	_ = flowdb.UpdateOwner(db, o)
+}
+
+// buildOwnerTickPromptInteractive is the prompt for a hand-triggered tick
+// run WITH the user present (often the first tick). Same orchestrate +
+// journal discipline as the headless tick, but the human can guide it: it
+// MAY use AskUserQuestion, and it folds anything learned back into the
+// charter so future headless ticks improve.
+func buildOwnerTickPromptInteractive(slug string) string {
+	return fmt.Sprintf(
+		"You are running ONE tick of the flow OWNER %q — INTERACTIVELY, with the user present (often the FIRST tick, to help you navigate). You MAY use AskUserQuestion to clarify intent, confirm a plan, or resolve charter ambiguity, and the user can course-correct you. If the charter is unclear or wrong, work it out WITH the user and update owners/%s/charter.md so future HEADLESS ticks behave correctly.\n\n"+
+			"You still ORCHESTRATE; you NEVER execute work inline. A tick gets no `flow done` close-out sweep, so route real work through tasks/playbooks that self-close:\n"+
+			"  - RECURRING work → a PLAYBOOK: create if needed, then `flow run playbook <slug> --auto`. Tag the run owner:%s.\n"+
+			"  - ONE-TIME work → a TASK: `flow add task \"<what>\" --tag owner:%s`, then `flow do --auto <task>`.\n"+
+			"  - A decision for the user → just ASK them (you're interactive), or park a QUESTION task (`--tag question --tag owner:%s`) for later.\n\n"+
+			"Do these in order:\n"+
+			"1. Invoke the flow skill via the Skill tool.\n"+
+			"2. Read your charter at owners/%s/charter.md.\n"+
+			"3. Read recent notes under owners/%s/updates/ (your journal), then review what you own with `flow owner show %s` (tasks, playbook runs, and questions with status). Don't duplicate tracked work or re-spawn an in-progress run.\n"+
+			"4. Observe per the charter and, together with the user, DISPATCH the needed playbook-runs / tasks / questions.\n"+
+			"5. Be conservative with irreversible/outward actions unless the charter authorizes them (when unsure, ask the user).\n"+
+			"6. Before finishing, WRITE a short note to owners/%s/updates/<today>-tick.md (what you observed, what you dispatched with slugs, what the next tick should check), and fold any lessons into the charter so headless ticks improve.\n",
+		slug, slug, slug, slug, slug, slug, slug, slug, slug,
+	)
 }
 
 // buildOwnerTickPrompt is the bootstrap prompt for one headless owner

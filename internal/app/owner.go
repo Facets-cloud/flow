@@ -29,7 +29,7 @@ This owner's operating manual. Edit freely or via a flow skill session.
 // cmdOwner dispatches `flow owner list|show|start|pause`.
 func cmdOwner(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: owner requires a subcommand (list, show, start, pause)")
+		fmt.Fprintln(os.Stderr, "error: owner requires a subcommand (list, show, start, pause, tick)")
 		return 2
 	}
 	switch args[0] {
@@ -41,6 +41,8 @@ func cmdOwner(args []string) int {
 		return ownerStart(args[1:])
 	case "pause":
 		return ownerPause(args[1:])
+	case "tick":
+		return ownerTickManual(args[1:])
 	case "tick-due":
 		return ownerTickDue(args[1:])
 	}
