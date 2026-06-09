@@ -109,6 +109,13 @@ the next one smarter.
   a headless Claude pass that re-reads the entire transcript and
   pulls anything kb-worthy that the live scoop missed. The status
   flip is the contract; the sweep is best-effort.
+- **Checkpoint (mid-session):** `flow checkpoint` runs the same
+  headless pass *without* closing the task — it reads the live
+  transcript and drafts one dated note into the task's `updates/`
+  for you to review. It's the non-terminal sibling of the sweep:
+  use it at a breakpoint on a long or heavy day so the next
+  `flow do` resume isn't reading a stale brief. No status change,
+  no kb writes — just the running log.
 - **Cross-reference:** `flow transcript <sibling-task>` lets a
   current session read what was decided in a related one — useful
   when the brief alone doesn't carry enough context.

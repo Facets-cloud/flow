@@ -53,6 +53,8 @@ func Run(args []string) int {
 		return cmdRun(rest)
 	case "done":
 		return cmdDone(rest)
+	case "checkpoint":
+		return cmdCheckpoint(rest)
 	case "show":
 		return cmdShow(rest)
 	case "list":
@@ -100,6 +102,7 @@ Create:
 Sessions:
   flow do                <ref> [--fresh] [--dangerously-skip-permissions]
   flow do --auto         <ref>                 (run headlessly in the background; self-completes via flow done)
+  flow checkpoint        [<ref>]               (draft a progress note from the live transcript; no status change)
   flow done              <ref>
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
