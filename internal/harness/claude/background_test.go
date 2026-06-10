@@ -58,6 +58,24 @@ func TestParseBackgroundBanner(t *testing.T) {
 	}
 }
 
+// `claude agents --json --all` also returns interactive (non-background)
+// sessions. parseBackgroundAgents must drop them — flow's bg surfaces
+// (bg_status, [live] merge, resume detection) are about background agents
+// only, and counting an ordinary tab session would mislabel it.
+func TestParseBackgroundAgentsDropsInteractive(t *testing.T) {
+	const mixed = `[
+	  {"pid":1,"id":"aaaaaaaa","cwd":"/w","kind":"interactive","sessionId":"aaaaaaaa-0000-4000-8000-000000000000","name":"tab","status":"waiting"},
+	  {"pid":2,"id":"bbbbbbbb","cwd":"/w","kind":"background","sessionId":"bbbbbbbb-0000-4000-8000-000000000000","name":"bg","status":"busy","state":"working"}
+	]`
+	agents, err := parseBackgroundAgents([]byte(mixed))
+	if err != nil {
+		t.Fatalf("parseBackgroundAgents: %v", err)
+	}
+	if len(agents) != 1 || agents[0].ShortID != "bbbbbbbb" {
+		t.Errorf("got %+v, want only the background-kind entry", agents)
+	}
+}
+
 func TestParseBackgroundAgents(t *testing.T) {
 	agents, err := parseBackgroundAgents([]byte(realAgentsJSON))
 	if err != nil {

@@ -294,6 +294,7 @@ func TestBackgroundLauncherForGate(t *testing.T) {
 // resolves to its live agent (status/state/pid); absent or session-less
 // tasks resolve to nil.
 func TestBGAgentStatus(t *testing.T) {
+	stubBGMode(t)
 	reg := bgAgentsJSON(bgFullSID)
 	stubBGCommand(t, &reg)
 
@@ -328,6 +329,7 @@ func TestBGAgentStatus(t *testing.T) {
 // `flow list` must count background agents (which don't show in the ps
 // scan) as live.
 func TestLiveSessionsIncludesBackgroundAgents(t *testing.T) {
+	stubBGMode(t)
 	stubPS(t, "") // nothing live via the process table
 	reg := bgAgentsJSON(bgFullSID)
 	stubBGCommand(t, &reg)
@@ -339,6 +341,35 @@ func TestLiveSessionsIncludesBackgroundAgents(t *testing.T) {
 	merged := liveSessionsForTasks(tasks)
 	if merged[strings.ToLower(bgFullSID)] == 0 {
 		t.Errorf("background agent not counted as live: %v", merged)
+	}
+}
+
+// Regression guard: with FLOW_TERM unset (non-bg mode), flow show / list
+// must NOT query the background-agent registry — no `claude agents`
+// subprocess, no bg_status, no bg-sourced [live]. The TestMain default
+// pins BackgroundOverride=false, so these run in non-bg mode.
+func TestNonBgModeSkipsRegistry(t *testing.T) {
+	bgCalled := false
+	old := claude.BGCommandRunner
+	claude.BGCommandRunner = func(workDir string, args []string) ([]byte, error) {
+		if len(args) >= 1 && args[0] == "agents" {
+			bgCalled = true
+		}
+		return []byte("[]"), nil
+	}
+	t.Cleanup(func() { claude.BGCommandRunner = old })
+	stubPS(t, "")
+
+	task := &flowdb.Task{
+		Harness:   sql.NullString{String: "claude", Valid: true},
+		SessionID: sql.NullString{String: bgFullSID, Valid: true},
+	}
+	if bgAgentStatus(task) != nil {
+		t.Error("bgAgentStatus non-nil in non-bg mode")
+	}
+	_ = liveSessionsForTasks([]*flowdb.Task{task})
+	if bgCalled {
+		t.Error("non-bg mode must not run `claude agents` (latency regression)")
 	}
 }
 

@@ -304,15 +304,16 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 	// `claude agents --json` lookup. Only prints when the bound session
 	// is currently a running background agent.
 	if a := bgAgentStatus(t); a != nil {
-		line := a.Status
-		if a.State != "" {
-			line += " / " + a.State
+		line := bgStateLabel(a)
+		if a.PID > 0 {
+			line += fmt.Sprintf(" (pid %d", a.PID)
+			if a.ShortID != "" {
+				line += ", id " + a.ShortID
+			}
+			line += ")"
+		} else if a.ShortID != "" {
+			line += " (id " + a.ShortID + ")"
 		}
-		line += fmt.Sprintf(" (pid %d", a.PID)
-		if a.ShortID != "" {
-			line += ", id " + a.ShortID
-		}
-		line += ")"
 		fmt.Printf("bg_status:             %s\n", line)
 	}
 

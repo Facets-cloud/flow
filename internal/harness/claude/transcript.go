@@ -55,7 +55,17 @@ func resolveTranscriptPath(home, cwd, sessionID string) (string, error) {
 	}
 	matches, _ := filepath.Glob(filepath.Join(projects, "*", sessionID+".jsonl"))
 	if len(matches) > 0 {
-		return matches[0], nil
+		// The same session id can appear under two project dirs (e.g. a
+		// plain `claude --resume <id>` from a different cwd writes a second
+		// copy). Prefer the most recently modified — the live transcript,
+		// not a stale one.
+		newest, newestMod := matches[0], int64(-1)
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && fi.ModTime().UnixNano() > newestMod {
+				newest, newestMod = m, fi.ModTime().UnixNano()
+			}
+		}
+		return newest, nil
 	}
 	return "", fmt.Errorf(
 		"claude transcript not found: no %s.jsonl under %s (tried cwd-encoded path %s and a glob on the session id)",

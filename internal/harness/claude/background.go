@@ -1,11 +1,13 @@
 package claude
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"flow/internal/harness"
 )
@@ -26,6 +28,19 @@ import (
 var BGCommandRunner = runBGCommand
 
 func runBGCommand(workDir string, args []string) ([]byte, error) {
+	// The read-only `agents` query runs on the hot path (flow show/list),
+	// so cap it: a stalled claude daemon must never hang those commands.
+	// Spawn/resume have no timeout — they return promptly after the
+	// session registers, and a slow spawn shouldn't be cut off.
+	if len(args) >= 1 && args[0] == "agents" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "claude", args...)
+		if workDir != "" {
+			cmd.Dir = workDir
+		}
+		return cmd.CombinedOutput()
+	}
 	cmd := exec.Command("claude", args...)
 	if workDir != "" {
 		cmd.Dir = workDir
@@ -64,6 +79,7 @@ type bgAgentJSON struct {
 	PID       int    `json:"pid"`
 	ID        string `json:"id"`
 	Cwd       string `json:"cwd"`
+	Kind      string `json:"kind"`
 	SessionID string `json:"sessionId"`
 	Name      string `json:"name"`
 	Status    string `json:"status"`
@@ -71,7 +87,10 @@ type bgAgentJSON struct {
 }
 
 // parseBackgroundAgents decodes `claude agents --json` into the harness's
-// normalized BackgroundAgent slice.
+// normalized BackgroundAgent slice. Only `kind:"background"` entries are
+// returned — `--all` also lists interactive (terminal-tab) sessions, and
+// counting those would mislabel an ordinary `flow do` tab session as a
+// background agent in flow show / list.
 func parseBackgroundAgents(raw []byte) ([]harness.BackgroundAgent, error) {
 	var entries []bgAgentJSON
 	if err := json.Unmarshal(raw, &entries); err != nil {
@@ -79,6 +98,9 @@ func parseBackgroundAgents(raw []byte) ([]harness.BackgroundAgent, error) {
 	}
 	out := make([]harness.BackgroundAgent, 0, len(entries))
 	for _, e := range entries {
+		if e.Kind != "background" {
+			continue
+		}
 		out = append(out, harness.BackgroundAgent{
 			ShortID:   e.ID,
 			SessionID: e.SessionID,
