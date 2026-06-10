@@ -28,12 +28,15 @@ import (
 var BGCommandRunner = runBGCommand
 
 func runBGCommand(workDir string, args []string) ([]byte, error) {
-	// The read-only `agents` query runs on the hot path (flow show/list),
-	// so cap it: a stalled claude daemon must never hang those commands.
-	// Spawn/resume have no timeout — they return promptly after the
-	// session registers, and a slow spawn shouldn't be cut off.
+	// The read-only `agents` query is bounded so a stalled claude daemon
+	// can't hang flow show/list forever — but the cap is generous: this
+	// same query is how SpawnBackground/ResumeBackground capture the
+	// minted session id, and immediately after a `--bg` launch the daemon
+	// is busy registering the new agent, so the query routinely takes
+	// ~10s (measured). The timeout is a backstop against a true hang, not
+	// a tight latency bound; too-tight a value kills legitimate captures.
 	if len(args) >= 1 && args[0] == "agents" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "claude", args...)
 		if workDir != "" {

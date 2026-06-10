@@ -7,6 +7,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.20] — 2026-06-10
+
+### Fixed
+
+- **`$FLOW_TERM=bg` spawn could fail to capture the session id.** The
+  `claude agents --json --all` lookup that resolves a freshly-spawned bg
+  session's id had a 5s timeout, but immediately after `claude --bg` the
+  daemon is busy registering the new agent and the query routinely takes
+  ~10s — so the spawn errored (`signal: killed`) and rolled back, leaving
+  an orphaned agent. The backstop timeout is now 30s (it only guards
+  against a genuinely stalled daemon, not normal post-spawn latency).
+  Fixes bg spawn introduced in alpha.19.
+
 ## [0.1.0-alpha.19] — 2026-06-10
 
 ### Added
@@ -374,7 +387,8 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.19...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.20...HEAD
+[0.1.0-alpha.20]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.20
 [0.1.0-alpha.19]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.19
 [0.1.0-alpha.18]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.18
 [0.1.0-alpha.17]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.17
