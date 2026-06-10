@@ -82,6 +82,106 @@ func TestOwnerTickDueRecordsRunningPID(t *testing.T) {
 	}
 }
 
+// After dispatch advances next_wake_at into the future, an immediate
+// second scheduler pass must not re-dispatch the same owner.
+func TestOwnerTickDueSecondPassDoesNotRedispatch(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	past := sql.NullString{String: time.Now().Add(-time.Hour).Format(time.RFC3339), Valid: true}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "active", NextWakeAt: past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var dispatched []string
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) {
+		dispatched = append(dispatched, slug)
+		return 0, nil
+	}
+	t.Cleanup(func() { ownerTickLauncher = old })
+	// Force the recorded pid to look dead so the overlap guard isn't what
+	// prevents re-dispatch — we want to prove the next_wake_at advance does.
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return false }
+	t.Cleanup(func() { processAlive = oldAlive })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("first pass rc=%d", rc)
+	}
+	if len(dispatched) != 1 {
+		t.Fatalf("first pass dispatched %v, want [o1]", dispatched)
+	}
+	dispatched = nil
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("second pass rc=%d", rc)
+	}
+	if len(dispatched) != 0 {
+		t.Errorf("second pass re-dispatched %v; the next_wake advance should prevent it", dispatched)
+	}
+}
+
+// tick-due must skip (not crash, not launch) an owner with an unparseable
+// --every — a defensive path since CreateOwner / direct writes don't
+// validate the interval the way `flow add owner` does.
+func TestOwnerTickDueSkipsInvalidEvery(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	past := sql.NullString{String: time.Now().Add(-time.Hour).Format(time.RFC3339), Valid: true}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "bad", Name: "B", WorkDir: "/x", Every: "notaduration", Status: "active", NextWakeAt: past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) { called = true; return 0, nil }
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("tick-due rc=%d (a bad-every row must not crash the pass)", rc)
+	}
+	if called {
+		t.Errorf("owner with invalid --every should be skipped, not launched")
+	}
+}
+
+// Each tick is a FRESH, sessionless run: the detached child's env must not
+// carry CLAUDE_CODE_SESSION_ID from the parent, or the tick would resume
+// the parent's transcript instead of starting clean.
+func TestOwnerTickDispatchEnvIsSessionless(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "11111111-2222-3333-4444-555555555555")
+	past := sql.NullString{String: time.Now().Add(-time.Hour).Format(time.RFC3339), Valid: true}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "active", NextWakeAt: past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var gotEnv []string
+	called := false
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) {
+		gotEnv = env
+		called = true
+		return 0, nil
+	}
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("tick-due rc=%d", rc)
+	}
+	if !called {
+		t.Fatal("launcher was not called")
+	}
+	for _, kv := range gotEnv {
+		if strings.HasPrefix(kv, "CLAUDE_CODE_SESSION_ID=") {
+			t.Errorf("tick child env leaked %q — each tick must be a fresh, sessionless run", kv)
+		}
+	}
+}
+
 // A tick that finishes BEFORE the scheduler records its pid must not have
 // its result clobbered. The scheduler dispatch write must touch only the
 // running-tick + schedule columns, never last_tick_*. Regression for the

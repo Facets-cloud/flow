@@ -127,6 +127,34 @@ func TestDueOwnersReturnsOnlyActivePastDue(t *testing.T) {
 	}
 }
 
+// A row whose next_wake_at can't be parsed must be skipped, not crash the
+// whole scheduler pass — DueOwners is defensive against a corrupt value.
+func TestDueOwnersSkipsUnparseableNextWake(t *testing.T) {
+	db := openTempDB(t)
+
+	const now = "2026-06-08T12:00:00Z"
+	past := sql.NullString{String: "2026-06-08T11:00:00Z", Valid: true}
+	if err := CreateOwner(db, &Owner{Slug: "good", Name: "n", WorkDir: "/x", Every: "1h", Status: "active", NextWakeAt: past}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateOwner(db, &Owner{Slug: "garbage", Name: "n", WorkDir: "/x", Every: "1h", Status: "active",
+		NextWakeAt: sql.NullString{String: "not-a-timestamp", Valid: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	due, err := DueOwners(db, now)
+	if err != nil {
+		t.Fatalf("DueOwners must not error on a garbage row: %v", err)
+	}
+	if len(due) != 1 || due[0].Slug != "good" {
+		var slugs []string
+		for _, o := range due {
+			slugs = append(slugs, o.Slug)
+		}
+		t.Fatalf("DueOwners = %v, want only [good] (garbage row skipped)", slugs)
+	}
+}
+
 func TestRetireOwner(t *testing.T) {
 	db := openTempDB(t)
 	if err := CreateOwner(db, &Owner{

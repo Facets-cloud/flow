@@ -83,6 +83,33 @@ func TestCmdOwnerNextRejectsPastTime(t *testing.T) {
 	}
 }
 
+// `flow owner next --at` accepts a date expression (today/tomorrow/
+// weekday), not just an RFC3339 timestamp — via parseOwnerWhen.
+func TestCmdOwnerNextAcceptsDateExpression(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdOwner([]string{"next", "o1", "--at", "tomorrow"}); rc != 0 {
+		t.Fatalf("--at tomorrow should be accepted, rc=%d", rc)
+	}
+	o, err := flowdb.GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.NextWakeAt.Valid {
+		t.Fatal("next_wake_at should be set")
+	}
+	nt, err := time.Parse(time.RFC3339, o.NextWakeAt.String)
+	if err != nil {
+		t.Fatalf("next_wake_at %q is not RFC3339: %v", o.NextWakeAt.String, err)
+	}
+	if !nt.After(time.Now()) {
+		t.Errorf("next_wake_at %q should be in the future", o.NextWakeAt.String)
+	}
+}
+
 // An explicit --slug that collides with an existing owner should fail with
 // a friendly message, not a raw SQL UNIQUE-constraint error.
 func TestCmdAddOwnerDuplicateSlugFriendlyError(t *testing.T) {
