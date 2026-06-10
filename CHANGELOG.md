@@ -7,6 +7,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.19] — 2026-06-10
+
+### Added
+
+- **Terminal-free background-agent spawn backend (`$FLOW_TERM=bg`).** Set
+  `FLOW_TERM=bg` and `flow do <task>` launches the session as a Claude Code
+  **background agent** (Agent View, `claude agents`) instead of opening a
+  terminal tab — for users who live in the Agent View. flow spawns
+  `claude --bg --name "<project>/<task>" <prompt>` (in the task's
+  `work_dir`), parses the launch banner, and resolves the **real**
+  session id via a single `claude agents --json --all` lookup — so a
+  `--bg`-injecting `claude` alias no longer defeats flow's session-id
+  binding (flow captures the harness-minted id instead of recording a
+  phantom one). Re-running is idempotent: a still-live session is reported
+  as open in the Agent View; a not-running or removed one is brought back
+  via `claude --bg --resume` (which inherits the prior conversation under
+  a new id, so flow re-records it). `flow show` / `flow list` surface live
+  bg status (and `flow transcript` resolves a bg session's jsonl by
+  globbing the session id, handling the git-worktree relocation case).
+  Background mode is Claude-only; pointing `FLOW_TERM=bg` at a task pinned
+  to another harness fails cleanly rather than silently opening a tab.
+
 ## [0.1.0-alpha.18] — 2026-06-08
 
 ### Added
@@ -352,7 +374,9 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.17...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.19...HEAD
+[0.1.0-alpha.19]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.19
+[0.1.0-alpha.18]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.18
 [0.1.0-alpha.17]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.17
 [0.1.0-alpha.16]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.16
 [0.1.0-alpha.15]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.15
