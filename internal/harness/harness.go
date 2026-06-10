@@ -82,12 +82,15 @@ type BackgroundAgent struct {
 // captures the REAL id after spawn by querying the registry, so the
 // DB-authoritative binding contract holds without fighting the harness.
 type BackgroundLauncher interface {
-	// SpawnBackground starts a fresh background session running prompt,
-	// displayed as name. It blocks only until the session is registered
-	// (no polling), then resolves and returns the full session id (plus
-	// current status) by querying the agent registry. The returned
+	// SpawnBackground starts a fresh background session in workDir,
+	// running prompt, displayed as name. workDir is where the agent
+	// begins (and what its transcript/CLAUDE.md context is keyed to) —
+	// it must be the task's work_dir, not the cwd flow happened to run
+	// from. It blocks only until the session is registered (no polling),
+	// then resolves and returns the full session id (plus current
+	// status) by querying the agent registry. The returned
 	// BackgroundAgent.SessionID is what flow records on the task.
-	SpawnBackground(name, prompt string, opts LaunchOpts) (BackgroundAgent, error)
+	SpawnBackground(workDir, name, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// ResumeBackground brings a no-longer-tracked background session's
 	// conversation back as a fresh background agent, seeded from the
@@ -96,9 +99,10 @@ type BackgroundLauncher interface {
 	// inherited, but `claude --bg --resume <id>` does not preserve the
 	// id — verified against the CLI and documented behavior). The
 	// returned BackgroundAgent carries the NEW id, which flow re-records
-	// on the task. opts.Inject, if set, is delivered as the first
-	// message after resume.
-	ResumeBackground(sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// on the task. workDir is where the resumed agent begins (the task's
+	// work_dir). opts.Inject, if set, is delivered as the first message
+	// after resume.
+	ResumeBackground(workDir, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /

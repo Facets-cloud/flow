@@ -10,18 +10,27 @@ import (
 	"flow/internal/harness"
 )
 
-// BGCommandRunner executes `claude <args...>` and returns its combined
-// output. It is the single test seam for all background operations
-// (spawn, resume, list): tests dispatch on args to return canned
-// banners / JSON without spawning a real claude. The default execs the
-// real binary; because Go's exec invokes the binary directly (NOT via a
-// shell), the user's interactive `claude` alias — which injects --bg and
-// breaks --session-id pinning — never applies here. flow controls every
-// flag.
+// BGCommandRunner executes `claude <args...>` in workDir and returns its
+// combined output. It is the single test seam for all background
+// operations (spawn, resume, list): tests dispatch on args to return
+// canned banners / JSON without spawning a real claude. The default
+// execs the real binary; because Go's exec invokes the binary directly
+// (NOT via a shell), the user's interactive `claude` alias — which
+// injects --bg and breaks --session-id pinning — never applies here.
+// flow controls every flag.
+//
+// workDir sets the spawned process's cwd: a `claude --bg` session begins
+// there (and keys its transcript/CLAUDE.md context to it), so it must be
+// the task's work_dir. Empty workDir means "inherit flow's cwd" — used
+// for cwd-independent queries like `claude agents --json`.
 var BGCommandRunner = runBGCommand
 
-func runBGCommand(args []string) ([]byte, error) {
-	return exec.Command("claude", args...).CombinedOutput()
+func runBGCommand(workDir string, args []string) ([]byte, error) {
+	cmd := exec.Command("claude", args...)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+	return cmd.CombinedOutput()
 }
 
 // ansiRe strips ANSI SGR escape sequences (color/dim) that `claude --bg`
@@ -89,21 +98,21 @@ func parseBackgroundAgents(raw []byte) ([]harness.BackgroundAgent, error) {
 // present but not currently running" — the former needs a resume, the
 // latter just needs the user to attach in the Agent View.
 func (c *claude) BackgroundAgents() ([]harness.BackgroundAgent, error) {
-	out, err := BGCommandRunner([]string{"agents", "--json", "--all"})
+	out, err := BGCommandRunner("", []string{"agents", "--json", "--all"})
 	if err != nil {
 		return nil, fmt.Errorf("claude agents --json --all: %w", err)
 	}
 	return parseBackgroundAgents(out)
 }
 
-// launchAndCapture runs a `claude --bg …` command, parses the short id
-// from its banner, and resolves the full session id by matching that
-// short id in the agent registry. One deterministic lookup — no polling,
-// no race — because `--bg` only prints the banner after the session is
-// registered. Shared by SpawnBackground and ResumeBackground (which
-// differ only in their argv; --bg mints a fresh id either way).
-func (c *claude) launchAndCapture(args []string, what string) (harness.BackgroundAgent, error) {
-	out, err := BGCommandRunner(args)
+// launchAndCapture runs a `claude --bg …` command in workDir, parses the
+// short id from its banner, and resolves the full session id by matching
+// that short id in the agent registry. One deterministic lookup — no
+// polling, no race — because `--bg` only prints the banner after the
+// session is registered. Shared by SpawnBackground and ResumeBackground
+// (which differ only in their argv; --bg mints a fresh id either way).
+func (c *claude) launchAndCapture(workDir string, args []string, what string) (harness.BackgroundAgent, error) {
+	out, err := BGCommandRunner(workDir, args)
 	if err != nil {
 		return harness.BackgroundAgent{}, fmt.Errorf("claude --bg (%s): %w (output: %s)", what, err, strings.TrimSpace(string(out)))
 	}
@@ -128,7 +137,7 @@ func (c *claude) launchAndCapture(args []string, what string) (harness.Backgroun
 // [--dangerously-skip-permissions]` and captures the minted session id.
 // opts.Inject is appended to the prompt behind InjectionMarker, mirroring
 // LaunchCmd.
-func (c *claude) SpawnBackground(name, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
 	if opts.Inject != "" {
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
@@ -136,7 +145,7 @@ func (c *claude) SpawnBackground(name, prompt string, opts harness.LaunchOpts) (
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	return c.launchAndCapture(args, "spawn")
+	return c.launchAndCapture(workDir, args, "spawn")
 }
 
 // ResumeBackground runs `claude --bg --resume <sessionID>
@@ -145,7 +154,7 @@ func (c *claude) SpawnBackground(name, prompt string, opts harness.LaunchOpts) (
 // the prior conversation* under a NEW id (verified against the CLI). So
 // this captures and returns the new id exactly like SpawnBackground; the
 // caller re-records it on the task.
-func (c *claude) ResumeBackground(sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+func (c *claude) ResumeBackground(workDir, sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
 	args := []string{"--bg", "--resume", sessionID}
 	if opts.Inject != "" {
 		args = append(args, harness.InjectionMarker+"\n"+opts.Inject)
@@ -153,5 +162,5 @@ func (c *claude) ResumeBackground(sessionID string, opts harness.LaunchOpts) (ha
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	return c.launchAndCapture(args, "resume")
+	return c.launchAndCapture(workDir, args, "resume")
 }

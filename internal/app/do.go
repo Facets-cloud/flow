@@ -624,28 +624,24 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 
 	if hasSession && !fresh {
 		sid := task.SessionID.String
-		// Is the session still known to the Agent View (any state)?
-		if a := bgAgentInRegistry(bg, sid); a != nil {
-			// Present — don't spawn. A bg session is recovered by
-			// attaching in the Agent View (a stopped/failed one restarts
-			// from where it left off, keeping its id), so flow points the
-			// user there rather than re-spawning. The recorded id stays
-			// valid.
-			if a.PID > 0 {
-				fmt.Printf("Already running in background: %s (%s, %s) — attach via your Agent View: `claude attach %s`\n",
-					task.Slug, a.ShortID, bgStateLabel(a), a.ShortID)
-			} else {
-				fmt.Printf("%s is in your Agent View (%s, %s) — attach to resume it (a stopped/failed session restarts on attach): `claude attach %s`\n",
-					task.Slug, a.ShortID, bgStateLabel(a), a.ShortID)
-			}
+		// If the session is still LIVE in the Agent View (process alive —
+		// running or idle-waiting), don't spawn or resume: it's already
+		// there, so just point the user at it. (A live bg session keeps a
+		// pid; an exited one — stopped/failed/done — has none.)
+		if a := bgAgentInRegistry(bg, sid); a != nil && a.PID > 0 {
+			fmt.Printf("%s is open in your Agent View (%s, %s) — run `claude agents` to view or reply\n",
+				task.Slug, a.ShortID, bgStateLabel(a))
 			return 0
 		}
 
-		// Absent from the registry (removed / no longer tracked): bring the
-		// conversation back as a fresh bg agent seeded from its transcript.
-		// --bg mints a NEW id, so capture and re-record it (otherwise flow
-		// would keep pointing at the dead id — the phantom-id bug).
-		agent, err := bg.ResumeBackground(sid, opts)
+		// Not running (exited: stopped/failed/done) or removed: bring the
+		// conversation back as a background agent seeded from its
+		// transcript. `claude --bg --resume` mints a NEW id (history
+		// inherited — it can't keep the id under --bg), so capture and
+		// re-record it; otherwise flow would keep pointing at the dead id
+		// (the phantom-id bug). Plain `--resume` would preserve the id but
+		// wouldn't be a background agent, so it can't be used in bg mode.
+		agent, err := bg.ResumeBackground(task.WorkDir, sid, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -674,7 +670,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	playbookSlug, isFirstRun := bgPlaybookContext(db, task)
 	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
 
-	agent, err := bg.SpawnBackground(title, prompt, opts)
+	agent, err := bg.SpawnBackground(task.WorkDir, title, prompt, opts)
 	if err != nil {
 		// Nothing was written to the DB yet — clean failure, next attempt retries.
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

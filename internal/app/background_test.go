@@ -20,12 +20,18 @@ import (
 // exercise bg behavior override it via stubBGCommand and restore on
 // cleanup.
 func TestMain(m *testing.M) {
-	claude.BGCommandRunner = func(args []string) ([]byte, error) {
+	claude.BGCommandRunner = func(workDir string, args []string) ([]byte, error) {
 		if len(args) >= 1 && args[0] == "agents" {
 			return []byte("[]"), nil
 		}
 		return nil, fmt.Errorf("BGCommandRunner not stubbed for args %v", args)
 	}
+	// Insulate the suite from an ambient $FLOW_TERM=bg in the developer's
+	// environment: default the whole app package to NON-background so
+	// cmdDo tests exercise the terminal path. bg tests opt in via
+	// stubBGMode (which saves/restores this override).
+	notBG := false
+	spawner.BackgroundOverride = &notBG
 	os.Exit(m.Run())
 }
 
@@ -35,8 +41,8 @@ const bgFullSID = "48d287d9-1ef0-4738-84b9-3110beb988c4"
 // 48d287d9 (the prefix of bgFullSID).
 const bgBanner = "backgrounded · 48d287d9 · flow/x\n"
 
-// bgAgentsJSON builds a `claude agents --json` array containing one entry
-// per session id (short id = first 8 chars).
+// bgAgentsJSON builds a `claude agents --json` array of LIVE entries
+// (pid set) — one per session id (short id = first 8 chars).
 func bgAgentsJSON(sids ...string) string {
 	var b strings.Builder
 	b.WriteString("[")
@@ -56,6 +62,19 @@ func bgAgentsJSON(sids ...string) string {
 	return b.String()
 }
 
+// bgAgentsJSONExited builds a registry entry for an exited session (no
+// pid / status — `state` only), as `claude agents --json --all` reports a
+// stopped/failed/done session whose process is gone.
+func bgAgentsJSONExited(sid, state string) string {
+	short := sid
+	if len(short) >= 8 {
+		short = short[:8]
+	}
+	return fmt.Sprintf(
+		`[{"id":%q,"cwd":"/w","kind":"background","startedAt":1,"sessionId":%q,"name":"n","state":%q}]`,
+		short, sid, state)
+}
+
 // stubBGMode forces spawner.IsBackground() true for the test.
 func stubBGMode(t *testing.T) {
 	t.Helper()
@@ -69,6 +88,10 @@ type bgCalls struct {
 	spawn, resume, agents     int
 	lastSpawn, lastResume     []string
 	spawnBanner, resumeBanner string
+	// onResume, if set, fires when a --resume command is issued — lets a
+	// test mutate the registry so the resume's capture lookup resolves the
+	// newly-forked id.
+	onResume func()
 }
 
 // stubBGCommand swaps claude.BGCommandRunner with a recorder that
@@ -81,7 +104,7 @@ func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 	t.Helper()
 	c := &bgCalls{spawnBanner: bgBanner, resumeBanner: bgBanner}
 	old := claude.BGCommandRunner
-	claude.BGCommandRunner = func(args []string) ([]byte, error) {
+	claude.BGCommandRunner = func(workDir string, args []string) ([]byte, error) {
 		if len(args) >= 1 && args[0] == "agents" {
 			c.agents++
 			return []byte(*agentsJSON), nil
@@ -90,6 +113,9 @@ func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 			if a == "--resume" {
 				c.resume++
 				c.lastResume = args
+				if c.onResume != nil {
+					c.onResume()
+				}
 				return []byte(c.resumeBanner), nil
 			}
 		}
@@ -205,6 +231,43 @@ func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 	}
 	if task.SessionID.String != newSID {
 		t.Errorf("session_id after resume = %q, want re-recorded new id %q", task.SessionID.String, newSID)
+	}
+}
+
+// TestCmdDoBackgroundResumeWhenExited: a bound session that's still listed
+// but no longer running (exited, no pid) is resumed (forked + re-recorded),
+// not left as "already open".
+func TestCmdDoBackgroundResumeWhenExited(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bgt")
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+
+	if rc := cmdDo([]string{"bgt"}); rc != 0 { // fresh spawn, binds bgFullSID
+		t.Fatalf("first cmdDo rc=%d", rc)
+	}
+
+	// Session now present but EXITED (stopped, no pid): the alive-check must
+	// see it as not-running → resume. The resume forks a new id, so flip the
+	// registry to that new session when the resume command fires (so the
+	// capture lookup resolves it).
+	const newSID = "77665544-0000-4000-8000-000000000000"
+	reg = bgAgentsJSONExited(bgFullSID, "stopped")
+	c.resumeBanner = "backgrounded · 77665544 · bgt\n"
+	c.onResume = func() { reg = bgAgentsJSON(newSID) }
+
+	if rc := cmdDo([]string{"bgt"}); rc != 0 {
+		t.Fatalf("resume cmdDo rc=%d", rc)
+	}
+	if c.resume != 1 {
+		t.Fatalf("resume calls = %d, want 1 (exited session must resume)", c.resume)
+	}
+	db := openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "bgt")
+	if task.SessionID.String != newSID {
+		t.Errorf("session_id after resume = %q, want %q", task.SessionID.String, newSID)
 	}
 }
 

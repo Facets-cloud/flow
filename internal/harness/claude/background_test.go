@@ -88,29 +88,37 @@ func TestParseBackgroundAgents(t *testing.T) {
 	}
 }
 
-// stubBG installs a BGCommandRunner that dispatches on args[0]/presence
-// of --bg: spawn/resume calls get the banner, `agents --json` gets the
-// JSON. Records the last spawn/resume argv for assertions.
-func stubBG(t *testing.T, banner, agentsJSON string) *[]string {
+// bgCap records what a stubbed BGCommandRunner saw on the last
+// spawn/resume (non-`agents`) call.
+type bgCap struct {
+	args    []string
+	workDir string
+}
+
+// stubBG installs a BGCommandRunner that dispatches on args[0]: spawn /
+// resume calls get the banner (and are recorded), `agents` calls get the
+// JSON. Returns the capture for assertions.
+func stubBG(t *testing.T, banner, agentsJSON string) *bgCap {
 	t.Helper()
-	var lastNonAgents []string
+	cap := &bgCap{}
 	old := BGCommandRunner
-	BGCommandRunner = func(args []string) ([]byte, error) {
+	BGCommandRunner = func(workDir string, args []string) ([]byte, error) {
 		if len(args) >= 1 && args[0] == "agents" {
 			return []byte(agentsJSON), nil
 		}
-		lastNonAgents = args
+		cap.args = args
+		cap.workDir = workDir
 		return []byte(banner), nil
 	}
 	t.Cleanup(func() { BGCommandRunner = old })
-	return &lastNonAgents
+	return cap
 }
 
 func TestSpawnBackgroundCapturesSessionID(t *testing.T) {
-	argv := stubBG(t, realBanner, realAgentsJSON)
+	cap := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
 
-	agent, err := h.SpawnBackground("flow/bg-probe", "do the work", harness.LaunchOpts{})
+	agent, err := h.SpawnBackground("/work/dir", "flow/bg-probe", "do the work", harness.LaunchOpts{})
 	if err != nil {
 		t.Fatalf("SpawnBackground: %v", err)
 	}
@@ -125,41 +133,54 @@ func TestSpawnBackgroundCapturesSessionID(t *testing.T) {
 	}
 
 	// argv must carry --bg, --name <name>, and the prompt; no skip flag.
-	joined := strings.Join(*argv, "\x00")
+	joined := strings.Join(cap.args, "\x00")
 	if !strings.Contains(joined, "--bg") {
-		t.Errorf("spawn argv missing --bg: %v", *argv)
+		t.Errorf("spawn argv missing --bg: %v", cap.args)
 	}
-	if !containsPair(*argv, "--name", "flow/bg-probe") {
-		t.Errorf("spawn argv missing --name flow/bg-probe: %v", *argv)
+	if !containsPair(cap.args, "--name", "flow/bg-probe") {
+		t.Errorf("spawn argv missing --name flow/bg-probe: %v", cap.args)
 	}
-	if !contains(*argv, "do the work") {
-		t.Errorf("spawn argv missing prompt: %v", *argv)
+	if !contains(cap.args, "do the work") {
+		t.Errorf("spawn argv missing prompt: %v", cap.args)
 	}
-	if contains(*argv, "--dangerously-skip-permissions") {
-		t.Errorf("spawn argv should NOT skip permissions when opts unset: %v", *argv)
+	if contains(cap.args, "--dangerously-skip-permissions") {
+		t.Errorf("spawn argv should NOT skip permissions when opts unset: %v", cap.args)
+	}
+}
+
+// SpawnBackground must run claude in the task's work_dir (a bg session
+// begins there and keys its transcript/CLAUDE.md to it), not flow's cwd.
+func TestSpawnBackgroundRunsInWorkDir(t *testing.T) {
+	cap := stubBG(t, realBanner, realAgentsJSON)
+	h := New().(harness.BackgroundLauncher)
+	if _, err := h.SpawnBackground("/repo/app", "n", "p", harness.LaunchOpts{}); err != nil {
+		t.Fatalf("SpawnBackground: %v", err)
+	}
+	if cap.workDir != "/repo/app" {
+		t.Errorf("spawn cwd = %q, want /repo/app", cap.workDir)
 	}
 }
 
 func TestSpawnBackgroundSkipPermissions(t *testing.T) {
-	argv := stubBG(t, realBanner, realAgentsJSON)
+	cap := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
-	if _, err := h.SpawnBackground("n", "p", harness.LaunchOpts{SkipPermissions: true}); err != nil {
+	if _, err := h.SpawnBackground("/w", "n", "p", harness.LaunchOpts{SkipPermissions: true}); err != nil {
 		t.Fatalf("SpawnBackground: %v", err)
 	}
-	if !contains(*argv, "--dangerously-skip-permissions") {
-		t.Errorf("spawn argv missing skip flag: %v", *argv)
+	if !contains(cap.args, "--dangerously-skip-permissions") {
+		t.Errorf("spawn argv missing skip flag: %v", cap.args)
 	}
 }
 
 func TestSpawnBackgroundInjectAppended(t *testing.T) {
-	argv := stubBG(t, realBanner, realAgentsJSON)
+	cap := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
-	if _, err := h.SpawnBackground("n", "base prompt", harness.LaunchOpts{Inject: "also check X"}); err != nil {
+	if _, err := h.SpawnBackground("/w", "n", "base prompt", harness.LaunchOpts{Inject: "also check X"}); err != nil {
 		t.Fatalf("SpawnBackground: %v", err)
 	}
-	joined := strings.Join(*argv, "\n")
+	joined := strings.Join(cap.args, "\n")
 	if !strings.Contains(joined, harness.InjectionMarker) || !strings.Contains(joined, "also check X") {
-		t.Errorf("spawn argv missing injection marker/text: %v", *argv)
+		t.Errorf("spawn argv missing injection marker/text: %v", cap.args)
 	}
 }
 
@@ -168,7 +189,7 @@ func TestSpawnBackgroundInjectAppended(t *testing.T) {
 func TestSpawnBackgroundShortIDNotInRegistry(t *testing.T) {
 	stubBG(t, "backgrounded · deadbeef · n\n", realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
-	if _, err := h.SpawnBackground("n", "p", harness.LaunchOpts{}); err == nil {
+	if _, err := h.SpawnBackground("/w", "n", "p", harness.LaunchOpts{}); err == nil {
 		t.Fatalf("SpawnBackground: want error when short id absent from registry")
 	}
 }
@@ -176,19 +197,22 @@ func TestSpawnBackgroundShortIDNotInRegistry(t *testing.T) {
 // ResumeBackground resumes the OLD id under --bg but, because --bg mints
 // a fresh id, must return the NEW captured agent (history inherited).
 func TestResumeBackgroundCapturesNewID(t *testing.T) {
-	argv := stubBG(t, realBanner, realAgentsJSON)
+	cap := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
 	oldSID := "00000000-1111-4222-8333-444444444444"
-	agent, err := h.ResumeBackground(oldSID, harness.LaunchOpts{SkipPermissions: true})
+	agent, err := h.ResumeBackground("/repo/app", oldSID, harness.LaunchOpts{SkipPermissions: true})
 	if err != nil {
 		t.Fatalf("ResumeBackground: %v", err)
 	}
-	// argv resumes the OLD id under --bg ...
-	if !contains(*argv, "--bg") || !containsPair(*argv, "--resume", oldSID) {
-		t.Errorf("resume argv wrong: %v", *argv)
+	// argv resumes the OLD id under --bg, in the task's work_dir ...
+	if !contains(cap.args, "--bg") || !containsPair(cap.args, "--resume", oldSID) {
+		t.Errorf("resume argv wrong: %v", cap.args)
 	}
-	if !contains(*argv, "--dangerously-skip-permissions") {
-		t.Errorf("resume argv missing skip flag: %v", *argv)
+	if cap.workDir != "/repo/app" {
+		t.Errorf("resume cwd = %q, want /repo/app", cap.workDir)
+	}
+	if !contains(cap.args, "--dangerously-skip-permissions") {
+		t.Errorf("resume argv missing skip flag: %v", cap.args)
 	}
 	// ... but returns the NEW id minted by --bg (captured via banner + registry).
 	if agent.SessionID != "48d287d9-1ef0-4738-84b9-3110beb988c4" {
@@ -213,7 +237,7 @@ func TestBackgroundAgentsList(t *testing.T) {
 func TestBackgroundAgentsUsesAll(t *testing.T) {
 	var gotArgs []string
 	old := BGCommandRunner
-	BGCommandRunner = func(args []string) ([]byte, error) { gotArgs = args; return []byte("[]"), nil }
+	BGCommandRunner = func(workDir string, args []string) ([]byte, error) { gotArgs = args; return []byte("[]"), nil }
 	t.Cleanup(func() { BGCommandRunner = old })
 	if _, err := New().(harness.BackgroundLauncher).BackgroundAgents(); err != nil {
 		t.Fatalf("BackgroundAgents: %v", err)
