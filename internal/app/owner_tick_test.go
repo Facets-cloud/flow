@@ -82,6 +82,39 @@ func TestOwnerTickDueRecordsRunningPID(t *testing.T) {
 	}
 }
 
+// A hand-triggered `flow owner tick --auto` must not stack a second tick on
+// top of one already running (e.g. a scheduled tick, or an event-triggered
+// tick racing the scheduler) — it refuses and preserves the live pid.
+func TestOwnerTickManualAutoRefusesWhileTickRunning(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "active",
+		TickPID:     sql.NullInt64{Int64: 4242, Valid: true},
+		TickStarted: sql.NullString{String: time.Now().Format(time.RFC3339), Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return pid == 4242 } // the tick is live
+	t.Cleanup(func() { processAlive = oldAlive })
+	launched := false
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) { launched = true; return 9, nil }
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	if rc := ownerTickManual([]string{"o1", "--auto"}); rc == 0 {
+		t.Errorf("expected refusal while a tick is already running, got rc=0")
+	}
+	if launched {
+		t.Errorf("must not launch a second tick over a running one")
+	}
+	o, _ := flowdb.GetOwner(db, "o1")
+	if o.TickPID.Int64 != 4242 {
+		t.Errorf("the running tick's pid must be preserved, got %v", o.TickPID)
+	}
+}
+
 // Tick prompts must reference the ABSOLUTE owner dir, so a headless run
 // (cwd=work_dir) reads/writes the real charter+journal under $FLOW_ROOT
 // instead of creating a stray owners/ dir inside the user's repo.

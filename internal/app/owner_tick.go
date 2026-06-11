@@ -144,6 +144,16 @@ func ownerTickManual(args []string) int {
 	}
 
 	if *auto {
+		// Overlap guard (same as the scheduler's): don't stack a headless
+		// tick on top of one already running — important now that event
+		// triggers (`flow owner tick --auto` from a watcher) can race a
+		// scheduled tick. A dead or stale pid falls through and is replaced.
+		if o.TickPID.Valid && processAlive(int(o.TickPID.Int64)) && !ownerTickStale(o) {
+			fmt.Fprintf(os.Stderr,
+				"error: owner %q already has a tick running (pid %d) — wait for it to finish\n",
+				slug, o.TickPID.Int64)
+			return 1
+		}
 		root, err := flowRoot()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)

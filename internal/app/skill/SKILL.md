@@ -1784,6 +1784,34 @@ interactively so the user navigates the agent and tunes the charter before it
 runs unattended (like playbook first-run capture, §4.13). Then let the
 scheduler take over.
 
+**Event-driven owners (advanced; default is poll-based).** By default an
+owner is a *poller* — scheduled ticks, self-paced via `flow owner next`. For
+a window that needs faster reaction than polling (a deploy in flight, a CI
+run, a PR's checks), an owner can become **event-driven** — but a tick is
+headless and **exits**, so it cannot hold a Monitor itself. Instead the tick
+spins up a **bounded watcher** and goes back to sleep:
+
+- The tick dispatches a one-time TASK (`flow add task "watch <event> for
+  <owner>" --tag owner:<slug>`, then `flow do --auto`) whose brief says: use
+  the **Monitor tool** to watch `<event>` with a clear stop condition **and**
+  a timeout.
+- When the event fires, that watcher session (a) appends a focus note to the
+  owner's journal (`owners/<slug>/updates/<today>-EVENT.md` — what fired,
+  what to check), then (b) runs `flow owner tick <slug> --auto` to fire a
+  **focused tick** now, then **exits**.
+- The triggered tick reads the journal (its normal step 3), sees the focus
+  note, acts on it, and re-sleeps at its normal cadence. (`flow owner tick
+  --auto` is overlap-guarded, so an event trigger that races a scheduled tick
+  won't double-fire.)
+
+This gives both modes from one primitive: cheap spaced **polling** by
+default, an event-driven **focused tick** on demand — without keeping a mind
+alive between events. **Bounded only:** the watcher is a living session that
+costs tokens while it watches, so use it for windows with a clear end (deploy
+/ CI / PR-checks), **never** as a permanent watcher (that's back to the
+expensive long-running-session model an owner exists to avoid). Always give
+the watcher a timeout so a never-fired event doesn't strand it running.
+
 **Lifecycle:** `start` begins ticking; `pause` stops but keeps state (resume
 with `start`); `flow owner retire <slug>` stops it (retired+archived — no
 longer ticks, off the default list, but charter/journal/owned-tasks
