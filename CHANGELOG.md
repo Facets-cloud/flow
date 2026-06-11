@@ -7,6 +7,44 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.21] — 2026-06-11
+
+### Added
+
+- **Owners — autonomous, self-prompting controllers (`flow owner`).** A new
+  durable primitive that takes ongoing responsibility for an outcome:
+  re-wakes on its own, re-evaluates, and acts until done — vs. the one-shot
+  `flow do --auto`. An owner is **not** a long-running session; it is state
+  (a `charter.md` operating manual + a journal + a clock). Each tick is a
+  *fresh headless run* that reads its charter and journal, **orchestrates**
+  (routes work through tasks/playbook-runs that self-close with the
+  `flow done` KB sweep — it never executes work inline), parks human
+  decisions as `question`-tagged tasks, **self-paces** its next wake, and
+  journals. Cheaper and more durable than keeping a mind alive between
+  events.
+  - Commands: `flow add owner "<name>" --work-dir <p> [--every <dur>]
+    [--slug] [--project] [--mkdir]`; `flow owner list | show <slug> |
+    start | pause | tick [--auto] | next (--in|--at) | retire [--delete]`.
+    `list`/`show` also as verb-first aliases `flow list owners` /
+    `flow show owner <slug>`.
+  - **Tags, not new tables** — owner↔task linkage and the human-question
+    marker reuse the tag system (`owner:<slug>`, `question`);
+    `flow add task --tag` and `flow list tasks --tag` are now repeatable
+    (intersection).
+  - **Self-paced scheduling** — each tick sets its own next wake; `--every`
+    is a fallback heartbeat floor (default 24h). Overdue ticks (e.g. after
+    the laptop sleeps) fire once on wake, never stack.
+  - **Event-driven owners (advanced)** — for a bounded reactive window a
+    tick can dispatch a watcher task (Monitor tool) that fires a focused
+    `flow owner tick --auto` on an event, then exits; the manual `--auto`
+    tick is overlap-guarded.
+  - **No daemon / no OS-specific scheduler code** — flow ships only
+    `flow owner tick-due`; the recurring heartbeat is a launchd (or
+    systemd/cron) agent the flow skill sets up once per host.
+  - Live tick indicator (`tick_pid`/`tick_started`) with overlap guard,
+    dead-/stale-pid reconciliation, and targeted-column writes that commute
+    across the scheduler and the detached tick (no lost updates).
+
 ## [0.1.0-alpha.20] — 2026-06-10
 
 ### Fixed
