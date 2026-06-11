@@ -137,5 +137,14 @@ Playbooks:
   flow run playbook   <slug> --here                              (bind THIS Claude session to the new run; no new tab)
   flow run playbook   <slug> --auto                              (run the playbook headlessly in the background)
   flow show playbook  <ref>
-  flow list playbooks [--project <slug>] [--include-archived]`)
+  flow list playbooks [--project <slug>] [--include-archived]
+
+Owners (autonomous, self-prompting controllers — see flow skill §4.17):
+  flow add owner     "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--mkdir]
+  flow owner list                              (alias: flow list owners)
+  flow owner show    <slug>                     (alias: flow show owner <slug>)
+  flow owner start|pause <slug>                 (start reactivates a paused OR retired owner)
+  flow owner tick    <slug> [--auto]            (wake now; interactive by default, --auto = headless)
+  flow owner next    <slug> --in <dur> | --at <when>   (self-pace the next wake)
+  flow owner retire  <slug> [--delete]`)
 }

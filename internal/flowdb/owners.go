@@ -126,6 +126,57 @@ func UpdateOwner(db *sql.DB, o *Owner) error {
 	return nil
 }
 
+// affectedOwnerRow checks an UPDATE result for the "exactly one owner
+// matched" contract shared by the targeted owner-mutation helpers below.
+func affectedOwnerRow(res sql.Result, err error, op, slug string) error {
+	if err != nil {
+		return fmt.Errorf("%s owner %s: %w", op, slug, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%s owner %s: no such owner", op, slug)
+	}
+	return nil
+}
+
+// SetOwnerNextWake sets ONLY next_wake_at (targeted column write). Used by
+// `flow owner next` and a tick's self-pacing. It deliberately does not
+// load+rewrite the whole row, so it can never clobber the tick-bookkeeping
+// columns (tick_pid/last_tick_*) a concurrent tick may be writing.
+func SetOwnerNextWake(db *sql.DB, slug, nextWakeAt string) error {
+	res, err := db.Exec(
+		`UPDATE owners SET next_wake_at=?, updated_at=? WHERE slug=?`,
+		nextWakeAt, NowISO(), slug,
+	)
+	return affectedOwnerRow(res, err, "set next wake", slug)
+}
+
+// ActivateOwner marks an owner active, schedules its next wake, and CLEARS
+// archived_at — so `flow owner start` un-retires a retired owner (otherwise
+// DueOwners' `archived_at IS NULL` filter would leave it active-but-never-
+// ticking and hidden from the list). Targeted write; touches no tick
+// bookkeeping.
+func ActivateOwner(db *sql.DB, slug, nextWakeAt string) error {
+	res, err := db.Exec(
+		`UPDATE owners SET status='active', next_wake_at=?, archived_at=NULL, updated_at=? WHERE slug=?`,
+		nextWakeAt, NowISO(), slug,
+	)
+	return affectedOwnerRow(res, err, "activate", slug)
+}
+
+// PauseOwner marks an owner paused (targeted; preserves every other column,
+// including any in-flight tick bookkeeping).
+func PauseOwner(db *sql.DB, slug string) error {
+	res, err := db.Exec(
+		`UPDATE owners SET status='paused', updated_at=? WHERE slug=?`,
+		NowISO(), slug,
+	)
+	return affectedOwnerRow(res, err, "pause", slug)
+}
+
 // RetireOwner permanently stops an owner: sets status='retired' and
 // archives it. It no longer ticks (DueOwners requires active) and is
 // hidden from the default list. On-disk files (charter, journal, tick

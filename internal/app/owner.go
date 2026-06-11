@@ -169,6 +169,9 @@ func ownerShow(args []string) int {
 			questions = append(questions, tk)
 		case tk.Kind == "playbook_run":
 			runs = append(runs, tk)
+		case tk.Status == "done":
+			// A completed owned task is not "in flight" — drop it from the
+			// active list so the section reflects only outstanding work.
 		default:
 			inflight = append(inflight, tk)
 		}
@@ -313,8 +316,7 @@ func ownerNext(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	o, err := flowdb.GetOwner(db, slug)
-	if err != nil {
+	if _, err := flowdb.GetOwner(db, slug); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fmt.Fprintf(os.Stderr, "error: no owner %q\n", slug)
 			return 1
@@ -322,8 +324,9 @@ func ownerNext(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	o.NextWakeAt = sql.NullString{String: next.Format(time.RFC3339), Valid: true}
-	if err := flowdb.UpdateOwner(db, o); err != nil {
+	// Targeted write (only next_wake_at) so a self-pacing tick or a manual
+	// `owner next` can't clobber the tick bookkeeping written concurrently.
+	if err := flowdb.SetOwnerNextWake(db, slug, next.Format(time.RFC3339)); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -352,9 +355,10 @@ func ownerStart(args []string) int {
 		return rc
 	}
 	defer db.Close()
-	o.Status = "active"
-	o.NextWakeAt = sql.NullString{String: flowdb.NowISO(), Valid: true}
-	if err := flowdb.UpdateOwner(db, o); err != nil {
+	// Targeted write that also clears archived_at — so `start` un-retires a
+	// retired owner (else DueOwners' archived_at filter would leave it
+	// active-but-never-ticking and hidden from the list).
+	if err := flowdb.ActivateOwner(db, o.Slug, flowdb.NowISO()); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -369,8 +373,7 @@ func ownerPause(args []string) int {
 		return rc
 	}
 	defer db.Close()
-	o.Status = "paused"
-	if err := flowdb.UpdateOwner(db, o); err != nil {
+	if err := flowdb.PauseOwner(db, o.Slug); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

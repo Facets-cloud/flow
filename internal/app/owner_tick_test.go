@@ -82,6 +82,88 @@ func TestOwnerTickDueRecordsRunningPID(t *testing.T) {
 	}
 }
 
+// Tick prompts must reference the ABSOLUTE owner dir, so a headless run
+// (cwd=work_dir) reads/writes the real charter+journal under $FLOW_ROOT
+// instead of creating a stray owners/ dir inside the user's repo.
+func TestOwnerTickPromptUsesAbsoluteOwnerDir(t *testing.T) {
+	dir := "/Users/x/.flow/owners/desk"
+	for label, p := range map[string]string{
+		"headless":    buildOwnerTickPrompt("desk", dir),
+		"interactive": buildOwnerTickPromptInteractive("desk", dir),
+	} {
+		if !strings.Contains(p, dir+"/charter.md") {
+			t.Errorf("%s prompt must use absolute charter path %q; got:\n%s", label, dir+"/charter.md", p)
+		}
+		if !strings.Contains(p, dir+"/updates/") {
+			t.Errorf("%s prompt must use absolute journal path %q", label, dir+"/updates/")
+		}
+	}
+	if !strings.Contains(strings.ToLower(buildOwnerTickPrompt("desk", dir)), "not your work_dir") {
+		t.Errorf("headless prompt should warn the charter is NOT under work_dir")
+	}
+}
+
+// A dispatched tick that skips a now-non-active owner must clear the
+// tick_pid the scheduler stamped (gap 8) — else the owner shows "tick
+// running" and reconcile later mislabels the clean skip as 'dead'.
+func TestCmdOwnerTickSkipClearsTickPID(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "paused",
+		TickPID:     sql.NullInt64{Int64: 4242, Valid: true},
+		TickStarted: sql.NullString{String: time.Now().Format(time.RFC3339), Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	old := ownerTickRunner
+	ownerTickRunner = func(h harness.Harness, prompt string) error { ran = true; return nil }
+	t.Cleanup(func() { ownerTickRunner = old })
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if ran {
+		t.Errorf("paused owner must not run the harness")
+	}
+	o, _ := flowdb.GetOwner(db, "o1")
+	if o.TickPID.Valid {
+		t.Errorf("skip must clear the stale tick_pid, got %v", o.TickPID)
+	}
+}
+
+// An owner whose tick_pid looks alive (pid reuse after a reboot) but whose
+// tick started long ago must NOT be skipped forever (gap 6) — the staleness
+// cap lets the scheduler re-dispatch it.
+func TestOwnerTickDueRedispatchesStaleTick(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	past := sql.NullString{String: time.Now().Add(-time.Hour).Format(time.RFC3339), Valid: true}
+	staleStart := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m", Status: "active", NextWakeAt: past,
+		TickPID:     sql.NullInt64{Int64: 4242, Valid: true},
+		TickStarted: sql.NullString{String: staleStart, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return true } // pid reuse → "alive"
+	t.Cleanup(func() { processAlive = oldAlive })
+	dispatched := false
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) { dispatched = true; return 5, nil }
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	if rc := cmdOwner([]string{"tick-due"}); rc != 0 {
+		t.Fatalf("tick-due rc=%d", rc)
+	}
+	if !dispatched {
+		t.Errorf("a stale overdue tick (pid reused) must be re-dispatched, not skipped forever")
+	}
+}
+
 // After dispatch advances next_wake_at into the future, an immediate
 // second scheduler pass must not re-dispatch the same owner.
 func TestOwnerTickDueSecondPassDoesNotRedispatch(t *testing.T) {
@@ -353,9 +435,11 @@ func TestCmdOwnerTickClearsTickPID(t *testing.T) {
 func TestOwnerShowShowsRunningTick(t *testing.T) {
 	setupFlowRoot(t)
 	db := openFlowDB(t)
+	// A genuinely-running tick has a RECENT start (a stale start trips the
+	// pid-reuse staleness cap and is reconciled to 'dead' instead).
 	if err := flowdb.CreateOwner(db, &flowdb.Owner{
 		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
-		TickPID: sql.NullInt64{Int64: 4242, Valid: true}, TickStarted: sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true},
+		TickPID: sql.NullInt64{Int64: 4242, Valid: true}, TickStarted: sql.NullString{String: time.Now().Format(time.RFC3339), Valid: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +600,7 @@ func TestCmdOwnerTickRecordsErrorStatus(t *testing.T) {
 }
 
 func TestBuildOwnerTickPromptRoutesWorkThroughTasksAndPlaybooks(t *testing.T) {
-	p := strings.ToLower(buildOwnerTickPrompt("desk"))
+	p := strings.ToLower(buildOwnerTickPrompt("desk", "/flowroot/owners/desk"))
 	// A tick is sessionless and gets no `flow done` KB sweep, so it must
 	// route substantive work through tasks/playbooks (which self-close with
 	// the sweep) rather than doing the work inline.
@@ -612,7 +696,7 @@ func TestOwnerTickManualAutoRunsHeadless(t *testing.T) {
 }
 
 func TestBuildOwnerTickPromptInteractiveAllowsHuman(t *testing.T) {
-	p := strings.ToLower(buildOwnerTickPromptInteractive("desk"))
+	p := strings.ToLower(buildOwnerTickPromptInteractive("desk", "/flowroot/owners/desk"))
 	if !strings.Contains(p, "askuserquestion") {
 		t.Errorf("interactive prompt should permit AskUserQuestion (human present)")
 	}
@@ -671,8 +755,8 @@ func TestCmdOwnerNextSetsNextWake(t *testing.T) {
 
 func TestTickPromptsSelfPaceNextWake(t *testing.T) {
 	for label, p := range map[string]string{
-		"headless":    buildOwnerTickPrompt("desk"),
-		"interactive": buildOwnerTickPromptInteractive("desk"),
+		"headless":    buildOwnerTickPrompt("desk", "/flowroot/owners/desk"),
+		"interactive": buildOwnerTickPromptInteractive("desk", "/flowroot/owners/desk"),
 	} {
 		if !strings.Contains(strings.ToLower(p), "flow owner next desk") {
 			t.Errorf("%s tick prompt must instruct self-paced scheduling via `flow owner next`; got:\n%s", label, p)
@@ -681,7 +765,7 @@ func TestTickPromptsSelfPaceNextWake(t *testing.T) {
 }
 
 func TestBuildOwnerTickPromptReadsAndWritesJournal(t *testing.T) {
-	p := strings.ToLower(buildOwnerTickPrompt("desk"))
+	p := strings.ToLower(buildOwnerTickPrompt("desk", "/flowroot/owners/desk"))
 	for _, want := range []string{
 		"flow owner show desk", // review via owner show (includes runs), not list-tasks
 		"owners/desk/updates",  // journal location (like playbook/task updates)

@@ -44,6 +44,17 @@ func (o listOpts) waitMax() int {
 	return waitingMaxRunes
 }
 
+// normalizeTags canonicalizes each tag and drops empties, preserving order.
+func normalizeTags(in stringSliceFlag) []string {
+	var out []string
+	for _, t := range in {
+		if n := flowdb.NormalizeTag(t); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // cmdList dispatches `flow list tasks|projects|playbooks|runs|tags|owners`.
 func cmdList(args []string) int {
 	if len(args) == 0 {
@@ -191,7 +202,8 @@ func listTasksCmd(args []string) int {
 	status := fs.String("status", "", "backlog|in-progress|done")
 	project := fs.String("project", "", "project slug")
 	priority := fs.String("priority", "", "high|medium|low")
-	tag := fs.String("tag", "", "only tasks carrying this tag (case-insensitive)")
+	var tags stringSliceFlag
+	fs.Var(&tags, "tag", "only tasks carrying this tag (case-insensitive; repeatable — tasks must carry ALL given tags)")
 	since := fs.String("since", "", "today|monday|7d|YYYY-MM-DD")
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
 	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
@@ -211,7 +223,7 @@ func listTasksCmd(args []string) int {
 		Status:          *status,
 		Project:         *project,
 		Priority:        *priority,
-		Tag:             flowdb.NormalizeTag(*tag),
+		Tags:            normalizeTags(tags),
 		IncludeArchived: *includeArchived,
 	}
 	// Default kind is "regular"; "all" disables the kind filter.

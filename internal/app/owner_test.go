@@ -52,6 +52,96 @@ func TestCmdAddOwnerHappyPath(t *testing.T) {
 	}
 }
 
+// A completed (done) owned task must not show under "in flight".
+func TestCmdOwnerShowExcludesDoneFromInFlight(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+	insertTask(t, db, "active-1", "a", "in-progress", "medium", "/x", nil)
+	insertTask(t, db, "done-1", "d", "done", "medium", "/x", nil)
+	for _, s := range []string{"active-1", "done-1"} {
+		if err := flowdb.AddTaskTag(db, s, "owner:o1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureStdout(t, func() {
+		if rc := cmdOwner([]string{"show", "o1"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	inflight := out[strings.Index(out, "in flight"):]
+	if strings.Contains(inflight, "done-1") {
+		t.Errorf("done task should not appear under 'in flight'; got:\n%s", out)
+	}
+	if !strings.Contains(out, "active-1") {
+		t.Errorf("active task should appear; got:\n%s", out)
+	}
+}
+
+// retire → start must produce a ticking owner again (not an active-but-
+// archived zombie hidden from the list and never dispatched).
+func TestCmdOwnerStartUnretiresZombie(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdOwner([]string{"retire", "o1"}); rc != 0 {
+		t.Fatalf("retire rc=%d", rc)
+	}
+	if rc := cmdOwner([]string{"start", "o1"}); rc != 0 {
+		t.Fatalf("start rc=%d", rc)
+	}
+	o, _ := flowdb.GetOwner(db, "o1")
+	if o.Status != "active" || o.ArchivedAt.Valid {
+		t.Errorf("start should reactivate + unarchive: status=%q archived=%v", o.Status, o.ArchivedAt)
+	}
+	if lst, _ := flowdb.ListOwners(db, flowdb.OwnerFilter{}); len(lst) != 1 {
+		t.Errorf("reactivated owner should appear in `owner list`, got %d", len(lst))
+	}
+	if due, _ := flowdb.DueOwners(db, flowdb.NowISO()); len(due) != 1 {
+		t.Errorf("reactivated owner should be due, got %d", len(due))
+	}
+}
+
+// `flow list tasks --tag a --tag b` must intersect (AND) — the skill's
+// owner-ledger query (`--tag owner:<slug> --tag question`) depends on it.
+func TestCmdListTasksTagIntersection(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	insertTask(t, db, "q-a", "qa", "backlog", "medium", "/x", nil)
+	insertTask(t, db, "q-b", "qb", "backlog", "medium", "/x", nil)
+	insertTask(t, db, "plain-a", "pa", "backlog", "medium", "/x", nil)
+	tagging := map[string][]string{
+		"q-a":     {"owner:a", "question"},
+		"q-b":     {"owner:b", "question"},
+		"plain-a": {"owner:a"},
+	}
+	for slug, tags := range tagging {
+		for _, tg := range tags {
+			if err := flowdb.AddTaskTag(db, slug, tg); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--tag", "owner:a", "--tag", "question", "--format", "tsv"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "q-a") {
+		t.Errorf("q-a has BOTH tags and must be listed; out:\n%s", out)
+	}
+	if strings.Contains(out, "q-b") {
+		t.Errorf("q-b has 'question' but not 'owner:a' — must be excluded (intersection); out:\n%s", out)
+	}
+	if strings.Contains(out, "plain-a") {
+		t.Errorf("plain-a has 'owner:a' but not 'question' — must be excluded; out:\n%s", out)
+	}
+}
+
 // `flow owner next` must reject a wake time already in the past — a stale
 // --at (or a negative --in) would leave the owner perpetually due, ticking
 // every scheduler pass.

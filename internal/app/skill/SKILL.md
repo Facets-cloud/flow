@@ -217,7 +217,7 @@ Playbook runs
 Owners (autonomous ownership — see §4.17)
   flow owner list                   all owners with status + next tick   (alias: flow list owners)
   flow owner show   <slug>          charter + what it owns (in-flight / playbook runs / questions) + next tick   (alias: flow show owner <slug>)
-  flow owner start  <slug>          begin ticking (first tick due now, then every <dur>)
+  flow owner start  <slug>          begin ticking — first tick now, then every <dur> (reactivates a paused OR retired owner)
   flow owner pause  <slug>          stop ticking, keep all state
   flow owner tick   <slug>          wake the owner NOW, interactively (a tab you drive); --auto = headless now
   flow owner next   <slug> --in <dur> | --at <when>   set the next tick time (how a tick self-paces)
@@ -1785,9 +1785,11 @@ runs unattended (like playbook first-run capture, §4.13). Then let the
 scheduler take over.
 
 **Lifecycle:** `start` begins ticking; `pause` stops but keeps state (resume
-with `start`); `flow owner retire <slug>` stops it **permanently**
-(retired+archived — no longer ticks, off the default list, but
-charter/journal/owned-tasks preserved); `--delete` hard-removes the row +
+with `start`); `flow owner retire <slug>` stops it (retired+archived — no
+longer ticks, off the default list, but charter/journal/owned-tasks
+preserved). Retire is reversible: `flow owner start <slug>` reactivates a
+paused OR retired owner (it un-archives and schedules a tick now). For a
+truly permanent removal, `--delete` hard-removes the row +
 `owners/<slug>/` dir (use instead of editing the DB; owned tasks survive).
 Confirm retire/delete via AskUserQuestion (`--delete` is destructive). Edit
 the charter directly at `owners/<slug>/charter.md`.

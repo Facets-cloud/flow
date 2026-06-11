@@ -168,7 +168,12 @@ func ownerTickManual(args []string) int {
 		return 0
 	}
 
-	if err := ownerInteractiveLauncher(o, buildOwnerTickPromptInteractive(slug)); err != nil {
+	ownerDir, derr := ownerDirFor(slug)
+	if derr != nil {
+		fmt.Fprintf(os.Stderr, "error: resolve owner dir for %q: %v\n", slug, derr)
+		return 1
+	}
+	if err := ownerInteractiveLauncher(o, buildOwnerTickPromptInteractive(slug, ownerDir)); err != nil {
 		fmt.Fprintf(os.Stderr, "error: spawn interactive tick: %v\n", err)
 		return 1
 	}
@@ -225,7 +230,7 @@ func ownerTickDue(args []string) int {
 		// tick_pid), don't stack another on top of it. A dead pid (crashed
 		// tick) is not alive, so we fall through and dispatch a fresh one
 		// (which overwrites the stale pid below).
-		if o.TickPID.Valid && processAlive(int(o.TickPID.Int64)) {
+		if o.TickPID.Valid && processAlive(int(o.TickPID.Int64)) && !ownerTickStale(o) {
 			continue
 		}
 		dur, derr := time.ParseDuration(o.Every)
@@ -294,6 +299,12 @@ func cmdOwnerTick(args []string) int {
 	// paused owner). Skip cleanly without running the harness or recording
 	// a tick.
 	if o.Status != "active" {
+		// A pending dispatch may have stamped tick_pid before this owner was
+		// paused/retired. Clear it so the owner isn't shown as "tick running"
+		// and the reconciler doesn't later mislabel this clean skip as 'dead'.
+		if o.TickPID.Valid {
+			_ = clearOwnerTickBookkeeping(db, slug)
+		}
 		fmt.Printf("owner %q is %s (not active) — skipping tick\n", slug, o.Status)
 		return 0
 	}
@@ -309,7 +320,13 @@ func cmdOwnerTick(args []string) int {
 		return 1
 	}
 
-	prompt := buildOwnerTickPrompt(o.Slug)
+	ownerDir, derr := ownerDirFor(o.Slug)
+	if derr != nil {
+		fmt.Fprintf(os.Stderr, "error: resolve owner dir for %q: %v\n", slug, derr)
+		_ = recordOwnerTick(db, slug, "error")
+		return 1
+	}
+	prompt := buildOwnerTickPrompt(o.Slug, ownerDir)
 	runErr := ownerTickRunner(h, prompt)
 
 	status := "ok"
@@ -342,6 +359,51 @@ func cmdOwnerTick(args []string) int {
 // scheduler records the pid leaves a stale (dead) pid set, which the
 // dead-pid reconcile (reconcileOwnerTick / DueOwners overlap guard) heals
 // on the next read or scan. No durable result is lost.
+
+// ownerTickStaleAfter caps how long a recorded tick_pid is trusted. A tick
+// orchestrates and exits in minutes; a pid still "alive" long after
+// tick_started is almost certainly pid-reuse (the original supervisor died
+// — e.g. reboot — and an unrelated process now holds that pid, which
+// processAlive reports as alive, incl. EPERM=alive for another user's
+// process). Without this cap such an owner would be skipped by the overlap
+// guard forever. One hour is far beyond any real tick.
+const ownerTickStaleAfter = time.Hour
+
+// ownerTickStale reports whether a recorded tick has been "running" longer
+// than ownerTickStaleAfter (so its pid should not be trusted).
+func ownerTickStale(o *flowdb.Owner) bool {
+	if !o.TickStarted.Valid {
+		return false
+	}
+	started, err := time.Parse(time.RFC3339, o.TickStarted.String)
+	if err != nil {
+		return false
+	}
+	return time.Since(started) > ownerTickStaleAfter
+}
+
+// ownerDirFor returns the absolute on-disk directory for an owner
+// ($FLOW_ROOT/owners/<slug>) — where its charter and journal live. Tick
+// prompts use this so a headless run (cwd=work_dir) reads/writes the real
+// files instead of creating an owners/ dir inside the user's repo.
+func ownerDirFor(slug string) (string, error) {
+	root, err := flowRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "owners", slug), nil
+}
+
+// clearOwnerTickBookkeeping clears tick_pid/tick_started without recording a
+// tick result — used when a dispatched tick is skipped (e.g. owner no longer
+// active) so a stale pid isn't left behind.
+func clearOwnerTickBookkeeping(db *sql.DB, slug string) error {
+	_, err := db.Exec(
+		`UPDATE owners SET tick_pid=NULL, tick_started=NULL, updated_at=? WHERE slug=?`,
+		flowdb.NowISO(), slug,
+	)
+	return err
+}
 
 // recordOwnerTickStarted stamps the running-tick bookkeeping (pid + start)
 // for a hand-triggered headless tick. It does not advance the schedule.
@@ -397,7 +459,7 @@ func reconcileOwnerTick(db *sql.DB, o *flowdb.Owner) {
 	if !o.TickPID.Valid {
 		return
 	}
-	if processAlive(int(o.TickPID.Int64)) {
+	if processAlive(int(o.TickPID.Int64)) && !ownerTickStale(o) {
 		return // genuinely running
 	}
 	now := flowdb.NowISO()
@@ -426,29 +488,29 @@ func reconcileOwnerTick(db *sql.DB, o *flowdb.Owner) {
 // journal discipline as the headless tick, but the human can guide it: it
 // MAY use AskUserQuestion, and it folds anything learned back into the
 // charter so future headless ticks improve.
-func buildOwnerTickPromptInteractive(slug string) string {
+func buildOwnerTickPromptInteractive(slug, ownerDir string) string {
 	return fmt.Sprintf(
-		"You are running ONE tick of the flow OWNER %q — INTERACTIVELY, with the user present (often the FIRST tick, to help you navigate). You MAY use AskUserQuestion to clarify intent, confirm a plan, or resolve charter ambiguity, and the user can course-correct you. If the charter is unclear or wrong, work it out WITH the user and update owners/%s/charter.md so future HEADLESS ticks behave correctly.\n\n"+
+		"You are running ONE tick of the flow OWNER %q — INTERACTIVELY, with the user present (often the FIRST tick, to help you navigate). You MAY use AskUserQuestion to clarify intent, confirm a plan, or resolve charter ambiguity, and the user can course-correct you. If the charter is unclear or wrong, work it out WITH the user and update %s/charter.md so future HEADLESS ticks behave correctly.\n\n"+
 			"You still ORCHESTRATE; you NEVER execute work inline. A tick gets no `flow done` close-out sweep, so route real work through tasks/playbooks that self-close:\n"+
 			"  - RECURRING work → a PLAYBOOK: create if needed, then `flow run playbook <slug> --auto`. Tag the run owner:%s.\n"+
 			"  - ONE-TIME work → a TASK: `flow add task \"<what>\" --tag owner:%s`, then `flow do --auto <task>`.\n"+
 			"  - A decision for the user → just ASK them (you're interactive), or park a QUESTION task (`--tag question --tag owner:%s`) for later.\n\n"+
 			"Do these in order:\n"+
 			"1. Invoke the flow skill via the Skill tool.\n"+
-			"2. Read your charter at owners/%s/charter.md.\n"+
-			"3. Read recent notes under owners/%s/updates/ (your journal), then review what you own with `flow owner show %s` (tasks, playbook runs, and questions with status). Don't duplicate tracked work or re-spawn an in-progress run.\n"+
+			"2. Read your charter at %s/charter.md (absolute path — your charter and journal live under $FLOW_ROOT, NOT your work_dir).\n"+
+			"3. Read recent notes under %s/updates/ (your journal), then review what you own with `flow owner show %s` (tasks, playbook runs, and questions with status). Don't duplicate tracked work or re-spawn an in-progress run.\n"+
 			"4. Observe per the charter and, together with the user, DISPATCH the needed playbook-runs / tasks / questions.\n"+
 			"5. Be conservative with irreversible/outward actions unless the charter authorizes them (when unsure, ask the user).\n"+
-			"6. Before finishing, WRITE a short note to owners/%s/updates/<today>-tick.md (what you observed, what you dispatched with slugs, what the next tick should check), and fold any lessons into the charter so headless ticks improve.\n"+
+			"6. Before finishing, WRITE a short note to %s/updates/<today>-tick.md (what you observed, what you dispatched with slugs, what the next tick should check), and fold any lessons into the charter so headless ticks improve.\n"+
 			"7. SELF-PACE the next wake: decide when you next need to run and set it with `flow owner next %s --in <duration>` (or --at <time>). You pick the cadence yourself each run — no need to ask the user about timing; --every is only a fallback.\n",
-		slug, slug, slug, slug, slug, slug, slug, slug, slug, slug,
+		slug, ownerDir, slug, slug, slug, ownerDir, ownerDir, slug, ownerDir, slug,
 	)
 }
 
 // buildOwnerTickPrompt is the bootstrap prompt for one headless owner
 // tick. The owner reads its charter, reviews what it owns, acts, and
 // parks any human decision as a question-task rather than blocking.
-func buildOwnerTickPrompt(slug string) string {
+func buildOwnerTickPrompt(slug, ownerDir string) string {
 	return fmt.Sprintf(
 		"You are the autonomous OWNER %q running ONE tick. You are headless: NO human is watching and there is no terminal — do NOT use AskUserQuestion and do NOT wait for input.\n\n"+
 			"YOU ORCHESTRATE; YOU NEVER EXECUTE WORK INLINE. A tick is a sessionless run with NO `flow done` close-out, so any real work you do directly here is LOST to the knowledge base and leaves no transcript. So do NOT do substantive work yourself in this tick — instead route EVERY piece of work through a task or a playbook, which run as their own sessions and self-close with the `flow done` KB + project sweep:\n"+
@@ -457,13 +519,13 @@ func buildOwnerTickPrompt(slug string) string {
 			"  - A decision only the HUMAN can make → a QUESTION task: `flow add task \"<the question>\" --tag question --tag owner:%s`, then move on.\n\n"+
 			"Do these in order:\n"+
 			"1. Invoke the flow skill via the Skill tool.\n"+
-			"2. Read your charter at owners/%s/charter.md — your operating manual (what you own, how to observe, when to ask, when to escalate).\n"+
-			"3. Catch up on yourself: read the most recent note(s) under owners/%s/updates/ — that is your JOURNAL from prior ticks (what you dispatched, what you were waiting on, what to check now). Then review everything you own with `flow owner show %s` — it lists your in-flight tasks, playbook runs, AND open questions with their current status (do NOT use `flow list tasks`, which hides playbook runs). Advance or check on what's there; never duplicate work already tracked and never re-spawn a run that is still in progress.\n"+
+			"2. Read your charter at %s/charter.md — your operating manual (what you own, how to observe, when to ask, when to escalate). This is an ABSOLUTE path: your charter and journal live under $FLOW_ROOT, NOT your work_dir — do not create an `owners/` directory in the repo.\n"+
+			"3. Catch up on yourself: read the most recent note(s) under %s/updates/ — that is your JOURNAL from prior ticks (what you dispatched, what you were waiting on, what to check now). Then review everything you own with `flow owner show %s` — it lists your in-flight tasks, playbook runs, AND open questions with their current status (do NOT use `flow list tasks`, which hides playbook runs). Advance or check on what's there; never duplicate work already tracked and never re-spawn a run that is still in progress.\n"+
 			"4. Observe the world per your charter, then DISPATCH what needs doing as playbook-runs / tasks / questions per the rule above. Keep the tick SHORT — spin work out, never perform it inline.\n"+
 			"5. Be conservative with irreversible or outward-facing actions (push, PR, deploy, messaging) unless your charter EXPLICITLY authorizes them.\n"+
-			"6. WRITE a short note to owners/%s/updates/<today>-tick.md recording what you observed, what you dispatched (with the task/run slugs), and what your NEXT tick should check. This is your memory — the next tick starts from a blank session and knows only what you write here plus the task records.\n"+
+			"6. WRITE a short note to %s/updates/<today>-tick.md recording what you observed, what you dispatched (with the task/run slugs), and what your NEXT tick should check. This is your memory — the next tick starts from a blank session and knows only what you write here plus the task records.\n"+
 			"7. SELF-PACE: decide when you next need to run and set it with `flow owner next %s --in <duration>` (e.g. +15m if watching a deploy/CI, +1h if a review is pending; use --at <time> for longer/idle gaps). You choose the cadence per-run; if you skip this, the owner falls back to its --every interval.\n"+
 			"8. Then exit. Do not loop or wait.\n",
-		slug, slug, slug, slug, slug, slug, slug, slug, slug,
+		slug, slug, slug, slug, ownerDir, ownerDir, slug, ownerDir, slug,
 	)
 }

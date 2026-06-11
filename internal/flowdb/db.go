@@ -194,7 +194,8 @@ type TaskFilter struct {
 	Priority        string
 	Kind            string // "regular" (default), "playbook_run", or "" for all
 	PlaybookSlug    string // optional; filter to runs of one playbook
-	Tag             string // optional; only tasks carrying this tag (already normalized)
+	Tag             string   // optional; only tasks carrying this tag (already normalized)
+	Tags            []string // optional; tasks must carry ALL of these (intersection; already normalized)
 	Since           string // RFC3339 or "" for no lower bound
 	IncludeArchived bool
 	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
@@ -789,6 +790,16 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 	if filter.Tag != "" {
 		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE tag = ?)")
 		args = append(args, filter.Tag)
+	}
+	// Intersection: each tag adds its own EXISTS-style subquery, ANDed
+	// together, so a task must carry EVERY requested tag (e.g.
+	// `--tag owner:x --tag question`).
+	for _, t := range filter.Tags {
+		if t == "" {
+			continue
+		}
+		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE tag = ?)")
+		args = append(args, t)
 	}
 	if filter.Since != "" {
 		where = append(where, "updated_at >= ?")

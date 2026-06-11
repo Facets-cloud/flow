@@ -155,6 +155,71 @@ func TestDueOwnersSkipsUnparseableNextWake(t *testing.T) {
 	}
 }
 
+// The targeted owner-mutation helpers must touch ONLY their own columns —
+// never clobber in-flight tick bookkeeping (the dispatch/finish race fix).
+func TestTargetedOwnerMutationsPreserveTickBookkeeping(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickPID:        sql.NullInt64{Int64: 4242, Valid: true},
+		TickStarted:    sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true},
+		LastTickStatus: sql.NullString{String: "ok", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetOwnerNextWake(db, "o1", "2026-06-09T01:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := GetOwner(db, "o1")
+	if o.NextWakeAt.String != "2026-06-09T01:00:00Z" {
+		t.Errorf("SetOwnerNextWake didn't set next_wake_at: %q", o.NextWakeAt.String)
+	}
+	if o.TickPID.Int64 != 4242 || o.LastTickStatus.String != "ok" {
+		t.Errorf("SetOwnerNextWake clobbered tick bookkeeping: pid=%v status=%q", o.TickPID, o.LastTickStatus.String)
+	}
+
+	if err := PauseOwner(db, "o1"); err != nil {
+		t.Fatal(err)
+	}
+	o, _ = GetOwner(db, "o1")
+	if o.Status != "paused" {
+		t.Errorf("PauseOwner status=%q, want paused", o.Status)
+	}
+	if o.TickPID.Int64 != 4242 {
+		t.Errorf("PauseOwner clobbered tick_pid: %v", o.TickPID)
+	}
+}
+
+// ActivateOwner clears archived_at so `flow owner start` un-retires a
+// retired owner (otherwise it'd be active-but-hidden and never tick).
+func TestActivateOwnerUnretires(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RetireOwner(db, "o1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ActivateOwner(db, "o1", "2000-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := GetOwner(db, "o1")
+	if o.Status != "active" {
+		t.Errorf("status=%q, want active", o.Status)
+	}
+	if o.ArchivedAt.Valid {
+		t.Errorf("ActivateOwner must clear archived_at, got %q", o.ArchivedAt.String)
+	}
+	due, err := DueOwners(db, "2026-06-08T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].Slug != "o1" {
+		t.Errorf("reactivated owner should be due (archived_at NULL + past wake), got %v", due)
+	}
+}
+
 func TestRetireOwner(t *testing.T) {
 	db := openTempDB(t)
 	if err := CreateOwner(db, &Owner{
