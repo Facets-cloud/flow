@@ -44,10 +44,21 @@ func (o listOpts) waitMax() int {
 	return waitingMaxRunes
 }
 
-// cmdList dispatches `flow list tasks|projects|playbooks|runs|tags`.
+// normalizeTags canonicalizes each tag and drops empties, preserving order.
+func normalizeTags(in stringSliceFlag) []string {
+	var out []string
+	for _, t := range in {
+		if n := flowdb.NormalizeTag(t); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// cmdList dispatches `flow list tasks|projects|playbooks|runs|tags|owners`.
 func cmdList(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', 'runs', or 'tags'")
+		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', 'runs', 'tags', or 'owners'")
 		return 2
 	}
 	switch args[0] {
@@ -61,6 +72,12 @@ func cmdList(args []string) int {
 		return listRunsCmd(args[1:])
 	case "tags":
 		return listTagsCmd(args[1:])
+	case "owners":
+		// Verb-first alias for `flow owner list` — owners share the
+		// list/show surface with the other top-level objects. Lifecycle
+		// verbs (start/pause/tick/next/retire) stay grouped under
+		// `flow owner`.
+		return ownerList(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown list subcommand %q\n", args[0])
 	return 2
@@ -185,7 +202,8 @@ func listTasksCmd(args []string) int {
 	status := fs.String("status", "", "backlog|in-progress|done")
 	project := fs.String("project", "", "project slug")
 	priority := fs.String("priority", "", "high|medium|low")
-	tag := fs.String("tag", "", "only tasks carrying this tag (case-insensitive)")
+	var tags stringSliceFlag
+	fs.Var(&tags, "tag", "only tasks carrying this tag (case-insensitive; repeatable — tasks must carry ALL given tags)")
 	since := fs.String("since", "", "today|monday|7d|YYYY-MM-DD")
 	includeArchived := fs.Bool("include-archived", false, "include archived tasks")
 	includeDone := fs.Bool("include-done", false, "include done tasks (hidden by default)")
@@ -205,7 +223,7 @@ func listTasksCmd(args []string) int {
 		Status:          *status,
 		Project:         *project,
 		Priority:        *priority,
-		Tag:             flowdb.NormalizeTag(*tag),
+		Tags:            normalizeTags(tags),
 		IncludeArchived: *includeArchived,
 	}
 	// Default kind is "regular"; "all" disables the kind filter.

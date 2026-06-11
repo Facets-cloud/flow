@@ -25,7 +25,7 @@ func Run(args []string) int {
 	// and `--version` — those manage the skill themselves or need to
 	// run before any install state exists. See maybeAutoUpgradeSkill.
 	switch cmd {
-	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec":
+	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec", "__owner-tick":
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
@@ -45,6 +45,10 @@ func Run(args []string) int {
 		// Hidden: the detached supervisor entry point for `flow do --auto`.
 		// Not listed in usage; invoked only by autoLauncher.
 		return cmdAutoExec(rest)
+	case "__owner-tick":
+		// Hidden: the detached owner-tick supervisor. Invoked only by
+		// ownerTickLauncher (via `flow owner tick-due`).
+		return cmdOwnerTick(rest)
 	case "run":
 		return cmdRun(rest)
 	case "done":
@@ -57,6 +61,8 @@ func Run(args []string) int {
 		return cmdEdit(rest)
 	case "update":
 		return cmdUpdate(rest)
+	case "owner":
+		return cmdOwner(rest)
 	case "archive":
 		return cmdArchive(rest)
 	case "unarchive":
@@ -131,5 +137,14 @@ Playbooks:
   flow run playbook   <slug> --here                              (bind THIS Claude session to the new run; no new tab)
   flow run playbook   <slug> --auto                              (run the playbook headlessly in the background)
   flow show playbook  <ref>
-  flow list playbooks [--project <slug>] [--include-archived]`)
+  flow list playbooks [--project <slug>] [--include-archived]
+
+Owners (autonomous, self-prompting controllers — see flow skill §4.17):
+  flow add owner     "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--mkdir]
+  flow owner list                              (alias: flow list owners)
+  flow owner show    <slug>                     (alias: flow show owner <slug>)
+  flow owner start|pause <slug>                 (start reactivates a paused OR retired owner)
+  flow owner tick    <slug> [--auto]            (wake now; interactive by default, --auto = headless)
+  flow owner next    <slug> --in <dur> | --at <when>   (self-pace the next wake)
+  flow owner retire  <slug> [--delete]`)
 }

@@ -1,0 +1,358 @@
+package flowdb
+
+import (
+	"database/sql"
+	"errors"
+	"testing"
+)
+
+func TestCreateAndGetOwner(t *testing.T) {
+	db := openTempDB(t)
+
+	o := &Owner{
+		Slug:    "af-maint",
+		Name:    "agent-factory maintenance",
+		WorkDir: "/Users/anshulsao/code/agent-factory",
+		Every:   "30m",
+	}
+	if err := CreateOwner(db, o); err != nil {
+		t.Fatalf("CreateOwner: %v", err)
+	}
+
+	got, err := GetOwner(db, "af-maint")
+	if err != nil {
+		t.Fatalf("GetOwner: %v", err)
+	}
+	if got.Name != "agent-factory maintenance" {
+		t.Errorf("Name = %q, want %q", got.Name, "agent-factory maintenance")
+	}
+	if got.WorkDir != "/Users/anshulsao/code/agent-factory" {
+		t.Errorf("WorkDir = %q", got.WorkDir)
+	}
+	if got.Every != "30m" {
+		t.Errorf("Every = %q, want 30m", got.Every)
+	}
+	if got.Status != "active" {
+		t.Errorf("Status = %q, want default active", got.Status)
+	}
+	if got.CreatedAt == "" || got.UpdatedAt == "" {
+		t.Errorf("timestamps not set: created=%q updated=%q", got.CreatedAt, got.UpdatedAt)
+	}
+	if got.NextWakeAt.Valid {
+		t.Errorf("NextWakeAt should be NULL on a freshly created (un-started) owner, got %q", got.NextWakeAt.String)
+	}
+}
+
+func TestListOwnersOrdersAndFilters(t *testing.T) {
+	db := openTempDB(t)
+
+	for _, o := range []*Owner{
+		{Slug: "ccc", Name: "C", WorkDir: "/c", Every: "30m"},
+		{Slug: "aaa", Name: "A", WorkDir: "/a", Every: "1h"},
+		{Slug: "bbb", Name: "B", WorkDir: "/b", Every: "1h", Status: "paused"},
+	} {
+		if err := CreateOwner(db, o); err != nil {
+			t.Fatalf("CreateOwner %s: %v", o.Slug, err)
+		}
+	}
+	// Archive one so the default list should exclude it.
+	if _, err := db.Exec(`UPDATE owners SET archived_at = ? WHERE slug = 'ccc'`, NowISO()); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Default: non-archived, sorted by slug.
+	got, err := ListOwners(db, OwnerFilter{})
+	if err != nil {
+		t.Fatalf("ListOwners: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("default list len = %d, want 2 (ccc archived)", len(got))
+	}
+	if got[0].Slug != "aaa" || got[1].Slug != "bbb" {
+		t.Errorf("order = [%s %s], want [aaa bbb]", got[0].Slug, got[1].Slug)
+	}
+
+	// Status filter.
+	paused, err := ListOwners(db, OwnerFilter{Status: "paused"})
+	if err != nil {
+		t.Fatalf("ListOwners(paused): %v", err)
+	}
+	if len(paused) != 1 || paused[0].Slug != "bbb" {
+		t.Errorf("paused filter = %v, want [bbb]", paused)
+	}
+
+	// IncludeArchived surfaces the archived owner too.
+	all, err := ListOwners(db, OwnerFilter{IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("ListOwners(all): %v", err)
+	}
+	if len(all) != 3 {
+		t.Errorf("IncludeArchived list len = %d, want 3", len(all))
+	}
+}
+
+func TestDueOwnersReturnsOnlyActivePastDue(t *testing.T) {
+	db := openTempDB(t)
+
+	const now = "2026-06-08T12:00:00Z"
+	past := sql.NullString{String: "2026-06-08T11:00:00Z", Valid: true}
+	future := sql.NullString{String: "2026-06-08T13:00:00Z", Valid: true}
+
+	owners := []*Owner{
+		{Slug: "due-now", Name: "n", WorkDir: "/x", Every: "1h", Status: "active", NextWakeAt: past},
+		{Slug: "future", Name: "n", WorkDir: "/x", Every: "1h", Status: "active", NextWakeAt: future},
+		{Slug: "never-started", Name: "n", WorkDir: "/x", Every: "1h", Status: "active"}, // NextWakeAt NULL
+		{Slug: "paused-due", Name: "n", WorkDir: "/x", Every: "1h", Status: "paused", NextWakeAt: past},
+		{Slug: "archived-due", Name: "n", WorkDir: "/x", Every: "1h", Status: "active", NextWakeAt: past},
+	}
+	for _, o := range owners {
+		if err := CreateOwner(db, o); err != nil {
+			t.Fatalf("CreateOwner %s: %v", o.Slug, err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE owners SET archived_at = ? WHERE slug = 'archived-due'`, now); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	due, err := DueOwners(db, now)
+	if err != nil {
+		t.Fatalf("DueOwners: %v", err)
+	}
+	if len(due) != 1 || due[0].Slug != "due-now" {
+		var slugs []string
+		for _, o := range due {
+			slugs = append(slugs, o.Slug)
+		}
+		t.Fatalf("DueOwners = %v, want only [due-now]", slugs)
+	}
+}
+
+// A row whose next_wake_at can't be parsed must be skipped, not crash the
+// whole scheduler pass — DueOwners is defensive against a corrupt value.
+func TestDueOwnersSkipsUnparseableNextWake(t *testing.T) {
+	db := openTempDB(t)
+
+	const now = "2026-06-08T12:00:00Z"
+	past := sql.NullString{String: "2026-06-08T11:00:00Z", Valid: true}
+	if err := CreateOwner(db, &Owner{Slug: "good", Name: "n", WorkDir: "/x", Every: "1h", Status: "active", NextWakeAt: past}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateOwner(db, &Owner{Slug: "garbage", Name: "n", WorkDir: "/x", Every: "1h", Status: "active",
+		NextWakeAt: sql.NullString{String: "not-a-timestamp", Valid: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	due, err := DueOwners(db, now)
+	if err != nil {
+		t.Fatalf("DueOwners must not error on a garbage row: %v", err)
+	}
+	if len(due) != 1 || due[0].Slug != "good" {
+		var slugs []string
+		for _, o := range due {
+			slugs = append(slugs, o.Slug)
+		}
+		t.Fatalf("DueOwners = %v, want only [good] (garbage row skipped)", slugs)
+	}
+}
+
+// The targeted owner-mutation helpers must touch ONLY their own columns —
+// never clobber in-flight tick bookkeeping (the dispatch/finish race fix).
+func TestTargetedOwnerMutationsPreserveTickBookkeeping(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickPID:        sql.NullInt64{Int64: 4242, Valid: true},
+		TickStarted:    sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true},
+		LastTickStatus: sql.NullString{String: "ok", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetOwnerNextWake(db, "o1", "2026-06-09T01:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := GetOwner(db, "o1")
+	if o.NextWakeAt.String != "2026-06-09T01:00:00Z" {
+		t.Errorf("SetOwnerNextWake didn't set next_wake_at: %q", o.NextWakeAt.String)
+	}
+	if o.TickPID.Int64 != 4242 || o.LastTickStatus.String != "ok" {
+		t.Errorf("SetOwnerNextWake clobbered tick bookkeeping: pid=%v status=%q", o.TickPID, o.LastTickStatus.String)
+	}
+
+	if err := PauseOwner(db, "o1"); err != nil {
+		t.Fatal(err)
+	}
+	o, _ = GetOwner(db, "o1")
+	if o.Status != "paused" {
+		t.Errorf("PauseOwner status=%q, want paused", o.Status)
+	}
+	if o.TickPID.Int64 != 4242 {
+		t.Errorf("PauseOwner clobbered tick_pid: %v", o.TickPID)
+	}
+}
+
+// ActivateOwner clears archived_at so `flow owner start` un-retires a
+// retired owner (otherwise it'd be active-but-hidden and never tick).
+func TestActivateOwnerUnretires(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RetireOwner(db, "o1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ActivateOwner(db, "o1", "2000-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := GetOwner(db, "o1")
+	if o.Status != "active" {
+		t.Errorf("status=%q, want active", o.Status)
+	}
+	if o.ArchivedAt.Valid {
+		t.Errorf("ActivateOwner must clear archived_at, got %q", o.ArchivedAt.String)
+	}
+	due, err := DueOwners(db, "2026-06-08T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].Slug != "o1" {
+		t.Errorf("reactivated owner should be due (archived_at NULL + past wake), got %v", due)
+	}
+}
+
+func TestRetireOwner(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "1h", Status: "active",
+		NextWakeAt: sql.NullString{String: "2020-01-01T00:00:00Z", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RetireOwner(db, "o1"); err != nil {
+		t.Fatalf("RetireOwner: %v", err)
+	}
+	o, err := GetOwner(db, "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Status != "retired" {
+		t.Errorf("status = %q, want retired", o.Status)
+	}
+	if !o.ArchivedAt.Valid {
+		t.Errorf("archived_at should be set on retire")
+	}
+	// Hidden from the default list and never due.
+	if list, _ := ListOwners(db, OwnerFilter{}); len(list) != 0 {
+		t.Errorf("retired owner should be hidden from default list, got %d", len(list))
+	}
+	if due, _ := DueOwners(db, "2099-01-01T00:00:00Z"); len(due) != 0 {
+		t.Errorf("retired owner must never be due, got %d", len(due))
+	}
+	if err := RetireOwner(db, "nope"); err == nil {
+		t.Errorf("retiring an unknown owner should error")
+	}
+}
+
+func TestDeleteOwner(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "1h"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteOwner(db, "o1"); err != nil {
+		t.Fatalf("DeleteOwner: %v", err)
+	}
+	if _, err := GetOwner(db, "o1"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("owner row should be gone, got err=%v", err)
+	}
+	if err := DeleteOwner(db, "o1"); err == nil {
+		t.Errorf("deleting an already-gone owner should error")
+	}
+}
+
+func TestDueOwnersHandlesMixedTimezoneOffsets(t *testing.T) {
+	db := openTempDB(t)
+
+	// next_wake stored with a +05:30 offset == 18:25:00 UTC. It IS due when
+	// "now" is 18:30:00Z, but a naive string comparison ("23:55…+05:30" >
+	// "18:30…Z") would wrongly skip it. Comparison must be timezone-correct.
+	wake := sql.NullString{String: "2026-06-08T23:55:00+05:30", Valid: true}
+	if err := CreateOwner(db, &Owner{
+		Slug: "o", Name: "O", WorkDir: "/x", Every: "30m", Status: "active", NextWakeAt: wake,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := DueOwners(db, "2026-06-08T18:30:00Z")
+	if err != nil {
+		t.Fatalf("DueOwners: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("owner due at 18:25Z must be returned when now=18:30Z (mixed offsets); got %d", len(got))
+	}
+}
+
+func TestOwnerTickFieldsPersist(t *testing.T) {
+	db := openTempDB(t)
+	o := &Owner{Slug: "o", Name: "O", WorkDir: "/x", Every: "30m"}
+	if err := CreateOwner(db, o); err != nil {
+		t.Fatal(err)
+	}
+	// A freshly created owner has no tick running.
+	if o.TickPID.Valid {
+		t.Errorf("new owner should have NULL tick_pid")
+	}
+
+	o.TickPID = sql.NullInt64{Int64: 4242, Valid: true}
+	o.TickStarted = sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true}
+	if err := UpdateOwner(db, o); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetOwner(db, "o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TickPID.Int64 != 4242 {
+		t.Errorf("TickPID = %+v, want 4242", got.TickPID)
+	}
+	if got.TickStarted.String != "2026-06-09T00:00:00Z" {
+		t.Errorf("TickStarted = %+v", got.TickStarted)
+	}
+}
+
+func TestUpdateOwnerPersistsMutableFields(t *testing.T) {
+	db := openTempDB(t)
+
+	o := &Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}
+	if err := CreateOwner(db, o); err != nil {
+		t.Fatalf("CreateOwner: %v", err)
+	}
+
+	o.Status = "paused"
+	o.NextWakeAt = sql.NullString{String: "2026-06-08T13:00:00Z", Valid: true}
+	o.LastTickAt = sql.NullString{String: "2026-06-08T12:00:00Z", Valid: true}
+	o.LastTickStatus = sql.NullString{String: "ok", Valid: true}
+	if err := UpdateOwner(db, o); err != nil {
+		t.Fatalf("UpdateOwner: %v", err)
+	}
+
+	got, err := GetOwner(db, "o1")
+	if err != nil {
+		t.Fatalf("GetOwner: %v", err)
+	}
+	if got.Status != "paused" {
+		t.Errorf("Status = %q, want paused", got.Status)
+	}
+	if got.NextWakeAt.String != "2026-06-08T13:00:00Z" {
+		t.Errorf("NextWakeAt = %q", got.NextWakeAt.String)
+	}
+	if got.LastTickAt.String != "2026-06-08T12:00:00Z" {
+		t.Errorf("LastTickAt = %q", got.LastTickAt.String)
+	}
+	if got.LastTickStatus.String != "ok" {
+		t.Errorf("LastTickStatus = %q, want ok", got.LastTickStatus.String)
+	}
+	if got.UpdatedAt == "" {
+		t.Errorf("UpdatedAt not set")
+	}
+}

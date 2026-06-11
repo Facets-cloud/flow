@@ -85,6 +85,24 @@ CREATE TABLE IF NOT EXISTS task_tags (
     PRIMARY KEY (task_slug, tag)
 );
 
+CREATE TABLE IF NOT EXISTS owners (
+    slug              TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    work_dir          TEXT NOT NULL,
+    project_slug      TEXT REFERENCES projects(slug),
+    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','retired')),
+    every             TEXT NOT NULL,
+    next_wake_at      TEXT,
+    last_tick_at      TEXT,
+    last_tick_status  TEXT,
+    tick_pid          INTEGER,
+    tick_started      TEXT,
+    harness           TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    archived_at       TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_slug);
 CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at);
@@ -176,7 +194,8 @@ type TaskFilter struct {
 	Priority        string
 	Kind            string // "regular" (default), "playbook_run", or "" for all
 	PlaybookSlug    string // optional; filter to runs of one playbook
-	Tag             string // optional; only tasks carrying this tag (already normalized)
+	Tag             string   // optional; only tasks carrying this tag (already normalized)
+	Tags            []string // optional; tasks must carry ALL of these (intersection; already normalized)
 	Since           string // RFC3339 or "" for no lower bound
 	IncludeArchived bool
 	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
@@ -340,6 +359,24 @@ func runMigrations(db *sql.DB) error {
 		if !has {
 			if _, err := db.Exec(col.ddl); err != nil {
 				return fmt.Errorf("add tasks.%s: %w", col.name, err)
+			}
+		}
+	}
+
+	// owners: live-tick bookkeeping columns (the tick-running indicator).
+	// Fresh DBs get these from schemaDDL; DBs whose owners table predates
+	// the columns get them via ALTER. All nullable.
+	for _, col := range []struct{ name, ddl string }{
+		{"tick_pid", "ALTER TABLE owners ADD COLUMN tick_pid INTEGER"},
+		{"tick_started", "ALTER TABLE owners ADD COLUMN tick_started TEXT"},
+	} {
+		has, err := columnExists(db, "owners", col.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(col.ddl); err != nil {
+				return fmt.Errorf("add owners.%s: %w", col.name, err)
 			}
 		}
 	}
@@ -753,6 +790,16 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 	if filter.Tag != "" {
 		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE tag = ?)")
 		args = append(args, filter.Tag)
+	}
+	// Intersection: each tag adds its own EXISTS-style subquery, ANDed
+	// together, so a task must carry EVERY requested tag (e.g.
+	// `--tag owner:x --tag question`).
+	for _, t := range filter.Tags {
+		if t == "" {
+			continue
+		}
+		where = append(where, "slug IN (SELECT task_slug FROM task_tags WHERE tag = ?)")
+		args = append(args, t)
 	}
 	if filter.Since != "" {
 		where = append(where, "updated_at >= ?")
