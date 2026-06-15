@@ -205,6 +205,7 @@ Sessions
                               (run headlessly in the background — no tab, no human; the
                                session does the work and self-completes via `flow done`.
                                Implies --dangerously-skip-permissions. Cannot combine with --here.)
+  flow checkpoint       [<ref>]   (draft a progress note from the live transcript; no status change)
   flow done             <ref>
 
 Playbook runs
@@ -797,7 +798,23 @@ that…", "record that I…", "document that I just…".
    `~/.flow/projects/<slug>/updates/` instead.
 6. Confirm to the user: "saved: <absolute path>".
 
-Do NOT run any `flow` command for this — updates are just files.
+Do NOT run any `flow` command for this hand-written path — updates are
+just files.
+
+**Assisted alternative — `flow checkpoint`.** When the user wants the
+*whole session so far* distilled into a note rather than dictating one
+("checkpoint this", "snapshot where we are", "save progress from this
+session", or at a natural breakpoint on a long/heavy session), run
+`flow checkpoint` (no arg → the task bound to this session; or
+`flow checkpoint <slug>`). It spawns a headless pass that reads the
+task's transcript and drafts ONE `updates/` note for the user to
+review — no status change, no KB writes. This is the non-terminal
+sibling of the `flow done` close-out sweep (§4.7): use checkpoint
+mid-stream so a future `flow do` resume isn't reading a stale brief;
+use `flow done` only when the task is actually finished. The task must
+have a `session_id` (a prior `flow do`). Prefer the hand-written path
+above for a quick, targeted note; prefer checkpoint when the session
+was substantial and you want it captured without re-typing.
 
 ### 4.6 Waiting on someone
 

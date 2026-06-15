@@ -7,6 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`flow checkpoint [<ref>]` — mid-session progress note from the live
+  transcript.** The non-terminal sibling of `flow done`: where done flips
+  status and runs a strict KB + project-update sweep at the end of a
+  task's life, checkpoint runs a lighter, task-local sweep at any
+  breakpoint *during* the work. It reuses the headless `claude -p` engine
+  to read the task's transcript and draft ONE dated note into
+  `tasks/<slug>/updates/` for the user to review — no status change, no KB
+  writes. Resolution mirrors `flow show task`: an explicit ref resolves by
+  slug, no ref reverse-looks-up the task bound to the current session;
+  either way the task must carry a session_id. This closes the write-back
+  gap where flow injects context at `SessionStart` but nothing prompts for
+  the `updates/` notes a future `flow do` reads back on resume — so on
+  heavy days they go unwritten and the next resume reads a stale brief.
+  ([#73](https://github.com/Facets-cloud/flow/pull/73) by
+  [@sanmesh-kakade](https://github.com/sanmesh-kakade), closes
+  [#72](https://github.com/Facets-cloud/flow/issues/72))
+
 ## [0.1.0-alpha.21] — 2026-06-11
 
 ### Added
