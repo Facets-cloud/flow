@@ -34,7 +34,9 @@ func TestLoadConstantsDefaultsAndOverride(t *testing.T) {
 	}
 	// valid override
 	p := filepath.Join(dir, "stats.json")
-	os.WriteFile(p, []byte(`{"minutes_per_unattended_run":30,"dollar_per_hour":150}`), 0o644)
+	if err := os.WriteFile(p, []byte(`{"minutes_per_unattended_run":30,"dollar_per_hour":150}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	got := LoadConstants(p)
 	if got.MinutesPerUnattendedRun != 30 || got.DollarPerHour != 150 {
 		t.Errorf("override not applied: %+v", got)
@@ -42,5 +44,18 @@ func TestLoadConstantsDefaultsAndOverride(t *testing.T) {
 	// zero/missing fields fall back to defaults
 	if got.MinutesPerContextSwitch != 5 || got.TokensPerKBLookup != 1500 {
 		t.Errorf("unset fields should default: %+v", got)
+	}
+}
+
+func TestLoadConstantsCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	// corrupt file → defaults (a stderr notice is also emitted, but asserting
+	// on stderr is brittle; the defaults return is the contract that matters)
+	p := filepath.Join(dir, "corrupt.json")
+	if err := os.WriteFile(p, []byte("not valid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadConstants(p); got != DefaultConstants() {
+		t.Errorf("corrupt file should give defaults, got %+v", got)
 	}
 }
