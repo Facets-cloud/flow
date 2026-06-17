@@ -158,5 +158,3 @@ func sparkline(values []int) string {
 	return string(out)
 }
 
-// writeCard is implemented in card.go (Task 6).
-func writeCard(path string, s stats.Stats) error { return os.WriteFile(path, []byte("card pending"), 0o644) }
