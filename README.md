@@ -315,6 +315,22 @@ This is the lane scheduled playbooks use to fire instructions at
 existing tasks without manual intervention. `flow run playbook <slug>`
 accepts the same flags for ad-hoc per-run instructions.
 
+### `flow stats`
+
+Show usage & ROI analytics derived from your own flow history — how many
+times flow recalled stored context for you, tokens processed, tasks done,
+automation runs, and estimated time/$ saved.
+
+    flow stats                      # all-time terminal report
+    flow stats --since 30d          # last 30 days
+    flow stats --project <slug>     # scope to one project
+    flow stats --card               # write a shareable HTML card to ~/.flow/stats-card.html
+
+Savings figures are estimates driven by `~/.flow/stats.json` (auto-created
+with defaults); ground-truth counts are exact. `~/.flow/stats-cache.json`
+is a derived cache — safe to delete, and should be gitignored if you track
+`~/.flow` in git.
+
 ## Your data — local, portable, yours
 
 Everything flow stores lives under `~/.flow/` (override with
