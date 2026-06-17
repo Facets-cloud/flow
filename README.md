@@ -325,6 +325,7 @@ automation runs, and estimated time/$ saved.
     flow stats --since 30d          # last 30 days
     flow stats --project <slug>     # scope to one project
     flow stats --card               # write a shareable HTML card to ~/.flow/stats-card.html
+    flow stats --card --out card.html   # ...or to a path you choose
 
 Savings figures are estimates driven by `~/.flow/stats.json` (auto-created
 with defaults); ground-truth counts are exact. `~/.flow/stats-cache.json`
