@@ -58,10 +58,76 @@ func TestBuildStatsEndToEnd(t *testing.T) {
 	}
 }
 
+func TestBuildStatsWindowed(t *testing.T) {
+	root := t.TempDir()
+	claudeProj := t.TempDir()
+
+	db, err := flowdb.OpenDB(filepath.Join(root, "flow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	work := "/work/app"
+	mustExec(t, db, `INSERT INTO tasks (slug,name,status,work_dir,session_id,created_at,updated_at)
+		VALUES ('t1','T1','done',?, '00000000-0000-4000-8000-000000000001', '2026-05-01T00:00:00Z','2026-05-01T00:00:00Z')`, work)
+
+	jdir := filepath.Join(claudeProj, claude.EncodeCwd(work))
+	os.MkdirAll(jdir, 0o755)
+	// (a) lookup BEFORE the cutoff, (b) lookup AFTER the cutoff,
+	// (c) lookup with a missing timestamp (zero TS).
+	before := `{"type":"assistant","timestamp":"2026-05-01T10:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"flow show task"}}]}}`
+	after := `{"type":"assistant","timestamp":"2026-06-10T10:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"flow show task"}}]}}`
+	noTS := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"flow show task"}}]}}`
+	os.WriteFile(filepath.Join(jdir, "00000000-0000-4000-8000-000000000001.jsonl"),
+		[]byte(before+"\n"+after+"\n"+noTS+"\n"), 0o644)
+
+	c := LoadCache(filepath.Join(root, "stats-cache.json"))
+	since := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) // between (a) and (b)
+	s, err := BuildStats(BuildOpts{
+		Root: root, ClaudeProjects: claudeProj, DB: db, Cache: c,
+		Constants: DefaultConstants(), Since: since, Project: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the after-cutoff lookup is counted; zero-TS and before-cutoff excluded.
+	if s.LookupsTotal != 1 || s.LookupsByKind[LookupResume] != 1 {
+		t.Errorf("windowed lookups = %d %v, want 1 resume", s.LookupsTotal, s.LookupsByKind)
+	}
+}
+
+func TestBuildStatsPlaybookRuns(t *testing.T) {
+	root := t.TempDir()
+	claudeProj := t.TempDir()
+
+	db, err := flowdb.OpenDB(filepath.Join(root, "flow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mustExec(t, db, `INSERT INTO tasks (slug,name,status,kind,work_dir,session_id,created_at,updated_at)
+		VALUES ('pr1','PR1','done','playbook_run','/work/app', '00000000-0000-4000-8000-000000000002', '2026-06-01T00:00:00Z','2026-06-01T00:00:00Z')`)
+
+	c := LoadCache(filepath.Join(root, "stats-cache.json"))
+	s, err := BuildStats(BuildOpts{
+		Root: root, ClaudeProjects: claudeProj, DB: db, Cache: c,
+		Constants: DefaultConstants(), Since: time.Time{}, Project: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PlaybookRuns != 1 {
+		t.Errorf("PlaybookRuns = %d, want 1", s.PlaybookRuns)
+	}
+}
+
 func TestParseSince(t *testing.T) {
 	now := time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC)
 	if got, _ := ParseSince("all", now); !got.IsZero() {
 		t.Errorf("all → %v, want zero", got)
+	}
+	if got, _ := ParseSince("", now); !got.IsZero() {
+		t.Errorf("empty → %v, want zero", got)
 	}
 	if got, _ := ParseSince("7d", now); !got.Equal(now.AddDate(0, 0, -7)) {
 		t.Errorf("7d → %v", got)

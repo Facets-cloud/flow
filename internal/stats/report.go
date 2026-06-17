@@ -78,7 +78,7 @@ func BuildStats(o BuildOpts) (Stats, error) {
 		seen[path] = true
 
 		for _, l := range roll.Lookups {
-			if !o.Since.IsZero() && !l.TS.IsZero() && l.TS.Before(o.Since) {
+			if !o.Since.IsZero() && (l.TS.IsZero() || l.TS.Before(o.Since)) {
 				continue
 			}
 			s.LookupsByKind[l.Kind]++
@@ -231,7 +231,7 @@ func countKBFacts(kbDir string) int {
 			continue
 		}
 		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "- ") {
+			if strings.HasPrefix(line, "- ") {
 				n++
 			}
 		}
