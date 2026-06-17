@@ -18,7 +18,7 @@ func cmdStats(args []string) int {
 	since := fs.String("since", "all", "window: all | <N>d | RFC3339")
 	project := fs.String("project", "", "limit to one project slug")
 	card := fs.Bool("card", false, "render a shareable HTML card instead of the terminal report")
-	out := fs.String("out", "", "output path for --card (default <flow-root>/stats-card.html)")
+	out := fs.String("out", "", "output path for --card; ignored without --card (default <flow-root>/stats-card.html)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

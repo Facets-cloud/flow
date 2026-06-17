@@ -40,3 +40,19 @@ func TestSparkline(t *testing.T) {
 		t.Errorf("sparkline len = %d runes, want 3 (%q)", len([]rune(got)), got)
 	}
 }
+
+func TestSparklineEmpty(t *testing.T) {
+	got := sparkline([]int{})
+	if len([]rune(got)) != 0 {
+		t.Errorf("sparkline([]) = %q, want empty string", got)
+	}
+}
+
+func TestSparklineAllZero(t *testing.T) {
+	// All-zero input exercises the `max > 0` division-by-zero guard:
+	// every value maps to the lowest bar.
+	got := sparkline([]int{0, 0, 0})
+	if got != "▁▁▁" {
+		t.Errorf("sparkline([0,0,0]) = %q, want %q", got, "▁▁▁")
+	}
+}
