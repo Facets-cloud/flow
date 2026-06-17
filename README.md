@@ -327,9 +327,10 @@ automation runs, and estimated time/$ saved.
     flow stats --card               # write a shareable HTML card to ~/.flow/stats-card.html
     flow stats --card --out card.html   # ...or to a path you choose
 
-Savings figures are estimates driven by `~/.flow/stats.json` (auto-created
-with defaults); ground-truth counts are exact. `~/.flow/stats-cache.json`
-is a derived cache — safe to delete, and should be gitignored if you track
+Savings figures are estimates driven by `~/.flow/stats.json` — optional;
+built-in defaults apply when it's absent, so create it only to override
+them. Ground-truth counts are exact. `~/.flow/stats-cache.json` is a
+derived cache — safe to delete, and should be gitignored if you track
 `~/.flow` in git.
 
 ## Your data — local, portable, yours
