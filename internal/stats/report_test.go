@@ -34,8 +34,8 @@ func TestBuildStatsEndToEnd(t *testing.T) {
 	// auto-runs + owner + kb fixtures.
 	os.MkdirAll(filepath.Join(root, "tasks", "t1", "auto-runs"), 0o755)
 	os.WriteFile(filepath.Join(root, "tasks", "t1", "auto-runs", "r.log"), []byte("x"), 0o644)
-	os.MkdirAll(filepath.Join(root, "owners", "o1", "updates"), 0o755)
-	os.WriteFile(filepath.Join(root, "owners", "o1", "updates", "tick.md"), []byte("x"), 0o644)
+	os.MkdirAll(filepath.Join(root, "owners", "o1", "ticks"), 0o755)
+	os.WriteFile(filepath.Join(root, "owners", "o1", "ticks", "tick.log"), []byte("x"), 0o644)
 	os.MkdirAll(filepath.Join(root, "kb"), 0o755)
 	os.WriteFile(filepath.Join(root, "kb", "org.md"), []byte("# org\n- 2026-06-01 — fact one\n- 2026-06-02 — fact two\n"), 0o644)
 

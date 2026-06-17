@@ -123,7 +123,8 @@ func BuildStats(o BuildOpts) (Stats, error) {
 	s.PlaybookRuns = len(runs)
 
 	s.AutoRuns = countFiles(filepath.Join(o.Root, "tasks"), "auto-runs", ".log")
-	s.OwnerTicks = countFiles(filepath.Join(o.Root, "owners"), "updates", ".md")
+	// owners/<slug>/ticks/*.log — one per tick that fired (deterministic launch count), not the agent-authored updates/ journals
+	s.OwnerTicks = countFiles(filepath.Join(o.Root, "owners"), "ticks", ".log")
 	s.KBFacts = countKBFacts(filepath.Join(o.Root, "kb"))
 
 	s.Savings = ComputeSavings(o.Constants, Counts{
