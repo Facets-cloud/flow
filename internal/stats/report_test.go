@@ -99,6 +99,15 @@ func TestBuildStatsWindowed(t *testing.T) {
 	os.WriteFile(filepath.Join(jdir, "00000000-0000-4000-8000-000000000001.jsonl"),
 		[]byte(before+"\n"+after+"\n"+noTS+"\n"), 0o644)
 
+	// Brief + updates for t1 — known byte sizes for the windowed token assertion.
+	// All three lookups are resumes, so each in-window resume contributes
+	// briefBytes + updatesBytes. Only the after-cutoff one is in window.
+	briefContent := []byte("# T1 brief\nWindowed test brief.\n") // 32 bytes
+	updatesContent := []byte("# update\nWindowed update note.\n")  // 31 bytes
+	os.MkdirAll(filepath.Join(root, "tasks", "t1", "updates"), 0o755)
+	os.WriteFile(filepath.Join(root, "tasks", "t1", "brief.md"), briefContent, 0o644)
+	os.WriteFile(filepath.Join(root, "tasks", "t1", "updates", "u1.md"), updatesContent, 0o644)
+
 	c := LoadCache(filepath.Join(root, "stats-cache.json"))
 	since := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) // between (a) and (b)
 	s, err := BuildStats(BuildOpts{
@@ -111,6 +120,13 @@ func TestBuildStatsWindowed(t *testing.T) {
 	// Only the after-cutoff lookup is counted; zero-TS and before-cutoff excluded.
 	if s.LookupsTotal != 1 || s.LookupsByKind[LookupResume] != 1 {
 		t.Errorf("windowed lookups = %d %v, want 1 resume", s.LookupsTotal, s.LookupsByKind)
+	}
+	// The window guard must govern byte accumulation too: only the single
+	// in-window resume contributes; out-of-window and zero-TS contribute ZERO.
+	wantContextTokens := (int64(len(briefContent)) + int64(len(updatesContent))) / 4
+	if s.Savings.ContextTokens != wantContextTokens {
+		t.Errorf("windowed ContextTokens = %d, want %d (only the 1 in-window resume: (brief=%d + updates=%d)/4)",
+			s.Savings.ContextTokens, wantContextTokens, len(briefContent), len(updatesContent))
 	}
 }
 

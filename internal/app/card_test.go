@@ -17,6 +17,7 @@ func TestRenderCardHTML(t *testing.T) {
 		Tokens:        stats.Usage{Input: 1000, Output: 500},
 		TasksDone:     7,
 		Savings:       stats.Savings{TotalHours: 3.5, TotalDollars: 350},
+		DollarPerHour: 100,
 		LookupsByKind: map[stats.LookupKind]int{},
 	}
 	var buf bytes.Buffer
@@ -24,7 +25,7 @@ func TestRenderCardHTML(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := buf.String()
-	for _, want := range []string{"<!doctype html", "flow", "42", "times flow remembered so you didn't", "est.", "at $"} {
+	for _, want := range []string{"<!doctype html", "flow", "42", "times flow remembered so you didn't", "est.", "at $100/hr"} {
 		if !strings.Contains(strings.ToLower(html), strings.ToLower(want)) {
 			t.Errorf("card html missing %q", want)
 		}

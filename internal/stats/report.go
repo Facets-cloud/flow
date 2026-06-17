@@ -108,7 +108,7 @@ func BuildStats(o BuildOpts) (Stats, error) {
 			case LookupReference:
 				contextBytes += briefBytes
 			case LookupCrossTask:
-				contextBytes += briefBytes // proxy: the referenced task's own brief
+				contextBytes += briefBytes // proxy: the current task's own brief (we don't resolve the specific sibling here)
 			case LookupKB:
 				contextBytes += avgKBFileBytes
 			}
