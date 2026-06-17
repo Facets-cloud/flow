@@ -24,7 +24,7 @@ func TestRenderCardHTML(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := buf.String()
-	for _, want := range []string{"<!doctype html", "flow", "42", "served you stored context", "est."} {
+	for _, want := range []string{"<!doctype html", "flow", "42", "times flow remembered so you didn't", "est.", "at $"} {
 		if !strings.Contains(strings.ToLower(html), strings.ToLower(want)) {
 			t.Errorf("card html missing %q", want)
 		}

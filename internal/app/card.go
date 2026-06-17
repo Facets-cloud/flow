@@ -10,14 +10,15 @@ import (
 
 // cardData is the view model handed to the HTML template.
 type cardData struct {
-	Window       string
-	Lookups      int
-	Tokens       int64
-	TasksDone    int
-	AutoRuns     int
-	OwnerTicks   int
-	TotalHours   float64
-	TotalDollars float64
+	Window        string
+	Lookups       int
+	Tokens        int64
+	TasksDone     int
+	AutoRuns      int
+	OwnerTicks    int
+	TotalHours    float64
+	TotalDollars  float64
+	DollarPerHour float64
 }
 
 var cardTmpl = template.Must(template.New("card").Parse(`<!doctype html>
@@ -41,14 +42,14 @@ var cardTmpl = template.Must(template.New("card").Parse(`<!doctype html>
   <div class="wordmark">✦ flow</div>
   <div class="head">{{.Window}} · flow served you stored context</div>
   <div class="big">{{.Lookups}}×</div>
-  <div class="sub">times it recalled context so you didn't have to.</div>
+  <div class="sub">times flow remembered so you didn't.</div>
   <div class="grid">
     <div class="stat"><div class="n">{{.Tokens}}</div><div class="l">tokens processed</div></div>
     <div class="stat"><div class="n">{{.TasksDone}}</div><div class="l">tasks done</div></div>
     <div class="stat"><div class="n">{{.AutoRuns}}</div><div class="l">auto runs</div></div>
     <div class="stat"><div class="n">{{.OwnerTicks}}</div><div class="l">owner ticks</div></div>
   </div>
-  <div class="est">≈ {{printf "%.1f" .TotalHours}} hrs · ${{printf "%.0f" .TotalDollars}} saved <em>(est.)</em></div>
+  <div class="est">≈ {{printf "%.1f" .TotalHours}} hrs · ${{printf "%.0f" .TotalDollars}} saved (at ${{printf "%.0f" .DollarPerHour}}/hr, <em>est.</em>)</div>
   <div class="foot">Estimates use your ~/.flow/stats.json assumptions. Ground-truth counts are exact.</div>
 </div>
 </body></html>
@@ -57,14 +58,15 @@ var cardTmpl = template.Must(template.New("card").Parse(`<!doctype html>
 // renderCardHTML writes a self-contained HTML card for the stats.
 func renderCardHTML(w io.Writer, s stats.Stats) error {
 	return cardTmpl.Execute(w, cardData{
-		Window:       s.Window,
-		Lookups:      s.LookupsTotal,
-		Tokens:       s.Tokens.Total(),
-		TasksDone:    s.TasksDone,
-		AutoRuns:     s.AutoRuns,
-		OwnerTicks:   s.OwnerTicks,
-		TotalHours:   s.Savings.TotalHours,
-		TotalDollars: s.Savings.TotalDollars,
+		Window:        s.Window,
+		Lookups:       s.LookupsTotal,
+		Tokens:        s.Tokens.Total(),
+		TasksDone:     s.TasksDone,
+		AutoRuns:      s.AutoRuns,
+		OwnerTicks:    s.OwnerTicks,
+		TotalHours:    s.Savings.TotalHours,
+		TotalDollars:  s.Savings.TotalDollars,
+		DollarPerHour: s.DollarPerHour,
 	})
 }
 

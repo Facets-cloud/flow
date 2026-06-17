@@ -33,6 +33,7 @@ type Stats struct {
 	PlaybookRuns  int
 	KBFacts       int
 	Savings       Savings
+	DollarPerHour float64
 	Weekly        []WeeklyPoint
 }
 
@@ -54,6 +55,7 @@ func BuildStats(o BuildOpts) (Stats, error) {
 		Window:        windowLabel(o.Since),
 		Project:       o.Project,
 		LookupsByKind: map[LookupKind]int{},
+		DollarPerHour: o.Constants.DollarPerHour,
 	}
 
 	tasks, err := flowdb.ListTasks(o.DB, flowdb.TaskFilter{IncludeArchived: true, Project: o.Project})
@@ -61,8 +63,12 @@ func BuildStats(o BuildOpts) (Stats, error) {
 		return s, fmt.Errorf("list tasks: %w", err)
 	}
 
+	// avgKBFileBytes is computed once: average byte size of kb/*.md files.
+	avgKBFileBytes := computeAvgKBFileBytes(filepath.Join(o.Root, "kb"))
+
 	weekly := map[time.Time]*WeeklyPoint{}
 	seen := map[string]bool{}
+	var contextBytes int64
 	for _, t := range tasks {
 		if !t.SessionID.Valid || t.SessionID.String == "" {
 			continue
@@ -77,6 +83,10 @@ func BuildStats(o BuildOpts) (Stats, error) {
 		}
 		seen[path] = true
 
+		// Compute per-task file sizes once (0 if files are missing).
+		briefBytes := fileSize(filepath.Join(o.Root, "tasks", t.Slug, "brief.md"))
+		updatesBytes := dirSize(filepath.Join(o.Root, "tasks", t.Slug, "updates"), ".md")
+
 		for _, l := range roll.Lookups {
 			if !o.Since.IsZero() && (l.TS.IsZero() || l.TS.Before(o.Since)) {
 				continue
@@ -90,6 +100,18 @@ func BuildStats(o BuildOpts) (Stats, error) {
 				weekly[wk] = wp
 			}
 			wp.Lookups++
+
+			// Accumulate context bytes saved per lookup kind.
+			switch l.Kind {
+			case LookupResume:
+				contextBytes += briefBytes + updatesBytes
+			case LookupReference:
+				contextBytes += briefBytes
+			case LookupCrossTask:
+				contextBytes += briefBytes // proxy: the referenced task's own brief
+			case LookupKB:
+				contextBytes += avgKBFileBytes
+			}
 		}
 
 		// Tokens: include the whole file's usage when its last activity is
@@ -132,12 +154,69 @@ func BuildStats(o BuildOpts) (Stats, error) {
 		OwnerTicks:    s.OwnerTicks,
 		ResumeLookups: s.LookupsByKind[LookupResume],
 		RefLookups:    s.LookupsByKind[LookupReference],
-		KBLookups:     s.LookupsByKind[LookupKB],
 		CrossLookups:  s.LookupsByKind[LookupCrossTask],
 	})
+	// ContextTokens is grounded in real file sizes (4 bytes ≈ 1 token).
+	s.Savings.ContextTokens = contextBytes / 4
 
 	s.Weekly = sortedWeekly(weekly)
 	return s, nil
+}
+
+// computeAvgKBFileBytes returns the average byte size of *.md files in kbDir.
+// Returns 0 if the directory is missing or empty.
+func computeAvgKBFileBytes(kbDir string) int64 {
+	entries, err := os.ReadDir(kbDir)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	var count int
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		total += fi.Size()
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return total / int64(count)
+}
+
+// fileSize returns the byte size of the file at path, or 0 if it does not exist.
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+// dirSize sums the byte sizes of files with the given extension under dir.
+// Returns 0 if the directory is missing or empty.
+func dirSize(dir, ext string) int64 {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ext) {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		total += fi.Size()
+	}
+	return total
 }
 
 // ParseSince converts a --since value to a lower-bound time. "all"/"" → zero

@@ -39,6 +39,14 @@ func TestBuildStatsEndToEnd(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "kb"), 0o755)
 	os.WriteFile(filepath.Join(root, "kb", "org.md"), []byte("# org\n- 2026-06-01 — fact one\n- 2026-06-02 — fact two\n"), 0o644)
 
+	// Task t1 brief + updates — known sizes for ContextTokens assertion.
+	briefContent := []byte("# T1 brief\nThis is a test brief.\n") // 36 bytes
+	updatesContent := []byte("# update 1\nSome progress notes.\n")  // 32 bytes
+	os.MkdirAll(filepath.Join(root, "tasks", "t1"), 0o755)
+	os.WriteFile(filepath.Join(root, "tasks", "t1", "brief.md"), briefContent, 0o644)
+	os.MkdirAll(filepath.Join(root, "tasks", "t1", "updates"), 0o755)
+	os.WriteFile(filepath.Join(root, "tasks", "t1", "updates", "u1.md"), updatesContent, 0o644)
+
 	c := LoadCache(filepath.Join(root, "stats-cache.json"))
 	s, err := BuildStats(BuildOpts{
 		Root: root, ClaudeProjects: claudeProj, DB: db, Cache: c,
@@ -55,6 +63,16 @@ func TestBuildStatsEndToEnd(t *testing.T) {
 	}
 	if s.TasksDone != 1 || s.AutoRuns != 1 || s.OwnerTicks != 1 || s.KBFacts != 2 {
 		t.Errorf("counts done=%d auto=%d ticks=%d kb=%d", s.TasksDone, s.AutoRuns, s.OwnerTicks, s.KBFacts)
+	}
+	// ContextTokens: 1 resume lookup → briefBytes + updatesBytes, /4 for token approx.
+	wantContextTokens := (int64(len(briefContent)) + int64(len(updatesContent))) / 4
+	if s.Savings.ContextTokens != wantContextTokens {
+		t.Errorf("ContextTokens = %d, want %d (brief=%d + updates=%d bytes / 4)",
+			s.Savings.ContextTokens, wantContextTokens, len(briefContent), len(updatesContent))
+	}
+	// DollarPerHour should be threaded through from constants.
+	if s.DollarPerHour != DefaultConstants().DollarPerHour {
+		t.Errorf("DollarPerHour = %v, want %v", s.DollarPerHour, DefaultConstants().DollarPerHour)
 	}
 }
 

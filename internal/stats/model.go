@@ -11,7 +11,6 @@ import (
 type Constants struct {
 	MinutesPerUnattendedRun float64 `json:"minutes_per_unattended_run"`
 	MinutesPerContextSwitch float64 `json:"minutes_per_context_switch"`
-	TokensPerKBLookup       int64   `json:"tokens_per_kb_lookup"`
 	DollarPerHour           float64 `json:"dollar_per_hour"`
 }
 
@@ -20,7 +19,6 @@ func DefaultConstants() Constants {
 	return Constants{
 		MinutesPerUnattendedRun: 20,
 		MinutesPerContextSwitch: 5,
-		TokensPerKBLookup:       1500,
 		DollarPerHour:           100,
 	}
 }
@@ -45,9 +43,6 @@ func LoadConstants(path string) Constants {
 	if c.MinutesPerContextSwitch <= 0 {
 		c.MinutesPerContextSwitch = def.MinutesPerContextSwitch
 	}
-	if c.TokensPerKBLookup <= 0 {
-		c.TokensPerKBLookup = def.TokensPerKBLookup
-	}
 	if c.DollarPerHour <= 0 {
 		c.DollarPerHour = def.DollarPerHour
 	}
@@ -60,24 +55,26 @@ type Counts struct {
 	OwnerTicks    int
 	ResumeLookups int
 	RefLookups    int
-	KBLookups     int
 	CrossLookups  int
 }
 
 // Savings are the counterfactual estimates. AddressableCount is a count,
 // NOT time/$ — it must never be summed into TotalHours/TotalDollars.
+// ContextTokens is set by BuildStats from real file sizes after ComputeSavings.
 type Savings struct {
 	AutomationHours    float64
 	ContextSwitchHours float64
-	KBTokens           int64
+	ContextTokens      int64
 	AddressableCount   int
 	TotalHours         float64
 	TotalDollars       float64
 }
 
 // ComputeSavings applies the counterfactual model. TotalHours sums only the
-// two time-valued levers (automation + context-switch); KBTokens (tokens)
+// two time-valued levers (automation + context-switch); ContextTokens (tokens)
 // and AddressableCount (a count) are reported separately by design.
+// ContextTokens is NOT computed here — it is derived from real file sizes by
+// BuildStats and assigned after this call.
 func ComputeSavings(c Constants, n Counts) Savings {
 	auto := float64(n.AutoRuns+n.OwnerTicks) * c.MinutesPerUnattendedRun / 60.0
 	sw := float64(n.ResumeLookups+n.RefLookups) * c.MinutesPerContextSwitch / 60.0
@@ -85,7 +82,6 @@ func ComputeSavings(c Constants, n Counts) Savings {
 	return Savings{
 		AutomationHours:    auto,
 		ContextSwitchHours: sw,
-		KBTokens:           int64(n.KBLookups) * c.TokensPerKBLookup,
 		AddressableCount:   n.CrossLookups + n.RefLookups,
 		TotalHours:         total,
 		TotalDollars:       total * c.DollarPerHour,

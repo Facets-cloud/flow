@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"flow/internal/flowdb"
@@ -119,9 +120,9 @@ func renderReport(w io.Writer, s stats.Stats) error {
 	fmt.Fprintln(w, "  Estimated savings (est. — assumptions in stats.json)")
 	fmt.Fprintf(w, "    Automation       : ~%.1f hrs (est.)\n", s.Savings.AutomationHours)
 	fmt.Fprintf(w, "    Context recovery : ~%.1f hrs (est.)\n", s.Savings.ContextSwitchHours)
-	fmt.Fprintf(w, "    KB reuse         : ~%d tokens (est.)\n", s.Savings.KBTokens)
+	fmt.Fprintf(w, "    Context re-established : ~%s tokens (est.) — context you never re-explained\n", humanInt(s.Savings.ContextTokens))
 	fmt.Fprintf(w, "    Addressed by slug: %d (never hunted a UUID)\n", s.Savings.AddressableCount)
-	fmt.Fprintf(w, "    Saved            : ~%.1f hrs · ~$%.0f (est.)\n", s.Savings.TotalHours, s.Savings.TotalDollars)
+	fmt.Fprintf(w, "    Saved            : ~%.1f hrs · ~$%s (at $%.0f/hr, est.)\n", s.Savings.TotalHours, humanInt(int64(s.Savings.TotalDollars)), s.DollarPerHour)
 
 	if len(s.Weekly) > 0 {
 		vals := make([]int, len(s.Weekly))
@@ -132,6 +133,31 @@ func renderReport(w io.Writer, s stats.Stats) error {
 		fmt.Fprintf(w, "  Weekly lookups   : %s\n", sparkline(vals))
 	}
 	return nil
+}
+
+// humanInt formats n with thousands separators (e.g. 1041234 → "1,041,234").
+// Pure Go, no third-party deps.
+func humanInt(n int64) string {
+	if n < 0 {
+		return "-" + humanInt(-n)
+	}
+	s := fmt.Sprintf("%d", n)
+	// Insert commas every 3 digits from the right.
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	rem := len(s) % 3
+	if rem > 0 {
+		b.WriteString(s[:rem])
+	}
+	for i := rem; i < len(s); i += 3 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
