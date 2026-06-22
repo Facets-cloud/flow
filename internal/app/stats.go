@@ -19,7 +19,8 @@ func cmdStats(args []string) int {
 	since := fs.String("since", "all", "window: all | <N>d | RFC3339")
 	project := fs.String("project", "", "limit to one project slug")
 	card := fs.Bool("card", false, "render a shareable HTML card instead of the terminal report")
-	out := fs.String("out", "", "output path for --card; ignored without --card (default <flow-root>/stats-card.html)")
+	png := fs.Bool("png", false, "render a shareable PNG card (no browser needed)")
+	out := fs.String("out", "", "output path for --card/--png; default <flow-root>/stats-card.{html,png}")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -71,6 +72,19 @@ func cmdStats(args []string) int {
 	}
 	if saveErr := cache.Save(cachePath); saveErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not write stats cache: %v\n", saveErr)
+	}
+
+	if *png {
+		outPath := *out
+		if outPath == "" {
+			outPath = filepath.Join(root, "stats-card.png")
+		}
+		if err := writeCardPNG(outPath, s); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write png: %v\n", err)
+			return 1
+		}
+		fmt.Printf("png written: %s\n", outPath)
+		return 0
 	}
 
 	if *card {
