@@ -77,7 +77,7 @@ func renderCardPNG(s stats.Stats) (image.Image, error) {
 	}
 
 	const (
-		canvasW     = 1100
+		canvasW     = 940
 		cardPad     = 64.0
 		cardX       = 40.0
 		cardW       = canvasW - 2*cardX
@@ -131,7 +131,7 @@ func renderCardPNG(s stats.Stats) (image.Image, error) {
 	face22bold := newFace(fonts.bold, 22)
 	dc.SetFontFace(face22bold)
 	dc.SetRGB(accentR, accentG, accentB)
-	dc.DrawString("flow - your AI remembered, so you didn't", x+circR*2+8, y+20)
+	dc.DrawString("flow — your AI remembered, so you didn't", x+circR*2+8, y+20)
 	y += 36
 
 	// ── Window label ─────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ func renderCardPNG(s stats.Stats) (image.Image, error) {
 	face64bold := newFace(fonts.bold, 64)
 	dc.SetFontFace(face64bold)
 	dc.SetRGB(primaryR, primaryG, primaryB)
-	heroText := humanCompact(int64(s.LookupsTotal)) + "x"
+	heroText := humanCompact(int64(s.LookupsTotal)) + "×"
 	dc.DrawString(heroText, x, y+60)
 	y += 80
 
@@ -153,7 +153,7 @@ func renderCardPNG(s stats.Stats) (image.Image, error) {
 	face18 := newFace(fonts.regular, 18)
 	dc.SetFontFace(face18)
 	dc.SetRGBA(primaryR, primaryG, primaryB, 0.85)
-	dc.DrawString("context recalls - you never re-explained", x, y)
+	dc.DrawString("context recalls — you never re-explained", x, y)
 	y += 40
 
 	// ── Stat row ─────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ func renderCardPNG(s stats.Stats) (image.Image, error) {
 	face15 := newFace(fonts.regular, 15)
 	dc.SetFontFace(face15)
 	dc.SetRGBA(primaryR, primaryG, primaryB, 0.9)
-	resumeText := fmt.Sprintf("%d instant resumes - straight back into work, in context not from scratch", resumeCount)
+	resumeText := fmt.Sprintf("%d instant resumes — straight back into work, in context not from scratch", resumeCount)
 	dc.DrawStringWrapped(resumeText, x, y, 0, 0, cardW-2*cardPad, 1.4, gg.AlignLeft)
 	y += 40
 
@@ -197,7 +197,7 @@ func renderCardPNG(s stats.Stats) (image.Image, error) {
 
 		totalRuns := autoRuns + ownerTicks + playbookRuns
 		dollars := humanInt(int64(s.Savings.AutomationHours * s.DollarPerHour))
-		autoText := fmt.Sprintf("+ %d runs flow did unattended (%d auto, %d owner, %d playbooks)  ~$%s",
+		autoText := fmt.Sprintf("+ %d runs flow did unattended (%d auto · %d owner · %d playbooks)   ~$%s",
 			totalRuns, autoRuns, ownerTicks, playbookRuns, dollars)
 		face14auto := newFace(fonts.regular, 14)
 		dc.SetFontFace(face14auto)
@@ -211,7 +211,7 @@ func renderCardPNG(s stats.Stats) (image.Image, error) {
 	face12 := newFace(fonts.regular, 12)
 	dc.SetFontFace(face12)
 	dc.SetRGBA(primaryR, primaryG, primaryB, 0.55)
-	dc.DrawString("counts exact - est. time/tokens", x, y)
+	dc.DrawString("counts exact · est. time/tokens", x, y)
 
 	return dc.Image(), nil
 }
