@@ -102,36 +102,44 @@ func renderReport(w io.Writer, s stats.Stats) error {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w)
 
-	fmt.Fprintf(w, "  flow served you stored context %d times\n", s.LookupsTotal)
+	fmt.Fprintln(w, "  Your AI remembered, so you didn't.")
+	fmt.Fprintf(w, "  flow recalled your context %d times — you never re-explained it.\n", s.LookupsTotal)
 	fmt.Fprintf(w, "    resume %d · reference %d · cross-task %d · kb %d\n",
 		s.LookupsByKind[stats.LookupResume], s.LookupsByKind[stats.LookupReference],
 		s.LookupsByKind[stats.LookupCrossTask], s.LookupsByKind[stats.LookupKB])
 	fmt.Fprintln(w)
 
-	fmt.Fprintln(w, "  Ground truth")
-	fmt.Fprintf(w, "    Tokens processed : %d\n", s.Tokens.Total())
-	fmt.Fprintf(w, "    Tasks done       : %d\n", s.TasksDone)
-	fmt.Fprintf(w, "    Auto runs        : %d\n", s.AutoRuns)
-	fmt.Fprintf(w, "    Owner ticks      : %d\n", s.OwnerTicks)
-	fmt.Fprintf(w, "    Playbook runs    : %d\n", s.PlaybookRuns)
-	fmt.Fprintf(w, "    KB facts         : %d\n", s.KBFacts)
+	fmt.Fprintln(w, "  Memory")
+	fmt.Fprintf(w, "    Context re-established : ~%s tokens you never re-typed (est.)\n", humanInt(s.Savings.ContextTokens))
+	fmt.Fprintf(w, "    \"Where was I?\" skipped : ~%.1f hrs — every task resumes by name, fully loaded (est.)\n", s.Savings.ContextSwitchHours)
 	fmt.Fprintln(w)
 
-	fmt.Fprintln(w, "  Estimated savings (est. — assumptions in stats.json)")
-	fmt.Fprintf(w, "    Automation       : ~%.1f hrs (est.)\n", s.Savings.AutomationHours)
-	fmt.Fprintf(w, "    Context recovery : ~%.1f hrs (est.)\n", s.Savings.ContextSwitchHours)
-	fmt.Fprintf(w, "    Context re-established : ~%s tokens (est.) — context you never re-explained\n", humanInt(s.Savings.ContextTokens))
-	fmt.Fprintf(w, "    Addressed by slug: %d (never hunted a UUID)\n", s.Savings.AddressableCount)
-	fmt.Fprintf(w, "    Saved            : ~%.1f hrs · ~$%s (at $%.0f/hr, est.)\n", s.Savings.TotalHours, humanInt(int64(s.Savings.TotalDollars)), s.DollarPerHour)
+	fmt.Fprintln(w, "  Shipped")
+	fmt.Fprintf(w, "    Tasks done       : %d\n", s.TasksDone)
+	fmt.Fprintf(w, "    Tokens processed : %s\n", humanInt(s.Tokens.Total()))
+	fmt.Fprintf(w, "    KB facts         : %d\n", s.KBFacts)
+
+	if s.AutoRuns+s.OwnerTicks+s.PlaybookRuns > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "  Automation (power-user)")
+		fmt.Fprintf(w, "    Auto runs        : %d\n", s.AutoRuns)
+		fmt.Fprintf(w, "    Owner ticks      : %d\n", s.OwnerTicks)
+		fmt.Fprintf(w, "    Playbook runs    : %d\n", s.PlaybookRuns)
+		fmt.Fprintf(w, "    Unattended work  : ~%.1f hrs (est.)\n", s.Savings.AutomationHours)
+	}
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "  Addressed by name, not a UUID : %d\n", s.Savings.AddressableCount)
 
 	if len(s.Weekly) > 0 {
 		vals := make([]int, len(s.Weekly))
 		for i, wp := range s.Weekly {
 			vals[i] = wp.Lookups
 		}
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  Weekly lookups   : %s\n", sparkline(vals))
+		fmt.Fprintf(w, "  Weekly recalls   : %s\n", sparkline(vals))
 	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  counts exact · time/tokens are est. · ≈$%s at $%.0f/hr · tune ~/.flow/stats.json\n", humanInt(int64(s.Savings.TotalDollars)), s.DollarPerHour)
 	return nil
 }
 
@@ -158,6 +166,24 @@ func humanInt(n int64) string {
 		b.WriteString(s[i : i+3])
 	}
 	return b.String()
+}
+
+// humanCompact formats large numbers with B/M/K suffix for compact display.
+// ≥1B → "X.XXB"; ≥1M → "X.XXM"; ≥1K → "XK" or "X.XK"; else plain integer.
+func humanCompact(n int64) string {
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.2fB", float64(n)/1e9)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.2fM", float64(n)/1e6)
+	case n >= 1_000:
+		if n%1000 == 0 {
+			return fmt.Sprintf("%dK", n/1000)
+		}
+		return fmt.Sprintf("%.1fK", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
 }
 
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")

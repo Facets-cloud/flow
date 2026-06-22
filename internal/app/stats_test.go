@@ -28,9 +28,79 @@ func TestRenderReportContainsSections(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"flow served you stored context", "6", "all-time", "Tokens", "est.", "Saved", "Context re-established", "context you never re-explained", "$100/hr"} {
+	for _, want := range []string{
+		"Your AI remembered",
+		"Memory",
+		"Context re-established",
+		"Where was I",
+		"Addressed by name",
+		"$",
+		"all-time",
+		"6",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report missing %q.\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderReportHidesAutomationWhenZero(t *testing.T) {
+	base := stats.Stats{
+		Window:        "all-time",
+		LookupsByKind: map[stats.LookupKind]int{},
+		Savings:       stats.Savings{},
+	}
+
+	t.Run("hidden when zero", func(t *testing.T) {
+		s := base
+		s.AutoRuns = 0
+		s.OwnerTicks = 0
+		s.PlaybookRuns = 0
+		var buf bytes.Buffer
+		if err := renderReport(&buf, s); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(buf.String(), "Automation (power-user)") {
+			t.Errorf("expected Automation section to be absent when AutoRuns+OwnerTicks+PlaybookRuns==0\n---\n%s", buf.String())
+		}
+	})
+
+	t.Run("shown when nonzero", func(t *testing.T) {
+		s := base
+		s.AutoRuns = 1
+		s.OwnerTicks = 0
+		s.PlaybookRuns = 0
+		var buf bytes.Buffer
+		if err := renderReport(&buf, s); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "Automation (power-user)") {
+			t.Errorf("expected Automation section to be present when AutoRuns>0\n---\n%s", buf.String())
+		}
+	})
+}
+
+func TestHumanCompact(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{766, "766"},
+		{999, "999"},
+		{1000, "1K"},
+		{1500, "1.5K"},
+		{320000, "320K"},
+		{999999, "1000.0K"},
+		{1000000, "1.00M"},
+		{1149208, "1.15M"},
+		{1000000000, "1.00B"},
+		{5188827405, "5.19B"},
+	}
+	for _, c := range cases {
+		got := humanCompact(c.in)
+		if got != c.want {
+			t.Errorf("humanCompact(%d) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
