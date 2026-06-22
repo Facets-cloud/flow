@@ -1,6 +1,8 @@
 package app
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"image"
 	"image/color"
@@ -10,11 +12,34 @@ import (
 
 	"github.com/fogleman/gg"
 	"github.com/golang/freetype/truetype"
+	"golang.org/x/image/draw"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goregular"
 
 	"flow/internal/stats"
+)
+
+// flowWordmarkPNG is the official flow wordmark (light "flo" + gradient
+// wave "w"), pre-rendered with a transparent background, embedded so the
+// PNG card is fully self-contained.
+//
+//go:embed assets/flow-wordmark.png
+var flowWordmarkPNG []byte
+
+// flow brand palette (from site/styles.css :root, dark theme).
+var (
+	cPageBg    = hexColor("#0B0D10") // --bg-deep
+	cCardTop   = hexColor("#1C2128") // --bg-paper-2 (card gradient top)
+	cCardBot   = hexColor("#14171D") // --bg-elev   (card gradient bottom)
+	cBorder    = hexColor("#30363D") // --rule
+	cFg        = hexColor("#E6EDF3") // --fg
+	cFgSoft    = hexColor("#C9D1D9") // --fg-soft
+	cFgMuted   = hexColor("#8B949E") // --fg-muted
+	cFgDim     = hexColor("#6E7681") // --fg-dim
+	cGrad1     = hexColor("#0AEAA8") // wave gradient stops
+	cGrad2     = hexColor("#0ADCCE")
+	cGrad3     = hexColor("#198FFF")
 )
 
 // cardFonts holds the parsed TrueType fonts, loaded once.
@@ -27,6 +52,10 @@ var (
 	cardFontsOnce sync.Once
 	cardFontsVal  cardFonts
 	cardFontsErr  error
+
+	wordmarkOnce sync.Once
+	wordmarkImg  image.Image
+	wordmarkErr  error
 )
 
 func loadCardFonts() (cardFonts, error) {
@@ -46,174 +75,191 @@ func loadCardFonts() (cardFonts, error) {
 	return cardFontsVal, cardFontsErr
 }
 
-func newFace(f *truetype.Font, size float64) font.Face {
-	return truetype.NewFace(f, &truetype.Options{
-		Size:    size,
-		DPI:     96,
-		Hinting: font.HintingFull,
+func loadWordmark() (image.Image, error) {
+	wordmarkOnce.Do(func() {
+		wordmarkImg, wordmarkErr = png.Decode(bytes.NewReader(flowWordmarkPNG))
 	})
+	return wordmarkImg, wordmarkErr
 }
 
-// cardPalette holds the colour values used throughout the PNG card.
-const (
-	// Background: #1b1714
-	bgR, bgG, bgB = 0x1b / 255.0, 0x17 / 255.0, 0x14 / 255.0
-	// Card gradient start: #2a2420
-	cardStartR, cardStartG, cardStartB = 0x2a / 255.0, 0x24 / 255.0, 0x20 / 255.0
-	// Card gradient end: #3a322b
-	cardEndR, cardEndG, cardEndB = 0x3a / 255.0, 0x32 / 255.0, 0x2b / 255.0
-	// Accent: #e8a87c
-	accentR, accentG, accentB = 0xe8 / 255.0, 0xa8 / 255.0, 0x7c / 255.0
-	// Primary text: #f3ede4
-	primaryR, primaryG, primaryB = 0xf3 / 255.0, 0xed / 255.0, 0xe4 / 255.0
-)
+func newFace(f *truetype.Font, size float64) font.Face {
+	return truetype.NewFace(f, &truetype.Options{Size: size, DPI: 96, Hinting: font.HintingFull})
+}
 
-// renderCardPNG draws the share card and returns the resulting image.
-// Layout mirrors renderCardHTML in card.go.
+// renderCardPNG draws the flow-branded share card and returns the image.
 func renderCardPNG(s stats.Stats) (image.Image, error) {
 	fonts, err := loadCardFonts()
 	if err != nil {
 		return nil, err
 	}
+	logo, err := loadWordmark()
+	if err != nil {
+		return nil, err
+	}
 
 	const (
-		canvasW     = 940
-		cardPad     = 64.0
-		cardX       = 40.0
-		cardW       = canvasW - 2*cardX
-		cornerR     = 24.0
-		mutedAlpha  = 0.65
+		canvasW = 940
+		cardX   = 40.0
+		cardPad = 56.0
+		cardW   = canvasW - 2*cardX
+		cornerR = 16.0
 	)
+	logoH := 34.0
 
-	// Determine whether the automation band is needed.
-	autoRuns := s.AutoRuns
-	ownerTicks := s.OwnerTicks
-	playbookRuns := s.PlaybookRuns
-	showAuto := autoRuns+ownerTicks+playbookRuns > 0
+	// Build the gradient hero up front so its real height drives layout.
+	heroText := humanCompact(int64(s.LookupsTotal)) + "×"
+	heroImg := gradientText(heroText, newFace(fonts.bold, 60))
+	heroH := float64(heroImg.Bounds().Dy())
 
-	// Compute card height based on content sections.
-	// Each section height is the approximate pixels it occupies.
-	baseCardH := 420.0
-	autoExtraH := 0.0
+	showAuto := s.AutoRuns+s.OwnerTicks+s.PlaybookRuns > 0
+	autoBlock := 0.0
 	if showAuto {
-		autoExtraH = 80.0
+		autoBlock = 10 + 26 + 30
 	}
-	cardH := baseCardH + autoExtraH
+	// Sum of vertical advances (mirrors the draw sequence below).
+	cardH := cardPad + (logoH + 20) + 28 + (heroH + 10) + 42 + 80 + 30 + autoBlock + 18 + 14 + 30
 	canvasH := int(cardH) + 2*int(cardX)
 
 	dc := gg.NewContext(canvasW, canvasH)
 
-	// ── Background ──────────────────────────────────────────────────────────
-	dc.SetRGB(bgR, bgG, bgB)
+	// ── Page background ───────────────────────────────────────────────
+	dc.SetColor(cPageBg)
 	dc.Clear()
 
-	// ── Card gradient ───────────────────────────────────────────────────────
-	grad := gg.NewLinearGradient(cardX, cardX, cardX+cardW, cardX+cardH)
-	grad.AddColorStop(0, rgbColor(cardStartR, cardStartG, cardStartB))
-	grad.AddColorStop(1, rgbColor(cardEndR, cardEndG, cardEndB))
-	dc.DrawRoundedRectangle(cardX, float64(cardX), cardW, cardH, cornerR)
+	// ── Card surface (subtle vertical gradient) + border ──────────────
+	grad := gg.NewLinearGradient(0, cardX, 0, cardX+cardH)
+	grad.AddColorStop(0, cCardTop)
+	grad.AddColorStop(1, cCardBot)
+	dc.NewSubPath()
+	dc.DrawRoundedRectangle(cardX, cardX, cardW, cardH, cornerR)
 	dc.SetFillStyle(grad)
-	dc.Fill()
+	dc.FillPreserve()
+	dc.SetColor(cBorder)
+	dc.SetLineWidth(1.5)
+	dc.Stroke()
 
-	// ── Layout cursor ───────────────────────────────────────────────────────
 	x := cardX + cardPad
-	y := float64(cardX) + cardPad
+	y := cardX + cardPad
 
-	// ── Wordmark line ────────────────────────────────────────────────────────
-	// Draw a small filled accent circle as the mark (bullet).
-	dc.SetRGB(accentR, accentG, accentB)
-	circR := 6.0
-	// Vertically centre the circle with the text baseline at y+circR.
-	// Bold 22pt face: ascent ~20px at 96dpi.
-	dc.DrawCircle(x+circR, y+14.0, circR)
-	dc.Fill()
+	// ── Wordmark logo (top-left) + window label (top-right) ───────────
+	lb := logo.Bounds()
+	logoW := logoH * float64(lb.Dx()) / float64(lb.Dy())
+	scaled := scaleImage(logo, int(logoW+0.5), int(logoH+0.5))
+	dc.DrawImage(scaled, int(x), int(y))
 
-	face22bold := newFace(fonts.bold, 22)
-	dc.SetFontFace(face22bold)
-	dc.SetRGB(accentR, accentG, accentB)
-	dc.DrawString("flow — your AI remembered, so you didn't", x+circR*2+8, y+20)
-	y += 36
+	face13 := newFace(fonts.regular, 13)
+	dc.SetFontFace(face13)
+	dc.SetColor(cFgDim)
+	dc.DrawStringAnchored(s.Window, cardX+cardW-cardPad, y+logoH/2, 1, 0.4)
 
-	// ── Window label ─────────────────────────────────────────────────────────
-	face14 := newFace(fonts.regular, 14)
-	dc.SetFontFace(face14)
-	dc.SetRGBA(primaryR, primaryG, primaryB, mutedAlpha)
-	dc.DrawString(s.Window, x, y)
+	y += logoH + 20
+
+	// ── Tagline ───────────────────────────────────────────────────────
+	face15 := newFace(fonts.regular, 15)
+	dc.SetFontFace(face15)
+	dc.SetColor(cFgMuted)
+	dc.DrawString("your AI remembered, so you didn't", x, y)
 	y += 28
 
-	// ── Hero number ──────────────────────────────────────────────────────────
-	face64bold := newFace(fonts.bold, 64)
-	dc.SetFontFace(face64bold)
-	dc.SetRGB(primaryR, primaryG, primaryB)
-	heroText := humanCompact(int64(s.LookupsTotal)) + "×"
-	dc.DrawString(heroText, x, y+60)
-	y += 80
+	// ── Hero number (brand gradient) ──────────────────────────────────
+	dc.DrawImage(heroImg, int(x), int(y))
+	y += heroH + 10
 
-	// ── Hero sub ─────────────────────────────────────────────────────────────
+	// ── Hero sub ──────────────────────────────────────────────────────
 	face18 := newFace(fonts.regular, 18)
 	dc.SetFontFace(face18)
-	dc.SetRGBA(primaryR, primaryG, primaryB, 0.85)
-	dc.DrawString("context recalls — you never re-explained", x, y)
-	y += 40
+	dc.SetColor(cFgSoft)
+	dc.DrawString("context recalls you never re-explained", x, y)
+	y += 42
 
-	// ── Stat row ─────────────────────────────────────────────────────────────
-	face13 := newFace(fonts.regular, 13)
-	face28bold := newFace(fonts.bold, 28)
+	// ── Stat row ──────────────────────────────────────────────────────
+	face26 := newFace(fonts.bold, 26)
 	statItems := []struct{ val, label string }{
-		{humanCompact(s.Savings.ContextTokens), "tokens never re-typed"},
+		{humanCompact(s.Savings.ContextTokens), "tokens never retyped"},
 		{fmt.Sprintf("%d", s.TasksDone), "tasks shipped"},
 		{humanCompact(s.Tokens.Total()), "tokens processed"},
 	}
 	colW := (cardW - 2*cardPad) / float64(len(statItems))
 	for i, item := range statItems {
 		sx := x + float64(i)*colW
-		dc.SetFontFace(face28bold)
-		dc.SetRGB(primaryR, primaryG, primaryB)
-		dc.DrawString(item.val, sx, y+28)
+		dc.SetFontFace(face26)
+		dc.SetColor(cFg)
+		dc.DrawString(item.val, sx, y+26)
 		dc.SetFontFace(face13)
-		dc.SetRGBA(primaryR, primaryG, primaryB, mutedAlpha)
+		dc.SetColor(cFgMuted)
 		dc.DrawString(item.label, sx, y+46)
 	}
-	y += 68
+	y += 80
 
-	// ── Resume line ──────────────────────────────────────────────────────────
+	// ── Resume line ───────────────────────────────────────────────────
 	resumeCount := s.LookupsByKind[stats.LookupResume]
-	face15 := newFace(fonts.regular, 15)
 	dc.SetFontFace(face15)
-	dc.SetRGBA(primaryR, primaryG, primaryB, 0.9)
-	resumeText := fmt.Sprintf("%d instant resumes — straight back into work, in context not from scratch", resumeCount)
-	dc.DrawStringWrapped(resumeText, x, y, 0, 0, cardW-2*cardPad, 1.4, gg.AlignLeft)
-	y += 40
+	dc.SetColor(cFgSoft)
+	dc.DrawString(fmt.Sprintf("%d instant resumes, straight back into work in context, not from scratch", resumeCount), x, y)
+	y += 30
 
-	// ── Automation band (conditional) ────────────────────────────────────────
+	// ── Automation band (conditional) ─────────────────────────────────
 	if showAuto {
-		// Thin separator rule.
-		y += 8
-		dc.SetRGBA(primaryR, primaryG, primaryB, 0.2)
+		y += 10
+		dc.SetColor(cBorder)
 		dc.SetLineWidth(1)
 		dc.DrawLine(x, y, cardX+cardW-cardPad, y)
 		dc.Stroke()
-		y += 14
+		y += 26
 
-		totalRuns := autoRuns + ownerTicks + playbookRuns
+		totalRuns := s.AutoRuns + s.OwnerTicks + s.PlaybookRuns
 		dollars := humanInt(int64(s.Savings.AutomationHours * s.DollarPerHour))
-		autoText := fmt.Sprintf("+ %d runs flow did unattended (%d auto · %d owner · %d playbooks)   ~$%s",
-			totalRuns, autoRuns, ownerTicks, playbookRuns, dollars)
-		face14auto := newFace(fonts.regular, 14)
-		dc.SetFontFace(face14auto)
-		dc.SetRGB(accentR, accentG, accentB)
-		dc.DrawStringWrapped(autoText, x, y, 0, 0, cardW-2*cardPad, 1.4, gg.AlignLeft)
-		y += 36
+		face14 := newFace(fonts.regular, 14)
+		dc.SetFontFace(face14)
+		dc.SetColor(cFgMuted)
+		dc.DrawString(fmt.Sprintf("+ %d runs flow did unattended (%d auto · %d owner · %d playbooks)   ~$%s",
+			totalRuns, s.AutoRuns, s.OwnerTicks, s.PlaybookRuns, dollars), x, y)
+		y += 30
 	}
 
-	// ── Footer ───────────────────────────────────────────────────────────────
-	y = float64(cardX) + cardH - 32
+	// ── Footer ────────────────────────────────────────────────────────
+	y += 18
 	face12 := newFace(fonts.regular, 12)
 	dc.SetFontFace(face12)
-	dc.SetRGBA(primaryR, primaryG, primaryB, 0.55)
+	dc.SetColor(cFgDim)
 	dc.DrawString("counts exact · est. time/tokens", x, y)
 
 	return dc.Image(), nil
+}
+
+// gradientText renders text filled with the flow wave gradient onto a
+// tightly-sized transparent image.
+func gradientText(text string, face font.Face) image.Image {
+	measure := gg.NewContext(8, 8)
+	measure.SetFontFace(face)
+	w, h := measure.MeasureString(text)
+	W := int(w + 8)
+	H := int(h*1.18 + 4)
+	baseline := h * 0.95 // approximate baseline within the box
+
+	// Text as a white alpha mask.
+	mc := gg.NewContext(W, H)
+	mc.SetFontFace(face)
+	mc.SetRGB(1, 1, 1)
+	mc.DrawString(text, 4, baseline)
+
+	out := gg.NewContext(W, H)
+	out.SetMask(mc.AsMask())
+	g := gg.NewLinearGradient(0, 0, float64(W), 0)
+	g.AddColorStop(0, cGrad1)
+	g.AddColorStop(0.55, cGrad2)
+	g.AddColorStop(1, cGrad3)
+	out.SetFillStyle(g)
+	out.DrawRectangle(0, 0, float64(W), float64(H))
+	out.Fill()
+	return out.Image()
+}
+
+// scaleImage resizes src to w×h using high-quality resampling.
+func scaleImage(src image.Image, w, h int) image.Image {
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+	return dst
 }
 
 // writeCardPNG renders the PNG card and writes it to path.
@@ -230,12 +276,9 @@ func writeCardPNG(path string, s stats.Stats) error {
 	return png.Encode(f, img)
 }
 
-// rgbColor returns a color.NRGBA from normalised [0,1] float components (fully opaque).
-func rgbColor(r, g, b float64) color.Color {
-	return color.NRGBA{
-		R: uint8(r * 255),
-		G: uint8(g * 255),
-		B: uint8(b * 255),
-		A: 255,
-	}
+// hexColor parses "#RRGGBB" into an opaque color.
+func hexColor(s string) color.Color {
+	var r, g, b uint8
+	fmt.Sscanf(s, "#%02x%02x%02x", &r, &g, &b)
+	return color.NRGBA{R: r, G: g, B: b, A: 255}
 }
