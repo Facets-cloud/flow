@@ -32,15 +32,26 @@ func TestRenderReportContainsSections(t *testing.T) {
 		"Your AI remembered",
 		"Memory",
 		"Context re-established",
-		"Where was I",
+		"Instant resumes",
+		"in context not from scratch",
 		"Addressed by name",
-		"$",
 		"all-time",
 		"6",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report missing %q.\n---\n%s", want, out)
 		}
+	}
+	// Dollar figure must appear in the automation block (Unattended work line), not globally.
+	if !strings.Contains(out, "Unattended work") {
+		t.Errorf("report missing Unattended work line\n---\n%s", out)
+	}
+	if !strings.Contains(out, "$") {
+		t.Errorf("report missing $ in automation block\n---\n%s", out)
+	}
+	// "Where was I" must be gone.
+	if strings.Contains(out, "Where was I") {
+		t.Errorf("report should not contain 'Where was I'\n---\n%s", out)
 	}
 }
 
@@ -60,8 +71,12 @@ func TestRenderReportHidesAutomationWhenZero(t *testing.T) {
 		if err := renderReport(&buf, s); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(buf.String(), "Automation (power-user)") {
-			t.Errorf("expected Automation section to be absent when AutoRuns+OwnerTicks+PlaybookRuns==0\n---\n%s", buf.String())
+		out := buf.String()
+		if strings.Contains(out, "Automation (power-user)") {
+			t.Errorf("expected Automation section to be absent when AutoRuns+OwnerTicks+PlaybookRuns==0\n---\n%s", out)
+		}
+		if strings.Contains(out, "$") {
+			t.Errorf("expected no $ for manual-only user\n---\n%s", out)
 		}
 	})
 
@@ -70,12 +85,18 @@ func TestRenderReportHidesAutomationWhenZero(t *testing.T) {
 		s.AutoRuns = 1
 		s.OwnerTicks = 0
 		s.PlaybookRuns = 0
+		s.Savings.AutomationHours = 2.0
+		s.DollarPerHour = 100
 		var buf bytes.Buffer
 		if err := renderReport(&buf, s); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(buf.String(), "Automation (power-user)") {
-			t.Errorf("expected Automation section to be present when AutoRuns>0\n---\n%s", buf.String())
+		out := buf.String()
+		if !strings.Contains(out, "Automation (power-user)") {
+			t.Errorf("expected Automation section to be present when AutoRuns>0\n---\n%s", out)
+		}
+		if !strings.Contains(out, "$") {
+			t.Errorf("expected $ in automation block when AutoRuns>0\n---\n%s", out)
 		}
 	})
 }

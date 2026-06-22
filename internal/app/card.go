@@ -15,12 +15,13 @@ type cardData struct {
 	ContextTokensCompact  string
 	TokensProcessedCompact string
 	TasksDone             int
-	ContextSwitchHours    float64
+	ResumeCount           int
 	ShowAutomation        bool
 	AutomationRuns        int
 	AutoRuns              int
 	OwnerTicks            int
 	PlaybookRuns          int
+	AutomationDollars     string
 	TotalDollars          float64
 	DollarPerHour         float64
 }
@@ -54,9 +55,9 @@ var cardTmpl = template.Must(template.New("card").Parse(`<!doctype html>
     <div class="stat"><div class="n">{{.TasksDone}}</div><div class="l">tasks shipped</div></div>
     <div class="stat"><div class="n">{{.TokensProcessedCompact}}</div><div class="l">tokens processed</div></div>
   </div>
-  <div class="mem">≈ {{printf "%.1f" .ContextSwitchHours}} hrs of "where was I?" skipped</div>
-  {{if .ShowAutomation}}<div class="auto">+ {{.AutomationRuns}} runs flow did unattended ({{.AutoRuns}} auto · {{.OwnerTicks}} owner · {{.PlaybookRuns}} playbooks)</div>{{end}}
-  <div class="foot">counts exact · est. time/tokens · ≈${{printf "%.0f" .TotalDollars}} at ${{printf "%.0f" .DollarPerHour}}/hr</div>
+  <div class="mem">{{.ResumeCount}} instant resumes — straight back into work, in context not from scratch</div>
+  {{if .ShowAutomation}}<div class="auto">+ {{.AutomationRuns}} runs flow did unattended ({{.AutoRuns}} auto · {{.OwnerTicks}} owner · {{.PlaybookRuns}} playbooks) · ≈${{.AutomationDollars}}</div>{{end}}
+  <div class="foot">counts exact · est. time/tokens</div>
 </div>
 </body></html>
 `))
@@ -73,12 +74,13 @@ func renderCardHTML(w io.Writer, s stats.Stats) error {
 		ContextTokensCompact:   humanCompact(s.Savings.ContextTokens),
 		TokensProcessedCompact: humanCompact(s.Tokens.Total()),
 		TasksDone:              s.TasksDone,
-		ContextSwitchHours:     s.Savings.ContextSwitchHours,
+		ResumeCount:            s.LookupsByKind[stats.LookupResume],
 		ShowAutomation:         showAutomation,
 		AutomationRuns:         autoRuns + ownerTicks + playbookRuns,
 		AutoRuns:               autoRuns,
 		OwnerTicks:             ownerTicks,
 		PlaybookRuns:           playbookRuns,
+		AutomationDollars:      humanInt(int64(s.Savings.AutomationHours * s.DollarPerHour)),
 		TotalDollars:           s.Savings.TotalDollars,
 		DollarPerHour:          s.DollarPerHour,
 	})

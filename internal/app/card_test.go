@@ -18,7 +18,7 @@ func TestRenderCardHTML(t *testing.T) {
 		TasksDone:     7,
 		Savings:       stats.Savings{TotalHours: 3.5, TotalDollars: 350, ContextSwitchHours: 2.0},
 		DollarPerHour: 100,
-		LookupsByKind: map[stats.LookupKind]int{},
+		LookupsByKind: map[stats.LookupKind]int{stats.LookupResume: 5},
 	}
 	var buf bytes.Buffer
 	if err := renderCardHTML(&buf, s); err != nil {
@@ -31,12 +31,21 @@ func TestRenderCardHTML(t *testing.T) {
 		"42×",
 		"context recalls — you never re-explained",
 		"est.",
-		"at $100/hr",
+		"5 instant resumes",
+		"in context not from scratch",
 		"your AI remembered, so you didn't",
 	} {
 		if !strings.Contains(strings.ToLower(html), strings.ToLower(want)) {
 			t.Errorf("card html missing %q", want)
 		}
+	}
+	// No automation runs → no $ in output (manual-only user).
+	if strings.Contains(html, "$") {
+		t.Errorf("card html should not contain $ when ShowAutomation=false\n---\n%s", html)
+	}
+	// Footer must not contain dollar or /hr.
+	if strings.Contains(html, "/hr") {
+		t.Errorf("card footer should not contain /hr\n---\n%s", html)
 	}
 }
 
@@ -56,8 +65,12 @@ func TestRenderCardHTMLAutomationBand(t *testing.T) {
 		if err := renderCardHTML(&buf, s); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(buf.String(), "runs flow did unattended") {
-			t.Errorf("automation band should be absent when ShowAutomation=false\n---\n%s", buf.String())
+		html := buf.String()
+		if strings.Contains(html, "runs flow did unattended") {
+			t.Errorf("automation band should be absent when ShowAutomation=false\n---\n%s", html)
+		}
+		if strings.Contains(html, "$") {
+			t.Errorf("no $ expected when ShowAutomation=false\n---\n%s", html)
 		}
 	})
 
@@ -66,15 +79,21 @@ func TestRenderCardHTMLAutomationBand(t *testing.T) {
 		s.AutoRuns = 3
 		s.OwnerTicks = 2
 		s.PlaybookRuns = 1
+		s.Savings.AutomationHours = 2.5
+		s.DollarPerHour = 100
 		var buf bytes.Buffer
 		if err := renderCardHTML(&buf, s); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(buf.String(), "runs flow did unattended") {
-			t.Errorf("automation band should be present when ShowAutomation=true\n---\n%s", buf.String())
+		html := buf.String()
+		if !strings.Contains(html, "runs flow did unattended") {
+			t.Errorf("automation band should be present when ShowAutomation=true\n---\n%s", html)
 		}
-		if !strings.Contains(buf.String(), "6 runs") {
-			t.Errorf("automation band should show total run count (6)\n---\n%s", buf.String())
+		if !strings.Contains(html, "6 runs") {
+			t.Errorf("automation band should show total run count (6)\n---\n%s", html)
+		}
+		if !strings.Contains(html, "$") {
+			t.Errorf("automation band should contain $ when ShowAutomation=true\n---\n%s", html)
 		}
 	})
 }

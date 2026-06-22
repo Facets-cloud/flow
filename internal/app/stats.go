@@ -111,7 +111,7 @@ func renderReport(w io.Writer, s stats.Stats) error {
 
 	fmt.Fprintln(w, "  Memory")
 	fmt.Fprintf(w, "    Context re-established : ~%s tokens you never re-typed (est.)\n", humanInt(s.Savings.ContextTokens))
-	fmt.Fprintf(w, "    \"Where was I?\" skipped : ~%.1f hrs — every task resumes by name, fully loaded (est.)\n", s.Savings.ContextSwitchHours)
+	fmt.Fprintf(w, "    Instant resumes        : %d× — flow dropped you straight back into work, in context not from scratch\n", s.LookupsByKind[stats.LookupResume])
 	fmt.Fprintln(w)
 
 	fmt.Fprintln(w, "  Shipped")
@@ -125,7 +125,7 @@ func renderReport(w io.Writer, s stats.Stats) error {
 		fmt.Fprintf(w, "    Auto runs        : %d\n", s.AutoRuns)
 		fmt.Fprintf(w, "    Owner ticks      : %d\n", s.OwnerTicks)
 		fmt.Fprintf(w, "    Playbook runs    : %d\n", s.PlaybookRuns)
-		fmt.Fprintf(w, "    Unattended work  : ~%.1f hrs (est.)\n", s.Savings.AutomationHours)
+		fmt.Fprintf(w, "    Unattended work  : ~%.1f hrs · ≈$%s (est.)\n", s.Savings.AutomationHours, humanInt(int64(s.Savings.AutomationHours*s.DollarPerHour)))
 	}
 	fmt.Fprintln(w)
 
@@ -139,7 +139,7 @@ func renderReport(w io.Writer, s stats.Stats) error {
 		fmt.Fprintf(w, "  Weekly recalls   : %s\n", sparkline(vals))
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  counts exact · time/tokens are est. · ≈$%s at $%.0f/hr · tune ~/.flow/stats.json\n", humanInt(int64(s.Savings.TotalDollars)), s.DollarPerHour)
+	fmt.Fprintf(w, "  counts exact · time/tokens are est. · tune ~/.flow/stats.json\n")
 	return nil
 }
 
