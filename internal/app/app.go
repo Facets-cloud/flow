@@ -73,6 +73,8 @@ func Run(args []string) int {
 		return cmdSkill(rest)
 	case "transcript":
 		return cmdTranscript(rest)
+	case "stats":
+		return cmdStats(rest)
 	case "hook":
 		return cmdHook(rest)
 	case "-h", "--help", "help":
@@ -107,6 +109,7 @@ Read:
   flow show task       [<ref>]
   flow show project    [<ref>]
   flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
+  flow stats           [--since all|<N>d] [--project <slug>] [--card] [--out <path>]
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
   flow list tags                                            (every tag in use, with per-tag task counts)

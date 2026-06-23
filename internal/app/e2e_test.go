@@ -10,6 +10,58 @@ import (
 	"testing"
 )
 
+// TestStatsE2E exercises `flow stats` against a real (but temp) flow root:
+// empty stats succeed, --card writes a file, and a garbage --since value
+// returns exit code 2.
+func TestStatsE2E(t *testing.T) {
+	tmp := t.TempDir()
+	flowRoot := filepath.Join(tmp, "flow")
+	t.Setenv("FLOW_ROOT", flowRoot)
+	t.Setenv("HOME", tmp)
+
+	// Mirror the same stubs as TestE2EFullRoundtrip so cmdInit doesn't try
+	// to touch real ~/.claude or run osascript.
+	oldOverride := spawner.Override
+	spawner.Override = spawner.BackendITerm
+	t.Cleanup(func() { spawner.Override = oldOverride })
+
+	oldOsa := iterm.Runner
+	iterm.Runner = func(args []string) error { return nil }
+	t.Cleanup(func() { iterm.Runner = oldOsa })
+
+	oldClaude := claude.SkipPermissionsRunner
+	claude.SkipPermissionsRunner = func(prompt string) error { return nil }
+	t.Cleanup(func() { claude.SkipPermissionsRunner = oldClaude })
+
+	oldNewUUID := claude.NewUUID
+	claude.NewUUID = func() (string, error) { return "stats-e2e-uuid", nil }
+	t.Cleanup(func() { claude.NewUUID = oldNewUUID })
+
+	// init — creates the tree, db, and skill files.
+	if rc := cmdInit(nil); rc != 0 {
+		t.Fatalf("init rc=%d", rc)
+	}
+
+	// stats on an empty-but-initialized root must succeed (all zeros, no panic).
+	if rc := cmdStats(nil); rc != 0 {
+		t.Fatalf("stats rc=%d, want 0", rc)
+	}
+
+	// --card writes a file and exits 0.
+	card := filepath.Join(flowRoot, "card.html")
+	if rc := cmdStats([]string{"--card", "--out", card}); rc != 0 {
+		t.Fatalf("stats --card rc=%d, want 0", rc)
+	}
+	if _, err := os.Stat(card); err != nil {
+		t.Fatalf("card not written: %v", err)
+	}
+
+	// A garbage --since value is a usage error (rc=2).
+	if rc := cmdStats([]string{"--since", "garbage"}); rc != 2 {
+		t.Fatalf("bad --since rc=%d, want 2", rc)
+	}
+}
+
 // TestE2EFullRoundtrip exercises the full command surface in the order a
 // user would hit it for a realistic session: init, add project, add task
 // under the project, do (bootstrap + spawn), show both, list both, waiting
