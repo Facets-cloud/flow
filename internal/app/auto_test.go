@@ -51,7 +51,8 @@ func TestCmdDoAutoLaunchesDetached(t *testing.T) {
 	if *gotSlug != "auto-task" {
 		t.Errorf("launcher slug = %q, want auto-task", *gotSlug)
 	}
-	if !strings.Contains(*gotLog, "tasks/auto-task/auto-runs/") {
+	// Normalize separators: on Windows filepath.Join yields backslashes.
+	if !strings.Contains(strings.ReplaceAll(*gotLog, "\\", "/"), "tasks/auto-task/auto-runs/") {
 		t.Errorf("launcher logPath = %q, want path under tasks/auto-task/auto-runs/", *gotLog)
 	}
 	if !strings.HasSuffix(*gotLog, ".log") {

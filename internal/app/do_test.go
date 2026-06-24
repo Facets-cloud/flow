@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -763,6 +764,9 @@ func TestCmdDoEmitsPlaybookVariantForPlaybookRun(t *testing.T) {
 // the parent process write to /elsewhere but the spawned tab fall
 // back to ~/.flow.
 func TestCmdDoPropagatesFlowRootEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("asserts the iTerm/osascript spawn-script format (macOS backend); on Windows the spawn path is winterm. FLOW_ROOT propagation on Windows is covered by internal/winterm TestSpawnTabArgvAndScript.")
+	}
 	root := setupFlowRoot(t)
 	seedTask(t, "env-prop")
 	t.Setenv("FLOW_ROOT", root)
@@ -1035,6 +1039,9 @@ func TestCmdDoWithResumeAppendsPositionalArg(t *testing.T) {
 }
 
 func TestCmdDoWithFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("asserts the iTerm/osascript injection format (macOS backend), whose AppleScript escaping doubles backslashes in Windows paths; the --with-file injection is backend-agnostic and the Windows spawn path is winterm.")
+	}
 	setupFlowRoot(t)
 	seedTask(t, "with-file-task")
 
