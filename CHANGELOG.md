@@ -7,6 +7,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.22] — 2026-06-24
+
+### Added
+
+- **`flow stats` — local usage & ROI analytics.** A new read-only command
+  that mines your own flow history (harness session transcripts, the task
+  DB, and the on-disk KB/updates) to show how much context flow has
+  re-established for you without re-typing: context recalls broken down by
+  kind (resume · reference · cross-task · kb), tokens processed, tasks
+  shipped, KB facts, automation runs, and estimated time/$ saved. Ground-
+  truth counts are exact; time/token figures are estimates.
+  - `flow stats` (all-time terminal report); `--since all|<N>d|RFC3339`
+    (window); `--project <slug>` (scope to one project).
+  - **Shareable cards.** `flow stats --card` writes a flow-branded HTML
+    card; `flow stats --png` renders the same card to a self-contained PNG
+    with no browser or runtime dependency (pure-Go drawing via
+    `fogleman/gg` + embedded fonts; CGO stays off — costs ~+1.27MB binary).
+    The PNG card is flow-branded — embedded wordmark logo, gradient hero
+    number, dark palette. `--out <path>` overrides the default
+    `<flow-root>/stats-card.{html,png}`.
+  - **Estimates are tunable and grounded.** Savings figures derive from an
+    optional `~/.flow/stats.json` (built-in defaults apply when absent, so
+    create it only to override); context-token savings are file-size-
+    grounded. A derived `~/.flow/stats-cache.json` (keyed by mtime+size)
+    keeps re-scans cheap — safe to delete; gitignore it if you track
+    `~/.flow` in git.
+
 ## [0.1.0-alpha.21] — 2026-06-11
 
 ### Added
