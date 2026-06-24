@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -65,7 +66,11 @@ func cmdEdit(args []string) int {
 
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
-		editor = "vi"
+		if runtime.GOOS == "windows" {
+			editor = "notepad"
+		} else {
+			editor = "vi"
+		}
 	}
 
 	// Accept EDITOR values that contain flags ("emacs -nw"), splitting on

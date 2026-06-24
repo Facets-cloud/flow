@@ -103,12 +103,28 @@ func TestOverrideBeatsEnv(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	for _, want := range []Backend{
-		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij, BackendGhostty,
+		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij, BackendGhostty, BackendWinTerm,
 	} {
 		Override = want
 		if got := Detect(); got != want {
 			t.Errorf("Override=%q: got %q, want %q", want, got, want)
 		}
+	}
+}
+
+// TestDetectFlowTermWinTerm verifies $FLOW_TERM=winterm selects the
+// Windows Terminal backend. The $FLOW_TERM allowlist check runs before
+// the GOOS-default branch, so this is deterministic on any host (the
+// test suite also runs on Windows in CI, where winterm is the default).
+func TestDetectFlowTermWinTerm(t *testing.T) {
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM", "")
+	t.Setenv("FLOW_TERM", "winterm")
+	t.Setenv("TERM_PROGRAM", "iTerm.app") // proves FLOW_TERM wins
+	Override = ""
+	if got := Detect(); got != BackendWinTerm {
+		t.Errorf("Detect() with FLOW_TERM=winterm: got %q, want %q", got, BackendWinTerm)
 	}
 }
 

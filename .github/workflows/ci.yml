@@ -15,7 +15,11 @@ jobs:
       - run: go vet ./...
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -23,11 +27,21 @@ jobs:
           go-version-file: go.mod
       - run: go test ./...
 
-  build:
+  # Pure-Go (no CGO), so every target cross-compiles from one host. This
+  # gate keeps the Unix/Windows build-tag seams (proc_*, ps_*,
+  # shellquote_*) honest on every PR.
+  cross-compile:
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go build ./...
+      - name: Build all targets
+        run: |
+          for target in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64; do
+            echo "==> $target"
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+          done

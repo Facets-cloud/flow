@@ -6,10 +6,18 @@ INSTALL_DIR := $(HOME)/.local/bin
 VERSION  ?= dev
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: build install uninstall test clean
+.PHONY: build build-windows install uninstall test clean
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
+
+# Cross-compile a Windows binary from any host. Pure Go (no CGO), so no
+# Windows toolchain is needed. GOARCH defaults to amd64; override for
+# arm64 with `make build-windows GOARCH=arm64`.
+GOARCH ?= amd64
+build-windows:
+	GOOS=windows GOARCH=$(GOARCH) CGO_ENABLED=0 \
+		go build -ldflags '$(LDFLAGS)' -o $(BINARY).exe .
 
 test:
 	go test ./...

@@ -180,6 +180,35 @@ doesn't refuse to run the unsigned binary.
 
 </details>
 
+<details>
+<summary>Manual install on Windows (PowerShell)</summary>
+
+```powershell
+# 1. Download the binary for your PC. Use amd64 for most machines;
+#    arm64 for Windows on ARM.
+$arch = "amd64"
+$dir  = "$env:LOCALAPPDATA\Programs\flow"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Invoke-WebRequest -UseBasicParsing `
+  -Uri "https://github.com/Facets-cloud/flow/releases/latest/download/flow-windows-$arch.exe" `
+  -OutFile "$dir\flow.exe"
+
+# 2. Add the folder to your user PATH (open a new terminal afterward).
+[Environment]::SetEnvironmentVariable(
+  "Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
+
+# 3. Initialize. Creates %USERPROFILE%\.flow\ and installs the Claude
+#    skill + SessionStart hook into %USERPROFILE%\.claude\.
+flow init
+```
+
+The binary is unsigned, so SmartScreen may warn on first run — choose
+**More info → Run anyway**. flow opens interactive sessions in
+**Windows Terminal** (`wt.exe`); for a headless setup with no terminal
+tab, set `FLOW_TERM=bg` to use Claude Code background agents instead.
+
+</details>
+
 ## Upgrade
 
 In any Claude Code session:
@@ -396,22 +425,34 @@ and reinstall the skill + hook.
 
 ## Where flow runs (and where we'd love help)
 
-Today flow runs on **macOS (iTerm2, Warp, stock Terminal.app, kitty,
-zellij, or Claude Code background agents via `FLOW_TERM=bg`) + Claude
-Code only**. That's the stack we use, and that's what the session-spawn
-layer was built and tested against. The background-agent backend is
-platform-agnostic (no terminal, no AppleScript) but Claude-only. zellij
-and kitty work on Linux too as a side effect — both are
-cross-platform and flow's zellij / kitty backends don't depend on
-any macOS APIs. Kitty needs `allow_remote_control yes` (or
-`socket-only`) in `kitty.conf` so flow can drive `kitty @ launch`
-from inside the running kitty instance.
+flow runs on **macOS, Windows, and Linux**, with **Claude Code** as the
+agent harness:
 
-The architecture is portable — session spawning is one small
-package — but other harnesses (Codex, Cursor, plain shell) and other
-terminals (Linux + tmux/wezterm, Windows Terminal) need contributors
-who run those stacks daily and care enough to wire them in. If that's
-you, [a PR is very welcome](CONTRIBUTING.md).
+- **macOS** — iTerm2, Warp, stock Terminal.app, kitty, or zellij.
+- **Windows** — Windows Terminal (`wt.exe`), the default interactive
+  backend; `flow do` opens tabs running PowerShell. See the open
+  caveats below.
+- **Linux** — zellij or kitty (both cross-platform; flow's backends for
+  them don't touch any macOS APIs). Kitty needs `allow_remote_control
+  yes` (or `socket-only`) in `kitty.conf` so flow can drive `kitty @
+  launch` from inside the running kitty instance.
+- **Any platform, no terminal** — set `FLOW_TERM=bg` to run sessions as
+  Claude Code background agents. This backend is platform-agnostic (no
+  terminal, no AppleScript) and is the simplest way to run flow on
+  Windows or in headless environments.
+
+**Windows caveats** (see [docs/windows-support-plan.md](docs/windows-support-plan.md)):
+the `wt.exe` backend does not yet focus an already-open tab for a
+running session (you'll be told it's running elsewhere — switch tabs or
+pass `--force`), and the `~/.claude/projects` path encoding for Windows
+cwds is flow's best reconstruction pending verification against Claude
+Code. Bug reports from Windows users are very welcome.
+
+The architecture is portable — session spawning is one small package
+behind `//go:build` seams. Other harnesses (Codex, Cursor, plain shell)
+and other terminals (tmux/wezterm, ConEmu) still need contributors who
+run those stacks daily. If that's you, [a PR is very
+welcome](CONTRIBUTING.md).
 
 ## Where flow came from
 

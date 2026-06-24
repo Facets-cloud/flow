@@ -1,5 +1,7 @@
 /flow
 /flowde
+/flow.exe
+/flow-windows-*.exe
 /bin/flow
 *.db
 

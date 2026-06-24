@@ -2,13 +2,11 @@ package app
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"flow/internal/flowdb"
@@ -89,9 +87,10 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 	cmd.Stdin = nil
 	cmd.Stdout = logF
 	cmd.Stderr = logF
-	// New session → detached from the parent's controlling terminal, so
-	// it survives `flow do --auto` returning.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Detached from the parent's controlling terminal/console, so it
+	// survives `flow do --auto` returning. Platform-specific (see
+	// proc_unix.go / proc_windows.go).
+	setDetached(cmd)
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("start auto supervisor: %w", err)
 	}
@@ -104,23 +103,9 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 
 // processAlive reports whether a process with the given pid is currently
 // running. Used for read-time reconciliation of stale 'running' rows.
-// Overridable in tests.
-var processAlive = func(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 performs error checking without delivering a signal:
-	// nil → alive and ours; EPERM → alive but owned by another user.
-	err = proc.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	return errors.Is(err, syscall.EPERM)
-}
+// The default implementation is platform-specific (proc_unix.go /
+// proc_windows.go); the var indirection keeps it overridable in tests.
+var processAlive = processAliveImpl
 
 // autoChildEnv builds the environment for the detached supervisor. It
 // inherits the parent's environment (so PATH finds claude and FLOW_ROOT

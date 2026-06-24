@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"flow/internal/harness"
@@ -236,9 +237,11 @@ func (c *claude) LiveSessionIDs() (map[string]int, error) {
 	return live, nil
 }
 
-func runPS() ([]byte, error) {
-	return exec.Command("ps", "-axo", "pid,command").Output()
-}
+// runPS returns process-table output (one line per process, each
+// containing at least the pid and the full command line) for
+// LiveSessionIDs to scan. Its implementation is platform-specific:
+// `ps -axo pid,command` on Unix (ps_unix.go), a PowerShell CIM query on
+// Windows (ps_windows.go). PSRunner is the overridable test seam.
 
 // ---------- transcript ----------
 //
@@ -248,23 +251,38 @@ func runPS() ([]byte, error) {
 // EncodeCwd encodes an absolute cwd path for Claude Code's
 // ~/.claude/projects/<dir> directory naming. Empirically: the
 // characters `/`, `.`, and `_` are each replaced by `-`. Other
-// characters pass through unchanged.
+// characters pass through unchanged. On Windows, the path separator
+// `\` and the drive-letter colon `:` are also mapped to `-`.
 //
 // Samples:
 //
 //	/Users/alice/code/myapp                      → -Users-alice-code-myapp
 //	/Users/alice/.flow/tasks/foo/workspace       → -Users-alice--flow-tasks-foo-workspace
 //	/Users/alice/.cache/work/_default            → -Users-alice--cache-work--default
+//	C:\Users\alice\code\myapp                    → C--Users-alice-code-myapp
 //
-// If CC introduces a new substitution in a future version, add the
-// char here and add a sample case to claude_test.go.
+// NOTE (Windows): the `\` and `:` substitutions are flow's best
+// reconstruction of Claude Code's Windows encoding and need empirical
+// verification on a real Windows install (see docs/windows-support-plan.md
+// open questions). If Claude Code encodes Windows cwds differently,
+// `flow do --here` validation and `flow transcript` resolution depend on
+// this matching byte-for-byte — fix it here and add a sample to
+// claude_test.go.
+//
+// The Windows-only substitutions are gated on runtime.GOOS so Unix
+// encoding is byte-identical to the original behavior: `:` is a legal
+// filename character on Linux (and POSIX-legal on macOS), so mapping it
+// to `-` everywhere would change the encoding for existing Unix users
+// whose cwd contains a colon.
 //
 // Exported because some test code in the app package pre-creates
 // fake transcript files at the encoded path; internal callers
 // (RenderTranscript) use this same function.
 func EncodeCwd(cwd string) string {
-	r := strings.NewReplacer("/", "-", ".", "-", "_", "-")
-	return r.Replace(cwd)
+	if runtime.GOOS == "windows" {
+		return strings.NewReplacer("/", "-", ".", "-", "_", "-", `\`, "-", ":", "-").Replace(cwd)
+	}
+	return strings.NewReplacer("/", "-", ".", "-", "_", "-").Replace(cwd)
 }
 
 // ---------- skill install ----------

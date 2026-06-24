@@ -4,6 +4,8 @@
 
 A Go CLI (`flow`) that manages personal tasks and bootstraps per-task Claude Code sessions. SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 
+Runs on **macOS, Windows, and Linux**. Platform-specific behavior is isolated behind `//go:build` seams (see "Platform support" below); the rest of the code is OS-neutral. Because there's no CGO, every target cross-compiles from any host (`GOOS=windows go build ./...`).
+
 ## Build and test
 
 ```bash
@@ -84,9 +86,23 @@ flow/
 - **`internal/warp`** — Warp tab spawning via `warp://action/new_tab` URI + osascript keystroke of a self-deleting per-spawn shell script. Exposes `warp.Runner`, `warp.OpenURL`, `warp.WriteScript` for test mocking. Requires Accessibility (same gate as Terminal.app).
 - **`internal/zellij`** — zellij CLI–based tab spawning. Active when `$ZELLIJ` is set in the environment.
 
+## Platform support
+
+flow runs on macOS, Windows, and Linux. OS-specific behavior is isolated behind `//go:build` constraints so the bulk of the code stays platform-neutral and every target cross-compiles (`GOOS=windows go build ./...`, gated in CI). The seams:
+
+- **`internal/app/proc_{unix,windows}.go`** — `setDetached(cmd)` (detach a child for `--auto` / owner ticks: `Setsid` on Unix, `CREATE_NEW_PROCESS_GROUP|DETACHED_PROCESS` on Windows) and `processAliveImpl(pid)` (signal-0 vs. `OpenProcess`+`GetExitCodeProcess`). `processAlive` stays a package var so tests override it.
+- **`internal/harness/claude/ps_{unix,windows}.go`** — `runPS()` feeds `LiveSessionIDs`: `ps -axo` on Unix, a `Get-CimInstance Win32_Process` PowerShell query on Windows.
+- **`internal/spawner/shellquote_{unix,windows}.go`** — `ShellQuote` for the shell the spawned tab runs: POSIX single-quote on Unix, PowerShell single-quote on Windows.
+- **`internal/winterm`** — the Windows Terminal (`wt.exe`) backend. Passes the launch command via PowerShell `-EncodedCommand` (base64/UTF-16LE) to avoid `wt`/PowerShell quoting pitfalls. `spawner.Detect()` defaults to it on Windows (never iTerm).
+- `EncodeCwd` (`harness/claude/claude.go`) maps Windows path chars (`\`, `:`) — **pending verification** against Claude Code's real Windows encoding (see `docs/windows-support-plan.md`).
+- Windows-only dep: `golang.org/x/sys/windows` (used only in `proc_windows.go`).
+
+The macOS-only backends (iterm, terminal, warp, ghostty) and the macOS Accessibility error path are never selected on Windows; they compile everywhere but only run on macOS.
+
 ## Conventions
 
 - **No CGO.** Pure Go SQLite driver (`modernc.org/sqlite`).
+- **Platform seams via build tags**, not `runtime.GOOS` scattered through logic. New OS-specific behavior goes in a `*_unix.go` / `*_windows.go` pair behind a neutral function, mirroring the seams above. Keep the overridable test `var` (e.g. `processAlive`, `PSRunner`) in the shared file so tests don't need per-OS stubs.
 - **Flag parsing:** `flag.FlagSet` with `ContinueOnError`, not `flag.Parse()`. Created via `flagSet()` helper in `internal/app/helpers.go`.
 - **Exit codes:** 0 = success, 1 = runtime error, 2 = usage error.
 - **Timestamps:** RFC3339 strings everywhere (never Unix timestamps).

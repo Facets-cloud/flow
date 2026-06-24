@@ -14,10 +14,18 @@ jobs:
     strategy:
       matrix:
         include:
-          - goarch: arm64
+          - goos: darwin
+            goarch: arm64
             asset: flow-darwin-arm64
-          - goarch: amd64
+          - goos: darwin
+            goarch: amd64
             asset: flow-darwin-amd64
+          - goos: windows
+            goarch: amd64
+            asset: flow-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            asset: flow-windows-arm64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -25,7 +33,7 @@ jobs:
           go-version-file: go.mod
       - name: Build ${{ matrix.asset }}
         env:
-          GOOS: darwin
+          GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
         run: |
@@ -49,7 +57,7 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: |
-          shasum -a 256 flow-darwin-* > SHA256SUMS
+          shasum -a 256 flow-darwin-* flow-windows-* > SHA256SUMS
           cat SHA256SUMS
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -57,6 +65,8 @@ jobs:
           files: |
             dist/flow-darwin-arm64
             dist/flow-darwin-amd64
+            dist/flow-windows-amd64.exe
+            dist/flow-windows-arm64.exe
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true

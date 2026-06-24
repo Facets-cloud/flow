@@ -1,24 +1,28 @@
 // Package spawner picks a terminal backend (zellij, kitty, Warp, iTerm2,
-// Ghostty, or macOS Terminal.app) at runtime and forwards SpawnTab to it.
+// Ghostty, macOS Terminal.app, or Windows Terminal) at runtime and
+// forwards SpawnTab to it.
 //
 // Selection priority (highest first):
 //
 //	$ZELLIJ set                                    → internal/zellij
 //	$KITTY_WINDOW_ID set or $TERM=xterm-kitty      → internal/kitty
 //	$FLOW_TERM=<valid backend>                     → that backend (user override)
+//	GOOS=windows                                   → internal/winterm  (Windows Terminal)
 //	TERM_PROGRAM=WarpTerminal                      → internal/warp
 //	TERM_PROGRAM=Apple_Terminal                    → internal/terminal
 //	TERM_PROGRAM=iTerm.app                         → internal/iterm
 //	TERM_PROGRAM=ghostty                           → internal/ghostty
-//	anything else (or unset)                       → internal/iterm  (historical default)
+//	anything else (or unset)                       → internal/iterm  (historical macOS default)
 //
 // $ZELLIJ and kitty's per-window markers win over $FLOW_TERM because if
 // the user is inside a session-manager terminal, that's where their
 // workflow lives — the host terminal is a substrate detail. $FLOW_TERM
 // lets users on non-standard hosts (tmux inside Warp, shell-script
 // invocations, Hyper, wezterm, etc.) opt into a specific backend
-// without relying on TERM_PROGRAM. Unknown values silently fall
-// through to TERM_PROGRAM detection.
+// without relying on TERM_PROGRAM. On Windows the default is Windows
+// Terminal (the macOS TERM_PROGRAM ladder and its iTerm fallback never
+// apply); zellij/kitty/$FLOW_TERM still win if set. Unknown $FLOW_TERM
+// values silently fall through to the OS default.
 //
 // The Override var lets tests pin the backend deterministically without
 // having to set env vars via t.Setenv.
@@ -30,8 +34,10 @@ import (
 	"flow/internal/kitty"
 	"flow/internal/terminal"
 	"flow/internal/warp"
+	"flow/internal/winterm"
 	"flow/internal/zellij"
 	"os"
+	"runtime"
 )
 
 // Backend identifies which terminal app a SpawnTab call targets.
@@ -44,6 +50,7 @@ const (
 	BackendKitty    Backend = "kitty"
 	BackendWarp     Backend = "warp"
 	BackendGhostty  Backend = "ghostty"
+	BackendWinTerm  Backend = "winterm"
 )
 
 // Override, if non-empty, forces a backend regardless of env vars.
@@ -82,10 +89,15 @@ func Detect() Backend {
 	}
 	if v := os.Getenv("FLOW_TERM"); v != "" {
 		switch Backend(v) {
-		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty:
+		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty, BackendWinTerm:
 			return Backend(v)
 		}
-		// Unknown value falls through to TERM_PROGRAM detection.
+		// Unknown value falls through to OS-default detection.
+	}
+	// On Windows the macOS TERM_PROGRAM ladder (and its iTerm fallback)
+	// never applies — default to Windows Terminal.
+	if runtime.GOOS == "windows" {
+		return BackendWinTerm
 	}
 	switch os.Getenv("TERM_PROGRAM") {
 	case "Apple_Terminal":
@@ -115,6 +127,8 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		return warp.SpawnTab(title, cwd, command, envVars)
 	case BackendGhostty:
 		return ghostty.SpawnTab(title, cwd, command, envVars)
+	case BackendWinTerm:
+		return winterm.SpawnTab(title, cwd, command, envVars)
 	default:
 		return iterm.SpawnTab(title, cwd, command, envVars)
 	}
@@ -145,15 +159,15 @@ func FocusSession(sessionID, binary string) (bool, error) {
 		return kitty.FocusSession(sessionID, binary)
 	case BackendTerminal:
 		return terminal.FocusSession(sessionID, binary)
+	case BackendWinTerm:
+		return winterm.FocusSession(sessionID, binary)
 	default:
 		return iterm.FocusSession(sessionID, binary)
 	}
 }
 
 // ShellQuote is re-exported so callers don't need to import the chosen
-// backend just to quote a value before handing it to SpawnTab. All
-// backends quote identically (POSIX single-quote with embedded-quote
-// escape), so we delegate to iterm's implementation.
-func ShellQuote(s string) string {
-	return iterm.ShellQuote(s)
-}
+// backend just to quote a value before handing it to SpawnTab. The
+// quoting style depends on the shell the spawned tab runs, which is
+// platform-specific: POSIX single-quote on Unix (shellquote_unix.go),
+// PowerShell single-quote on Windows (shellquote_windows.go).

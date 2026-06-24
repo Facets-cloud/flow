@@ -76,8 +76,21 @@ bugs reproduce deterministically with a small command sequence.
 
 ## Scope
 
-flow is **macOS (iTerm2, stock Terminal.app, or zellij) + Claude
-Code** by design. zellij works on Linux too as a side effect.
-tmux/wezterm, Windows Terminal, and non-Claude integrations are out
-of scope for the current motion. If you have a use case that would
-change that, open an issue first to discuss before sending code.
+flow targets **macOS, Windows, and Linux** with **Claude Code** as the
+agent harness:
+
+- macOS: iTerm2, Warp, stock Terminal.app, kitty, Ghostty, zellij.
+- Windows: Windows Terminal (`wt.exe`).
+- Linux: zellij or kitty.
+- Any platform: `FLOW_TERM=bg` (Claude Code background agents, no terminal).
+
+Platform-specific behavior lives behind `//go:build` seams — see
+`docs/windows-support-plan.md` for the pattern (`proc_*`, `ps_*`,
+`shellquote_*`, and the `internal/winterm` backend). Because flow is
+pure Go (no CGO), every target cross-compiles from any host; CI gates
+this on every PR.
+
+Non-Claude harnesses (Codex, Cursor, plain shell) and other terminals
+(tmux/wezterm, ConEmu) are still out of scope for the current motion.
+If you have a use case that would change that, open an issue first to
+discuss before sending code.

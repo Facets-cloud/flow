@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -61,7 +60,9 @@ var ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, 
 	cmd.Stdin = nil
 	cmd.Stdout = logF
 	cmd.Stderr = logF
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Detached (own session/process group) so the tick outlives the
+	// dispatching process. Platform-specific (proc_unix.go / proc_windows.go).
+	setDetached(cmd)
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("start owner tick: %w", err)
 	}

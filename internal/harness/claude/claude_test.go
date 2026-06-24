@@ -3,6 +3,7 @@ package claude
 import (
 	"errors"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -88,10 +89,32 @@ func TestEncodeCwd(t *testing.T) {
 		// Hyphens, digits, and mixed case pass through unchanged.
 		{"/Users/alice/Downloads/my-charts-45dae5e1171f",
 			"-Users-alice-Downloads-my-charts-45dae5e1171f"},
+		// A colon in a Unix path is left UNCHANGED — `:` is a legal
+		// filename char on Linux/POSIX, and the Windows-only `:`→`-`
+		// substitution must not leak onto Unix (would break transcript
+		// resolution for these users). This pins that guarantee.
+		{"/home/u/backups/2024:01:01", "-home-u-backups-2024:01:01"},
 	}
 	for _, tc := range cases {
 		if got := EncodeCwd(tc.cwd); got != tc.want {
 			t.Errorf("EncodeCwd(%q) = %q, want %q", tc.cwd, got, tc.want)
+		}
+	}
+
+	// Windows-only substitutions (`\` and `:` → `-`). EncodeCwd gates
+	// these on runtime.GOOS, so only assert them when actually running
+	// on Windows (CI's windows-latest job); on Unix the cases above
+	// already pin that `:` is preserved.
+	if runtime.GOOS == "windows" {
+		winCases := []struct{ cwd, want string }{
+			{`C:\Users\alice\code\myapp`, "C--Users-alice-code-myapp"},
+			{`C:\Users\alice\.flow\tasks\add-oauth\workspace`,
+				"C--Users-alice--flow-tasks-add-oauth-workspace"},
+		}
+		for _, tc := range winCases {
+			if got := EncodeCwd(tc.cwd); got != tc.want {
+				t.Errorf("EncodeCwd(%q) = %q, want %q", tc.cwd, got, tc.want)
+			}
 		}
 	}
 }

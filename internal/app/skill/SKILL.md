@@ -1843,11 +1843,21 @@ owner tick-due` ~every 60s:
 - **Linux:** a systemd **user** timer (`OnUnitActiveSec=60s` + a `.service`
   running `flow owner tick-due`), or `* * * * * <flow> owner tick-due` in
   crontab.
+- **Windows (Task Scheduler):** if `schtasks /Query /TN flow-owner-scheduler`
+  reports the task is absent, create it:
+  `schtasks /Create /TN flow-owner-scheduler /TR "<abs flow> owner tick-due"
+  /SC MINUTE /MO 1 /F` (the `/SC MINUTE /MO 1` floor of 1 minute is Task
+  Scheduler's finest interval). Like launchd's minimal PATH, a scheduled
+  task runs with a restricted environment — claude/gh/git must be resolvable
+  on the **system** or **user** PATH (not just an interactive profile), or
+  the tick fails `exec: "claude": executable file not found`. Verify with
+  `schtasks /Query /TN flow-owner-scheduler`.
 
 It's **opt-in** (owners then run unattended until paused/unloaded) — offer
 via AskUserQuestion; never install silently. Re-verify/respawn whenever the
-user touches owners. **Stop all:** unload the plist; **stop one:** `flow
-owner pause`.
+user touches owners. **Stop all:** unload the plist (macOS) / disable the
+timer (Linux) / `schtasks /Delete /TN flow-owner-scheduler /F` (Windows);
+**stop one:** `flow owner pause`.
 
 **Anti-patterns:**
 - **Don't auto-create owners** — explicit request only (they run unattended).
