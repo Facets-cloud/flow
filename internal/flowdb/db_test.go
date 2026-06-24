@@ -564,8 +564,14 @@ func TestMigrationHarnessSurvivesSessionInvariantRebuild(t *testing.T) {
 
 	// TaskCols-shaped SELECT must succeed (this is the surface that
 	// errored before the fix).
-	if _, err := db.Query("SELECT " + TaskCols + " FROM tasks"); err != nil {
-		t.Errorf("SELECT TaskCols failed: %v", err)
+	// Close the rows: an unclosed *sql.Rows keeps a connection (and the
+	// DB file handle) checked out, which on Windows blocks t.TempDir from
+	// deleting flow.db during cleanup ("file in use by another process").
+	rows, qerr := db.Query("SELECT " + TaskCols + " FROM tasks")
+	if qerr != nil {
+		t.Errorf("SELECT TaskCols failed: %v", qerr)
+	} else {
+		rows.Close()
 	}
 
 	// The legacy row should still be readable, with harness=NULL.

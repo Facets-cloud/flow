@@ -4,10 +4,24 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	flowdb "flow/internal/flowdb"
 )
+
+// setTestHome points os.UserHomeDir() at dir for the duration of the test.
+// On Unix that's $HOME; on Windows os.UserHomeDir() reads %USERPROFILE%
+// and ignores $HOME, so we set both — otherwise test isolation silently
+// escapes to the real profile (skill/hook/transcript reads and writes
+// land outside the temp dir). t.Setenv auto-restores at test end.
+func setTestHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", dir)
+	}
+}
 
 func openTempDB(t *testing.T) *sql.DB {
 	t.Helper()

@@ -19,7 +19,7 @@ import (
 func TestTranscriptCmdNoSession(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
-	t.Setenv("HOME", tmp)
+	setTestHome(t, tmp)
 
 	oldOsa := iterm.Runner
 	iterm.Runner = func(args []string) error { return nil }
@@ -37,7 +37,7 @@ func TestTranscriptCmdNoSession(t *testing.T) {
 func TestTranscriptCmdWithSession(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
-	t.Setenv("HOME", tmp)
+	setTestHome(t, tmp)
 
 	oldOsa := iterm.Runner
 	iterm.Runner = func(args []string) error { return nil }
@@ -83,7 +83,7 @@ func TestTranscriptCmdWithSession(t *testing.T) {
 func TestTranscriptRetrospectiveBindFullOutput(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("FLOW_ROOT", filepath.Join(tmp, "flow"))
-	t.Setenv("HOME", tmp)
+	setTestHome(t, tmp)
 
 	oldOsa := iterm.Runner
 	iterm.Runner = func(args []string) error { return nil }

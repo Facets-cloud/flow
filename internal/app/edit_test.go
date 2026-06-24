@@ -238,7 +238,11 @@ func TestCmdEditPlaybook(t *testing.T) {
 	if rc := cmdAdd([]string{"playbook", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
 		t.Fatal()
 	}
-	t.Setenv("EDITOR", "/usr/bin/true")
+	noopEditor := "/usr/bin/true"
+	if runtime.GOOS == "windows" {
+		noopEditor = "cmd /c exit 0"
+	}
+	t.Setenv("EDITOR", noopEditor)
 	if rc := cmdEdit([]string{"p"}); rc != 0 {
 		t.Errorf("rc=%d", rc)
 	}

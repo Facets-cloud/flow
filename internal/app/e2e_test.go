@@ -17,7 +17,7 @@ func TestStatsE2E(t *testing.T) {
 	tmp := t.TempDir()
 	flowRoot := filepath.Join(tmp, "flow")
 	t.Setenv("FLOW_ROOT", flowRoot)
-	t.Setenv("HOME", tmp)
+	setTestHome(t, tmp)
 
 	// Mirror the same stubs as TestE2EFullRoundtrip so cmdInit doesn't try
 	// to touch real ~/.claude or run osascript.
@@ -75,7 +75,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	tmp := t.TempDir()
 	flowRoot := filepath.Join(tmp, "flow")
 	t.Setenv("FLOW_ROOT", flowRoot)
-	t.Setenv("HOME", tmp)
+	setTestHome(t, tmp)
 
 	// Fake repo that serves as the project's work_dir.
 	repo := filepath.Join(tmp, "code", "budgeting-app")

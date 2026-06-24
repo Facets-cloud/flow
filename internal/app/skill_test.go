@@ -62,9 +62,7 @@ func expectedCommand(event string) string {
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", oldHome) })
+	setTestHome(t, dir)
 	return dir
 }
 

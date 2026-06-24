@@ -7,6 +7,7 @@ import (
 	"flow/internal/terminal"
 	"flow/internal/warp"
 	"flow/internal/zellij"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,7 +63,28 @@ func TestBackgroundOverrideBeatsEnv(t *testing.T) {
 // TestDetectFromEnv verifies the TERM_PROGRAM → backend mapping. The
 // Override knob and the ZELLIJ / kitty / FLOW_TERM checks have higher
 // precedence and are checked separately below.
+// TestDetectDefaultsToWinTermOnWindows pins that on Windows the default
+// backend is Windows Terminal even when a macOS TERM_PROGRAM is set — the
+// macOS detection ladder never applies there.
+func TestDetectDefaultsToWinTermOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only default-backend behavior")
+	}
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM", "")
+	t.Setenv("FLOW_TERM", "")
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	Override = ""
+	if got := Detect(); got != BackendWinTerm {
+		t.Errorf("Detect() on Windows = %q, want %q", got, BackendWinTerm)
+	}
+}
+
 func TestDetectFromEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("macOS TERM_PROGRAM detection; on Windows Detect() returns winterm by design (see TestDetectDefaultsToWinTermOnWindows)")
+	}
 	cases := []struct {
 		termProgram string
 		want        Backend
@@ -225,6 +247,9 @@ func TestDetectKittyBeatsFlowTerm(t *testing.T) {
 // TestDetectFlowTermInvalidFallsThrough — an unrecognized FLOW_TERM
 // value is silently ignored and TERM_PROGRAM detection takes over.
 func TestDetectFlowTermInvalidFallsThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("invalid FLOW_TERM falls through to the macOS TERM_PROGRAM ladder; on Windows it falls through to the winterm default")
+	}
 	t.Setenv("ZELLIJ", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("TERM", "")
@@ -471,6 +496,9 @@ func stubAllFocusBackends(t *testing.T) focusFlags {
 // TestShellQuoteParity makes sure the re-exported helper matches
 // every backend's implementation. All backends quote identically.
 func TestShellQuoteParity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX backend quote parity; on Windows spawner.ShellQuote is PowerShell quoting — see internal/winterm.ShellQuote")
+	}
 	cases := []string{"plain", "with space", "with'quote", `back\slash`, ""}
 	for _, in := range cases {
 		exp := iterm.ShellQuote(in)
