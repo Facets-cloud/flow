@@ -783,6 +783,30 @@ func TestCmdListTasksFormatJSON(t *testing.T) {
 	if rows[1].Project != "" {
 		t.Errorf("row 1 should be floating, got project=%q", rows[1].Project)
 	}
+	// Names are carried in JSON so consumers get legible titles, not slugs.
+	if rows[0].Name != "Alpha IP" || rows[1].Name != "Beta BL" {
+		t.Errorf("names = %q,%q, want \"Alpha IP\",\"Beta BL\"", rows[0].Name, rows[1].Name)
+	}
+}
+
+func TestCmdListTasksFormatJSONDueRaw(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "due-t", "Has Due", "backlog", "high", filepath.Join(root, "x"), nil)
+	if _, err := db.Exec(`UPDATE tasks SET due_date = ? WHERE slug = ?`, "2026-12-31", "due-t"); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if rc := cmdList([]string{"tasks", "--format", "json"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	var rows []taskListRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("invalid JSON: %v\nout=%q", err, out)
+	}
+	if len(rows) != 1 || rows[0].Due != "2026-12-31" {
+		t.Fatalf("want raw due 2026-12-31, got %+v", rows)
+	}
 }
 
 // TestCmdListTasksAutoColumn: `flow list tasks` has a dedicated, always-on
@@ -1011,8 +1035,8 @@ func TestCmdListProjectsFormatJSON(t *testing.T) {
 	if r["in_progress"].(float64) != 1 || r["backlog"].(float64) != 1 {
 		t.Errorf("breakdown wrong: %+v", r)
 	}
-	// `name` field was removed from JSON — confirm absence.
-	if _, ok := r["name"]; ok {
-		t.Errorf("name field should be absent from project JSON: %+v", r)
+	// `name` is included in JSON so the workspace layer gets legible titles.
+	if r["name"] != "P1" {
+		t.Errorf("name = %v, want P1", r["name"])
 	}
 }

@@ -304,9 +304,14 @@ func listTasksCmd(args []string) int {
 	for _, t := range tasks {
 		r := taskListRow{
 			Slug:     t.Slug,
+			Name:     t.Name,
 			Status:   t.Status,
 			Priority: t.Priority,
 			Archived: t.ArchivedAt.Valid,
+			Updated:  t.UpdatedAt,
+		}
+		if t.DueDate.Valid {
+			r.Due = t.DueDate.String
 		}
 		if t.ProjectSlug.Valid {
 			r.Project = t.ProjectSlug.String
@@ -454,10 +459,12 @@ func boolStr(b bool) string {
 // for `flow list tasks`. Field order matters for JSON output stability.
 type taskListRow struct {
 	Slug       string   `json:"slug"`
+	Name       string   `json:"name"`
 	Status     string   `json:"status"`
 	Priority   string   `json:"priority"`
 	Project    string   `json:"project,omitempty"`
 	AgeDays    int      `json:"age_days,omitempty"`
+	Due        string   `json:"due,omitempty"`
 	DueInDays  *int     `json:"due_in_days,omitempty"`
 	DueLabel   string   `json:"due_label,omitempty"`
 	Stale      bool     `json:"stale,omitempty"`
@@ -468,6 +475,7 @@ type taskListRow struct {
 	AutoRun    string   `json:"auto_run,omitempty"`
 	AutoRunPID int      `json:"auto_run_pid,omitempty"`
 	Archived   bool     `json:"archived,omitempty"`
+	Updated    string   `json:"updated,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 }
 
@@ -608,6 +616,7 @@ func listProjectsCmd(args []string) int {
 
 	type projectRow struct {
 		Slug       string `json:"slug"`
+		Name       string `json:"name"`
 		Priority   string `json:"priority"`
 		Status     string `json:"status"`
 		Total      int    `json:"total"`
@@ -615,6 +624,7 @@ func listProjectsCmd(args []string) int {
 		Backlog    int    `json:"backlog"`
 		Done       int    `json:"done"`
 		Archived   bool   `json:"archived,omitempty"`
+		Updated    string `json:"updated,omitempty"`
 	}
 
 	rows := make([]projectRow, 0, len(sortedProjects))
@@ -630,6 +640,7 @@ func listProjectsCmd(args []string) int {
 		}
 		rows = append(rows, projectRow{
 			Slug:       p.Slug,
+			Name:       p.Name,
 			Priority:   p.Priority,
 			Status:     statusW,
 			Total:      counts.total,
@@ -637,6 +648,7 @@ func listProjectsCmd(args []string) int {
 			Backlog:    counts.backlog,
 			Done:       counts.done,
 			Archived:   p.ArchivedAt.Valid,
+			Updated:    p.UpdatedAt,
 		})
 	}
 
