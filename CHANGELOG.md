@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.24] — 2026-07-06
+
 ### Added
 
 - **UserPromptSubmit hook — bound-session drift/close-out anchor.** In a
@@ -467,7 +469,8 @@ Initial public release.
   against `macos-latest` and `ubuntu-latest`.
 - **License.** MIT.
 
-[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.20...HEAD
+[Unreleased]: https://github.com/Facets-cloud/flow/compare/v0.1.0-alpha.24...HEAD
+[0.1.0-alpha.24]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.24
 [0.1.0-alpha.20]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.20
 [0.1.0-alpha.19]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.19
 [0.1.0-alpha.18]: https://github.com/Facets-cloud/flow/releases/tag/v0.1.0-alpha.18
