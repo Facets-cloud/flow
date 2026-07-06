@@ -1118,6 +1118,12 @@ prose "want me to...?" question). Its purpose is to keep a task's
 transcript and update log focused, instead of letting unrelated work
 pile up under whichever task happens to own the current terminal tab.
 
+In a bound session a `UserPromptSubmit` hook re-injects a one-line
+anchor on every prompt (naming the bound task and citing §4.11/§4.7),
+so this check — and the §4.7 close-out check — stay live over a long
+session instead of decaying. The hook only re-anchors; the judgment
+below is still yours.
+
 **When to consider firing:**
 
 Fire when the *work itself* (not a single question) has clearly moved

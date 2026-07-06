@@ -17,10 +17,10 @@ var embeddedSkill []byte
 // orphan existing installations.
 const hookCommand = "flow hook session-start"
 
-// userPromptSubmitHookCommand is the legacy UserPromptSubmit hook
-// string. flow no longer installs this hook (removed in
-// v0.1.0-alpha.7), but every install/upgrade actively uninstalls
-// stale entries so existing-user setups converge to a clean state.
+// userPromptSubmitHookCommand is the exact string settings.json records
+// as the UserPromptSubmit hook handler. In bound sessions the command
+// injects a tiny drift/close-out anchor; unbound sessions no-op. Stable
+// — changing it would orphan existing installations.
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
 // readSkillVersion returns the version string recorded in the
@@ -89,10 +89,7 @@ func maybeAutoUpgradeSkill() {
 	}
 	_ = writeSkillVersion(Version)
 	_, _ = h.InstallSessionStartHook(hookCommand)
-	// UserPromptSubmit hook was removed in v0.1.0-alpha.7 — the
-	// per-prompt token cost wasn't worth the marginal value. Actively
-	// uninstall any stale entry left behind by older binaries.
-	_, _ = h.UninstallUserPromptSubmitHook(userPromptSubmitHookCommand)
+	_, _ = h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand)
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
@@ -161,14 +158,13 @@ func skillInstall(args []string, forceDefault bool) int {
 	} else {
 		fmt.Println("SessionStart hook already installed — leaving as is")
 	}
-	// UserPromptSubmit hook was removed in v0.1.0-alpha.7. Actively
-	// uninstall any stale entry left behind by older binaries so a
-	// fresh `flow skill install` (or `update`) leaves a clean config.
-	if removed, err := h.UninstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not remove stale UserPromptSubmit hook: %v\n", err)
+	if added, err := h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install UserPromptSubmit hook: %v\n", err)
 		return 0
-	} else if removed {
-		fmt.Println("removed stale UserPromptSubmit hook (no longer used)")
+	} else if added {
+		fmt.Println("installed UserPromptSubmit hook (nudges drift/close-out on bound-session prompts)")
+	} else {
+		fmt.Println("UserPromptSubmit hook already installed — leaving as is")
 	}
 	return 0
 }

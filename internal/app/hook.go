@@ -15,8 +15,10 @@ import (
 //     sessions never re-read briefs and updates that may have been
 //     edited since the previous session.
 //
-//   - user-prompt-submit: kept as a permanent no-op for forward
-//     compatibility with stale settings.json entries.
+//   - user-prompt-submit: wired as a Claude Code UserPromptSubmit hook.
+//     In bound sessions it injects a tiny per-prompt anchor that re-runs
+//     the skill's drift (§4.11) and close-out (§4.7) checks; unbound
+//     sessions are a no-op.
 func cmdHook(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit)")
@@ -114,30 +116,39 @@ func appendStaleVersionHint() string {
 	)
 }
 
-// lookupBoundTaskSlug returns the slug of the task whose session_id
-// matches $CLAUDE_CODE_SESSION_ID, or "" if no such task exists, the
-// env var is unset, or the DB lookup fails. Hook code must never
-// fail loud — a hook error blocks the user's session — so all errors
-// are swallowed and treated as "unbound".
-func lookupBoundTaskSlug() string {
+// lookupBoundTask returns the task whose session_id matches
+// $CLAUDE_CODE_SESSION_ID, or nil if no such task exists, the env var
+// is unset, or the DB lookup fails. Hook code must never fail loud — a
+// hook error blocks the user's session — so all errors are swallowed
+// and treated as "unbound".
+func lookupBoundTask() *flowdb.Task {
 	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
 	if sid == "" {
-		return ""
+		return nil
 	}
 	dbPath, err := flowDBPath()
 	if err != nil {
-		return ""
+		return nil
 	}
 	db, err := flowdb.OpenDB(dbPath)
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer db.Close()
 	t, err := flowdb.TaskBySessionID(db, sid)
 	if err != nil {
-		return ""
+		return nil
 	}
-	return t.Slug
+	return t
+}
+
+// lookupBoundTaskSlug returns the slug of the bound task, or "" if the
+// session is unbound. Thin wrapper over lookupBoundTask.
+func lookupBoundTaskSlug() string {
+	if t := lookupBoundTask(); t != nil {
+		return t.Slug
+	}
+	return ""
 }
 
 // emitAmbientSkillHint is the unbound-session branch of the
@@ -206,15 +217,37 @@ func emitHookContext(event, ctx string) int {
 	return 0
 }
 
-// cmdHookUserPromptSubmit is a permanent no-op kept only for forward
-// compatibility with stale `~/.claude/settings.json` entries.
-// `flow skill install` (and the auto-upgrade path) now actively
-// remove any UserPromptSubmit entry from settings.json, so this code
-// path should not be hit on upgraded installs.
+// cmdHookUserPromptSubmit implements `flow hook user-prompt-submit`,
+// wired as a Claude Code UserPromptSubmit hook that fires on every user
+// prompt but does work only in bound sessions.
+//
+// In a session bound to a flow task it injects a tiny (~45-token)
+// anchor that re-runs the skill's lifecycle-transition checks against
+// the current prompt — drift (§4.11 → offer a new task) and close-out
+// (§4.7 → offer to mark done) — so those passive disciplines don't
+// decay over a long session the way a SessionStart-only reminder does.
+// Unbound sessions are a pure no-op: the "go bind a task" nudge lives
+// in SessionStart, and repeating it per prompt was retired in
+// v0.1.0-alpha.7 for its token cost.
+//
+// The semantic judgment is Claude's — the hook only supplies which task
+// the session is bound to (a free, deterministic DB lookup); whether
+// the prompt has drifted or signals completion is Claude's call.
 func cmdHookUserPromptSubmit(args []string) int {
 	fs := flagSet("hook user-prompt-submit")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	return 0
+	t := lookupBoundTask()
+	if t == nil {
+		// Unbound — no-op, emit nothing.
+		return 0
+	}
+	anchor := fmt.Sprintf(
+		"flow session → task %q (%s). Per §4.11/§4.7: if this prompt is "+
+			"unrelated work, offer a new task; if it signals the task is done, "+
+			"offer to close it out. Else proceed silently.",
+		t.Name, t.Slug,
+	)
+	return emitHookContext("UserPromptSubmit", anchor)
 }

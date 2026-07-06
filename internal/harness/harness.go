@@ -265,9 +265,14 @@ type Harness interface {
 	// inner command matches `command`.
 	UninstallSessionStartHook(command string) (removed bool, err error)
 
-	// UninstallUserPromptSubmitHook removes any stale
-	// UserPromptSubmit entry matching `command`. flow used to wire
-	// this hook in older releases; the cleanup is kept so upgraded
-	// installs converge to a clean config.
+	// InstallUserPromptSubmitHook idempotently registers `command` as a
+	// UserPromptSubmit hook (no matcher). Fires on every user prompt;
+	// the command itself no-ops in unbound sessions and injects a tiny
+	// drift/close-out anchor in bound ones. Returns (added=true) iff the
+	// on-disk hook config was actually modified.
+	InstallUserPromptSubmitHook(command string) (added bool, err error)
+
+	// UninstallUserPromptSubmitHook removes any UserPromptSubmit entry
+	// matching `command`. Used by `flow skill uninstall`.
 	UninstallUserPromptSubmitHook(command string) (removed bool, err error)
 }
