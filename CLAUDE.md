@@ -109,6 +109,6 @@ flow/
 
 ## Things to watch out for
 
-- `hookCommand` in `internal/app/skill.go` is the exact string matched in `~/.claude/settings.json`. Changing it orphans existing installations.
+- `hookCommand` (SessionStart) and `userPromptSubmitHookCommand` (UserPromptSubmit) in `internal/app/skill.go` are the exact strings matched in `~/.claude/settings.json`. Changing either orphans existing installations.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.

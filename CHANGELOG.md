@@ -7,6 +7,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **UserPromptSubmit hook — bound-session drift/close-out anchor.** In a
+  Claude session bound to a flow task, `flow hook user-prompt-submit`
+  injects a tiny (~45-token) per-prompt anchor naming the task and
+  re-running the skill's lifecycle-transition checks: if the prompt is
+  unrelated work it offers a new task (§4.11), and if the prompt signals
+  the task is finished it offers to close it out (§4.7). Unbound sessions
+  are a pure no-op. This is distinct from — and not a revival of — the
+  per-prompt *unbound* skill nudge retired in v0.1.0-alpha.7: that one
+  duplicated the SessionStart hint, whereas drift and close-out are
+  per-prompt signals SessionStart structurally cannot catch. Both
+  `flow skill install` and the auto-upgrade path now install the hook
+  (leaving any unrelated user-defined hooks in the same event untouched).
+
 ## [0.1.0-alpha.22] — 2026-06-24
 
 ### Added

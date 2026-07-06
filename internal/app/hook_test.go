@@ -121,12 +121,66 @@ func TestHookSessionStartRequiresSkillInvocation(t *testing.T) {
 	}
 }
 
-// TestHookUserPromptSubmitIsNoOp pins the v0.1.0-alpha.7 contract:
-// the UserPromptSubmit hook is a permanent no-op — exits 0 with no
-// stdout regardless of session state. Kept around only for forward
-// compatibility with stale settings.json entries on older installs.
-// `flow skill install` actively removes the entry on upgrade.
-func TestHookUserPromptSubmitIsNoOp(t *testing.T) {
+// TestHookUserPromptSubmitBoundEmitsAnchor pins the bound-session
+// contract: when the current $CLAUDE_CODE_SESSION_ID belongs to a task,
+// the hook injects a UserPromptSubmit anchor naming the task and citing
+// the drift (§4.11) and close-out (§4.7) checks.
+func TestHookUserPromptSubmitBoundEmitsAnchor(t *testing.T) {
+	setupFlowRoot(t)
+
+	// Seed a task whose name and slug differ, so the anchor is asserted
+	// to carry both.
+	if rc := cmdAdd([]string{"task", "Redesign Billing Page"}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+	const sid = "deadbeef-1234-4567-8abc-def012345678"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, status='in-progress', session_started=? WHERE slug='redesign-billing-page'`,
+		sid, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+
+	out := captureStdout(t, func() {
+		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	var parsed struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("parse hook output: %v\nraw: %s", err, out)
+	}
+	if parsed.HookSpecificOutput.HookEventName != "UserPromptSubmit" {
+		t.Errorf("hookEventName = %q, want UserPromptSubmit", parsed.HookSpecificOutput.HookEventName)
+	}
+	ctx := parsed.HookSpecificOutput.AdditionalContext
+	for _, want := range []string{
+		"Redesign Billing Page", // task name
+		"redesign-billing-page", // slug
+		"§4.11",
+		"§4.7",
+		"new task",
+		"close it out",
+	} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("anchor missing %q; got:\n%s", want, ctx)
+		}
+	}
+}
+
+// TestHookUserPromptSubmitUnboundIsNoOp pins the unbound contract: with
+// no task carrying $CLAUDE_CODE_SESSION_ID (var unset, or set but
+// unmatched), the hook exits 0 with no stdout. The "go bind a task"
+// nudge lives in SessionStart, not per prompt.
+func TestHookUserPromptSubmitUnboundIsNoOp(t *testing.T) {
+	setupFlowRoot(t)
 	for _, sid := range []string{"", "deadbeef-1234-4567-8abc-def012345678"} {
 		t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
 		out := captureStdout(t, func() {

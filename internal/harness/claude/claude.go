@@ -335,6 +335,11 @@ func (c *claude) UninstallSessionStartHook(command string) (bool, error) {
 	return uninstallHook("SessionStart", command)
 }
 
+func (c *claude) InstallUserPromptSubmitHook(command string) (bool, error) {
+	// UserPromptSubmit takes no matcher — the event fires on every prompt.
+	return installHook("UserPromptSubmit", "", command)
+}
+
 func (c *claude) UninstallUserPromptSubmitHook(command string) (bool, error) {
 	return uninstallHook("UserPromptSubmit", command)
 }
