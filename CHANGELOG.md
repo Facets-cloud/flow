@@ -7,6 +7,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- **Skill token footprint cut ~55% via progressive disclosure.** The flow
+  skill's `SKILL.md` is loaded resident by the Skill tool and re-billed as
+  cached tokens on *every* turn, making it the dominant contributor to
+  flow's per-session cost (~28K tokens, and multiplied across a long
+  session). The skill is now a **lean resident core** (~50 KB, down from
+  ~111 KB / ~27.7K → ~12.6K tokens) plus twelve on-demand
+  `references/*.md` files that hold rarely-needed workflows (playbooks,
+  owners, upgrade, weekly review/archive, tagging, session-binding
+  detail, project intake, first-run setup, brief templates, the work_dir
+  recipe, cross-task transcripts & field-edit semantics). The core keeps a
+  one-line trigger pointing at each reference, so the model loads a
+  workflow's full text only when it's actually needed — paid once, not
+  every turn. No workflow content was removed; sections were relocated and
+  the resident prose tightened. The embed changed from a single
+  `//go:embed skill/SKILL.md` to the whole `skill/` directory, and
+  `Harness.InstallSkill` now writes the tree (`SKILL.md` + `references/`)
+  under `~/.claude/skills/flow/`. New guards: `TestSkillCoreIsLean` caps
+  the resident core, `TestSkillReferencesAreReachable` forbids orphan
+  references, and content assertions run against the full corpus so a
+  future relocation can't silently drop a section.
+
 ## [0.1.0-alpha.24] — 2026-07-06
 
 ### Added

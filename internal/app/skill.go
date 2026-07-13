@@ -1,15 +1,35 @@
 package app
 
 import (
-	_ "embed"
+	"embed"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-//go:embed skill/SKILL.md
-var embeddedSkill []byte
+// embeddedSkillFS holds the entire skill directory — SKILL.md (the lean
+// resident core loaded by the Skill tool) plus references/*.md (rarely-
+// needed workflows loaded on demand). Embedding the whole tree lets the
+// installer lay the reference files down alongside SKILL.md so the core
+// can point at them.
+//
+//go:embed skill
+var embeddedSkillFS embed.FS
+
+// skillFiles returns the embedded skill tree rooted at the skill/
+// directory, so walking it yields "SKILL.md" and "references/<x>.md"
+// (not "skill/SKILL.md"). Passed to Harness.InstallSkill.
+func skillFiles() fs.FS {
+	sub, err := fs.Sub(embeddedSkillFS, "skill")
+	if err != nil {
+		// The embed directive guarantees skill/ exists; this is
+		// unreachable in a correctly-built binary.
+		return embeddedSkillFS
+	}
+	return sub
+}
 
 // hookCommand is the exact string the harness's settings.json
 // (settings.json / hooks.json depending on harness) records as the
@@ -84,7 +104,7 @@ func maybeAutoUpgradeSkill() {
 		return
 	}
 	// Version mismatch — refresh skill bytes and the SessionStart hook.
-	if err := h.InstallSkill(embeddedSkill); err != nil {
+	if err := h.InstallSkill(skillFiles()); err != nil {
 		return
 	}
 	_ = writeSkillVersion(Version)
@@ -134,7 +154,7 @@ func skillInstall(args []string, forceDefault bool) int {
 		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", dest, err)
 		return 1
 	}
-	if err := h.InstallSkill(embeddedSkill); err != nil {
+	if err := h.InstallSkill(skillFiles()); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

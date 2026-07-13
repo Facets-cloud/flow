@@ -101,7 +101,7 @@ func cmdInit(args []string) int {
 		return 1
 	}
 	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		if err := h.InstallSkill(embeddedSkill); err != nil {
+		if err := h.InstallSkill(skillFiles()); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
