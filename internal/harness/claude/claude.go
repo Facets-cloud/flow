@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -287,19 +288,36 @@ func (c *claude) SkillVersionPath() (string, error) {
 	return filepath.Join(filepath.Dir(skill), "VERSION"), nil
 }
 
-// InstallSkill writes content to SkillInstallPath. Creates parent dirs.
-func (c *claude) InstallSkill(content []byte) error {
+// InstallSkill writes the skill tree (SKILL.md + references/*.md) into
+// the directory that holds SkillInstallPath, preserving each file's
+// relative path. Creates parent dirs as needed. Files already on disk
+// that aren't in the tree (e.g. the VERSION sidecar) are left untouched.
+func (c *claude) InstallSkill(files fs.FS) error {
 	p, err := c.SkillInstallPath()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Dir(p), err)
-	}
-	if err := os.WriteFile(p, content, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", p, err)
-	}
-	return nil
+	base := filepath.Dir(p)
+	return fs.WalkDir(files, ".", func(rel string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		content, err := fs.ReadFile(files, rel)
+		if err != nil {
+			return fmt.Errorf("read embedded %s: %w", rel, err)
+		}
+		target := filepath.Join(base, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", filepath.Dir(target), err)
+		}
+		if err := os.WriteFile(target, content, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", target, err)
+		}
+		return nil
+	})
 }
 
 // UninstallSkill removes the skill directory entirely (SKILL.md plus

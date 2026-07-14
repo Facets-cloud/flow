@@ -25,6 +25,7 @@ package harness
 
 import (
 	"io"
+	"io/fs"
 )
 
 // Name is the short identifier persisted on tasks.harness and used to
@@ -246,10 +247,12 @@ type Harness interface {
 	// the auto-upgrade gate.
 	SkillVersionPath() (string, error)
 
-	// InstallSkill writes content to SkillInstallPath, creating
-	// parent dirs as needed. Idempotent — callers gate "already
-	// installed" themselves.
-	InstallSkill(content []byte) error
+	// InstallSkill writes the skill tree rooted at SkillInstallPath's
+	// directory. The passed fs.FS is walked and every file is written
+	// preserving its relative path — so "SKILL.md" lands next to
+	// "references/<x>.md". Creates parent dirs as needed. Idempotent —
+	// callers gate "already installed" themselves.
+	InstallSkill(files fs.FS) error
 
 	// UninstallSkill removes the skill directory for this harness.
 	UninstallSkill() error

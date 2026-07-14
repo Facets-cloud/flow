@@ -2,11 +2,41 @@ package app
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// skillCorpus concatenates SKILL.md and every references/*.md into one
+// string. Content lives in the lean resident core OR in an on-demand
+// reference file; the corpus is the union. Content-presence assertions
+// run against the corpus so the split can relocate a workflow without
+// deleting it — the corpus is the no-info-loss contract.
+func skillCorpus(t *testing.T) string {
+	t.Helper()
+	var b strings.Builder
+	err := fs.WalkDir(skillFiles(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".md") {
+			return nil
+		}
+		data, err := fs.ReadFile(skillFiles(), p)
+		if err != nil {
+			return err
+		}
+		b.Write(data)
+		b.WriteString("\n")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk skill corpus: %v", err)
+	}
+	return b.String()
+}
 
 func readSettings(t *testing.T, path string) map[string]any {
 	t.Helper()
@@ -290,7 +320,7 @@ func TestSkillUnknownSubcommand(t *testing.T) {
 }
 
 func TestSkillMentionsPlaybooks(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"## 2. The model",
 		"**Playbooks**",
@@ -318,7 +348,7 @@ func TestSkillMentionsPlaybooks(t *testing.T) {
 }
 
 func TestSkillHasPlaybookSections(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"### 4.12 Add a playbook",
 		"### 4.13 Run a playbook",
@@ -336,7 +366,7 @@ func TestSkillHasPlaybookSections(t *testing.T) {
 }
 
 func TestSkillSection414(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"### 4.14 Substantive-unrelated-work check",
 		"ongoing check, not one-shot",
@@ -351,7 +381,7 @@ func TestSkillSection414(t *testing.T) {
 }
 
 func TestSkillIntakeMinimal(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"Required sections (always asked, in this order)",
 		"Optional sections (offered, can be deferred)",
@@ -369,7 +399,7 @@ func TestSkillIntakeMinimal(t *testing.T) {
 }
 
 func TestSkillMentionsAutoMode(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"flow do --auto",
 		"flow run playbook <slug> --auto",
@@ -384,7 +414,7 @@ func TestSkillMentionsAutoMode(t *testing.T) {
 }
 
 func TestSkillUsesAskUserQuestionConsistently(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	// The skill should have many AskUserQuestion references — at least one
 	// per major workflow that involves user choice.
 	count := strings.Count(got, "AskUserQuestion")
@@ -398,7 +428,7 @@ func TestSkillUsesAskUserQuestionConsistently(t *testing.T) {
 }
 
 func TestSkillHasPlaybookPersistAdjustmentsPattern(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"Persisting in-run adjustments back to the playbook",
 		"frozen snapshot",
@@ -414,7 +444,7 @@ func TestSkillHasPlaybookPersistAdjustmentsPattern(t *testing.T) {
 }
 
 func TestSkillHasMidInterviewDriftRule(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"Mid-interview drift",
 		"sub-question has 2–4 discrete options",
@@ -433,7 +463,7 @@ func TestSkillHasMidInterviewDriftRule(t *testing.T) {
 // `flow-version-stale:` signal the SessionStart hook emits when the
 // local binary lags the latest GitHub release.
 func TestSkillHasUpgradeWorkflow(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"### 4.15 Upgrade flow itself",
 		"https://github.com/Facets-cloud/flow",
@@ -456,7 +486,7 @@ func TestSkillHasUpgradeWorkflow(t *testing.T) {
 // Claude never proactively offers to close, which means the user's
 // learnings stay locked in the transcript.
 func TestSkillEmphasizesCloseOutValue(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"Why closing matters",
 		"close-out sweep",
@@ -484,7 +514,7 @@ func TestSkillEmphasizesCloseOutValue(t *testing.T) {
 // right Settings pane via the deep-link URL, and retry only after
 // explicit user confirmation.
 func TestSkillHasAccessibilityErrorRecipe(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"macOS Accessibility error from the Terminal.app backend",
 		"Trust the error verbatim",
@@ -504,7 +534,7 @@ func TestSkillHasAccessibilityErrorRecipe(t *testing.T) {
 // its capabilities and AskUserQuestion for the user's intent — NOT
 // auto-run §4.1, auto-list tasks, or auto-propose opening a task.
 func TestSkillHasExplicitInvocationSection(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"## 1a. When invoked explicitly with no intent",
 		"DO NOT auto-run any workflow",
@@ -528,7 +558,7 @@ func TestSkillHasExplicitInvocationSection(t *testing.T) {
 // "Mark done?" prompt that read "Yes, `flow done <slug>`". If either
 // regresses, a future sweep loses ground silently.
 func TestSkillNoCliCoachingInUserFacingLabels(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, banned := range []string{
 		`"Yes, run flow init"`,
 		"\"Yes, `flow done <slug>`\"",
@@ -549,7 +579,7 @@ func TestSkillNoCliCoachingInUserFacingLabels(t *testing.T) {
 }
 
 func TestSkillHasFirstRunCapturePattern(t *testing.T) {
-	got := string(embeddedSkill)
+	got := skillCorpus(t)
 	for _, want := range []string{
 		"First-run capture",
 		"FIRST RUN OF THIS PLAYBOOK",
@@ -561,6 +591,44 @@ func TestSkillHasFirstRunCapturePattern(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("skill missing first-run capture content %q", want)
 		}
+	}
+}
+
+// TestSkillReferencesAreReachable pins the split's no-orphan property:
+// every references/<x>.md file must be pointed at from the resident core
+// (SKILL.md) so the model always knows the file exists and when to load
+// it. A reference nobody points to is dead weight the model never reads.
+func TestSkillReferencesAreReachable(t *testing.T) {
+	main, err := fs.ReadFile(skillFiles(), "SKILL.md")
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+	core := string(main)
+	refs, err := fs.Glob(skillFiles(), "references/*.md")
+	if err != nil {
+		t.Fatalf("glob references: %v", err)
+	}
+	for _, r := range refs {
+		if !strings.Contains(core, r) {
+			t.Errorf("reference %q is not pointed at from SKILL.md — orphaned", r)
+		}
+	}
+}
+
+// TestSkillCoreIsLean guards the trim: SKILL.md is loaded resident by the
+// Skill tool and re-billed as cached tokens on every turn, so its size is
+// the dominant cost. This ceiling prevents a future edit from silently
+// re-inflating the resident core back toward the pre-split ~110 KB. The
+// reference files carry no such ceiling — they're paid only when read.
+func TestSkillCoreIsLean(t *testing.T) {
+	main, err := fs.ReadFile(skillFiles(), "SKILL.md")
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+	const ceiling = 54000 // bytes (~13.5K tokens); pre-split was 110769 (~27.7K)
+	if len(main) > ceiling {
+		t.Errorf("SKILL.md is %d bytes, over the %d-byte lean-core ceiling; "+
+			"move rarely-used workflows into references/ instead of growing the resident core", len(main), ceiling)
 	}
 }
 
