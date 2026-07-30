@@ -938,10 +938,11 @@ priority, assignee, due-date, waiting, and tag flags — → read
 is owned by `flow do` / `flow do --here`.
 ## 10. How "what task am I on?" gets answered
 
-`tasks.session_id` is the single source of truth. Every Claude Code
-session has `$CLAUDE_CODE_SESSION_ID` in its env (Claude Code injects
-it); flow's commands reverse-lookup this value against
-`tasks.session_id` to find the bound task. Two implications:
+`tasks.session_id` is the single source of truth. Registered harnesses
+export their session UUID into the environment — Claude Code uses
+`$CLAUDE_CODE_SESSION_ID`; Praxis uses `$PRAXIS_SESSION_ID`. Flow's
+commands reverse-lookup the active harness value against `tasks.session_id`
+to find the bound task. Two implications:
 
 - `flow show task` with no argument resolves the bound task via
   reverse-lookup. So does `flow show project` (it resolves the bound

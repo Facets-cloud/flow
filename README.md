@@ -163,17 +163,18 @@ chmod +x /usr/local/bin/flow
 xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
 
 # 2. Initialize. This is required — it creates ~/.flow/, the SQLite
-#    index, the knowledge base, AND installs the Claude skill +
-#    SessionStart hook. Without this step, Claude can't talk to flow.
+#    index, knowledge base, and Flow skill + SessionStart hook for every
+#    registered harness (currently Claude Code and Praxis).
 flow init
 ```
 
-`flow init` is the step that wires flow into Claude Code. It:
+`flow init` wires Flow into every registered harness. It:
 
 - Creates `~/.flow/` (database, kb, projects, tasks, playbooks)
-- Writes the flow skill to `~/.claude/skills/flow/SKILL.md`
-- Adds a SessionStart hook to `~/.claude/settings.json` so every new
-  Claude Code session auto-loads the skill
+- Writes the Flow skill to both `~/.claude/skills/flow/SKILL.md` and
+  `~/.praxis/agent/skills/flow/SKILL.md`
+- Adds the matching SessionStart hook to each harness's settings file so
+  new sessions auto-load task context
 
 The `xattr` step removes Gatekeeper's quarantine attribute so macOS
 doesn't refuse to run the unsigned binary.
@@ -196,9 +197,22 @@ UserPromptSubmit hooks. Check the running version with
 Just open Claude and say **"let's get to work"**. The skill
 handles the rest.
 
+## Praxis
+
+```sh
+# Enable Praxis once in ~/.zshrc or ~/.bashrc.
+export PRAXIS_EXPERIMENTAL=1
+
+# Flow installs integrations for every registered harness.
+flow init
+
+# Start an unbound task in Praxis.
+flow do <task> --harness praxis
+```
+
 ## What you get
 
-- **One task, one Claude session, one tab.** `flow do <task>`
+- **One task, one harness session, one tab.** `flow do <task>`
   spawns a dedicated tab in iTerm2, Warp, stock macOS Terminal, kitty
   (requires `allow_remote_control yes` in `kitty.conf`), or your
   current zellij session (requires zellij ≥ 0.40) — flow picks

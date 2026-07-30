@@ -9,9 +9,12 @@ import (
 
 // initTempFlowRoot points FLOW_ROOT at a tempdir AND redirects $HOME so
 // skill install lands inside the tempdir as well. Isolates every init test
-// from the real ~/.flow/ and ~/.claude/skills/. Named with an `init` prefix
-// to avoid colliding with withTempFlowRoot defined in cmd_show_test.go
-// (which has a different signature because it returns (root, db)).
+// from the real ~/.flow/ and ~/.claude/skills/. It also clears ALL
+// registered harness session-id env vars so ambient-harness detection
+// (which now includes praxis) doesn't leak the outer session's env into
+// the test. Named with an `init` prefix to avoid colliding with
+// withTempFlowRoot defined in cmd_show_test.go (which has a different
+// signature because it returns (root, db)).
 func initTempFlowRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -19,11 +22,17 @@ func initTempFlowRoot(t *testing.T) string {
 
 	oldRoot := os.Getenv("FLOW_ROOT")
 	oldHome := os.Getenv("HOME")
+	oldClaudeSID := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	oldPraxisSID := os.Getenv("PRAXIS_SESSION_ID")
 	os.Setenv("FLOW_ROOT", root)
 	os.Setenv("HOME", home)
+	os.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	os.Setenv("PRAXIS_SESSION_ID", "")
 	t.Cleanup(func() {
 		os.Setenv("FLOW_ROOT", oldRoot)
 		os.Setenv("HOME", oldHome)
+		os.Setenv("CLAUDE_CODE_SESSION_ID", oldClaudeSID)
+		os.Setenv("PRAXIS_SESSION_ID", oldPraxisSID)
 	})
 	return root
 }

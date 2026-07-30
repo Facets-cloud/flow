@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/praxis"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
 	"io"
@@ -1257,5 +1258,83 @@ func TestCmdDoHereForceDoesNotBypassCwdGate(t *testing.T) {
 	task, _ := flowdb.GetTask(db, "force-mismatch")
 	if task.SessionID.String != oldSID {
 		t.Errorf("session_id should be untouched; got %q want %s", task.SessionID.String, oldSID)
+	}
+}
+
+// TestCmdDoSelectsPraxisHarness verifies the end-to-end selection path:
+// an unbound task launched with --harness praxis gets a pre-allocated id,
+// persists its harness pin, and spawns `praxis chat` without Flow setting
+// or passing the PRAXIS_EXPERIMENTAL opt-in.
+func TestCmdDoSelectsPraxisHarness(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "praxis-task")
+	spawnCount, lastScript := stubITerm(t)
+
+	const sid = "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
+	oldNewUUID := praxis.NewUUID
+	praxis.NewUUID = func() (string, error) { return sid, nil }
+	t.Cleanup(func() { praxis.NewUUID = oldNewUUID })
+
+	if rc := cmdDo([]string{"praxis-task", "--harness", "praxis"}); rc != 0 {
+		t.Fatalf("cmdDo rc=%d", rc)
+	}
+	if got := atomic.LoadInt64(spawnCount); got != 1 {
+		t.Fatalf("spawn calls=%d, want 1", got)
+	}
+	script := lastScript()
+	for _, want := range []string{"praxis chat --session-id " + sid, "PRAXIS_EXPERIMENTAL"} {
+		if want == "PRAXIS_EXPERIMENTAL" {
+			if strings.Contains(script, want) {
+				t.Errorf("spawn script must not set %s; got:\n%s", want, script)
+			}
+			continue
+		}
+		if !strings.Contains(script, want) {
+			t.Errorf("spawn script missing %q; got:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "--experimental") {
+		t.Errorf("spawn script must not pass --experimental; got:\n%s", script)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "praxis-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != sid {
+		t.Errorf("session_id = %+v, want %s", task.SessionID, sid)
+	}
+	if !task.Harness.Valid || task.Harness.String != "praxis" {
+		t.Errorf("harness = %+v, want praxis", task.Harness)
+	}
+}
+
+// TestCmdDoRejectsHarnessSwitch verifies an existing session cannot be
+// opened through a different adapter: its transcript format and path are
+// owned by the harness pinned at initial bind.
+func TestCmdDoRejectsHarnessSwitch(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "claude-task")
+	spawnCount, _ := stubITerm(t)
+
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, status='in-progress', harness='claude' WHERE slug='claude-task'`,
+		"658bf2be-5ae3-4842-a8a4-e0d0b785514d", flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := cmdDo([]string{"claude-task", "--harness", "praxis"}); rc != 1 {
+			t.Errorf("cmdDo rc=%d, want 1", rc)
+		}
+	})
+	if !strings.Contains(out, "already pinned to harness \"claude\"") {
+		t.Errorf("expected harness-switch rejection; got:\n%s", out)
+	}
+	if got := atomic.LoadInt64(spawnCount); got != 0 {
+		t.Errorf("spawn calls=%d, want 0", got)
 	}
 }

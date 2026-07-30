@@ -116,13 +116,14 @@ func appendStaleVersionHint() string {
 	)
 }
 
-// lookupBoundTask returns the task whose session_id matches
-// $CLAUDE_CODE_SESSION_ID, or nil if no such task exists, the env var
-// is unset, or the DB lookup fails. Hook code must never fail loud — a
+// lookupBoundTask returns the task whose session_id matches the
+// session-id env var of ANY registered harness (CLAUDE_CODE_SESSION_ID,
+// PRAXIS_SESSION_ID, etc.), or nil if no such task exists, no env var
+// is set, or the DB lookup fails. Hook code must never fail loud — a
 // hook error blocks the user's session — so all errors are swallowed
 // and treated as "unbound".
 func lookupBoundTask() *flowdb.Task {
-	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	sid := ambientSessionID()
 	if sid == "" {
 		return nil
 	}
@@ -147,6 +148,21 @@ func lookupBoundTask() *flowdb.Task {
 func lookupBoundTaskSlug() string {
 	if t := lookupBoundTask(); t != nil {
 		return t.Slug
+	}
+	return ""
+}
+
+// ambientSessionID returns the session-id value from whichever
+// registered harness's env var is set in the current process. Returns
+// "" if none is set. If multiple are set (e.g. a claude session
+// launched inside a praxis session), returns the first one found in
+// the harness registry order — the hook is best-effort and must not
+// fail the user's session over an ambiguous env.
+func ambientSessionID() string {
+	for _, h := range allHarnesses() {
+		if v := os.Getenv(h.SessionIDEnvVar()); v != "" {
+			return v
+		}
 	}
 	return ""
 }

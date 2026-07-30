@@ -34,6 +34,7 @@ type Name string
 
 const (
 	NameClaude Name = "claude"
+	NamePraxis Name = "praxis"
 )
 
 // InjectionMarker prefixes any first-user-message text injected via

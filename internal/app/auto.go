@@ -123,15 +123,27 @@ var processAlive = func(pid int) bool {
 }
 
 // autoChildEnv builds the environment for the detached supervisor. It
-// inherits the parent's environment (so PATH finds claude and FLOW_ROOT
-// points at the same store) but strips CLAUDE_CODE_SESSION_ID — that
-// belongs to the dispatch session, not the headless run, and leaking it
-// would confuse reverse-lookups inside the autonomous session.
+// inherits the parent's environment (so PATH finds the harness binary and
+// FLOW_ROOT points at the same store) but strips ALL registered harness
+// session-id env vars (CLAUDE_CODE_SESSION_ID, PRAXIS_SESSION_ID, etc.) —
+// those belong to the dispatch session, not the headless run, and leaking
+// them would confuse reverse-lookups inside the autonomous session.
 func autoChildEnv() []string {
+	strip := make(map[string]bool, len(allHarnesses()))
+	for _, h := range allHarnesses() {
+		strip[h.SessionIDEnvVar()+"="] = true
+	}
 	in := os.Environ()
 	out := make([]string, 0, len(in))
 	for _, kv := range in {
-		if strings.HasPrefix(kv, "CLAUDE_CODE_SESSION_ID=") {
+		skip := false
+		for prefix := range strip {
+			if strings.HasPrefix(kv, prefix) {
+				skip = true
+				break
+			}
+		}
+		if skip {
 			continue
 		}
 		out = append(out, kv)

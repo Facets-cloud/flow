@@ -92,33 +92,36 @@ func cmdInit(args []string) int {
 	}
 	db.Close()
 
-	// Install the skill idempotently. Skip if already present; we never
-	// overwrite on init (use `flow skill update` for that).
-	h := defaultHarness()
-	skillPath, err := h.SkillInstallPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		if err := h.InstallSkill(skillFiles()); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	// Install the skill and SessionStart hook for every registered harness.
+	// Init commonly runs from an ordinary terminal, which has no session-id
+	// env var from which to infer a single target. Installing every adapter
+	// makes `flow init` deterministic; the files are inert until that
+	// harness runs and let a user switch agents without re-initializing Flow.
+	for _, h := range allHarnesses() {
+		skillPath, err := h.SkillInstallPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s skill path: %v\n", h.Name(), err)
 			return 1
 		}
-		if err := writeSkillVersion(Version); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
+		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+			if err := h.InstallSkill(skillFiles()); err != nil {
+				fmt.Fprintf(os.Stderr, "error: install %s skill: %v\n", h.Name(), err)
+				return 1
+			}
+			if err := writeSkillVersionFor(h, Version); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not record %s skill version: %v\n", h.Name(), err)
+			}
+			fmt.Printf("installed flow skill for %s to %s\n", h.Name(), skillPath)
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "error: stat %s skill at %s: %v\n", h.Name(), skillPath, err)
+			return 1
 		}
-		fmt.Printf("installed flow skill to %s\n", skillPath)
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
-		return 1
-	}
 
-	// Install the SessionStart hook idempotently.
-	if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
-	} else if added {
-		fmt.Println("installed SessionStart hook")
+		if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not install %s SessionStart hook: %v\n", h.Name(), err)
+		} else if added {
+			fmt.Printf("installed %s SessionStart hook\n", h.Name())
+		}
 	}
 
 	fmt.Printf("flow initialized at %s\n", root)

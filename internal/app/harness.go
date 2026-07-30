@@ -8,15 +8,17 @@ import (
 	"flow/internal/flowdb"
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/praxis"
 	"flow/internal/spawner"
 )
 
 // allHarnesses returns every implemented harness adapter. The slice
 // is the registry that ambient-harness detection and harnessByName
-// consult. Adding codex/gemini = one line each here.
+// consult. Adding a new harness = one line here.
 func allHarnesses() []harness.Harness {
 	return []harness.Harness{
 		claude.New(),
+		praxis.New(),
 		// codex.New(),    // wired when the codex adapter lands
 		// gemini.New(),   // wired when the gemini adapter lands
 	}
@@ -30,6 +32,17 @@ func registeredHarnessNames() string {
 	names := make([]string, 0, len(allHarnesses()))
 	for _, h := range allHarnesses() {
 		names = append(names, string(h.Name()))
+	}
+	return strings.Join(names, ", ")
+}
+
+// harnessEnvVarHint returns a comma-joined list of all registered
+// harness session-id env vars (e.g. "$CLAUDE_CODE_SESSION_ID, $PRAXIS_SESSION_ID"),
+// for use in error messages that tell the user which env vars flow probes.
+func harnessEnvVarHint() string {
+	names := make([]string, 0, len(allHarnesses()))
+	for _, h := range allHarnesses() {
+		names = append(names, "$"+h.SessionIDEnvVar())
 	}
 	return strings.Join(names, ", ")
 }

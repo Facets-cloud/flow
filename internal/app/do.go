@@ -102,10 +102,11 @@ func cmdDo(args []string) int {
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
 	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
-	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
+	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires running inside a registered harness (Claude Code, Praxis, etc.)")
 	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
+	harnessName := fs.String("harness", "", "spawn the task with a specific harness (claude, praxis) instead of auto-detecting")
 	// Two-pass parse so the slug positional may appear before OR after
 	// the flags: first absorb any leading flags, then take the next
 	// non-flag as the slug, then absorb any trailing flags.
@@ -179,14 +180,29 @@ func cmdDo(args []string) int {
 	// `claude --resume <uuid>` in another tab), warn before focusing.
 	// Both processes write to the same session jsonl and can race —
 	// the user almost certainly wants to know.
-	// Pick the harness for this spawn. If the task has been opened
-	// before, task.harness is set and binding; otherwise detect from
-	// the current process's ambient harness env (so `flow do` from
-	// inside codex picks codex), falling back to claude.
-	h, err := harnessForSpawn(task)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
+	// Pick the harness for this spawn. --harness selects the adapter only
+	// for an unbound task. A stored harness pin is immutable: silently
+	// changing it would make Flow try to resume one harness's transcript
+	// through another harness and corrupt the session association.
+	var h harness.Harness
+	if *harnessName != "" {
+		h, err = harnessByName(*harnessName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: --harness: %v\n", err)
+			return 1
+		}
+		if task.Harness.Valid && task.Harness.String != "" && task.Harness.String != string(h.Name()) {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q is already pinned to harness %q; --harness %q would resume the wrong transcript\n",
+				task.Slug, task.Harness.String, h.Name())
+			return 1
+		}
+	} else {
+		h, err = harnessForSpawn(task)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	// Background-agent mode ($FLOW_TERM=bg): spawn a terminal-free
@@ -848,13 +864,13 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 }
 
 // cmdDoHere is the `--here` branch of `flow do`. Instead of spawning
-// a new tab with a fresh Claude session, it binds the CURRENT Claude
-// session (discovered via $CLAUDE_CODE_SESSION_ID) to the named task
-// and flips the task to in-progress.
+// a new tab with a fresh harness session, it binds the CURRENT harness
+// session (discovered via any registered harness's session-id env var)
+// to the named task and flips the task to in-progress.
 //
 // Safety:
-//   - Refuses if not running inside a Claude Code session
-//     (CLAUDE_CODE_SESSION_ID unset).
+//   - Refuses if not running inside a known harness session
+//     (no registered harness's session-id env var is set).
 //   - Refuses if the target task already has a different session_id
 //     bound. The constraint guards against silent overwrites that
 //     would orphan the prior session. --force overrides.
@@ -866,7 +882,7 @@ func findTask(db *sql.DB, query string) (*flowdb.Task, int) {
 //
 // The DB write is the only side effect — no terminal spawn, no env
 // var injection. Subsequent `flow do <slug>` from elsewhere will
-// resume this session via `claude --resume`.
+// resume this session via the harness's resume command.
 func cmdDoHere(query string, force bool) int {
 	// --here only makes sense from inside a harness session. Probe
 	// ambient explicitly — defaultHarness's claude fallback would
@@ -943,9 +959,9 @@ func cmdDoHere(query string, force bool) int {
 	priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
 	if lookupErr == nil && priorBinding.Slug != task.Slug {
 		fmt.Fprintf(os.Stderr,
-			"error: this Claude session is already bound to task %q. binding it to %q would orphan %q's transcript and is rejected by the session_id uniqueness invariant. --force does not override this.\n"+
+			"error: this %s session is already bound to task %q. binding it to %q would orphan %q's transcript and is rejected by the session_id uniqueness invariant. --force does not override this.\n"+
 				"  to start work on %q in a separate session: flow do %s\n",
-			priorBinding.Slug, task.Slug, priorBinding.Slug, task.Slug, task.Slug)
+			h.Name(), priorBinding.Slug, task.Slug, priorBinding.Slug, task.Slug, task.Slug)
 		return 1
 	}
 
@@ -963,28 +979,26 @@ func cmdDoHere(query string, force bool) int {
 		}
 	}
 
-	// Invariant validation. Any task with session_id has work_dir
-	// == the cwd that session was created at — because the
-	// harness's on-disk transcript path is keyed by (cwd, sid),
-	// and future `flow do <slug>` resumes spawn at work_dir
-	// (GH #59).
-	//
-	// h.ValidateSession is the honest check: claude's impl stats
-	// the expected jsonl path on disk. Comparing os.Getwd() to
-	// work_dir would be fooled by chained-cd from inside a claude
-	// Bash invocation (the subprocess cwd has nothing to do with
-	// where the actual jsonl was written). Codex's impl will
-	// no-op since its sessions are sid-only.
+	// Verify the transcript at the path the selected harness owns before
+	// binding it. Claude keys transcripts by (work_dir, session id), whereas
+	// Praxis keys them by session id alone. The adapter, not this command,
+	// is the single source of truth for that layout.
 	if err := h.ValidateSession(task.WorkDir, sid); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"error: can't bind this session to task %q — the claude transcript isn't where work_dir says it should be:\n"+
-				"  %v\n"+
-				"this means claude was started in a different directory than task.work_dir, OR work_dir is set wrong.\n"+
-				"pick one of:\n"+
-				"  - open it in a new tab (recommended):           flow do %s\n"+
-				"  - point work_dir at where claude actually runs: flow update task %s --work-dir <real-cwd>\n"+
-				"    (allowed because the new work_dir must match the session's real on-disk location)\n",
-			task.Slug, err, task.Slug, task.Slug)
+		if h.Name() == harness.NameClaude {
+			fmt.Fprintf(os.Stderr,
+				"error: can't bind this session to task %q — the claude transcript isn't where work_dir says it should be:\n"+
+					"  %v\n"+
+					"this means claude was started in a different directory than task.work_dir, OR work_dir is set wrong.\n"+
+					"pick one of:\n"+
+					"  - open it in a new tab (recommended):           flow do %s\n"+
+					"  - point work_dir at where claude actually runs: flow update task %s --work-dir <real-cwd>\n"+
+					"    (allowed because the new work_dir must match the session's real on-disk location)\n",
+				task.Slug, err, task.Slug, task.Slug)
+		} else {
+			fmt.Fprintf(os.Stderr,
+				"error: can't bind this session to task %q — the %s transcript could not be found:\n  %v\n",
+				task.Slug, h.Name(), err)
+		}
 		return 1
 	}
 

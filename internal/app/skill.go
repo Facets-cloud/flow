@@ -2,6 +2,7 @@ package app
 
 import (
 	"embed"
+	"flow/internal/harness"
 	"fmt"
 	"io/fs"
 	"os"
@@ -57,12 +58,19 @@ func readSkillVersion() string {
 	return strings.TrimSpace(string(b))
 }
 
-// writeSkillVersion records `v` as the version of the binary that
-// installed the current skill content. Errors are non-fatal —
-// failing to write the sidecar should never block a successful
-// skill install.
+// writeSkillVersion records `v` for the ambient/default harness. Errors
+// are non-fatal — failing to write the sidecar should never block a
+// successful skill install.
 func writeSkillVersion(v string) error {
-	p, err := defaultHarness().SkillVersionPath()
+	return writeSkillVersionFor(defaultHarness(), v)
+}
+
+// writeSkillVersionFor records `v` for h. `flow init` installs every
+// registered integration, so it must write a sidecar adjacent to the skill
+// it actually installed rather than resolving the ambient/default harness
+// again.
+func writeSkillVersionFor(h harness.Harness, v string) error {
+	p, err := h.SkillVersionPath()
 	if err != nil {
 		return err
 	}

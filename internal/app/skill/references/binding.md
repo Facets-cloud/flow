@@ -2,12 +2,12 @@
 
 > Loaded on demand from the flow skill's resident core (SKILL.md). This file holds the full workflow; the core keeps a one-line trigger pointing here.
 
-### 4.16 Bind an in-flight Claude session to a task
+### 4.16 Bind an in-flight harness session to a task
 
 **Triggers:** "bind this session to <task>", "track this session
 under <task>", "attach this conversation to <task>", "this session is
 for <task>". Also fires when the user manually creates a flow task
-while already deep in an ad-hoc Claude session and wants future
+while already deep in an ad-hoc harness session and wants future
 `flow do <slug>` to resume *this* conversation rather than start a
 new one. The §4.2 "Continue here" option is the most common entry
 point.
@@ -19,9 +19,10 @@ it via §4.2), run:
 flow do --here <slug>
 ```
 
-`flow do --here` reads the current session's UUID from
-`$CLAUDE_CODE_SESSION_ID` (Claude Code injects this into every
-session), validates it, and writes it to `tasks.session_id`. Side
+`flow do --here` reads the current session's UUID from the active
+harness's env var — `$CLAUDE_CODE_SESSION_ID` for Claude Code or
+`$PRAXIS_SESSION_ID` for Praxis — validates it, and writes it to
+`tasks.session_id`. Side
 effects: status flips backlog → in-progress (the session-id
 invariant requires it). No terminal spawn happens; the binding is
 the only mutation.
@@ -29,8 +30,9 @@ the only mutation.
 **Safety properties enforced by the binary** (you don't have to
 police these):
 
-- Refuses if `$CLAUDE_CODE_SESSION_ID` is unset (not a Claude Code
-  session) or not a v4 UUID.
+- Refuses if no registered harness session-id env var is set (not a
+  supported harness session), or if the id is not a valid UUID. Praxis
+  accepts its UUIDv7 session ids as well as Flow's UUIDv4 ids.
 - Refuses if **THIS session** is already bound to a different task.
   `--force` does NOT override this — session_id uniqueness is
   structural. The user must release the prior binding first or
@@ -39,17 +41,15 @@ police these):
   session_id bound. `--force` overrides this case (and only this
   case), but the user has been told it orphans the target's
   prior session.
-- Refuses if **this Claude session's spawn directory ≠
-  `task.work_dir`**. Flow maintains the invariant *any task with
-  a session_id has work_dir equal to the cwd that session was
-  created at* — that's what makes `flow do <slug>` resumes find
-  the harness's on-disk transcript (the path is keyed by encoded
-  cwd). The check is honest: the binary stats the expected
-  transcript file on disk, not `os.Getwd()`. **`cd <work_dir>
-  && flow do --here` does NOT bypass this** — the chained `cd`
-  only changes the flow subprocess's cwd, not where the actual
-  Claude session jsonl was written. `--force` does NOT override
-  this gate — see the sub-recipe below.
+- Refuses if the selected harness's transcript cannot be found. Claude
+  keys transcripts by encoded cwd, so its task `work_dir` must match the
+  Claude session's spawn directory. Praxis keys transcripts by UUID alone,
+  so this cwd-specific gate does not apply to Praxis. The check is honest:
+  the binary stats the adapter's expected transcript file, not `os.Getwd()`.
+  For Claude, **`cd <work_dir> && flow do --here` does NOT bypass this** —
+  the chained `cd` only changes the flow subprocess's cwd, not where the
+  actual session jsonl was written. `--force` does NOT override this gate —
+  see the sub-recipe below.
 - No-op (idempotent) if the target is already bound to this same
   session.
 - Refuses if the target is `done`. Reopen via
