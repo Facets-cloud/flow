@@ -26,7 +26,6 @@ package spawner
 
 import (
 	"flow/internal/ghostty"
-	"flow/internal/harness/shellquote"
 	"flow/internal/iterm"
 	"flow/internal/kitty"
 	"flow/internal/terminal"
@@ -149,14 +148,4 @@ func FocusSession(sessionID, binary string) (bool, error) {
 	default:
 		return iterm.FocusSession(sessionID, binary)
 	}
-}
-
-// ShellQuote is re-exported so callers don't need to import the chosen
-// backend just to quote a value before handing it to SpawnTab. All
-// backends quote identically (POSIX single-quote with embedded-quote
-// escape). The canonical implementation lives in the leaf
-// harness/shellquote package to avoid a transitive import of the
-// terminal-spawning layer.
-func ShellQuote(s string) string {
-	return shellquote.Quote(s)
 }

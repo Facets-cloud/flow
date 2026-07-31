@@ -410,19 +410,3 @@ func TestFocusSessionMalformedJSON(t *testing.T) {
 		t.Errorf("got (%v, %v); want (false, non-nil) for malformed JSON", focused, err)
 	}
 }
-
-// TestShellQuote — same contract as iterm/terminal/zellij.
-func TestShellQuote(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"plain", "'plain'"},
-		{"with space", "'with space'"},
-		{"with'quote", `'with'\''quote'`},
-	}
-	for _, tc := range cases {
-		if got := ShellQuote(tc.in); got != tc.want {
-			t.Errorf("ShellQuote(%q) = %q; want %q", tc.in, got, tc.want)
-		}
-	}
-}

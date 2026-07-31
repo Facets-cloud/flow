@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"flow/internal/shellquote"
 )
 
 // Runner runs osascript. Tests override this to capture the AppleScript
@@ -81,8 +83,8 @@ var removeScript = func(path string) error {
 //
 // `command` is interpolated raw into the script as `exec env … <command>`
 // — it MUST already be a valid, shell-safe command line. Callers are
-// responsible for quoting any embedded arguments (typically via
-// ShellQuote). This matches the iterm/terminal/zellij contract.
+// responsible for quoting any embedded arguments (via
+// shellquote.Quote). This matches the iterm/terminal/zellij contract.
 //
 // envVars are attached as an `exec env` prefix to `command` inside
 // the script — so they are present in the spawned process's
@@ -121,12 +123,6 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	return nil
 }
 
-// ShellQuote wraps s in single quotes with proper escaping. Identical
-// to iterm.ShellQuote / terminal.ShellQuote / zellij.ShellQuote.
-func ShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // buildScript produces the bash script body that the keystroked
 // `bash <path>` line invokes. Shape:
 //
@@ -148,9 +144,9 @@ func buildScript(title, cwd, command string, envVars map[string]string) string {
 	b.WriteString(`rm -- "$0"`)
 	b.WriteString("\n")
 	if title != "" {
-		fmt.Fprintf(&b, "printf '\\033]2;%%s\\007' %s\n", ShellQuote(title))
+		fmt.Fprintf(&b, "printf '\\033]2;%%s\\007' %s\n", shellquote.Quote(title))
 	}
-	fmt.Fprintf(&b, "cd %s || exit 1\n", ShellQuote(cwd))
+	fmt.Fprintf(&b, "cd %s || exit 1\n", shellquote.Quote(cwd))
 
 	if len(envVars) == 0 {
 		fmt.Fprintf(&b, "exec %s\n", command)
@@ -164,7 +160,7 @@ func buildScript(title, cwd, command string, envVars map[string]string) string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(envVars))
 	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
+		parts = append(parts, fmt.Sprintf("%s=%s", k, shellquote.Quote(envVars[k])))
 	}
 	fmt.Fprintf(&b, "exec env %s %s\n", strings.Join(parts, " "), command)
 	return b.String()

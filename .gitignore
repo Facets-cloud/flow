@@ -10,3 +10,11 @@
 
 # git worktrees for isolated feature work
 /.worktrees/
+
+# agent scratch space: /.codex/worktrees/* holds full checkouts (each with
+# its own go.mod), so an unguarded `git add -A` would commit a nested
+# module into the repo.
+/.codex/
+
+# macOS Finder metadata
+.DS_Store

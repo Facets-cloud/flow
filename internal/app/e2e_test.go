@@ -76,10 +76,7 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	flowRoot := filepath.Join(tmp, "flow")
 	t.Setenv("FLOW_ROOT", flowRoot)
 	t.Setenv("HOME", tmp)
-	// Clear harness session-id env vars so ambient detection doesn't leak
-	// the outer test runner's session into the e2e flow.
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	t.Setenv("PRAXIS_SESSION_ID", "")
+	clearHarnessEnv(t)
 
 	// Fake repo that serves as the project's work_dir.
 	repo := filepath.Join(tmp, "code", "budgeting-app")

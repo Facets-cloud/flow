@@ -92,9 +92,9 @@ func cmdInit(args []string) int {
 	}
 	db.Close()
 
-	// Install the skill and SessionStart hook for every registered harness.
-	// Init commonly runs from an ordinary terminal, which has no session-id
-	// env var from which to infer a single target. Installing every adapter
+	// Install the skill and both hooks for every registered harness. Init
+	// commonly runs from an ordinary terminal, which has no session-id env
+	// var from which to infer a single target. Installing every adapter
 	// makes `flow init` deterministic; the files are inert until that
 	// harness runs and let a user switch agents without re-initializing Flow.
 	for _, h := range allHarnesses() {
@@ -121,6 +121,15 @@ func cmdInit(args []string) int {
 			fmt.Fprintf(os.Stderr, "warning: could not install %s SessionStart hook: %v\n", h.Name(), err)
 		} else if added {
 			fmt.Printf("installed %s SessionStart hook\n", h.Name())
+		}
+		// The UserPromptSubmit hook carries the drift/close-out anchor for
+		// bound sessions. Without it here, a harness initialized by `flow
+		// init` would only get the anchor if the user later happened to run
+		// `flow skill install` — the two commands must install the same set.
+		if added, err := h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not install %s UserPromptSubmit hook: %v\n", h.Name(), err)
+		} else if added {
+			fmt.Printf("installed %s UserPromptSubmit hook\n", h.Name())
 		}
 	}
 

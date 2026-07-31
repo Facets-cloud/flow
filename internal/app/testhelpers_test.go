@@ -7,7 +7,54 @@ import (
 	"testing"
 
 	flowdb "flow/internal/flowdb"
+	"flow/internal/harness/claude"
+	"flow/internal/harness/praxis"
 )
+
+// clearHarnessEnv blanks the session-id env var of EVERY registered
+// harness so ambient detection can't leak the session the test suite is
+// itself running under into a test. Derived from the registry rather than
+// a hand-written list: a hand-written one silently goes stale when an
+// adapter is added, and the resulting failures depend on which agent the
+// developer happened to run the tests from.
+func clearHarnessEnv(t *testing.T) {
+	t.Helper()
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+}
+
+// stubHarnessPreflight makes every harness's availability check succeed
+// without the real CLIs being installed. Called from initTempFlowRoot so
+// the suite stays hermetic: `flow do` preflights the harness before
+// spawning, and tests must not depend on whether the machine running them
+// happens to have `claude` or a `chat`-capable `praxis` on PATH.
+func stubHarnessPreflight(t *testing.T) {
+	t.Helper()
+	found := func(file string) (string, error) { return "/usr/local/bin/" + file, nil }
+
+	oldClaudeLook := claude.LookPathFn
+	oldPraxisLook := praxis.LookPathFn
+	oldPraxisProbe := praxis.PreflightRunner
+	claude.LookPathFn = found
+	praxis.LookPathFn = found
+	praxis.PreflightRunner = func() error { return nil }
+	t.Cleanup(func() {
+		claude.LookPathFn = oldClaudeLook
+		praxis.LookPathFn = oldPraxisLook
+		praxis.PreflightRunner = oldPraxisProbe
+	})
+}
+
+// stubPraxisPreflight pins the result of the `praxis chat` subcommand
+// probe. Pass a non-nil error to simulate a praxis build too old to host
+// a flow session.
+func stubPraxisPreflight(t *testing.T, err error) {
+	t.Helper()
+	old := praxis.PreflightRunner
+	praxis.PreflightRunner = func() error { return err }
+	t.Cleanup(func() { praxis.PreflightRunner = old })
+}
 
 func openTempDB(t *testing.T) *sql.DB {
 	t.Helper()

@@ -2,14 +2,20 @@ package praxis
 
 import (
 	"errors"
+	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"flow/internal/harness"
 )
 
-var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+// v7, matching what praxis itself mints (uuid.NewV7 in its session
+// store) so flow-created sessions sort chronologically alongside native
+// ones in the id-keyed sessions directory.
+var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 func TestNewUUIDFormat(t *testing.T) {
 	for i := 0; i < 50; i++ {
@@ -18,8 +24,42 @@ func TestNewUUIDFormat(t *testing.T) {
 			t.Fatalf("newUUID: %v", err)
 		}
 		if !uuidRe.MatchString(id) {
-			t.Errorf("newUUID returned %q, does not match UUID v4 format", id)
+			t.Errorf("newUUID returned %q, does not match UUID v7 format", id)
 		}
+		if err := New().ValidateSessionID(id); err != nil {
+			t.Errorf("minted id %q fails our own ValidateSessionID: %v", id, err)
+		}
+	}
+}
+
+// The whole point of v7 over v4 here: ids minted later must sort after
+// ids minted earlier, because praxis's sessions directory is keyed by id
+// and users browse it in order.
+func TestNewUUIDIsTimeOrdered(t *testing.T) {
+	var ids []string
+	for i := 0; i < 5; i++ {
+		id, err := newUUID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		time.Sleep(2 * time.Millisecond) // cross a millisecond boundary
+	}
+	for i := 1; i < len(ids); i++ {
+		if ids[i] <= ids[i-1] {
+			t.Errorf("id %d (%s) does not sort after id %d (%s)", i, ids[i], i-1, ids[i-1])
+		}
+	}
+
+	// And the timestamp prefix must actually be the current time, not an
+	// arbitrary increasing counter.
+	prefix := strings.ReplaceAll(ids[0][:13], "-", "")
+	ms, err := strconv.ParseInt(prefix, 16, 64)
+	if err != nil {
+		t.Fatalf("parse timestamp prefix %q: %v", prefix, err)
+	}
+	if delta := time.Since(time.UnixMilli(ms)); delta < 0 || delta > time.Minute {
+		t.Errorf("timestamp prefix decodes to %v (%v away from now)", time.UnixMilli(ms), delta)
 	}
 }
 
@@ -94,11 +134,17 @@ func TestAutoRunArgv(t *testing.T) {
 	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
 	prompt := "do the thing"
 
-	// Headless auto run: --session pinned, --prompt. Praxis run has no
-	// --permission-mode flag and Flow must not pass --experimental; the
-	// caller enables it through PRAXIS_EXPERIMENTAL in the shell profile.
+	// Headless auto run: --session pinned, an explicit turn budget, and
+	// --prompt. Praxis run has no --permission-mode flag and Flow must not
+	// pass --experimental; the caller enables it through
+	// PRAXIS_EXPERIMENTAL in the shell profile.
 	got := h.AutoRunArgv(sessionID, prompt, harness.LaunchOpts{SkipPermissions: true})
-	want := []string{"praxis", "run", "--session", sessionID, "--prompt", prompt}
+	want := []string{
+		"praxis", "run",
+		"--session", sessionID,
+		"--max-turns", "1000",
+		"--prompt", prompt,
+	}
 	if len(got) != len(want) {
 		t.Fatalf("AutoRunArgv len=%d %v, want %d %v", len(got), got, len(want), want)
 	}
@@ -108,10 +154,72 @@ func TestAutoRunArgv(t *testing.T) {
 		}
 	}
 
-	// Injection is appended to the prompt (argv[5]) behind the marker.
+	// Injection is appended to the prompt (the last arg) behind the marker.
 	inj := h.AutoRunArgv(sessionID, prompt, harness.LaunchOpts{Inject: "extra instr"})
-	if !strings.Contains(inj[5], "\n\n"+harness.InjectionMarker+"\nextra instr") {
-		t.Errorf("AutoRunArgv inject: missing marker+text in prompt arg %q", inj[5])
+	if !strings.Contains(inj[len(inj)-1], "\n\n"+harness.InjectionMarker+"\nextra instr") {
+		t.Errorf("AutoRunArgv inject: missing marker+text in prompt arg %q", inj[len(inj)-1])
+	}
+}
+
+// The turn budget must be explicit and comfortably above the 25 that
+// both `praxis run`'s flag default and the SDK's <=0 fallback resolve to
+// — an autonomous run truncated at 25 turns never reaches `flow done`.
+func TestAutoRunArgvSetsGenerousTurnBudget(t *testing.T) {
+	argv := New().AutoRunArgv("658bf2be-5ae3-4842-a8a4-e0d0b785514d", "p", harness.LaunchOpts{})
+
+	idx := -1
+	for i, a := range argv {
+		if a == "--max-turns" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx == len(argv)-1 {
+		t.Fatalf("AutoRunArgv has no --max-turns value: %v", argv)
+	}
+	turns, err := strconv.Atoi(argv[idx+1])
+	if err != nil {
+		t.Fatalf("--max-turns %q is not a number: %v", argv[idx+1], err)
+	}
+	if turns <= 25 {
+		t.Errorf("--max-turns is %d; <=25 is the SDK fallback that truncates autonomous runs", turns)
+	}
+}
+
+func TestPreflightProbesChatSubcommand(t *testing.T) {
+	probed := false
+	orig := PreflightRunner
+	PreflightRunner = func() error {
+		probed = true
+		return nil
+	}
+	t.Cleanup(func() { PreflightRunner = orig })
+
+	err := New().Preflight()
+	// `praxis` may not exist on the machine running the tests; the PATH
+	// check runs first, so only assert probe wiring when it got that far.
+	if err == nil && !probed {
+		t.Error("Preflight succeeded without probing for the chat subcommand")
+	}
+	if err != nil && !strings.Contains(err.Error(), "praxis") {
+		t.Errorf("Preflight error %q does not name the praxis CLI", err)
+	}
+}
+
+func TestPreflightReportsMissingChatSubcommand(t *testing.T) {
+	if _, err := exec.LookPath("praxis"); err != nil {
+		t.Skip("praxis not on PATH; the subcommand probe is unreachable")
+	}
+	orig := PreflightRunner
+	PreflightRunner = func() error { return errors.New("exit status 1") }
+	t.Cleanup(func() { PreflightRunner = orig })
+
+	err := New().Preflight()
+	if err == nil {
+		t.Fatal("Preflight succeeded despite a failing chat probe")
+	}
+	if !strings.Contains(err.Error(), "chat") {
+		t.Errorf("Preflight error %q does not mention the missing chat subcommand", err)
 	}
 }
 

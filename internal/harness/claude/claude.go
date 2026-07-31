@@ -6,7 +6,6 @@ package claude
 
 import (
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,7 +16,8 @@ import (
 	"strings"
 
 	"flow/internal/harness"
-	"flow/internal/spawner"
+	"flow/internal/harness/hooksettings"
+	"flow/internal/shellquote"
 )
 
 // Package-level seams. Tests in other packages swap these to avoid
@@ -28,6 +28,7 @@ import (
 //	                         close-out sweep.
 //	PSRunner               — `ps -axo pid,command` output used by
 //	                         LiveSessionIDs.
+//	LookPathFn             — PATH resolution used by Preflight.
 //
 // Use t.Cleanup to restore after stubbing, exactly as iterm.Runner is
 // stubbed in the existing tests.
@@ -35,6 +36,7 @@ var (
 	NewUUID               = newUUID
 	SkipPermissionsRunner = runSkipPermissions
 	PSRunner              = runPS
+	LookPathFn            = exec.LookPath
 )
 
 const (
@@ -56,6 +58,16 @@ type claude struct{}
 func (c *claude) Name() harness.Name      { return harness.NameClaude }
 func (c *claude) Binary() string          { return "claude" }
 func (c *claude) SessionIDEnvVar() string { return "CLAUDE_CODE_SESSION_ID" }
+
+// Preflight checks only that `claude` resolves on PATH. Session launch
+// uses the CLI's top-level flags (--session-id / --resume), so there is
+// no optional subcommand to probe and nothing worth exec'ing.
+func (c *claude) Preflight() error {
+	if _, err := LookPathFn("claude"); err != nil {
+		return fmt.Errorf("claude CLI not found on PATH: %w", err)
+	}
+	return nil
+}
 
 // ---------- session allocation ----------
 
@@ -134,7 +146,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 	if opts.Inject != "" {
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	cmd := fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
+	cmd := fmt.Sprintf("claude --session-id %s %s", sessionID, shellquote.Quote(prompt))
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
@@ -145,7 +157,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	cmd := "claude --resume " + sessionID
 	if opts.Inject != "" {
-		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
+		cmd += " " + shellquote.Quote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
@@ -345,184 +357,40 @@ func settingsPath() (string, error) {
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
 
+// The four hook methods delegate to harness/hooksettings, which owns the
+// Claude-compatible settings.json mutation (idempotent add, marker-based
+// removal, preservation of unrelated keys/events/siblings). Only the file
+// path is claude-specific.
+
 func (c *claude) InstallSessionStartHook(command string) (bool, error) {
-	return installHook("SessionStart", hookMatcher, command)
+	path, err := settingsPath()
+	if err != nil {
+		return false, err
+	}
+	return hooksettings.Install(path, "SessionStart", hookMatcher, command)
 }
 
 func (c *claude) UninstallSessionStartHook(command string) (bool, error) {
-	return uninstallHook("SessionStart", command)
+	path, err := settingsPath()
+	if err != nil {
+		return false, err
+	}
+	return hooksettings.Uninstall(path, "SessionStart", command)
 }
 
 func (c *claude) InstallUserPromptSubmitHook(command string) (bool, error) {
+	path, err := settingsPath()
+	if err != nil {
+		return false, err
+	}
 	// UserPromptSubmit takes no matcher — the event fires on every prompt.
-	return installHook("UserPromptSubmit", "", command)
+	return hooksettings.Install(path, "UserPromptSubmit", "", command)
 }
 
 func (c *claude) UninstallUserPromptSubmitHook(command string) (bool, error) {
-	return uninstallHook("UserPromptSubmit", command)
-}
-
-// installHook idempotently adds a hook entry for `event` to
-// ~/.claude/settings.json. matcher may be empty — some events don't
-// use one and the field is omitted. command is both the literal
-// command Claude Code will execute AND the marker used to detect
-// whether the hook is already installed.
-//
-// Returns (added=true) iff the file was actually modified. Preserves
-// all other settings, all other events, and all sibling entries
-// under the same event.
-func installHook(event, matcher, command string) (bool, error) {
 	path, err := settingsPath()
 	if err != nil {
 		return false, err
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return false, fmt.Errorf("read %s: %w", path, err)
-		}
-		raw = []byte("{}")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return false, fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-		}
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return false, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if settings == nil {
-		settings = map[string]any{}
-	}
-
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		hooks = map[string]any{}
-	}
-	entries, _ := hooks[event].([]any)
-
-	for _, entry := range entries {
-		m, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		inner, _ := m["hooks"].([]any)
-		for _, h := range inner {
-			hm, ok := h.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cmd, _ := hm["command"].(string); cmd == command {
-				return false, nil
-			}
-		}
-	}
-
-	newEntry := map[string]any{
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": command,
-			},
-		},
-	}
-	if matcher != "" {
-		newEntry["matcher"] = matcher
-	}
-	entries = append(entries, newEntry)
-	hooks[event] = entries
-	settings["hooks"] = hooks
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal settings: %w", err)
-	}
-	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
-	}
-	return true, nil
-}
-
-// uninstallHook removes any entry under hooks.<event> whose inner
-// hook list contains a command matching `command`. Returns
-// (removed=true) iff the file changed.
-func uninstallHook(event, command string) (bool, error) {
-	path, err := settingsPath()
-	if err != nil {
-		return false, err
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("read %s: %w", path, err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return false, fmt.Errorf("parse %s: %w", path, err)
-	}
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		return false, nil
-	}
-	entries, _ := hooks[event].([]any)
-	if len(entries) == 0 {
-		return false, nil
-	}
-
-	changed := false
-	kept := make([]any, 0, len(entries))
-	for _, entry := range entries {
-		m, ok := entry.(map[string]any)
-		if !ok {
-			kept = append(kept, entry)
-			continue
-		}
-		inner, _ := m["hooks"].([]any)
-		filteredInner := make([]any, 0, len(inner))
-		for _, h := range inner {
-			hm, ok := h.(map[string]any)
-			if !ok {
-				filteredInner = append(filteredInner, h)
-				continue
-			}
-			cmd, _ := hm["command"].(string)
-			if strings.TrimSpace(cmd) == command {
-				changed = true
-				continue
-			}
-			filteredInner = append(filteredInner, h)
-		}
-		if len(filteredInner) == 0 {
-			changed = true
-			continue
-		}
-		m["hooks"] = filteredInner
-		kept = append(kept, m)
-	}
-
-	if !changed {
-		return false, nil
-	}
-	if len(kept) == 0 {
-		delete(hooks, event)
-	} else {
-		hooks[event] = kept
-	}
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
-	}
-
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal settings: %w", err)
-	}
-	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
-	}
-	return true, nil
+	return hooksettings.Uninstall(path, "UserPromptSubmit", command)
 }

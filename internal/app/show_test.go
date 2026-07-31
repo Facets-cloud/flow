@@ -23,10 +23,8 @@ func withTempFlowRoot(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("FLOW_ROOT", dir)
-	// Clear all harness session-id env vars so ambient detection doesn't
-	// leak the outer session's env into the test.
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	t.Setenv("PRAXIS_SESSION_ID", "")
+	clearHarnessEnv(t)
+	stubHarnessPreflight(t)
 	return dir
 }
 

@@ -7,8 +7,88 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`Harness.Preflight()`** — harness availability is now verified before
+  `flow do` claims a session id. Spawning works by handing a command
+  string to a terminal tab, and a tab opens successfully even when the
+  command inside it dies instantly, so a missing or too-old CLI used to
+  leave the task bound to a session that never existed with every later
+  resume failing identically. Claude checks PATH; Praxis also probes
+  `praxis chat --help`, since the released CLI predates the `chat`
+  subcommand every launch/resume path depends on.
+- **`flow do --here --harness <name>` is now rejected** with exit 2.
+  `--here` binds the session the user is already sitting in, so its
+  harness is fixed by the ambient env; the flag was silently ignored.
+- **`internal/harness/hooksettings`** — the Claude-compatible
+  settings.json hook surgery (idempotent add, marker-based removal,
+  preservation of unrelated keys/events/siblings) now lives in one
+  stdlib-only leaf package instead of being duplicated verbatim in each
+  adapter. Adapters supply only the settings path.
+
+### Fixed
+
+- **Praxis transcripts rendered the wrong content in both modes.** The
+  renderer matched only `type:"text"` parts and ignored its `compact`
+  argument entirely, so `flow transcript` dropped every assistant
+  thinking block and tool call while `--compact` emitted full,
+  untruncated tool output — the exact inverse of the documented contract,
+  because praxis persists tool results as their own `role:"toolResult"`
+  messages whose content *is* a text part. It now decodes `toolCall`,
+  `thinking`, and `toolResult` explicitly and renders the same section
+  vocabulary as the claude adapter (`─── Assistant ───`,
+  `─── Tool: x ───`, …), truncating tool results at the same 500 bytes.
+  Measured on a real 503 KB session: compact is now 28% of full instead
+  of byte-identical to it.
+- **`flow skill update` and `flow skill uninstall` only touched one
+  harness** while `flow init` installed for all of them. A praxis skill
+  installed by `init` could never auto-upgrade (the version gate read the
+  ambient harness's sidecar), and `uninstall` left both the skill
+  directory and a live `flow hook` entry in the other harness's
+  settings.json. All three paths plus `maybeAutoUpgradeSkill` now iterate
+  every registered harness with a per-harness version sidecar, and `flow
+  init` installs the UserPromptSubmit hook it had been skipping.
+- **Headless praxis runs were capped at 25 turns.** `AutoRunArgv` left
+  `--max-turns` unset; `praxis run` defaults it to 25 and the SDK
+  substitutes the same 25 for any value <= 0, so a `flow do --auto` run
+  was truncated long before reaching its own `flow done` close-out. Now
+  passes an explicit 1000, matching the Praxis TUI's interactive budget.
+- **Two ambient-session resolvers disagreed.** The hook picked the first
+  matching harness env var while `currentSessionID` refused to guess when
+  several were set — reachable as soon as a second harness existed, since
+  a harness exports its session id into child processes. In a nested
+  session the hook injected task context while `flow show`,
+  `flow transcript`, and `flow do --here` reported no harness session.
+  There is now one rule (`ambientHarness`, first match in registry order)
+  that every caller resolves through.
+- **Praxis close-out sweeps failed silently.** `runSkipPermissions`
+  discarded stderr, so the most likely failure — `PRAXIS_EXPERIMENTAL`
+  not exported, making `praxis run` refuse — surfaced only as a bare exit
+  code. Stderr is now folded into the error, bounded at 2 KB.
+- **Legacy praxis transcripts were unreachable.** The fallback looked for
+  `<sessions>/<id>.jsonl`, a layout praxis never wrote; the real older
+  layout is cwd-encoded, `<sessions>/<encoded-cwd>/<timestamp>Z_<id>.jsonl`.
+  Lookup now globs for it (newest wins when a resumed session left copies
+  under two cwds), and `ValidateSession` and `RenderTranscript` share one
+  `findTranscript` helper instead of each reimplementing the search.
+- **Praxis session ids are now UUIDv7, not v4.** Praxis mints its own with
+  `uuid.NewV7` and keys its session store by id, so the millisecond prefix
+  is what makes that directory sort chronologically — flow's v4 ids
+  scattered among the native ones. The comment claiming flow required v4
+  was wrong: `tasks.session_id` is TEXT and `ValidateSessionID` accepts
+  v1-v7.
+
 ### Changed
 
+- **One shell-quoting implementation, at `internal/shellquote`.** The same
+  four-line POSIX quote function had been copy-pasted into all six
+  terminal backends plus a `spawner.ShellQuote` re-export, with a parity
+  test cross-checking the copies instead of removing them; the claude
+  adapter reached it through `spawner`, so the harness layer imported the
+  terminal-spawning layer it is supposed to be independent of. There is
+  now a single stdlib-only leaf package that all eight callers import, and
+  the parity test is replaced by a table of cases plus a round-trip through
+  a real `sh`.
 - **Skill token footprint cut ~55% via progressive disclosure.** The flow
   skill's `SKILL.md` is loaded resident by the Skill tool and re-billed as
   cached tokens on *every* turn, making it the dominant contributor to

@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"flow/internal/shellquote"
 )
 
 // Runner is the function used to execute osascript. Tests override
@@ -68,11 +70,11 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		sort.Strings(keys)
 		parts := make([]string, 0, len(envVars))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
+			parts = append(parts, fmt.Sprintf("%s=%s", k, shellquote.Quote(envVars[k])))
 		}
 		envPrefix = strings.Join(parts, " ") + " "
 	}
-	fullCommand := fmt.Sprintf(" cd %s && %s%s", ShellQuote(cwd), envPrefix, command)
+	fullCommand := fmt.Sprintf(" cd %s && %s%s", shellquote.Quote(cwd), envPrefix, command)
 	safeCommand := escapeAppleScriptString(fullCommand)
 	safeTitle := escapeAppleScriptString(title)
 
@@ -263,11 +265,6 @@ end tell
 		return false, fmt.Errorf("osascript: %w", err)
 	}
 	return strings.TrimSpace(string(out)) == "ok", nil
-}
-
-// ShellQuote wraps s in single quotes with proper escaping.
-func ShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func escapeAppleScriptString(s string) string {

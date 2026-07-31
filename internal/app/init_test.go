@@ -22,18 +22,16 @@ func initTempFlowRoot(t *testing.T) string {
 
 	oldRoot := os.Getenv("FLOW_ROOT")
 	oldHome := os.Getenv("HOME")
-	oldClaudeSID := os.Getenv("CLAUDE_CODE_SESSION_ID")
-	oldPraxisSID := os.Getenv("PRAXIS_SESSION_ID")
 	os.Setenv("FLOW_ROOT", root)
 	os.Setenv("HOME", home)
-	os.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	os.Setenv("PRAXIS_SESSION_ID", "")
 	t.Cleanup(func() {
 		os.Setenv("FLOW_ROOT", oldRoot)
 		os.Setenv("HOME", oldHome)
-		os.Setenv("CLAUDE_CODE_SESSION_ID", oldClaudeSID)
-		os.Setenv("PRAXIS_SESSION_ID", oldPraxisSID)
 	})
+	clearHarnessEnv(t)
+	// Harness availability is probed before every spawn; stub it so tests
+	// never depend on the real agent CLIs being installed on this machine.
+	stubHarnessPreflight(t)
 	return root
 }
 

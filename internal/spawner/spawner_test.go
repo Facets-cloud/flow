@@ -452,30 +452,6 @@ func stubAllFocusBackends(t *testing.T) focusFlags {
 	}
 }
 
-// TestShellQuoteParity makes sure the re-exported helper matches
-// every backend's implementation. All backends quote identically.
-func TestShellQuoteParity(t *testing.T) {
-	cases := []string{"plain", "with space", "with'quote", `back\slash`, ""}
-	for _, in := range cases {
-		exp := iterm.ShellQuote(in)
-		if got := ShellQuote(in); got != exp {
-			t.Errorf("spawner.ShellQuote(%q) = %q; want %q", in, got, exp)
-		}
-		if got := terminal.ShellQuote(in); got != exp {
-			t.Errorf("terminal.ShellQuote(%q) = %q; want %q", in, got, exp)
-		}
-		if got := zellij.ShellQuote(in); got != exp {
-			t.Errorf("zellij.ShellQuote(%q) = %q; want %q", in, got, exp)
-		}
-		if got := warp.ShellQuote(in); got != exp {
-			t.Errorf("warp.ShellQuote(%q) = %q; want %q", in, got, exp)
-		}
-		if got := ghostty.ShellQuote(in); got != exp {
-			t.Errorf("ghostty.ShellQuote(%q) = %q; want %q", in, got, exp)
-		}
-	}
-}
-
 // runnerFlags bundles per-backend "was called" flags so routing tests
 // can assert on which backend SpawnTab dispatched to without an
 // awkward multi-return-value tuple.

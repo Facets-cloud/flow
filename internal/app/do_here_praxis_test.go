@@ -46,3 +46,30 @@ func TestCmdDoHereBindsPraxisSession(t *testing.T) {
 		t.Errorf("status = %q, want in-progress", task.Status)
 	}
 }
+
+// --here binds the session the user is already in, so its harness is
+// fixed by the ambient env. Accepting --harness alongside it would look
+// like it selected something while being silently ignored.
+func TestCmdDoHereRejectsHarnessFlag(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "praxis-here")
+
+	const sid = "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
+	t.Setenv("PRAXIS_SESSION_ID", sid)
+
+	for _, name := range []string{"praxis", "claude"} {
+		if rc := cmdDo([]string{"praxis-here", "--here", "--harness", name}); rc != 2 {
+			t.Errorf("cmdDo --here --harness %s rc=%d, want 2", name, rc)
+		}
+	}
+
+	// And nothing was bound.
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "praxis-here")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionID.Valid && task.SessionID.String != "" {
+		t.Errorf("session_id = %q, want unset after a usage error", task.SessionID.String)
+	}
+}

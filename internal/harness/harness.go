@@ -128,6 +128,22 @@ type Harness interface {
 	// mention the right binary.
 	Binary() string
 
+	// Preflight reports whether this harness can actually be driven on
+	// this machine: the binary resolves on PATH and, where the launch
+	// path depends on a subcommand that only some builds ship, that
+	// subcommand exists. The error is shown to the user verbatim, so it
+	// must name the remedy.
+	//
+	// flow calls this BEFORE claiming a session id and writing it to the
+	// DB. That ordering matters: spawning happens by handing a command
+	// string to a terminal tab, and a tab opens successfully even when
+	// the command inside it dies immediately — so an unavailable harness
+	// would otherwise leave a task bound to a session that never
+	// existed, with every later resume failing the same way.
+	//
+	// Implementations must be cheap enough to run on every spawn.
+	Preflight() error
+
 	// SessionIDEnvVar returns the env var the harness exports inside
 	// each running session so flow can reverse-lookup the bound task
 	// (e.g. "CLAUDE_CODE_SESSION_ID"). Flow reads this; it never sets

@@ -37,6 +37,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"flow/internal/shellquote"
 )
 
 // Runner is the function used to execute kitty for side-effect calls
@@ -88,7 +90,7 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		sort.Strings(keys)
 		parts := make([]string, 0, len(envVars))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
+			parts = append(parts, fmt.Sprintf("%s=%s", k, shellquote.Quote(envVars[k])))
 		}
 		envPrefix = strings.Join(parts, " ") + " "
 	}
@@ -203,11 +205,4 @@ func windowIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int,
 		}
 	}
 	return 0, false, nil
-}
-
-// ShellQuote wraps s in single quotes with proper escaping. Same
-// implementation as iterm.ShellQuote / terminal.ShellQuote /
-// zellij.ShellQuote.
-func ShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

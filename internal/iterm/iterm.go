@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"flow/internal/shellquote"
 )
 
 // Runner is the function used to execute osascript for SpawnTab.
@@ -55,7 +57,7 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		sort.Strings(keys)
 		parts := make([]string, 0, len(envVars))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
+			parts = append(parts, fmt.Sprintf("%s=%s", k, shellquote.Quote(envVars[k])))
 		}
 		envPrefix = strings.Join(parts, " ") + " "
 	}
@@ -63,7 +65,7 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	// gives shells a default soft limit of 256, which trips Claude under
 	// heavy tool use ("possibly due to low max file descriptors"). Some
 	// terminal apps (Warp) raise it on their own; iTerm does not.
-	fullCommand := fmt.Sprintf(" cd %s && ulimit -n 65536 && %s%s", ShellQuote(cwd), envPrefix, command)
+	fullCommand := fmt.Sprintf(" cd %s && ulimit -n 65536 && %s%s", shellquote.Quote(cwd), envPrefix, command)
 	safeCommand := quoteAppleScriptString(fullCommand)
 	safeTitle := quoteAppleScriptString(title)
 
@@ -187,11 +189,6 @@ end tell
 		return false, fmt.Errorf("osascript: %w", err)
 	}
 	return strings.TrimSpace(string(out)) == "ok", nil
-}
-
-// ShellQuote wraps s in single quotes with proper escaping.
-func ShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func escapeAppleScriptString(s string) string {

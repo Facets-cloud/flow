@@ -163,8 +163,8 @@ chmod +x /usr/local/bin/flow
 xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
 
 # 2. Initialize. This is required — it creates ~/.flow/, the SQLite
-#    index, knowledge base, and Flow skill + SessionStart hook for every
-#    registered harness (currently Claude Code and Praxis).
+#    index, knowledge base, and Flow skill + hooks for every registered
+#    harness (currently Claude Code and Praxis).
 flow init
 ```
 
@@ -174,7 +174,12 @@ flow init
 - Writes the Flow skill to both `~/.claude/skills/flow/SKILL.md` and
   `~/.praxis/agent/skills/flow/SKILL.md`
 - Adds the matching SessionStart hook to each harness's settings file so
-  new sessions auto-load task context
+  new sessions auto-load task context, plus the UserPromptSubmit hook that
+  nudges drift/close-out inside a bound session
+
+`flow skill install|update|uninstall` cover the same set of harnesses, so
+an upgrade refreshes every installed skill and an uninstall leaves no
+orphaned hooks behind.
 
 The `xattr` step removes Gatekeeper's quarantine attribute so macOS
 doesn't refuse to run the unsigned binary.
@@ -209,6 +214,11 @@ flow init
 # Start an unbound task in Praxis.
 flow do <task> --harness praxis
 ```
+
+Requires a Praxis CLI that ships the `chat` subcommand. Flow checks for it
+before claiming a session id, so an older `praxis` fails fast with a clear
+message instead of opening a tab that dies on `unknown command "chat"` and
+leaving the task bound to a session that never started.
 
 ## What you get
 

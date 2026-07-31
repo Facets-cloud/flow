@@ -84,6 +84,9 @@ flow/
 - **`internal/terminal`** — osascript-based macOS Terminal.app tab spawning. Requires Accessibility for the cmd-T keystroke via System Events.
 - **`internal/warp`** — Warp tab spawning via `warp://action/new_tab` URI + osascript keystroke of a self-deleting per-spawn shell script. Exposes `warp.Runner`, `warp.OpenURL`, `warp.WriteScript` for test mocking. Requires Accessibility (same gate as Terminal.app).
 - **`internal/zellij`** — zellij CLI–based tab spawning. Active when `$ZELLIJ` is set in the environment.
+- **`internal/shellquote`** — the ONLY POSIX shell-quoting implementation. Stdlib-only leaf package imported by every terminal backend and every harness adapter. Deliberately outside both `harness/` and `spawner/` so a harness adapter can quote a launch argument without importing the terminal layer. Never re-add a local copy.
+- **`internal/harness`** — the `Harness` interface every agent CLI adapter implements (session ids, launch/resume command strings, `Preflight`, transcript rendering, skill + hook installation). Adapters live in `internal/harness/<name>/`.
+- **`internal/harness/hooksettings`** — shared Claude-compatible `settings.json` hook surgery (idempotent install, marker-based removal, preserves unrelated keys/events/siblings). Adapters pass their own settings path; the mutation logic exists once.
 
 ## Conventions
 

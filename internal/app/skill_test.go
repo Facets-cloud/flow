@@ -88,24 +88,17 @@ func expectedCommand(event string) string {
 	return ""
 }
 
-// withTempHome redirects $HOME to a tempdir for the duration of the test.
-// Also clears ALL registered harness session-id env vars so ambient
-// detection (which now includes praxis) doesn't leak the outer
-// session's env into the test.
+// withTempHome redirects $HOME to a tempdir for the duration of the test
+// and clears every registered harness's session-id env var so ambient
+// detection doesn't leak the outer session's env into the test.
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	oldHome := os.Getenv("HOME")
-	oldClaudeSID := os.Getenv("CLAUDE_CODE_SESSION_ID")
-	oldPraxisSID := os.Getenv("PRAXIS_SESSION_ID")
 	os.Setenv("HOME", dir)
-	os.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	os.Setenv("PRAXIS_SESSION_ID", "")
-	t.Cleanup(func() {
-		os.Setenv("HOME", oldHome)
-		os.Setenv("CLAUDE_CODE_SESSION_ID", oldClaudeSID)
-		os.Setenv("PRAXIS_SESSION_ID", oldPraxisSID)
-	})
+	t.Cleanup(func() { os.Setenv("HOME", oldHome) })
+	clearHarnessEnv(t)
+	stubHarnessPreflight(t)
 	return dir
 }
 

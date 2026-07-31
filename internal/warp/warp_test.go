@@ -10,16 +10,16 @@ import (
 // (Runner, OpenURL, WriteScript, removeScript) so tests can assert on
 // exactly what SpawnTab did. Restore originals on cleanup.
 type warpStubs struct {
-	writeCalls    []string // bodies passed to WriteScript
-	openCalls     []string // URIs passed to OpenURL
-	runnerCalls   [][]string
-	removeCalls   []string
-	scriptPath    string // returned by WriteScript stub
-	writeErr      error
-	openErr       error
-	runnerErr     error
-	removeErr     error
-	t             *testing.T
+	writeCalls  []string // bodies passed to WriteScript
+	openCalls   []string // URIs passed to OpenURL
+	runnerCalls [][]string
+	removeCalls []string
+	scriptPath  string // returned by WriteScript stub
+	writeErr    error
+	openErr     error
+	runnerErr   error
+	removeErr   error
+	t           *testing.T
 }
 
 func newWarpStubs(t *testing.T) *warpStubs {
@@ -221,7 +221,7 @@ func TestAppleScriptHasWasRunningBranch(t *testing.T) {
 		"delay 1.8",
 		"end if",
 		`keystroke "bash `,
-		"delay 0.5", // settle delay between typed text and CR — load-bearing
+		"delay 0.5",                      // settle delay between typed text and CR — load-bearing
 		`keystroke (ASCII character 13)`, // PTY-level CR — bypasses Warp's synthetic-Return filter
 	} {
 		if !strings.Contains(script, want) {
@@ -337,25 +337,6 @@ func TestSpawnTabWrapsAccessibilityError(t *testing.T) {
 				t.Errorf("wrapped error mentions Terminal (wrong copy):\n%s", es)
 			}
 		})
-	}
-}
-
-// TestShellQuote — same contract as iterm.ShellQuote / terminal.ShellQuote
-// / zellij.ShellQuote.
-func TestShellQuote(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"plain", "'plain'"},
-		{"with space", "'with space'"},
-		{"with'quote", `'with'\''quote'`},
-		{"", "''"},
-		{`back\slash`, `'back\slash'`},
-	}
-	for _, tc := range cases {
-		if got := ShellQuote(tc.in); got != tc.want {
-			t.Errorf("ShellQuote(%q) = %q; want %q", tc.in, got, tc.want)
-		}
 	}
 }
 

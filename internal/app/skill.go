@@ -44,10 +44,18 @@ const hookCommand = "flow hook session-start"
 // — changing it would orphan existing installations.
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
-// readSkillVersion returns the version string recorded in the
-// harness's skill-version sidecar, or "" if missing/unreadable.
+// readSkillVersion returns the version recorded for the ambient/default
+// harness. Kept for callers that only care about "this session's"
+// installation; anything that mutates installations must go per-harness
+// via readSkillVersionFor.
 func readSkillVersion() string {
-	p, err := defaultHarness().SkillVersionPath()
+	return readSkillVersionFor(defaultHarness())
+}
+
+// readSkillVersionFor returns the version string recorded in h's
+// skill-version sidecar, or "" if missing/unreadable.
+func readSkillVersionFor(h harness.Harness) string {
+	p, err := h.SkillVersionPath()
 	if err != nil {
 		return ""
 	}
@@ -58,17 +66,10 @@ func readSkillVersion() string {
 	return strings.TrimSpace(string(b))
 }
 
-// writeSkillVersion records `v` for the ambient/default harness. Errors
-// are non-fatal — failing to write the sidecar should never block a
-// successful skill install.
-func writeSkillVersion(v string) error {
-	return writeSkillVersionFor(defaultHarness(), v)
-}
-
-// writeSkillVersionFor records `v` for h. `flow init` installs every
-// registered integration, so it must write a sidecar adjacent to the skill
-// it actually installed rather than resolving the ambient/default harness
-// again.
+// writeSkillVersionFor records `v` for h. Every install path writes a
+// sidecar adjacent to the skill it actually installed rather than
+// resolving the ambient/default harness again. Errors are non-fatal —
+// failing to write the sidecar should never block a successful install.
 func writeSkillVersionFor(h harness.Harness, v string) error {
 	p, err := h.SkillVersionPath()
 	if err != nil {
@@ -80,12 +81,19 @@ func writeSkillVersionFor(h harness.Harness, v string) error {
 	return os.WriteFile(p, []byte(v+"\n"), 0o644)
 }
 
-// maybeAutoUpgradeSkill checks the recorded skill version against the
-// running binary's version and, if they differ, refreshes the skill +
-// SessionStart hook. Designed to run on every flow invocation so the
-// user gets a self-healing upgrade flow after replacing the binary.
+// maybeAutoUpgradeSkill checks each installed skill's recorded version
+// against the running binary's version and, where they differ, refreshes
+// that harness's skill bytes + hooks. Designed to run on every flow
+// invocation so the user gets a self-healing upgrade after replacing the
+// binary.
 //
-// The check is intentionally conservative — it does nothing when:
+// It sweeps EVERY registered harness, not just the ambient one: `flow
+// init` installs for all of them, and an installation that only upgrades
+// when you happen to run flow from inside that particular agent would
+// silently rot forever.
+//
+// The check is intentionally conservative — per harness it does nothing
+// when:
 //   - The binary is a "dev" build (Version == "dev"). Local devs use
 //     `make install` and shouldn't fight an auto-installer.
 //   - The skill isn't installed at all (sentinel: SKILL.md missing).
@@ -99,26 +107,28 @@ func maybeAutoUpgradeSkill() {
 	if Version == "" || Version == "dev" {
 		return
 	}
-	h := defaultHarness()
-	skillPath, err := h.SkillInstallPath()
-	if err != nil {
-		return
+	for _, h := range allHarnesses() {
+		skillPath, err := h.SkillInstallPath()
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(skillPath); err != nil {
+			// Not installed → user opted out; don't reinstall behind
+			// their back.
+			continue
+		}
+		if readSkillVersionFor(h) == Version {
+			continue
+		}
+		// Version mismatch — refresh skill bytes and both hooks.
+		if err := h.InstallSkill(skillFiles()); err != nil {
+			continue
+		}
+		_ = writeSkillVersionFor(h, Version)
+		_, _ = h.InstallSessionStartHook(hookCommand)
+		_, _ = h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand)
+		fmt.Fprintf(os.Stderr, "flow: upgraded %s skill to %s\n", h.Name(), Version)
 	}
-	if _, err := os.Stat(skillPath); err != nil {
-		// Not installed → user opted out; don't reinstall behind their back.
-		return
-	}
-	if readSkillVersion() == Version {
-		return
-	}
-	// Version mismatch — refresh skill bytes and the SessionStart hook.
-	if err := h.InstallSkill(skillFiles()); err != nil {
-		return
-	}
-	_ = writeSkillVersion(Version)
-	_, _ = h.InstallSessionStartHook(hookCommand)
-	_, _ = h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand)
-	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
 // cmdSkill dispatches `flow skill install|uninstall|update`.
@@ -149,50 +159,67 @@ func skillInstall(args []string, forceDefault bool) int {
 		return 2
 	}
 
-	h := defaultHarness()
-	dest, err := h.SkillInstallPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	// Install for every registered harness, matching `flow init`. Doing
+	// only the ambient one would leave the other installations to rot at
+	// whatever version first wrote them, since `flow skill update` is
+	// normally run from an ordinary terminal.
+	harnesses := allHarnesses()
+	dests := make([]string, len(harnesses))
+	var existing []string
+	for i, h := range harnesses {
+		dest, err := h.SkillInstallPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s: %v\n", h.Name(), err)
+			return 1
+		}
+		dests[i] = dest
+		if _, err := os.Stat(dest); err == nil {
+			existing = append(existing, dest)
+		} else if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", dest, err)
+			return 1
+		}
+	}
+	// Refuse before touching anything, so a partial install can't happen.
+	if len(existing) > 0 && !*force {
+		fmt.Fprintf(os.Stderr, "error: %s already exists; use --force to overwrite\n",
+			strings.Join(existing, ", "))
 		return 1
 	}
-	if _, err := os.Stat(dest); err == nil && !*force {
-		fmt.Fprintf(os.Stderr, "error: %s already exists; use --force to overwrite\n", dest)
-		return 1
-	} else if err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", dest, err)
-		return 1
+
+	for i, h := range harnesses {
+		if err := h.InstallSkill(skillFiles()); err != nil {
+			fmt.Fprintf(os.Stderr, "error: install %s skill: %v\n", h.Name(), err)
+			return 1
+		}
+		if err := writeSkillVersionFor(h, Version); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not record %s skill version: %v\n", h.Name(), err)
+		}
+		fmt.Printf("installed flow skill for %s to %s\n", h.Name(), dests[i])
 	}
-	if err := h.InstallSkill(skillFiles()); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	if err := writeSkillVersion(Version); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
-	}
-	fmt.Printf("installed flow skill to %s\n", dest)
 
 	if *skipHook {
 		fmt.Println("--skip-hook: leaving harness settings alone")
 		return 0
 	}
-	if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
-		// Non-fatal: the skill is still usable without the hook; the
-		// user can wire it manually. Return 0 so `flow init` doesn't
-		// fail on a settings quirk.
-		return 0
-	} else if added {
-		fmt.Printf("installed SessionStart hook (fires on startup + resume)\n")
-	} else {
-		fmt.Println("SessionStart hook already installed — leaving as is")
-	}
-	if added, err := h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install UserPromptSubmit hook: %v\n", err)
-		return 0
-	} else if added {
-		fmt.Println("installed UserPromptSubmit hook (nudges drift/close-out on bound-session prompts)")
-	} else {
-		fmt.Println("UserPromptSubmit hook already installed — leaving as is")
+	// Hook failures are non-fatal: the skill is still usable without
+	// them and the user can wire them manually. Report and keep going so
+	// one harness's settings quirk can't block the others.
+	for _, h := range harnesses {
+		if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not install %s SessionStart hook: %v\n", h.Name(), err)
+		} else if added {
+			fmt.Printf("installed %s SessionStart hook (fires on startup + resume)\n", h.Name())
+		} else {
+			fmt.Printf("%s SessionStart hook already installed — leaving as is\n", h.Name())
+		}
+		if added, err := h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not install %s UserPromptSubmit hook: %v\n", h.Name(), err)
+		} else if added {
+			fmt.Printf("installed %s UserPromptSubmit hook (nudges drift/close-out on bound-session prompts)\n", h.Name())
+		} else {
+			fmt.Printf("%s UserPromptSubmit hook already installed — leaving as is\n", h.Name())
+		}
 	}
 	return 0
 }
@@ -203,38 +230,43 @@ func skillUninstall(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	h := defaultHarness()
-	dest, err := h.SkillInstallPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	skillDir := filepath.Dir(dest)
-	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
-		fmt.Printf("flow skill not installed at %s — nothing to do\n", skillDir)
-	} else {
-		if err := h.UninstallSkill(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	// Uninstall must be the exact inverse of install/init, which cover
+	// every registered harness — otherwise `flow skill uninstall` leaves
+	// another agent's skill dir and, worse, a live `flow hook` entry in
+	// its settings.json.
+	for _, h := range allHarnesses() {
+		dest, err := h.SkillInstallPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s: %v\n", h.Name(), err)
 			return 1
 		}
-		fmt.Printf("uninstalled flow skill from %s\n", skillDir)
-	}
+		skillDir := filepath.Dir(dest)
+		if _, err := os.Stat(skillDir); os.IsNotExist(err) {
+			fmt.Printf("flow skill not installed for %s at %s — nothing to do\n", h.Name(), skillDir)
+		} else {
+			if err := h.UninstallSkill(); err != nil {
+				fmt.Fprintf(os.Stderr, "error: uninstall %s skill: %v\n", h.Name(), err)
+				return 1
+			}
+			fmt.Printf("uninstalled flow skill for %s from %s\n", h.Name(), skillDir)
+		}
 
+		if *keepHook {
+			continue
+		}
+		if removed, err := h.UninstallSessionStartHook(hookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remove %s SessionStart hook: %v\n", h.Name(), err)
+		} else if removed {
+			fmt.Printf("removed %s SessionStart hook\n", h.Name())
+		}
+		if removed, err := h.UninstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remove %s UserPromptSubmit hook: %v\n", h.Name(), err)
+		} else if removed {
+			fmt.Printf("removed %s UserPromptSubmit hook\n", h.Name())
+		}
+	}
 	if *keepHook {
-		fmt.Println("--keep-hook: leaving SessionStart hook in place")
-		return 0
-	}
-	if removed, err := h.UninstallSessionStartHook(hookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not remove SessionStart hook: %v\n", err)
-		return 0
-	} else if removed {
-		fmt.Println("removed SessionStart hook")
-	}
-	if removed, err := h.UninstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not remove UserPromptSubmit hook: %v\n", err)
-		return 0
-	} else if removed {
-		fmt.Println("removed UserPromptSubmit hook")
+		fmt.Println("--keep-hook: leaving hooks in place")
 	}
 	return 0
 }

@@ -71,6 +71,49 @@ func TestMaybeAutoUpgradeUpgradesOnMismatch(t *testing.T) {
 	}
 }
 
+// The auto-upgrade sweep must cover every harness, not just the ambient
+// one. `flow` almost always runs from an ordinary terminal, where the
+// ambient harness is the default — so a single-harness sweep would leave
+// every other installed skill frozen at whatever version first wrote it.
+func TestMaybeAutoUpgradeCoversAllHarnesses(t *testing.T) {
+	home := withTempHome(t)
+	withVersion(t, "v1.0.0")
+	if rc := cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+
+	// No session env vars are set here, so the ambient harness is the
+	// default (claude) — exactly the situation that used to strand the
+	// praxis copy.
+	stalePaths := []string{
+		filepath.Join(home, ".claude", "skills", "flow", "SKILL.md"),
+		filepath.Join(home, ".praxis", "agent", "skills", "flow", "SKILL.md"),
+	}
+	for _, p := range stalePaths {
+		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	Version = "v2.0.0"
+	maybeAutoUpgradeSkill()
+
+	for _, p := range stalePaths {
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		if string(got) == "stale" {
+			t.Errorf("auto-upgrade did not refresh %s", p)
+		}
+	}
+	for _, h := range allHarnesses() {
+		if v := readSkillVersionFor(h); v != "v2.0.0" {
+			t.Errorf("%s VERSION sidecar=%q after upgrade, want v2.0.0", h.Name(), v)
+		}
+	}
+}
+
 func TestMaybeAutoUpgradeIdempotent(t *testing.T) {
 	home := withTempHome(t)
 	withVersion(t, "v1.0.0")

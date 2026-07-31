@@ -77,20 +77,3 @@ func TestSpawnTabNoEnvVars(t *testing.T) {
 		t.Errorf("unexpected env assignment in command line: %s", captured)
 	}
 }
-
-// TestShellQuote is a sanity check on the local helper — same contract
-// as iterm.ShellQuote and terminal.ShellQuote.
-func TestShellQuote(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"plain", "'plain'"},
-		{"with space", "'with space'"},
-		{"with'quote", `'with'\''quote'`},
-	}
-	for _, tc := range cases {
-		if got := ShellQuote(tc.in); got != tc.want {
-			t.Errorf("ShellQuote(%q) = %q; want %q", tc.in, got, tc.want)
-		}
-	}
-}

@@ -281,20 +281,3 @@ func stubRunnerOutput(t *testing.T, fn func([]string) ([]byte, error)) {
 	RunnerOutput = fn
 	t.Cleanup(func() { RunnerOutput = old })
 }
-
-// TestShellQuote is a sanity check on the local helper — same contract
-// as iterm.ShellQuote.
-func TestShellQuote(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"plain", "'plain'"},
-		{"with space", "'with space'"},
-		{"with'quote", `'with'\''quote'`},
-	}
-	for _, tc := range cases {
-		if got := ShellQuote(tc.in); got != tc.want {
-			t.Errorf("ShellQuote(%q) = %q; want %q", tc.in, got, tc.want)
-		}
-	}
-}

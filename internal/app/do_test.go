@@ -1274,6 +1274,7 @@ func TestCmdDoSelectsPraxisHarness(t *testing.T) {
 	oldNewUUID := praxis.NewUUID
 	praxis.NewUUID = func() (string, error) { return sid, nil }
 	t.Cleanup(func() { praxis.NewUUID = oldNewUUID })
+	stubPraxisPreflight(t, nil)
 
 	if rc := cmdDo([]string{"praxis-task", "--harness", "praxis"}); rc != 0 {
 		t.Fatalf("cmdDo rc=%d", rc)
@@ -1307,6 +1308,40 @@ func TestCmdDoSelectsPraxisHarness(t *testing.T) {
 	}
 	if !task.Harness.Valid || task.Harness.String != "praxis" {
 		t.Errorf("harness = %+v, want praxis", task.Harness)
+	}
+}
+
+// An unusable harness must be caught BEFORE the session id is claimed.
+// Spawning only hands a command string to a terminal tab, so a tab opens
+// fine even when the command inside it dies instantly — without the
+// preflight the task would end up pinned to a session that never existed,
+// and every later `flow do` would resume into the same dead command.
+func TestCmdDoPreflightFailureLeavesTaskUnbound(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "praxis-task")
+	spawnCount, _ := stubITerm(t)
+	stubPraxisPreflight(t, errors.New("exit status 1"))
+
+	if rc := cmdDo([]string{"praxis-task", "--harness", "praxis"}); rc != 1 {
+		t.Fatalf("cmdDo rc=%d, want 1", rc)
+	}
+	if got := atomic.LoadInt64(spawnCount); got != 0 {
+		t.Errorf("spawn calls=%d, want 0 — nothing should launch", got)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "praxis-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionID.Valid && task.SessionID.String != "" {
+		t.Errorf("session_id = %q, want unset after a failed preflight", task.SessionID.String)
+	}
+	if task.Harness.Valid && task.Harness.String != "" {
+		t.Errorf("harness = %q, want unset after a failed preflight", task.Harness.String)
+	}
+	if task.Status == "in-progress" {
+		t.Error("status advanced to in-progress despite a failed preflight")
 	}
 }
 

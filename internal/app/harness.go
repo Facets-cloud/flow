@@ -92,19 +92,27 @@ func harnessForTask(task *flowdb.Task) (harness.Harness, error) {
 }
 
 // ambientHarness probes the current process env for each known
-// harness's session-id env var. Returns the matching adapter if
-// exactly one is set; returns nil if none are set OR if multiple
-// are (defensive — shouldn't happen in practice, but if a user
-// nests sessions we'd rather refuse to guess than pick wrong).
+// harness's session-id env var and returns the FIRST match in registry
+// order, or nil if none are set.
+//
+// This is the single ambient-detection rule for the whole binary —
+// currentSessionID, harnessForSpawn, defaultHarness, `flow do --here`
+// and the hook's bound-task lookup all resolve through it, so they
+// cannot disagree about which session this process is in.
+//
+// Multiple vars CAN be set: a harness exports its session id into child
+// processes, so nesting one inside another (running `claude` from a
+// praxis tool call, say) leaves both visible and no rule can tell which
+// shell is innermost. First-match-wins is deterministic and cheap;
+// picking wrong is caught downstream by ValidateSession, which stats the
+// transcript the chosen harness would have written. Refusing to guess
+// was worse: it made `flow show` report "no harness session" while the
+// hook, using its own rule, happily resolved the binding.
 func ambientHarness() harness.Harness {
-	var matches []harness.Harness
 	for _, h := range allHarnesses() {
 		if v := os.Getenv(h.SessionIDEnvVar()); v != "" {
-			matches = append(matches, h)
+			return h
 		}
-	}
-	if len(matches) == 1 {
-		return matches[0]
 	}
 	return nil
 }

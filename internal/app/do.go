@@ -146,6 +146,13 @@ func cmdDo(args []string) int {
 	}
 
 	if *here {
+		// --here binds the session the user is already sitting in, so the
+		// harness is whatever that session runs under — there is nothing
+		// for --harness to select. Reject rather than silently ignore it.
+		if *harnessName != "" {
+			fmt.Fprintln(os.Stderr, "error: --harness cannot be used with --here (the ambient session's harness is the harness)")
+			return 2
+		}
 		return cmdDoHere(query, *force)
 	}
 
@@ -203,6 +210,15 @@ func cmdDo(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
+	}
+
+	// Confirm the harness is actually usable before any DB mutation. A
+	// spawn only hands a command string to a terminal tab, so a missing
+	// or too-old CLI would otherwise leave the task bound to a session
+	// that never started, failing identically on every later resume.
+	if err := h.Preflight(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s harness unavailable: %v\n", h.Name(), err)
+		return 1
 	}
 
 	// Background-agent mode ($FLOW_TERM=bg): spawn a terminal-free
@@ -889,13 +905,9 @@ func cmdDoHere(query string, force bool) int {
 	// mask the "user isn't in any harness" case.
 	h := ambientHarness()
 	if h == nil {
-		var probed []string
-		for _, hh := range allHarnesses() {
-			probed = append(probed, "$"+hh.SessionIDEnvVar())
-		}
 		fmt.Fprintf(os.Stderr,
 			"error: --here requires running inside a known harness session; none of %s is set\n",
-			strings.Join(probed, ", "))
+			harnessEnvVarHint())
 		return 1
 	}
 	sid := os.Getenv(h.SessionIDEnvVar())

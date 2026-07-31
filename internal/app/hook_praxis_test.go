@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"flow/internal/flowdb"
+	"os"
 	"strings"
 	"testing"
 )
@@ -97,28 +98,57 @@ func TestHookUserPromptSubmitBoundViaPraxisSessionID(t *testing.T) {
 	}
 }
 
-// TestAmbientSessionIDProbesAllHarnesses verifies that the env-var
+// TestCurrentSessionIDProbesAllHarnesses verifies that the env-var
 // lookup probes all registered harnesses, not just claude.
-func TestAmbientSessionIDProbesAllHarnesses(t *testing.T) {
+func TestCurrentSessionIDProbesAllHarnesses(t *testing.T) {
 	setupFlowRoot(t)
 
 	// Nothing set → empty.
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("PRAXIS_SESSION_ID", "")
-	if got := ambientSessionID(); got != "" {
-		t.Errorf("ambientSessionID() = %q, want empty", got)
+	if got := currentSessionID(); got != "" {
+		t.Errorf("currentSessionID() = %q, want empty", got)
 	}
 
 	// PRAXIS_SESSION_ID set → found.
 	t.Setenv("PRAXIS_SESSION_ID", "test-praxis-sid")
-	if got := ambientSessionID(); got != "test-praxis-sid" {
-		t.Errorf("ambientSessionID() = %q, want test-praxis-sid", got)
+	if got := currentSessionID(); got != "test-praxis-sid" {
+		t.Errorf("currentSessionID() = %q, want test-praxis-sid", got)
 	}
 
 	// CLAUDE wins (registered first in allHarnesses).
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "test-claude-sid")
 	t.Setenv("PRAXIS_SESSION_ID", "test-praxis-sid")
-	if got := ambientSessionID(); got != "test-claude-sid" {
-		t.Errorf("ambientSessionID() = %q, want test-claude-sid (claude is registered first)", got)
+	if got := currentSessionID(); got != "test-claude-sid" {
+		t.Errorf("currentSessionID() = %q, want test-claude-sid (claude is registered first)", got)
+	}
+}
+
+// Every ambient-detection caller must resolve through the SAME rule:
+// before unification the hook picked the first match while
+// currentSessionID refused to guess, so a nested session got task
+// context injected by the hook while `flow show` reported no session.
+func TestAmbientDetectionAgreesAcrossCallers(t *testing.T) {
+	setupFlowRoot(t)
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "test-claude-sid")
+	t.Setenv("PRAXIS_SESSION_ID", "test-praxis-sid")
+
+	h := ambientHarness()
+	if h == nil {
+		t.Fatal("ambientHarness() = nil with two session env vars set; callers would disagree")
+	}
+	if got, want := currentSessionID(), os.Getenv(h.SessionIDEnvVar()); got != want {
+		t.Errorf("currentSessionID() = %q but ambientHarness() is %s (%q)", got, h.Name(), want)
+	}
+	spawn, err := harnessForSpawn(nil)
+	if err != nil {
+		t.Fatalf("harnessForSpawn: %v", err)
+	}
+	if spawn.Name() != h.Name() {
+		t.Errorf("harnessForSpawn = %s, ambientHarness = %s", spawn.Name(), h.Name())
+	}
+	if defaultHarness().Name() != h.Name() {
+		t.Errorf("defaultHarness = %s, ambientHarness = %s", defaultHarness().Name(), h.Name())
 	}
 }

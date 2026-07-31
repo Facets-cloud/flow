@@ -8,8 +8,8 @@ import (
 )
 
 // TestSpawnTabBasicNoEnv verifies the two-call argv sequence with no env vars:
-//  1) zellij action new-tab --name <title> --cwd <cwd>
-//  2) zellij action write-chars " <command>\n"   (leading space for histignorespace)
+//  1. zellij action new-tab --name <title> --cwd <cwd>
+//  2. zellij action write-chars " <command>\n"   (leading space for histignorespace)
 func TestSpawnTabBasicNoEnv(t *testing.T) {
 	var calls [][]string
 	old := Runner
@@ -314,20 +314,4 @@ func stubRunnerOutput(t *testing.T, fn func([]string) ([]byte, error)) {
 	old := RunnerOutput
 	RunnerOutput = fn
 	t.Cleanup(func() { RunnerOutput = old })
-}
-
-// TestShellQuote — same contract as iterm.ShellQuote / terminal.ShellQuote.
-func TestShellQuote(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"plain", "'plain'"},
-		{"with space", "'with space'"},
-		{"with'quote", `'with'\''quote'`},
-	}
-	for _, tc := range cases {
-		if got := ShellQuote(tc.in); got != tc.want {
-			t.Errorf("ShellQuote(%q) = %q; want %q", tc.in, got, tc.want)
-		}
-	}
 }

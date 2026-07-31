@@ -23,8 +23,8 @@
 // for the LLM, so this is lossless.
 //
 // This file mirrors the contract of internal/iterm and internal/terminal
-// — same SpawnTab signature, same Runner mock var for tests, same
-// ShellQuote helper.
+// — same SpawnTab signature, same Runner mock var for tests, and the
+// shared internal/shellquote for value quoting.
 package zellij
 
 import (
@@ -34,6 +34,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"flow/internal/shellquote"
 )
 
 // Runner is the function used to execute zellij.
@@ -74,7 +76,7 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		sort.Strings(keys)
 		parts := make([]string, 0, len(envVars))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
+			parts = append(parts, fmt.Sprintf("%s=%s", k, shellquote.Quote(envVars[k])))
 		}
 		envPrefix = strings.Join(parts, " ") + " "
 	}
@@ -165,10 +167,4 @@ func paneIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int, b
 		return p.ID, true, nil
 	}
 	return 0, false, nil
-}
-
-// ShellQuote wraps s in single quotes with proper escaping. Same
-// implementation as iterm.ShellQuote and terminal.ShellQuote.
-func ShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
