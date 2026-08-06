@@ -41,6 +41,8 @@ func Run(args []string) int {
 		return cmdAdd(rest)
 	case "do":
 		return cmdDo(rest)
+	case "focus":
+		return cmdFocus(rest)
 	case "__auto-exec":
 		// Hidden: the detached supervisor entry point for `flow do --auto`.
 		// Not listed in usage; invoked only by autoLauncher.
@@ -103,6 +105,7 @@ Sessions:
   flow do                <ref> [--fresh] [--dangerously-skip-permissions]
   flow do --auto         <ref>                 (run headlessly in the background; self-completes via flow done)
   flow done              <ref>
+  flow focus             <session-id|slug>     (bring the terminal tab running that session to the front)
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
 Read:
