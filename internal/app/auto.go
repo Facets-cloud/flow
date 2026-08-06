@@ -176,13 +176,35 @@ func recordAutoRunLaunched(db *sql.DB, slug string, pid int, logPath string) err
 // finalizeAutoRun records a terminal auto-run status ('completed' or
 // 'dead') and clears the supervisor pid. Best-effort: errors are returned
 // for the caller to log, but the run is over regardless.
+//
+// This is also where the auto-run notification fires. An autonomous run
+// has no tab and no human watching it, so without a banner its outcome
+// is invisible until the user thinks to check. Notifying here rather
+// than at the call sites means every terminal transition is covered —
+// including the early-return path where the harness fails to resolve.
 func finalizeAutoRun(db *sql.DB, slug, status string) error {
 	now := flowdb.NowISO()
 	_, err := db.Exec(
 		`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=? WHERE slug=?`,
 		status, now, now, slug,
 	)
+	notifyAutoRun(slug, status, autoRunLogPath(db, slug))
 	return err
+}
+
+// autoRunLogPath returns the recorded log path for a task's auto run, or
+// "" if unavailable. Used to point a 'dead' notification at the log
+// worth reading. Errors are swallowed — a missing path just means a
+// slightly less helpful banner.
+func autoRunLogPath(db *sql.DB, slug string) string {
+	t, err := flowdb.GetTask(db, slug)
+	if err != nil || t == nil {
+		return ""
+	}
+	if t.AutoRunLog.Valid {
+		return t.AutoRunLog.String
+	}
+	return ""
 }
 
 // reconcileAutoRun promotes a stale 'running' row to 'dead' when its

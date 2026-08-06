@@ -278,4 +278,18 @@ type Harness interface {
 	// UninstallUserPromptSubmitHook removes any UserPromptSubmit entry
 	// matching `command`. Used by `flow skill uninstall`.
 	UninstallUserPromptSubmitHook(command string) (removed bool, err error)
+
+	// InstallNotificationHook idempotently registers `command` as a
+	// Notification hook filtered by `matcher`. Unlike UserPromptSubmit,
+	// this event DOES support a matcher, which is matched against the
+	// payload's notification_type — so the harness filters events before
+	// flow is ever executed. Returns (added=true) iff the on-disk hook
+	// config was actually modified.
+	//
+	// A harness with no notification concept may return (false, nil).
+	InstallNotificationHook(command, matcher string) (added bool, err error)
+
+	// UninstallNotificationHook removes any Notification entry whose
+	// inner command matches `command`.
+	UninstallNotificationHook(command string) (removed bool, err error)
 }
