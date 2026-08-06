@@ -132,11 +132,26 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 // surfacing the existing "session running elsewhere" error so the
 // user knows to switch manually or pass --force.
 //
-// Backend dispatch mirrors SpawnTab:
+// Backend dispatch mirrors SpawnTab — every backend is matched
+// explicitly:
 //   - Zellij: list-panes JSON match on pane_command + focus-pane-id
 //   - Kitty: `kitty @ ls` JSON match on foreground_processes cmdline + focus-window
 //   - Terminal.app: pid → tty via ps, then osascript walk
-//   - iTerm2 (default): pid → tty via ps, then osascript walk
+//   - iTerm2: pid → tty via ps, then osascript walk
+//   - Warp: activates the app, always reports a miss (no scripting surface)
+//   - Ghostty: activates the app, always reports a miss (no tty in its sdef)
+//
+// The unknown-backend case returns (false, nil) — "no matching tab" —
+// rather than falling through to iTerm2. An earlier version used
+// `default: iterm.FocusSession(...)`, which meant Warp and Ghostty
+// (whose Backend constants exist and whose SpawnTab paths are fully
+// implemented) silently drove iTerm2's AppleScript dictionary. On a
+// machine without iTerm2 installed that raises an osascript error, or
+// worse prompts the user to locate the application; on a machine with
+// iTerm2 it could focus an unrelated iTerm2 tab that happens to match
+// the tty. Dispatching every known backend explicitly and treating
+// unknown ones as a miss keeps a new Backend constant from silently
+// inheriting the wrong implementation again.
 func FocusSession(sessionID, binary string) (bool, error) {
 	switch Detect() {
 	case BackendZellij:
@@ -145,8 +160,14 @@ func FocusSession(sessionID, binary string) (bool, error) {
 		return kitty.FocusSession(sessionID, binary)
 	case BackendTerminal:
 		return terminal.FocusSession(sessionID, binary)
-	default:
+	case BackendWarp:
+		return warp.FocusSession(sessionID, binary)
+	case BackendGhostty:
+		return ghostty.FocusSession(sessionID, binary)
+	case BackendITerm:
 		return iterm.FocusSession(sessionID, binary)
+	default:
+		return false, nil
 	}
 }
 

@@ -341,7 +341,7 @@ func TestFocusSessionRoutesToITerm(t *testing.T) {
 	if !*flags.iterm {
 		t.Error("expected iterm focus path to be called")
 	}
-	if *flags.terminal || *flags.zellij || *flags.kitty {
+	if *flags.terminal || *flags.zellij || *flags.kitty || *flags.warp || *flags.ghostty {
 		t.Error("only iterm focus path should be called")
 	}
 }
@@ -359,7 +359,7 @@ func TestFocusSessionRoutesToTerminal(t *testing.T) {
 	if !*flags.terminal {
 		t.Error("expected terminal focus path to be called")
 	}
-	if *flags.iterm || *flags.zellij || *flags.kitty {
+	if *flags.iterm || *flags.zellij || *flags.kitty || *flags.warp || *flags.ghostty {
 		t.Error("only terminal focus path should be called")
 	}
 }
@@ -377,7 +377,7 @@ func TestFocusSessionRoutesToZellij(t *testing.T) {
 	if !*flags.zellij {
 		t.Error("expected zellij focus path to be called")
 	}
-	if *flags.iterm || *flags.terminal || *flags.kitty {
+	if *flags.iterm || *flags.terminal || *flags.kitty || *flags.warp || *flags.ghostty {
 		t.Error("only zellij focus path should be called")
 	}
 }
@@ -397,7 +397,7 @@ func TestFocusSessionRoutesToKitty(t *testing.T) {
 	if !*flags.kitty {
 		t.Error("expected kitty focus path to be called")
 	}
-	if *flags.iterm || *flags.terminal || *flags.zellij {
+	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.warp || *flags.ghostty {
 		t.Error("only kitty focus path should be called")
 	}
 }
@@ -406,7 +406,7 @@ func TestFocusSessionRoutesToKitty(t *testing.T) {
 // routing tests can assert which backend FocusSession dispatched to
 // without an awkward multi-return-value tuple.
 type focusFlags struct {
-	iterm, terminal, zellij, kitty *bool
+	iterm, terminal, zellij, kitty, warp, ghostty *bool
 }
 
 // stubAllFocusBackends replaces the per-backend PSRunner / RunnerOutput
@@ -414,7 +414,7 @@ type focusFlags struct {
 // path runs. Restores originals on cleanup.
 func stubAllFocusBackends(t *testing.T) focusFlags {
 	t.Helper()
-	var itermCalled, terminalCalled, zellijCalled, kittyCalled bool
+	var itermCalled, terminalCalled, zellijCalled, kittyCalled, warpCalled, ghosttyCalled bool
 
 	oldITermPS := iterm.PSRunner
 	iterm.PSRunner = func() ([]byte, error) {
@@ -444,11 +444,94 @@ func stubAllFocusBackends(t *testing.T) focusFlags {
 	}
 	t.Cleanup(func() { kitty.RunnerOutput = oldKittyRO })
 
+	// Warp has no scriptable focus surface, so its FocusSession only
+	// activates the app — ActivateApp is the observable call.
+	oldWarpActivate := warp.ActivateApp
+	warp.ActivateApp = func() error {
+		warpCalled = true
+		return nil
+	}
+	t.Cleanup(func() { warp.ActivateApp = oldWarpActivate })
+
+	oldGhosttyPS := ghostty.PSRunner
+	ghostty.PSRunner = func() ([]byte, error) {
+		ghosttyCalled = true
+		return []byte(""), nil // empty ps output -> no tty -> (false, nil)
+	}
+	t.Cleanup(func() { ghostty.PSRunner = oldGhosttyPS })
+
 	return focusFlags{
 		iterm:    &itermCalled,
 		terminal: &terminalCalled,
 		zellij:   &zellijCalled,
 		kitty:    &kittyCalled,
+		warp:     &warpCalled,
+		ghostty:  &ghosttyCalled,
+	}
+}
+
+// TestFocusSessionRoutesToWarp — Override=Warp must reach the warp
+// backend, NOT iTerm2. Before the explicit-dispatch fix, spawner's
+// `default:` arm sent Warp (and Ghostty) into iterm.FocusSession, which
+// drives iTerm2's AppleScript dictionary against a machine that may not
+// even have iTerm2 installed.
+func TestFocusSessionRoutesToWarp(t *testing.T) {
+	Override = BackendWarp
+	t.Cleanup(func() { Override = "" })
+
+	flags := stubAllFocusBackends(t)
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
+	if err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if focused {
+		t.Error("warp cannot select a specific tab; must report a miss")
+	}
+	if !*flags.warp {
+		t.Error("expected warp focus path to be called")
+	}
+	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.kitty || *flags.ghostty {
+		t.Error("only warp focus path should be called")
+	}
+}
+
+// TestFocusSessionRoutesToGhostty — Override=Ghostty must reach the
+// ghostty backend rather than falling through to iTerm2.
+func TestFocusSessionRoutesToGhostty(t *testing.T) {
+	Override = BackendGhostty
+	t.Cleanup(func() { Override = "" })
+
+	flags := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*flags.ghostty {
+		t.Error("expected ghostty focus path to be called")
+	}
+	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.kitty || *flags.warp {
+		t.Error("only ghostty focus path should be called")
+	}
+}
+
+// TestFocusSessionUnknownBackendIsMiss pins the replacement for the old
+// `default: iterm.FocusSession(...)` arm. A Backend constant that
+// FocusSession doesn't know about must report a clean miss rather than
+// silently inheriting iTerm2's implementation — that inheritance is
+// exactly how Warp and Ghostty ended up driving the wrong terminal.
+func TestFocusSessionUnknownBackendIsMiss(t *testing.T) {
+	Override = Backend("some-future-terminal")
+	t.Cleanup(func() { Override = "" })
+
+	flags := stubAllFocusBackends(t)
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
+	if err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if focused {
+		t.Error("unknown backend must report a miss")
+	}
+	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.kitty || *flags.warp || *flags.ghostty {
+		t.Error("unknown backend must not dispatch to any backend")
 	}
 }
 
