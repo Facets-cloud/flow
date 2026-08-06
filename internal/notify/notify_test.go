@@ -225,3 +225,26 @@ func TestNotifyMessageWithShellMetacharacters(t *testing.T) {
 		t.Errorf("-message = %q; want it passed through verbatim as argv", got)
 	}
 }
+
+// TestNotifyIgnoreDoNotDisturb — a blocked session stalls until noticed,
+// so its banner must punch through Focus modes. Informational banners
+// (auto-run completion) leave the flag off and can be suppressed.
+func TestNotifyIgnoreDoNotDisturb(t *testing.T) {
+	stubLookPath(t, true)
+
+	calls := stubRunner(t, nil)
+	if err := Notify(Request{Message: "blocked", IgnoreDoNotDisturb: true}); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if !hasFlag((*calls)[0].args, "-ignoreDnD") {
+		t.Errorf("expected -ignoreDnD when IgnoreDoNotDisturb is set; got %v", (*calls)[0].args)
+	}
+
+	calls2 := stubRunner(t, nil)
+	if err := Notify(Request{Message: "fyi"}); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if hasFlag((*calls2)[0].args, "-ignoreDnD") {
+		t.Errorf("-ignoreDnD must be opt-in; got %v", (*calls2)[0].args)
+	}
+}

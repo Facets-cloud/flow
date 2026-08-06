@@ -114,6 +114,11 @@ func buildNotification(p notificationPayload) notify.Request {
 		// of each other, which is the whole point across many tabs.
 		Group: notificationGroup(p.SessionID),
 		Sound: "default",
+		// A blocked session stalls until someone notices it, so a Focus
+		// mode suppressing the banner defeats the feature entirely.
+		// Auto-run banners deliberately don't set this — those are
+		// informational and can wait.
+		IgnoreDoNotDisturb: true,
 	}
 }
 

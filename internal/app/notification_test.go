@@ -357,3 +357,20 @@ func TestEnsureNotifierInstalledBrewFailure(t *testing.T) {
 
 	ensureNotifierInstalled() // must return normally despite the failure
 }
+
+// TestBlockedBannerIgnoresDoNotDisturb — the whole feature is "a session
+// is stalled waiting on you", so a Focus mode must not suppress it.
+func TestBlockedBannerIgnoresDoNotDisturb(t *testing.T) {
+	t.Setenv("FLOW_ROOT", filepath.Join(t.TempDir(), "nonexistent"))
+
+	for _, nt := range []string{"permission_prompt", "idle_prompt"} {
+		req := buildNotification(notificationPayload{
+			SessionID:        testSessionUUID,
+			NotificationType: nt,
+			Message:          "needs you",
+		})
+		if !req.IgnoreDoNotDisturb {
+			t.Errorf("%s: blocked-session banner must set IgnoreDoNotDisturb", nt)
+		}
+	}
+}

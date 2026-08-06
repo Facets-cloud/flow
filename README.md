@@ -344,9 +344,16 @@ die, since they have no tab to watch.
   cannot do. `flow init` installs it via Homebrew automatically. Without
   it you still get banners — they just aren't clickable. To install it
   yourself: `brew install terminal-notifier`.
-- **macOS must be allowed to show the banners.** Check System Settings →
-  Notifications and make sure `terminal-notifier` is enabled and set to
-  Banners or Alerts. Focus modes / Do Not Disturb will suppress them.
+- **Make the banners stick around.** By default macOS shows them as
+  *banners*, which auto-dismiss after a few seconds — easy to miss, which
+  defeats the point. In System Settings → Notifications → **terminal-notifier**,
+  set **Alert style** to **Alerts** and they stay on screen until you
+  dismiss or click them (the same behaviour Calendar uses for events).
+  macOS reserves this choice for you; no CLI flag can set it.
+
+  Blocked-session banners are posted with `-ignoreDnD`, so a Focus mode
+  won't hide them — a stalled session is exactly what shouldn't be
+  silenced. Auto-run completion banners deliberately don't do this.
 
 Terminal support for click-to-focus matches what each terminal exposes:
 iTerm2, Terminal.app, kitty and zellij focus the exact tab. Ghostty does

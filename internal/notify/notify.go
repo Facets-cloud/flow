@@ -67,7 +67,32 @@ type Request struct {
 	// Sound is an optional sound name ("default" for the standard
 	// notification sound). Empty means silent.
 	Sound string
+	// IgnoreDoNotDisturb delivers the notification even while a Focus
+	// mode is active. Set for "a session is blocked waiting on you"
+	// banners: the whole point is that the task stalls until noticed, so
+	// suppressing it defeats the feature. Not set for informational
+	// banners like auto-run completion.
+	//
+	// This does NOT control banner-vs-alert persistence — macOS keeps
+	// that under the user's control in System Settings → Notifications,
+	// and no CLI flag can override it. See PersistenceHint.
+	IgnoreDoNotDisturb bool
 }
+
+// PersistenceHint explains how to make banners persist on screen rather
+// than auto-dismissing after a few seconds. Exposed as a string (rather
+// than being applied automatically) because macOS deliberately reserves
+// this choice for the user: an app declares a default, but System
+// Settings → Notifications is authoritative and no command-line flag can
+// override it.
+//
+// The notification is owned by terminal-notifier — the signed bundle
+// that posts it — so it's terminal-notifier's entry that has to change,
+// not flow's.
+const PersistenceHint = `To keep flow banners on screen until dismissed (like Calendar alerts):
+  System Settings → Notifications → terminal-notifier → Alert style: Alerts
+
+macOS reserves this setting for you; flow cannot set it programmatically.`
 
 // Available reports whether a clickable banner can be delivered — i.e.
 // whether terminal-notifier is installed. Callers use this to decide
@@ -110,6 +135,9 @@ func notifyViaTerminalNotifier(req Request) error {
 	}
 	if req.Sound != "" {
 		args = append(args, "-sound", req.Sound)
+	}
+	if req.IgnoreDoNotDisturb {
+		args = append(args, "-ignoreDnD")
 	}
 	if req.Execute != "" {
 		args = append(args, "-execute", req.Execute)

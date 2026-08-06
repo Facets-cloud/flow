@@ -68,4 +68,6 @@ func ensureNotifierInstalled() {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "installed terminal-notifier")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, notify.PersistenceHint)
 }
