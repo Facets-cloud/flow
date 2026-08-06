@@ -152,8 +152,53 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 // the tty. Dispatching every known backend explicitly and treating
 // unknown ones as a miss keeps a new Backend constant from silently
 // inheriting the wrong implementation again.
+// A session lives in whichever terminal spawned it, which is NOT
+// necessarily the backend Detect() picks. Detect() answers "where would
+// a new tab go", driven by the ambient environment — and $FLOW_TERM in
+// particular is a *spawn* preference that outranks $TERM_PROGRAM. So a
+// user with FLOW_TERM=iterm who still has older tabs in Terminal.app
+// would have every focus attempt aimed at iTerm2, missing tabs that
+// plainly exist elsewhere.
+//
+// Focus therefore follows the TAB, not the environment: try the detected
+// backend first (the common case, and the cheapest), then fall back to
+// every other backend until one claims the session. Each backend matches
+// on the session's controlling tty, so a backend that doesn't host the
+// tab reports a miss rather than focusing something wrong — which makes
+// the sweep safe.
+//
+// Warp and Ghostty are skipped in the fallback sweep despite being
+// probed first when detected: neither can select a specific tab, and
+// both have the side effect of foregrounding their app. Running them
+// speculatively would yank focus to an app that cannot complete the job.
 func FocusSession(sessionID, binary string) (bool, error) {
-	switch Detect() {
+	detected := Detect()
+	focused, err := focusVia(detected, sessionID, binary)
+	if focused {
+		return true, nil
+	}
+	// Only the detected backend's error is worth surfacing: it's the one
+	// the user is actually sitting in, so a genuine failure there (a
+	// broken osascript, a dead zellij socket) is real signal. Errors from
+	// the speculative sweep below are not — "kitty: executable file not
+	// found" just means the user doesn't have kitty, which says nothing
+	// about whether the session was found.
+	firstErr := err
+
+	for _, b := range []Backend{BackendITerm, BackendTerminal, BackendKitty, BackendZellij} {
+		if b == detected {
+			continue // already tried
+		}
+		if focused, _ := focusVia(b, sessionID, binary); focused {
+			return true, nil
+		}
+	}
+	return false, firstErr
+}
+
+// focusVia dispatches to one backend's FocusSession.
+func focusVia(b Backend, sessionID, binary string) (bool, error) {
+	switch b {
 	case BackendZellij:
 		return zellij.FocusSession(sessionID, binary)
 	case BackendKitty:

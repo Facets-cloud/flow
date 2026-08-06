@@ -1,6 +1,8 @@
 package spawner
 
 import (
+	"errors"
+
 	"flow/internal/ghostty"
 	"flow/internal/iterm"
 	"flow/internal/kitty"
@@ -341,8 +343,10 @@ func TestFocusSessionRoutesToITerm(t *testing.T) {
 	if !*flags.iterm {
 		t.Error("expected iterm focus path to be called")
 	}
-	if *flags.terminal || *flags.zellij || *flags.kitty || *flags.warp || *flags.ghostty {
-		t.Error("only iterm focus path should be called")
+	// Other backends may also be probed by the cross-terminal fallback
+	// sweep; what matters is that the detected backend was tried.
+	if *flags.warp || *flags.ghostty {
+		t.Error("warp/ghostty must never be probed speculatively — they steal focus")
 	}
 }
 
@@ -359,8 +363,8 @@ func TestFocusSessionRoutesToTerminal(t *testing.T) {
 	if !*flags.terminal {
 		t.Error("expected terminal focus path to be called")
 	}
-	if *flags.iterm || *flags.zellij || *flags.kitty || *flags.warp || *flags.ghostty {
-		t.Error("only terminal focus path should be called")
+	if *flags.warp || *flags.ghostty {
+		t.Error("warp/ghostty must never be probed speculatively — they steal focus")
 	}
 }
 
@@ -377,8 +381,8 @@ func TestFocusSessionRoutesToZellij(t *testing.T) {
 	if !*flags.zellij {
 		t.Error("expected zellij focus path to be called")
 	}
-	if *flags.iterm || *flags.terminal || *flags.kitty || *flags.warp || *flags.ghostty {
-		t.Error("only zellij focus path should be called")
+	if *flags.warp || *flags.ghostty {
+		t.Error("warp/ghostty must never be probed speculatively — they steal focus")
 	}
 }
 
@@ -397,8 +401,8 @@ func TestFocusSessionRoutesToKitty(t *testing.T) {
 	if !*flags.kitty {
 		t.Error("expected kitty focus path to be called")
 	}
-	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.warp || *flags.ghostty {
-		t.Error("only kitty focus path should be called")
+	if *flags.warp || *flags.ghostty {
+		t.Error("warp/ghostty must never be probed speculatively — they steal focus")
 	}
 }
 
@@ -490,8 +494,8 @@ func TestFocusSessionRoutesToWarp(t *testing.T) {
 	if !*flags.warp {
 		t.Error("expected warp focus path to be called")
 	}
-	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.kitty || *flags.ghostty {
-		t.Error("only warp focus path should be called")
+	if *flags.ghostty {
+		t.Error("ghostty must not be probed when warp is detected")
 	}
 }
 
@@ -508,16 +512,19 @@ func TestFocusSessionRoutesToGhostty(t *testing.T) {
 	if !*flags.ghostty {
 		t.Error("expected ghostty focus path to be called")
 	}
-	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.kitty || *flags.warp {
-		t.Error("only ghostty focus path should be called")
+	if *flags.warp {
+		t.Error("warp must not be probed when ghostty is detected")
 	}
 }
 
-// TestFocusSessionUnknownBackendIsMiss pins the replacement for the old
-// `default: iterm.FocusSession(...)` arm. A Backend constant that
-// FocusSession doesn't know about must report a clean miss rather than
-// silently inheriting iTerm2's implementation — that inheritance is
-// exactly how Warp and Ghostty ended up driving the wrong terminal.
+// TestFocusSessionUnknownBackendIsMiss — an unrecognised Backend must
+// never inherit iTerm2's implementation as its *primary* dispatch (the
+// old `default: iterm.FocusSession(...)` arm, which is how Warp and
+// Ghostty ended up driving the wrong terminal). It still reports a miss
+// when nothing hosts the session.
+//
+// The searchable backends ARE probed here — that's the cross-terminal
+// fallback doing its job, and it's safe because each matches on tty.
 func TestFocusSessionUnknownBackendIsMiss(t *testing.T) {
 	Override = Backend("some-future-terminal")
 	t.Cleanup(func() { Override = "" })
@@ -528,10 +535,106 @@ func TestFocusSessionUnknownBackendIsMiss(t *testing.T) {
 		t.Fatalf("FocusSession: %v", err)
 	}
 	if focused {
-		t.Error("unknown backend must report a miss")
+		t.Error("unknown backend must report a miss when no terminal hosts the session")
 	}
-	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.kitty || *flags.warp || *flags.ghostty {
-		t.Error("unknown backend must not dispatch to any backend")
+	// Warp and Ghostty foreground their app as a side effect and cannot
+	// select a tab, so they must never be probed speculatively.
+	if *flags.warp || *flags.ghostty {
+		t.Error("warp/ghostty must not be probed speculatively — they steal focus without being able to finish the job")
+	}
+}
+
+// TestFocusSessionFallsBackAcrossTerminals is the cross-terminal sweep.
+//
+// A session lives in whichever terminal spawned it, which need not be
+// the one Detect() picks — $FLOW_TERM is a *spawn* preference and
+// outranks $TERM_PROGRAM, so a user who sets FLOW_TERM=iterm but still
+// has tabs open in Terminal.app would otherwise have every focus attempt
+// aimed at the wrong app. Focus must follow the tab.
+func TestFocusSessionFallsBackAcrossTerminals(t *testing.T) {
+	Override = BackendITerm // detected backend does NOT host the session
+	t.Cleanup(func() { Override = "" })
+
+	var itermTried, terminalTried bool
+
+	oldITermPS := iterm.PSRunner
+	iterm.PSRunner = func() ([]byte, error) {
+		itermTried = true
+		return []byte(""), nil // iTerm2 doesn't have it
+	}
+	t.Cleanup(func() { iterm.PSRunner = oldITermPS })
+
+	// Terminal.app does host it: ps finds the tty, osascript says "ok".
+	oldTermPS := terminal.PSRunner
+	terminal.PSRunner = func() ([]byte, error) {
+		terminalTried = true
+		return []byte("42 ttys004  claude --session-id 11111111-2222-4333-8444-555555555555\n"), nil
+	}
+	t.Cleanup(func() { terminal.PSRunner = oldTermPS })
+
+	oldTermRO := terminal.RunnerOutput
+	terminal.RunnerOutput = func([]string) ([]byte, error) { return []byte("ok"), nil }
+	t.Cleanup(func() { terminal.RunnerOutput = oldTermRO })
+
+	oldKittyRO := kitty.RunnerOutput
+	kitty.RunnerOutput = func([]string) ([]byte, error) { return []byte("[]"), nil }
+	t.Cleanup(func() { kitty.RunnerOutput = oldKittyRO })
+
+	oldZellijRO := zellij.RunnerOutput
+	zellij.RunnerOutput = func([]string) ([]byte, error) { return []byte("[]"), nil }
+	t.Cleanup(func() { zellij.RunnerOutput = oldZellijRO })
+
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
+	if err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !focused {
+		t.Fatal("expected the sweep to find the session in Terminal.app")
+	}
+	if !itermTried {
+		t.Error("the detected backend should be tried first")
+	}
+	if !terminalTried {
+		t.Error("the sweep should have reached Terminal.app")
+	}
+}
+
+// TestFocusSessionUninstalledBackendErrorIsNotSurfaced — a speculative
+// probe of a terminal the user doesn't have ("kitty: executable file not
+// found") says nothing about whether the session exists, so it must not
+// surface as the caller's error. Only the detected backend's failure is
+// real signal.
+func TestFocusSessionUninstalledBackendErrorIsNotSurfaced(t *testing.T) {
+	Override = BackendITerm
+	t.Cleanup(func() { Override = "" })
+
+	oldITermPS := iterm.PSRunner
+	iterm.PSRunner = func() ([]byte, error) { return []byte(""), nil } // clean miss
+	t.Cleanup(func() { iterm.PSRunner = oldITermPS })
+
+	oldTermPS := terminal.PSRunner
+	terminal.PSRunner = func() ([]byte, error) { return []byte(""), nil }
+	t.Cleanup(func() { terminal.PSRunner = oldTermPS })
+
+	// kitty and zellij aren't installed — their probes error.
+	oldKittyRO := kitty.RunnerOutput
+	kitty.RunnerOutput = func([]string) ([]byte, error) {
+		return nil, errors.New(`kitty @ ls: exec: "kitty": executable file not found in $PATH`)
+	}
+	t.Cleanup(func() { kitty.RunnerOutput = oldKittyRO })
+
+	oldZellijRO := zellij.RunnerOutput
+	zellij.RunnerOutput = func([]string) ([]byte, error) {
+		return nil, errors.New(`exec: "zellij": executable file not found in $PATH`)
+	}
+	t.Cleanup(func() { zellij.RunnerOutput = oldZellijRO })
+
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
+	if focused {
+		t.Error("no backend hosts the session; want a miss")
+	}
+	if err != nil {
+		t.Errorf("uninstalled-terminal errors must not surface; got %v", err)
 	}
 }
 

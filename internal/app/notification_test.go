@@ -219,9 +219,40 @@ func TestFocusCommandRejectsNonUUID(t *testing.T) {
 		}
 	}
 
-	// The legitimate shape still produces a command.
-	if got := focusCommand(testSessionUUID); got != "flow focus "+testSessionUUID {
-		t.Errorf("focusCommand(valid) = %q", got)
+	// The legitimate shape still produces a command, ending in the
+	// session id.
+	got := focusCommand(testSessionUUID)
+	if !strings.HasSuffix(got, " focus "+testSessionUUID) {
+		t.Errorf("focusCommand(valid) = %q; want it to end in ` focus <uuid>`", got)
+	}
+
+	// The binary must be referenced by ABSOLUTE, QUOTED path — not a
+	// bare `flow`. terminal-notifier's click handler runs with the
+	// system default PATH and does not source shell rc files, so a bare
+	// `flow` silently does nothing when the banner is clicked. Quoting
+	// matters because checkout paths legitimately contain spaces.
+	if strings.HasPrefix(got, "flow ") {
+		t.Error("click command must not rely on PATH — it runs in a minimal env where flow is not found")
+	}
+	if !strings.HasPrefix(got, "'/") {
+		t.Errorf("click command must start with a single-quoted absolute path; got %q", got)
+	}
+}
+
+// TestShellQuote covers the quoting that keeps a checkout path with
+// spaces (this repo lives under "Facets Work") from splitting into
+// separate shell words when terminal-notifier runs -execute.
+func TestShellQuote(t *testing.T) {
+	cases := map[string]string{
+		`/usr/local/bin/flow`:       `'/usr/local/bin/flow'`,
+		`/Users/x/Facets Work/flow`: `'/Users/x/Facets Work/flow'`,
+		`/tmp/it's/flow`:            `'/tmp/it'\''s/flow'`,
+		``:                          `''`,
+	}
+	for in, want := range cases {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %s; want %s", in, got, want)
+		}
 	}
 }
 

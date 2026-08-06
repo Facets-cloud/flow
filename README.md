@@ -337,7 +337,12 @@ session so a chatty task replaces its own banner instead of burying the
 others. Autonomous `flow do --auto` runs also notify when they finish or
 die, since they have no tab to watch.
 
-**Two setup notes:**
+**Three setup notes:**
+
+- **Keep the installed binary current.** The banner's click action invokes
+  the flow binary that posted it, by absolute path. If you build from
+  source, run `make install` so `~/.local/bin/flow` isn't a stale copy
+  without the `focus` subcommand.
 
 - **Clickable banners need `terminal-notifier`.** macOS only lets a
   registered app attach an action to a notification, which `osascript`

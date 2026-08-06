@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -126,18 +127,51 @@ func buildNotification(p notificationPayload) notify.Request {
 // banner is clicked. Returns "" when the session id fails validation, in
 // which case the banner is posted without a click action.
 //
+// The flow binary is referenced by ABSOLUTE PATH, not as a bare `flow`.
+// terminal-notifier's click handler runs in a minimal environment that
+// does not source the user's shell rc files, so its PATH is the system
+// default (/usr/bin:/bin:/usr/sbin:/sbin and friends). flow typically
+// lives in ~/.local/bin, which is only on PATH because .zshrc puts it
+// there — so a bare `flow focus …` silently does nothing when clicked.
+// os.Executable() is the running binary, which is by definition the one
+// that has the focus subcommand.
+//
 // SECURITY: terminal-notifier passes -execute to a shell, so this string
-// is a shell injection sink. The session id originates in a JSON payload
-// on stdin — not attacker-controlled in any realistic flow deployment,
-// but it is external input reaching a shell, so it is validated against
-// a strict UUID shape rather than quoted. Anything that isn't
-// hex-and-dashes in the 8-4-4-4-12 layout is rejected outright, which
-// leaves no character a shell could act on.
+// is a shell injection sink. Two inputs reach it, both handled:
+//   - The session id comes from a JSON payload on stdin. It is validated
+//     against a strict UUID shape rather than quoted, so no character a
+//     shell could act on survives.
+//   - The binary path comes from os.Executable() and is single-quoted,
+//     since a user's checkout path can legitimately contain spaces (this
+//     repo lives under "Facets Work") and could contain quotes.
 func focusCommand(sessionID string) string {
 	if !looksLikeUUID(sessionID) {
 		return ""
 	}
-	return "flow focus " + sessionID
+	return shellQuote(flowBinaryPath()) + " focus " + sessionID
+}
+
+// flowBinaryPath returns an absolute path to the running flow binary,
+// falling back to a bare "flow" if the lookup fails — better a click
+// that might work via PATH than no click action at all.
+func flowBinaryPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "flow"
+	}
+	// Resolve symlinks so a click doesn't depend on a link that may be
+	// replaced during an upgrade.
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		return resolved
+	}
+	return exe
+}
+
+// shellQuote wraps s in single quotes with embedded-quote escaping, so a
+// path containing spaces or quotes survives the shell terminal-notifier
+// runs -execute through.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // notificationGroup returns the -group ID for a session's banners.
