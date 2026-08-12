@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/codex"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
 	"io"
@@ -36,6 +37,15 @@ func stubNewUUID(t *testing.T, sid string) {
 	old := claude.NewUUID
 	claude.NewUUID = func() (string, error) { return sid, nil }
 	t.Cleanup(func() { claude.NewUUID = old })
+}
+
+func stubCodexProbe(t *testing.T, sid string) {
+	t.Helper()
+	old := codex.ProbeRunner
+	codex.ProbeRunner = func() ([]byte, error) {
+		return []byte(`{"type":"thread.started","thread_id":"` + sid + `"}`), nil
+	}
+	t.Cleanup(func() { codex.ProbeRunner = old })
 }
 
 // stubITerm replaces iterm.Runner with a counter + captured-script
@@ -131,6 +141,13 @@ func TestCmdDoLiveSessionGuard(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "live-task")
 
+	// This exercises the Claude-specific live-process guard. Clear the
+	// ambient harness inherited from the test process (which may be Codex)
+	// so harnessForSpawn selects Claude as intended.
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+
 	const pinnedSID = "abcdef12-3456-4789-8abc-def012345678"
 	// Pre-bind the task to the pinned session so the live check has
 	// something to match against. (Without bootstrapping via cmdDo —
@@ -169,6 +186,103 @@ func TestCmdDoLiveSessionGuard(t *testing.T) {
 	}
 	if *count != 1 {
 		t.Errorf("iterm spawn count after --force = %d, want 1", *count)
+	}
+}
+
+// TestCmdDoCurrentSessionGuard covers the case ps cannot see: a task was
+// bound with `do --here`, then `do <task>` is invoked from that same active
+// Codex thread. Resuming it would create a second writer and Codex refuses
+// the TUI bootstrap, so this must be an idempotent no-op.
+func TestCmdDoCurrentSessionGuard(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "current-codex-task")
+
+	const sid = "019ff4b1-6162-7263-974f-f5f1866ad0fe"
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=?, session_started=?, harness='codex' WHERE slug='current-codex-task'`,
+		sid, flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	t.Setenv("CODEX_THREAD_ID", sid)
+	spawns, _ := stubITerm(t)
+	out := captureStdout(t, func() {
+		if rc := cmdDo([]string{"current-codex-task"}); rc != 0 {
+			t.Errorf("cmdDo rc=%d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "Already open: current-codex-task — this is the current session") {
+		t.Errorf("cmdDo output = %q", out)
+	}
+	if *spawns != 0 {
+		t.Errorf("spawn count = %d, want 0", *spawns)
+	}
+}
+
+func TestCmdDoExplicitHarnessSelectsCodexForNewTask(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "explicit-codex")
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	// Exercise the important cross-harness case: Claude is ambient, but the
+	// user explicitly asks flow to open this *new* task in Codex.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "658bf2be-5ae3-4842-a8a4-e0d0b785514d")
+	const sid = "019ff4b1-6162-7263-974f-f5f1866ad0fe"
+	stubCodexProbe(t, sid)
+	_, script := stubITerm(t)
+
+	if rc := cmdDo([]string{"explicit-codex", "--harness", "codex"}); rc != 0 {
+		t.Fatalf("cmdDo rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	defer db.Close()
+	task, err := flowdb.GetTask(db, "explicit-codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Harness.String != "codex" || task.SessionID.String != sid {
+		t.Errorf("task = harness=%q session=%q, want codex/%q", task.Harness.String, task.SessionID.String, sid)
+	}
+	if !strings.Contains(script(), "codex resume "+sid) {
+		t.Errorf("spawn script did not resume Codex: %q", script())
+	}
+}
+
+func TestCmdDoExplicitHarnessRefusesStartedTask(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "started-task")
+	db := openFlowDB(t)
+	if _, err := db.Exec(
+		`UPDATE tasks SET harness='claude', session_id=?, session_started=? WHERE slug='started-task'`,
+		"658bf2be-5ae3-4842-a8a4-e0d0b785514d", flowdb.NowISO(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	_, _ = stubITerm(t)
+	stderr := captureStderr(t)
+	if rc := cmdDo([]string{"started-task", "--harness", "codex"}); rc == 0 {
+		t.Fatal("cmdDo succeeded, want explicit harness refusal")
+	}
+	if got := stderr(); !strings.Contains(got, "only selects the first session") {
+		t.Errorf("stderr = %q", got)
+	}
+}
+
+func TestCmdDoRejectsHarnessWithHere(t *testing.T) {
+	stderr := captureStderr(t)
+	if rc := cmdDo([]string{"task", "--here", "--harness", "codex"}); rc != 2 {
+		t.Errorf("cmdDo rc=%d, want 2", rc)
+	}
+	if got := stderr(); !strings.Contains(got, "cannot be used with --here") {
+		t.Errorf("stderr = %q", got)
 	}
 }
 

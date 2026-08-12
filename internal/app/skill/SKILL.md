@@ -141,7 +141,7 @@ Create
   flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
 
 Sessions
-  flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
+  flow do               <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]
                               [--with "<instruction>" | --with-file <path>]
   flow do --here        <ref> [--force]   (bind THIS harness session to the task — no new tab)
   flow do --auto        <ref> [--with "<instruction>" | --with-file <path>]
@@ -406,6 +406,13 @@ X", or a bare `flow do --auto X`.
 3. On "no task matching", ask the user to clarify or offer `flow add task`.
 4. Pass `--fresh` ONLY if the user explicitly asked ("start over", "fresh
    session"). Never on your own.
+5. **Harness selection:** if the user explicitly asks to open an
+   unbootstrapped task in another harness (for example, "open auth in
+   Codex" while speaking from Claude Code), pass `--harness codex`.
+   Without that flag, flow selects the active harness automatically. This is
+   a first-session choice only: never offer `--harness` for a task that
+   already has a session or is in progress, because its harness is pinned to
+   preserve its transcript and resume path.
 
 **Autonomous mode (`--auto`):** launches a detached headless run instead
 of a tab, returns immediately, does the work end-to-end and calls `flow
@@ -824,9 +831,11 @@ Y?", stop and use the tool.
 
 ## 9. The execution-session bootstrap contract
 
-When `flow do <task>` spawns a session, it selects the task's pinned harness
-or the active one (`CODEX_THREAD_ID` → Codex; otherwise Claude Code by
-default). Claude Code accepts a flow-minted UUID. Codex first mints a real
+When `flow do <task>` spawns a session, it selects the task's pinned harness,
+the explicit first-session `--harness <claude|codex>` choice, or the active
+harness (`CODEX_THREAD_ID` → Codex; otherwise Claude Code by default).
+`--harness` is rejected once a task already has a session. Claude Code accepts
+a flow-minted UUID. Codex first mints a real
 thread with `codex exec --json`, then flow opens `codex resume <thread-id>`.
 The chosen harness and session id are stored before the interactive tab opens,
 so there is no self-registration step. Subsequent `flow do <same-task>` calls

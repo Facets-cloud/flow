@@ -235,6 +235,12 @@ before flow opens `codex resume <thread-id>`. Future `flow do` calls resume
 the recorded conversation. A SessionStart hook re-injects the task brief,
 updates, and repository context on every resume.
 
+To start an unbootstrapped task in a different supported harness, choose it
+explicitly: `flow do <task> --harness codex` (or `--harness claude`). This
+only selects the first session. Once a task has a session, its harness remains
+pinned so flow can safely resume the same transcript instead of transferring
+an in-progress task.
+
 When `flow do <task>` is run for a task whose session is already
 live in another tab, flow focuses that tab instead of spawning a
 duplicate. The source tab prints "Already open: `<slug>` — switched

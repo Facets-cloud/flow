@@ -87,7 +87,7 @@ func Run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Println(`flow — personal task and Claude session manager
+	fmt.Println(`flow — personal task and agent-session manager
 
 Setup:
   flow init
@@ -100,8 +100,8 @@ Create:
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>]
 
 Sessions:
-  flow do                <ref> [--fresh] [--dangerously-skip-permissions]
-  flow do --auto         <ref>                 (run headlessly in the background; self-completes via flow done)
+  flow do                <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions]
+  flow do --auto         <ref> [--harness claude|codex] (run headlessly in the background; self-completes via flow done)
   flow done              <ref>
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
@@ -123,8 +123,8 @@ Edit / mutate:
                             [--waiting "<who or what>"] [--clear-waiting]
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
   flow update project <ref> [--priority h|m|l]
-  flow do        <ref> [--fresh] [--dangerously-skip-permissions] [--force]   (spawn a new tab; --force overrides the live-session guard)
-  flow do --here <ref> [--force]                                              (bind THIS Claude session to the task; --force overwrites a prior binding)
+  flow do        <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard)
+  flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>
 
@@ -137,7 +137,7 @@ Workdirs:
 Playbooks:
   flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
   flow run playbook   <slug> [--dangerously-skip-permissions]   (spawn a new tab)
-  flow run playbook   <slug> --here                              (bind THIS Claude session to the new run; no new tab)
+  flow run playbook   <slug> --here                              (bind THIS harness session to the new run; no new tab)
   flow run playbook   <slug> --auto                              (run the playbook headlessly in the background)
   flow show playbook  <ref>
   flow list playbooks [--project <slug>] [--include-archived]

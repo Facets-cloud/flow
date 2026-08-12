@@ -99,7 +99,7 @@ func runProbe() ([]byte, error) {
 	// This probe intentionally persists its thread: the interactive `codex
 	// resume` started immediately afterwards must resume this exact id.
 	return exec.Command(
-		"codex", "exec", "--json", "--sandbox", "read-only",
+		"codex", "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
 		"Reply exactly with OK. Do not make any changes.",
 	).Output()
 }
