@@ -170,7 +170,7 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 
 	// Simulate a future build having pinned the task.
 	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET harness='codex' WHERE slug='future-pin'`); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET harness='gemini' WHERE slug='future-pin'`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -181,7 +181,7 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 		t.Fatalf("cmdDo rc=%d, want non-zero (unsupported pin should refuse)", rc)
 	}
 	got := stderr()
-	if !strings.Contains(got, "codex") || !strings.Contains(got, "isn't supported") {
+	if !strings.Contains(got, "gemini") || !strings.Contains(got, "isn't supported") {
 		t.Errorf("stderr should name the unsupported harness; got:\n%s", got)
 	}
 
@@ -190,8 +190,8 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Harness.String != "codex" {
-		t.Errorf("refusal should preserve the pin; got %q, want codex",
+	if task.Harness.String != "gemini" {
+		t.Errorf("refusal should preserve the pin; got %q, want gemini",
 			task.Harness.String)
 	}
 	if task.SessionID.Valid {
