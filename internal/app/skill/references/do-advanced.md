@@ -29,7 +29,7 @@ right Settings pane. When you see that error:
 
 1. **Trust the error verbatim.** It says "Terminal" because macOS
    attributes Accessibility to the responsible parent app, which is
-	Terminal.app — NOT Claude Code or Codex, and NOT the flow binary. Do not advise
+   Terminal.app — NOT Claude Code or Codex, and NOT the flow binary. Do not advise
    the user to toggle "Claude" or "flow"; that wastes their time.
 2. **Open the Accessibility pane for them**: run
    `open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"`.
