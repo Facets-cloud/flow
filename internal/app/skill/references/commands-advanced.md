@@ -12,7 +12,7 @@ yours), use:
 flow transcript <sibling-task-slug>
 ```
 
-This outputs a readable conversation transcript from that task's Claude
+This outputs a readable conversation transcript from that task's harness
 session — user messages, assistant messages, tool calls, and results.
 Use `--compact` to omit tool results and thinking blocks for a shorter
 overview. Pipe through `grep` or `head` if the full transcript is too

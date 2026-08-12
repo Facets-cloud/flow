@@ -34,13 +34,13 @@ basics in this order:
    `AskUserQuestion` (header: "Open it now?", options:
    "Open it now" / "Later, just save") to ask whether to run
    `flow do <slug>`. Briefly explain in the question: a dedicated
-   Claude session gets the brief, updates, and repo conventions
+   agent session gets the brief, updates, and repo conventions
    automatically. If "Open it now", proceed to §4.4. If "Later",
    stop here.
 
 4. **Mention the knowledge base.** "As we work together, I'll
    automatically note durable facts about you and your org in
-   `~/.flow/kb/`. These notes carry across sessions so future Claude
+   `~/.flow/kb/`. These notes carry across sessions so future agent
    conversations have context without you repeating yourself."
 
 5. **Point to daily use.** "From any session, just say 'what should I

@@ -5,7 +5,7 @@
 #### Special case: live-session guard
 
 `flow do` refuses to spawn when the task's `session_id` is already
-running in another Claude process — typically because the user has the
+running in another process of the task's harness — typically because the user has the
 task's tab open elsewhere and forgot. The error names the running
 session ID and points at `--force`. When you see it:
 
@@ -29,7 +29,7 @@ right Settings pane. When you see that error:
 
 1. **Trust the error verbatim.** It says "Terminal" because macOS
    attributes Accessibility to the responsible parent app, which is
-   Terminal.app — NOT Claude Code, NOT the flow binary. Do not advise
+   Terminal.app — NOT Claude Code, Codex, or the flow binary. Do not advise
    the user to toggle "Claude" or "flow"; that wastes their time.
 2. **Open the Accessibility pane for them**: run
    `open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"`.
@@ -45,7 +45,7 @@ right Settings pane. When you see that error:
 Macros for this: do not invent more candidate apps to toggle, do not
 suggest the user reinstall flow, do not attempt to grant Accessibility
 yourself. macOS guards Accessibility deliberately — there is no CLI to
-self-grant it, and Claude cannot bypass that.
+self-grant it, and an agent cannot bypass that.
 
 #### Surgical instructions: `--with` and `--with-file`
 

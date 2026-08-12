@@ -1,7 +1,7 @@
 ---
 name: flow
 description: |
-  Personal task and Claude session manager. CLI binary is `flow` (assumed
+  Personal task and agent-session manager. CLI binary is `flow` (assumed
   on PATH) and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the
   user asks about their work, tasks, or projects in any natural phrasing —
   including but not limited to: "what's left", "what's remaining",
@@ -17,7 +17,7 @@ description: |
   on", "blocked on", "stuck until", "mark done", "archive", "weekly
   review", "clean up my tasks", or when the user invokes any
   `flow <subcommand>` directly. Also use whenever the user asks you to
-  bootstrap a new Claude session on a task or tell them about their
+  bootstrap a new Claude Code or Codex session on a task or tell them about their
   in-flight work.
 ---
 
@@ -26,16 +26,16 @@ description: |
 ## 1. What flow is
 
 `flow` is a small CLI (assumed on `$PATH`) that the user uses to track
-personal work and bootstrap per-task Claude sessions. Metadata (projects,
+personal work and bootstrap per-task agent sessions. Metadata (projects,
 tasks, workdirs, session IDs) lives in a single SQLite database at
 `~/.flow/flow.db`. Free-form plan content lives on disk as markdown
 "briefs" at `~/.flow/projects/<slug>/brief.md` and
 `~/.flow/tasks/<slug>/brief.md`. Progress notes accumulate as dated
 markdown files under each entity's `updates/` subdirectory. The user runs
-one long-lived Claude session per task in its own terminal tab, resumed via
+one long-lived Claude Code or Codex session per task in its own terminal tab, resumed via
 `flow do <task>`.
 
-You are speaking inside one of those Claude sessions (or the user's
+You are speaking inside one of those agent sessions (or the user's
 ambient "dispatch" session). Your job is to interpret the user's natural
 language requests and turn them into the exact `flow` commands and file
 edits they imply. You never edit `flow.db` directly. You never solve
@@ -63,7 +63,7 @@ first; let them choose what happens next.
 
 1. In 2–3 sentences, describe what you can do for the user with
    flow under the hood — capture work as briefs, log progress
-   notes, resume Claude sessions across days, track what they're
+   notes, resume agent sessions across days, track what they're
    waiting on. Frame it as your capabilities, not commands. The
    user does not need to learn flow's CLI.
 2. Use `AskUserQuestion` (header: "What now?") to offer the main
@@ -89,7 +89,7 @@ an intent, follow the matching recipe instead of re-asking via §1a.
   (mandatory — project's, user-supplied, or auto-created
   `~/.flow/tasks/<slug>/workspace/` for floating tasks), priority, status
   (`backlog`/`in-progress`/`done`), optional `project_slug`, optional
-  `waiting_on` note, `brief.md`. A task carries a Claude `session_id` once
+  `waiting_on` note, `brief.md`. A task carries a harness `session_id` once
   `flow do` has bootstrapped it.
 - **Playbooks** are reusable, runnable definitions (name, slug, work_dir,
   optional `project_slug`, `brief.md`). Each invocation creates a
@@ -143,7 +143,7 @@ Create
 Sessions
   flow do               <ref> [--fresh] [--dangerously-skip-permissions] [--force]
                               [--with "<instruction>" | --with-file <path>]
-  flow do --here        <ref> [--force]   (bind THIS Claude session to the task — no new tab)
+  flow do --here        <ref> [--force]   (bind THIS harness session to the task — no new tab)
   flow do --auto        <ref> [--with "<instruction>" | --with-file <path>]
                               (run headlessly in the background — no tab, no human; the
                                session does the work and self-completes via `flow done`.
@@ -153,7 +153,7 @@ Sessions
 Playbook runs
   flow run playbook <slug> [--with "<instr>" | --with-file <path>]
                                     spawn a fresh run session (new task with kind=playbook_run)
-  flow run playbook <slug> --here   bind THIS Claude session to the new run (no new tab)
+  flow run playbook <slug> --here   bind THIS harness session to the new run (no new tab)
   flow run playbook <slug> --auto   run the playbook headlessly in the background (no tab, no human)
   flow list runs [<playbook-slug>]  list playbook runs (filter by playbook optional)
 
@@ -168,7 +168,7 @@ Owners (autonomous ownership — see §4.17)
   (scheduled ticks run headlessly; `flow owner tick` is the on-demand / guided-first-run path)
 
 Read
-  flow show task    [<ref>]     (no arg → reverse-lookup via $CLAUDE_CODE_SESSION_ID)
+  flow show task    [<ref>]     (no arg → reverse-lookup via the active harness session id)
   flow show project [<ref>]     (no arg → project of the bound task)
   flow show playbook    [<ref>]
   flow transcript   [<ref>] [--compact]    (readable transcript from session jsonl)
@@ -348,7 +348,7 @@ else already bound.
 - **Yes, in a new tab** — §4.4 `flow do <slug>` (spawns a tab, flips to
   in-progress). Pick when work hasn't started.
 - **Continue here (bind this session)** — run **`flow do --here <slug>`**
-  now (binds `$CLAUDE_CODE_SESSION_ID`, flips to in-progress, no tab).
+  now (binds the active harness session id, flips to in-progress, no tab).
   Pick when the work already began in this session — the common case when
   §4.14 triggered intake from the SessionStart intercept.
 - **No, keep in backlog** — save and stop.
@@ -421,7 +421,7 @@ stop — do NOT poll, tail the log, or peek at its separate session.
 
 **After `flow do` succeeds** it already spawned the tab and exported env
 vars. Report "opened tab: <title>" and stop. Do NOT: run diagnostics
-(`pgrep`, `ls ~/.claude/...`, `osascript`) to verify the tab; spawn a tab
+(`pgrep`, `osascript`) to verify the tab; spawn a tab
 yourself; re-run `flow do` unless asked; or peek into the new session (you
 have no access). If `flow do` errored (rc≠0), relay it and stop — no
 workarounds.
@@ -510,7 +510,7 @@ passes", "ready to ship", "all good now", "we're good", "that did
 it".
 
 **Why closing matters — `flow done` is not just a status flip.** It runs
-a headless Claude **close-out sweep** over the task's transcript that
+a headless harness **close-out sweep** over the task's transcript that
 distills durable facts into the KB (`~/.flow/kb/`) and, for a
 project-attached task, writes a project update summarizing what got done
 and why. **If a task never closes, that distillation never happens** —
@@ -737,10 +737,9 @@ naming the tag.
 
 **Triggers:** "bind this session to <task>", "track this session under
 <task>", "attach this conversation to <task>". To bind THIS session so future
-`flow do <slug>` resumes here, run `flow do --here <slug>` (reads
-`$CLAUDE_CODE_SESSION_ID`, flips backlog→in-progress). The safety invariants,
-the cwd-mismatch refusal sub-recipe, and the anti-patterns (never guess the
-UUID, never `cd && --here` or `--force` to bypass a cwd mismatch) → read
+`flow do <slug>` resumes here, run `flow do --here <slug>` (reads the active
+harness's session id, flips backlog→in-progress). The safety invariants and
+anti-patterns → read
 **references/binding.md**.
 ### 4.17 Owners (autonomous ownership)
 
@@ -825,16 +824,13 @@ Y?", stop and use the tool.
 
 ## 9. The execution-session bootstrap contract
 
-When `flow do <task>` spawns a Claude session in a new terminal tab, it
-pre-allocates a UUID, writes it to `tasks.session_id` before spawning,
-and passes it to `claude --session-id <uuid>`. This makes the session's
-jsonl file appear at the deterministic path
-`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. There is no
-self-registration step — the DB is authoritative from the moment the
-tab opens.
-
-Subsequent `flow do <same-task>` calls read that UUID and spawn
-`claude --resume <uuid>` to continue the same conversation.
+When `flow do <task>` spawns a session, it selects the task's pinned harness
+or the active one (`CODEX_THREAD_ID` → Codex; otherwise Claude Code by
+default). Claude Code accepts a flow-minted UUID. Codex first mints a real
+thread with `codex exec --json`, then flow opens `codex resume <thread-id>`.
+The chosen harness and session id are stored before the interactive tab opens,
+so there is no self-registration step. Subsequent `flow do <same-task>` calls
+resume the recorded conversation with that same harness.
 
 **If you are the execution session spawned by `flow do`:**
 
@@ -938,10 +934,10 @@ priority, assignee, due-date, waiting, and tag flags — → read
 is owned by `flow do` / `flow do --here`.
 ## 10. How "what task am I on?" gets answered
 
-`tasks.session_id` is the single source of truth. Every Claude Code
-session has `$CLAUDE_CODE_SESSION_ID` in its env (Claude Code injects
-it); flow's commands reverse-lookup this value against
-`tasks.session_id` to find the bound task. Two implications:
+`tasks.session_id` is the single source of truth. Claude Code exposes
+`$CLAUDE_CODE_SESSION_ID`; Codex exposes `$CODEX_THREAD_ID`. Flow detects the
+one active harness and reverse-looks up its value against `tasks.session_id`
+to find the bound task. Two implications:
 
 - `flow show task` with no argument resolves the bound task via
   reverse-lookup. So does `flow show project` (it resolves the bound
