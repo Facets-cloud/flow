@@ -442,6 +442,14 @@ Read **references/do-advanced.md** when any of these apply:
 - The user wants to fire a one-off instruction at a task without opening the
   tab: `--with "<instruction>"` or `--with-file <path>` (also works on
   `flow run playbook`).
+
+#### Transfer a task to the other harness
+
+**Triggers:** "move X to codex", "switch X to claude", "reopen X in the
+other harness" — for a task that ALREADY has a session (harness pinned, so
+`--harness` is rejected). Read **references/harness-transfer.md** and follow
+it: progress note → `flow transcript` handoff file → un-pin via the scoped
+sqlite UPDATE → `flow do --harness <h> --with-file <handoff>`.
 ### 4.5 Save a progress note
 
 **Triggers:** "save a note", "log progress", "write an update", "note
