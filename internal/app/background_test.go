@@ -271,11 +271,16 @@ func TestCmdDoBackgroundResumeWhenExited(t *testing.T) {
 	}
 }
 
-// nonBGHarness satisfies harness.Harness (via embedded interface) but NOT
-// harness.BackgroundLauncher, so it exercises the capability gate.
+// nonBGHarness satisfies harness.Harness (via embedded interface) but
+// declares no background capability, so it exercises the capability
+// gate. Background() returning nil IS the "can't host background
+// sessions" answer — the embedded interface is nil, so every method the
+// gate does not call would panic, which is fine: the gate must decide
+// from Background() alone.
 type nonBGHarness struct{ harness.Harness }
 
-func (nonBGHarness) Name() harness.Name { return harness.Name("codex") }
+func (nonBGHarness) Name() harness.Name                     { return harness.Name("codex") }
+func (nonBGHarness) Background() harness.BackgroundLauncher { return nil }
 
 func TestBackgroundLauncherForGate(t *testing.T) {
 	if _, err := backgroundLauncherFor(claude.New()); err != nil {

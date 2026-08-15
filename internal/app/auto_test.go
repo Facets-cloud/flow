@@ -308,7 +308,7 @@ func TestReconcileAutoRunLivePidStaysRunning(t *testing.T) {
 // argv shape is unit-tested in each adapter (claude_test.go's
 // TestAutoRunArgv); here we just confirm the app layer delegates.
 func TestAutoRunnerUsesHarnessArgv(t *testing.T) {
-	h := claude.New()
+	h := claude.New().Headless()
 	argv := h.AutoRunArgv("sess-123", "do the work", harness.LaunchOpts{SkipPermissions: true})
 	joined := strings.Join(argv, " ")
 	for _, want := range []string{"claude", "--session-id", "sess-123", "-p", "do the work", "--dangerously-skip-permissions"} {

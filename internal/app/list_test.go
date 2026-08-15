@@ -173,8 +173,14 @@ func TestCmdListTasksDoneHiddenByDefault(t *testing.T) {
 func TestCmdListTasksSinceToday(t *testing.T) {
 	root, db := showListEditDB(t)
 	insertTask(t, db, "today-task", "A", "backlog", "high", filepath.Join(root, "x"), nil)
-	// Set it to 12 hours ago so it's still "today" in any reasonable timezone.
-	recent := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
+	// Timestamp it NOW, which is unconditionally "today".
+	//
+	// Any fixed negative offset has a window in which it crosses local
+	// midnight and the row stops being today's: this line used to say
+	// -2h (red between 00:00 and 02:00) under a comment claiming -12h
+	// (which would have been red until noon). --since today cuts at
+	// midnight, so the only offset that is safe at every hour is none.
+	recent := time.Now().Format(time.RFC3339)
 	if _, err := db.Exec(`UPDATE tasks SET updated_at = ? WHERE slug = ?`, recent, "today-task"); err != nil {
 		t.Fatal(err)
 	}

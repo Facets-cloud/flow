@@ -646,3 +646,62 @@ func TestPlaybookRunBootstrapMentionsPersistAdjustments(t *testing.T) {
 		}
 	}
 }
+
+// TestSkillFrontmatterSurvivesLineBasedParsers guards a failure with no
+// error path.
+//
+// Not every harness parses YAML. Praxis reads frontmatter with a
+// line-based subset (skill/skill.go:172-190): for `description: |` it
+// takes what follows on THAT line and drops the continuation, leaving
+// the description as the literal "|". The skill still loads and still
+// reports itself invocable — it just arrives in the catalog with a
+// one-character description, so the model never learns when to use it.
+//
+// require_frontmatter cannot catch this: the key is present, the VALUE
+// is unusable. A single-line scalar is valid YAML for every parser, so
+// the corpus targets the least capable one it will meet.
+func TestSkillFrontmatterSurvivesLineBasedParsers(t *testing.T) {
+	data, err := fs.ReadFile(skillFiles(), "SKILL.md")
+	if err != nil {
+		t.Fatalf("read embedded SKILL.md: %v", err)
+	}
+	text := string(data)
+	if !strings.HasPrefix(text, "---\n") {
+		t.Fatal("SKILL.md has no frontmatter block")
+	}
+	end := strings.Index(text[4:], "\n---")
+	if end < 0 {
+		t.Fatal("SKILL.md frontmatter is not terminated")
+	}
+	frontmatter := text[4 : 4+end]
+
+	// Parse exactly as a line-based subset would: take what follows the
+	// key on its own line, nothing more.
+	got := map[string]string{}
+	for _, line := range strings.Split(frontmatter, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found {
+			continue
+		}
+		if _, seen := got[key]; !seen {
+			got[key] = strings.TrimSpace(value)
+		}
+	}
+
+	for _, key := range []string{"name", "description"} {
+		value, ok := got[key]
+		switch {
+		case !ok:
+			t.Errorf("frontmatter key %q is missing; harnesses that require it reject the skill outright", key)
+		case value == "":
+			t.Errorf("frontmatter key %q has no value on its own line", key)
+		case value == "|" || value == ">" || strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">"):
+			t.Errorf("frontmatter key %q uses a YAML block scalar (%q); a line-based parser reads only that marker. "+
+				"Put the whole value on one line.", key, value)
+		}
+	}
+	// A description that survives parsing but says nothing is no better.
+	if d := got["description"]; len(d) < 40 {
+		t.Errorf("description is only %d chars (%q) — too short to drive skill selection", len(d), d)
+	}
+}

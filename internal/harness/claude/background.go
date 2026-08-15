@@ -117,6 +117,15 @@ func parseBackgroundAgents(raw []byte) ([]harness.BackgroundAgent, error) {
 	return out, nil
 }
 
+// View names Claude Code's background surface: sessions started with
+// `claude --bg` are inspected and replied to in the Agent View.
+func (c *claude) View() harness.BackgroundView {
+	return harness.BackgroundView{
+		Surface: "your Agent View",
+		Command: "claude agents",
+	}
+}
+
 // BackgroundAgents runs `claude agents --json --all` and decodes the
 // registry. --all includes exited / failed / completed sessions (not
 // just live ones) so flow can tell "session removed" apart from "session

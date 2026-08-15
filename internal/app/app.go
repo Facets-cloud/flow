@@ -77,6 +77,8 @@ func Run(args []string) int {
 		return cmdStats(rest)
 	case "hook":
 		return cmdHook(rest)
+	case "harness":
+		return cmdHarness(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -103,7 +105,12 @@ Sessions:
   flow do                <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions]
   flow do --auto         <ref> [--harness claude|codex] (run headlessly in the background; self-completes via flow done)
   flow done              <ref>
-  flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  flow hook session-start                      (SessionStart hook handler — wired by flow skill install)
+
+Harnesses:
+  flow harness list
+  flow harness show     <name>
+  flow harness validate <file.toml>            (check a manifest before installing it)
 
 Read:
   flow show task       [<ref>]

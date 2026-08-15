@@ -1,0 +1,110 @@
+# Claude Code expressed as a declarative manifest.
+#
+# This is the reference manifest and the DSL's honesty check. Claude is
+# the hardest harness flow supports and ships as a hand-written Go
+# adapter; claude_equivalence_test.go asserts that this file drives the
+# generic engine to byte-identical output for every command the native
+# adapter builds.
+#
+# It is deliberately NOT embedded in the binary. The native adapter wins
+# registry precedence, so an embedded copy would never run in
+# production — it would be dead weight that drifts. Its job is to fail
+# the build the moment the schema stops being able to express a real
+# harness.
+#
+# Regexps use TOML literal strings (single quotes) so backslashes reach
+# the regexp engine untouched. Templates use basic strings (double
+# quotes) so \n is a real newline.
+
+schema      = 1
+name        = "claude"
+binary      = "claude"
+session_env = "CLAUDE_CODE_SESSION_ID"
+
+[session]
+strategy = "uuid4"
+# Claude accepts an externally supplied id but only a canonical v4
+# UUID; anything else is rejected at spawn. This pattern is also what
+# earns {{.SessionID}} the right to be interpolated unquoted.
+validate = '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+# Claude keys transcripts by cwd, so binding an existing session can
+# and should confirm the transcript is where work_dir implies.
+verify_cwd = true
+
+[launch]
+# The final element folds an injection into the prompt as one argument.
+# It references .Prompt, a data variable, so the whole element is
+# shell-quoted — while "claude" and "--session-id" stay bare.
+argv = [
+  "claude",
+  "--session-id",
+  "{{.SessionID}}",
+  "{{.Prompt}}{{if .Inject}}\n\n{{.InjectionMarker}}\n{{.Inject}}{{end}}",
+]
+permission_flag = ["--dangerously-skip-permissions"]
+
+[resume]
+# On resume the injection is its own argument rather than part of a
+# prompt: there is no new prompt, only the continuation. When .Inject is
+# empty the element expands to "" and is dropped.
+argv = [
+  "claude",
+  "--resume",
+  "{{.SessionID}}",
+  "{{if .Inject}}{{.InjectionMarker}}\n{{.Inject}}{{end}}",
+]
+permission_flag = ["--dangerously-skip-permissions"]
+
+[headless]
+# Sessionless one-shot for `flow done`'s close-out sweep.
+run_argv = ["claude", "-p", "{{.Prompt}}", "--dangerously-skip-permissions"]
+# Session-pinned autonomous run for `flow do --auto`; keeps a transcript.
+auto_argv = ["claude", "--session-id", "{{.SessionID}}", "-p", "{{.Prompt}}"]
+
+[liveness]
+probe = "ps"
+# Matches `--session-id <uuid>` or `--resume <uuid>` in a process
+# command line. The alternation is non-capturing so the pattern has
+# exactly one group: the id.
+match = '(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})'
+
+[transcript]
+path   = "{{.Home}}/.claude/projects/{{encodeCwd .Cwd}}/{{.SessionID}}.jsonl"
+format = "jsonl"
+
+[transcript.map]
+role       = "message.role"
+text       = "message.content[].text"
+tool_block = "tool_use"
+tool_name  = "message.content[].name"
+
+[skills]
+# Claude scans ~/.claude/skills itself, so the tree is all that is
+# needed — no pointer block, nothing to tell it.
+discovery = "native"
+dir       = "{{.Home}}/.claude/skills/flow"
+
+[hooks]
+# Claude has a real lifecycle-event system, so the deterministic
+# strategy is the only one it needs.
+strategies = ["config-patch"]
+
+[hooks.config_patch]
+file = "{{.Home}}/.claude/settings.json"
+
+[hooks.config_patch.events.SessionStart]
+# The matcher is part of claude's entry shape, not flow's model, which
+# is why it lives inside the template rather than in a schema field.
+pointer = "/hooks/SessionStart"
+entry   = '{"matcher":"startup|resume","hooks":[{"type":"command","command":"{{.Command}}"}]}'
+
+[hooks.config_patch.events.UserPromptSubmit]
+# No matcher: the event fires on every prompt.
+pointer = "/hooks/UserPromptSubmit"
+entry   = '{"hooks":[{"type":"command","command":"{{.Command}}"}]}'
+
+[vocab]
+product      = "Claude"
+context_file = "CLAUDE.md"
+ask_tool     = "AskUserQuestion"
+skill_hint   = "via the Skill tool"

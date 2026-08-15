@@ -1,0 +1,105 @@
+# Codex CLI (OpenAI) — verified against codex-cli 0.146.0.
+#
+# Install:  cp codex.toml ~/.flow/harnesses/
+# Check:    flow harness validate ~/.flow/harnesses/codex.toml
+# Apply:    flow skill install --harness codex
+#
+# Notable: codex publishes NO session-id env var, so `flow do --here`
+# and hook reverse-lookup are unavailable. Everything else works.
+
+schema = 1
+name   = "codex"
+binary = "codex"
+
+# session_env intentionally omitted — codex mints ids internally and
+# never exports one. See `flow harness show codex`.
+
+[session]
+# Codex will not accept an externally chosen id, so flow mints one for
+# its own bookkeeping and codex records its own alongside. Resume works
+# because flow passes the id codex knows.
+strategy = "uuid7"
+validate = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+[launch]
+# `codex [OPTIONS] [PROMPT]` — prompt is positional, -C sets the cwd.
+argv = ["codex", "-C", "{{.WorkDir}}",
+        "{{.Prompt}}{{if .Inject}}\n\n{{.InjectionMarker}}\n{{.Inject}}{{end}}"]
+permission_flag = ["--dangerously-bypass-approvals-and-sandbox"]
+
+[resume]
+# `codex resume <SESSION_ID>` (picker without an id; --last for latest).
+argv = ["codex", "resume", "{{.SessionID}}", "-C", "{{.WorkDir}}"]
+permission_flag = ["--dangerously-bypass-approvals-and-sandbox"]
+
+[headless]
+# `codex exec` — "Run Codex non-interactively", prompt positional.
+run_argv  = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox",
+             "-C", "{{.WorkDir}}", "{{.Prompt}}"]
+auto_argv = ["codex", "exec", "resume", "{{.SessionID}}",
+             "-C", "{{.WorkDir}}", "{{.Prompt}}"]
+
+[liveness]
+probe = "ps"
+match = 'codex\s+resume\s+([0-9a-f-]{36})'
+
+[transcript]
+# Codex writes ~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<id>.jsonl.
+# The date and timestamp are not derivable from a session id, which is
+# what the glob is for — flow resolves it and takes the newest match.
+path   = "{{envOr \"CODEX_HOME\" .Home \"/.codex\"}}/sessions/*/*/*/rollout-*-{{.SessionID}}.jsonl"
+format = "jsonl"
+
+[transcript.map]
+# Verified against real session files: records are
+# {timestamp, type, payload}; a conversation turn is type="response_item"
+# with payload.type="message", payload.role and payload.content[] whose
+# blocks are {type, text}.
+role = "payload.role"
+text = "payload.content[].text"
+# tool_block/tool_name are deliberately ABSENT: no tool-call record
+# appeared in any session on the machine this was written on, so the
+# discriminator could not be confirmed. `flow transcript` therefore
+# renders the conversation but not tool-call lines. To add them, find a
+# session containing a tool call, read its payload.type, and set
+# tool_block to that value plus tool_name to the field holding the name.
+
+[skills]
+# Codex has no skills directory of its own, so flow writes the tree and
+# points AGENTS.md at it. Codex reads AGENTS.md automatically.
+discovery = "pointer"
+dir       = "{{envOr \"CODEX_HOME\" .Home \"/.codex\"}}/skills/flow"
+
+[skills.pointer]
+file    = "{{envOr \"CODEX_HOME\" .Home \"/.codex\"}}/AGENTS.md"
+comment = "html"
+block   = """
+# flow
+
+When the user asks about tasks, projects, playbooks, or "what should I work
+on", read {{.SkillPath}} and follow it.
+
+{{.HookDirective}}
+"""
+
+[hooks]
+# Codex's hooks.json uses the SAME entry shape as Claude Code's
+# settings.json — matcher + nested hooks[] with type/command.
+strategies = ["config-patch"]
+
+[hooks.config_patch]
+file = "{{envOr \"CODEX_HOME\" .Home \"/.codex\"}}/hooks.json"
+
+[hooks.config_patch.events.SessionStart]
+pointer = "/hooks/SessionStart"
+entry   = '{"matcher":"startup|resume","hooks":[{"type":"command","command":"{{.Command}}"}]}'
+
+[hooks.config_patch.events.UserPromptSubmit]
+pointer = "/hooks/UserPromptSubmit"
+entry   = '{"hooks":[{"type":"command","command":"{{.Command}}"}]}'
+
+[vocab]
+product      = "Codex"
+context_file = "AGENTS.md"
+ask_tool     = ""                      # no interactive-choice tool; prompts fall back to prose
+skill_hint   = "read the flow skill under ~/.codex/skills/flow"

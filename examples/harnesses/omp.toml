@@ -1,0 +1,83 @@
+# omp — verified against omp v17.2.10 (`omp --help`, `omp --version`,
+# and the real ~/.omp/agent/sessions tree).
+#
+# Install:  cp omp.toml ~/.flow/harnesses/
+# Check:    flow harness validate ~/.flow/harnesses/omp.toml
+# Apply:    flow skill install --harness omp
+#
+# omp and `pi` share a lineage — omp reads PI_* env vars and its agent
+# dir is $PI_CODING_AGENT_DIR (default ~/.omp/agent). See pi.toml.
+
+schema = 1
+name   = "omp"
+binary = "omp"
+
+# session_env omitted: `omp --help` documents no session-id env var.
+# Sessions are minted internally (uuidv7, visible in the filenames
+# under ~/.omp/agent/sessions).
+
+[session]
+strategy = "uuid7"
+validate = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+[launch]
+# Prompt is the positional MESSAGES argument; --cwd sets the workspace.
+argv = ["omp", "--cwd={{.WorkDir}}",
+        "{{.Prompt}}{{if .Inject}}\n\n{{.InjectionMarker}}\n{{.Inject}}{{end}}"]
+permission_flag = ["--approval-mode=yolo"]
+
+[resume]
+# -r/--resume accepts an id prefix, a path, or opens a picker.
+argv = ["omp", "--cwd={{.WorkDir}}", "--resume={{.SessionID}}"]
+permission_flag = ["--approval-mode=yolo"]
+
+[headless]
+# -p/--print: "process prompt and exit".
+run_argv  = ["omp", "-p", "--approval-mode=yolo", "--cwd={{.WorkDir}}", "{{.Prompt}}"]
+auto_argv = ["omp", "-p", "--approval-mode=yolo", "--cwd={{.WorkDir}}",
+             "--resume={{.SessionID}}", "{{.Prompt}}"]
+
+[liveness]
+probe = "ps"
+match = '--resume=([0-9a-f-]{36})'
+
+[transcript]
+# ~/.omp/agent/sessions/<cwd-slug>/<timestamp>_<uuidv7>.jsonl — the
+# directory is the cwd with "/" replaced by "-", and the filename
+# carries a creation timestamp flow cannot derive, hence the glob.
+path   = "{{envOr \"PI_CODING_AGENT_DIR\" .Home \"/.omp/agent\"}}/sessions/{{encodeCwd .Cwd}}/*_{{.SessionID}}.jsonl"
+format = "jsonl"
+
+[transcript.map]
+# Verified against real session files: records are
+# {id, parentId, timestamp, type, message}; message.role is one of
+# user/assistant/toolResult/developer; message.content[] blocks are
+# type="text" {text}, type="toolCall" {name, arguments, id}, or
+# type="thinking". Note this is the same shape praxis uses.
+role       = "message.role"
+text       = "message.content[].text"
+tool_block = "toolCall"
+tool_name  = "message.content[].name"
+
+[skills]
+# omp auto-discovers skills (`--skills=<glob>` / `--no-skills` confirm
+# the mechanism exists). The DIRECTORY is corroborated rather than
+# first-party: omp's own --help documents $PI_CODING_AGENT_DIR
+# (default ~/.omp/agent), and praxis's skill search path independently
+# lists ~/.omp/agent/skills. If omp ever stops finding the skill, check
+# `omp --help` for a documented skills path and correct this line.
+discovery = "native"
+dir       = "{{envOr \"PI_CODING_AGENT_DIR\" .Home \"/.omp/agent\"}}/skills/flow"
+
+[hooks]
+# omp loads hook files explicitly via --hook=<file>; `omp --help` shows
+# no always-on hooks config for flow to patch. The two non-config
+# strategies cover it: the spawn prompt for flow-started sessions, and
+# a standing directive for the rest.
+strategies = ["prompt-prelude"]
+
+[vocab]
+product      = "omp"
+context_file = "AGENTS.md"
+ask_tool     = ""
+skill_hint   = "read the flow skill under the omp agent dir"

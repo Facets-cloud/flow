@@ -45,9 +45,9 @@ func cmdTranscript(args []string) int {
 		if lookupErr != nil {
 			if isNoBindingErr(lookupErr) {
 				if currentSessionID() == "" {
-					fmt.Fprintln(os.Stderr, "error: no task ref given and not running inside a Claude session ($CLAUDE_CODE_SESSION_ID unset)")
+					fmt.Fprintf(os.Stderr, "error: no task ref given and not running inside an agent session (%s unset)\n", sessionEnvVarList())
 				} else {
-					fmt.Fprintln(os.Stderr, "error: no task ref given and this Claude session is not bound to a task")
+					fmt.Fprintf(os.Stderr, "error: no task ref given and this %s session is not bound to a task\n", ambientProduct())
 				}
 				return 2
 			}
@@ -80,7 +80,12 @@ func cmdTranscript(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if err := h.RenderTranscript(task.WorkDir, task.SessionID.String, *compact, os.Stdout); err != nil {
+	ts := h.Transcript()
+	if ts == nil {
+		fmt.Fprintf(os.Stderr, "error: harness %s keeps no readable transcript\n", h.Name())
+		return 1
+	}
+	if err := ts.RenderTranscript(task.WorkDir, task.SessionID.String, *compact, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		fmt.Fprintf(os.Stderr,
 			"hint: flow assumed the harness was started at work_dir=%q. "+

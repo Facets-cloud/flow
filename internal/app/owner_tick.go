@@ -38,7 +38,11 @@ import (
 // (no pinned session id) — the owner's memory is its durable charter +
 // ledger, not a resumed transcript. Overridable in tests.
 var ownerTickRunner = func(h harness.Harness, prompt string) error {
-	return h.SkipPermissionsRun(prompt)
+	hl := h.Headless()
+	if hl == nil {
+		return fmt.Errorf("harness %s has no headless mode, which owner ticks require", h.Name())
+	}
+	return hl.SkipPermissionsRun(prompt)
 }
 
 // ownerTickLauncher starts the detached `flow __owner-tick <slug>`

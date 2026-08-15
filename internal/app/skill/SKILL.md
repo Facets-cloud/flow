@@ -1,24 +1,6 @@
 ---
 name: flow
-description: |
-  Personal task and agent-session manager. CLI binary is `flow` (assumed
-  on PATH) and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the
-  user asks about their work, tasks, or projects in any natural phrasing —
-  including but not limited to: "what's left", "what's remaining",
-  "what's pending", "what do I need to do", "what's on my plate",
-  "what should I work on", "status", "give me a status", "anything
-  urgent", "what's overdue", "what's stale", "show me my work",
-  "how's my week looking", "what did I ship", "what's in progress",
-  "what's next", "what am I working on", "where did I leave off",
-  "start my day", "what should I do", "what should I do today".
-  Also use for task/project management actions: "flow", "add a task",
-  "add a project", "resume work", "pick up where I left off", "save a
-  note", "log progress", "write an update", "note that", "I'm waiting
-  on", "blocked on", "stuck until", "mark done", "archive", "weekly
-  review", "clean up my tasks", or when the user invokes any
-  `flow <subcommand>` directly. Also use whenever the user asks you to
-  bootstrap a new Claude Code or Codex session on a task or tell them about their
-  in-flight work.
+description: Personal task, project and agent-session manager. CLI binary is `flow` (assumed on PATH) and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the user asks about their work, tasks, or projects in any natural phrasing — including but not limited to: "what's left", "what's remaining", "what's pending", "what do I need to do", "what's on my plate", "what should I work on", "status", "give me a status", "anything urgent", "what's overdue", "what's stale", "show me my work", "how's my week looking", "what did I ship", "what's in progress", "what's next", "what am I working on", "where did I leave off", "start my day", "what should I do", "what should I do today". Also use for task/project management actions: "flow", "add a task", "add a project", "resume work", "pick up where I left off", "save a note", "log progress", "write an update", "note that", "I'm waiting on", "blocked on", "stuck until", "mark done", "archive", "weekly review", "clean up my tasks", or when the user invokes any `flow <subcommand>` directly. Also use whenever the user asks you to bootstrap a new agent session on a task or tell them about their in-flight work.
 ---
 
 # flow — task and session manager skill

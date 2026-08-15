@@ -54,6 +54,16 @@ type LaunchOpts struct {
 	// Inject is the first-user-message text to wrap with
 	// InjectionMarker and feed to the spawned session.
 	Inject string
+
+	// WorkDir is the directory the session should run in.
+	//
+	// The spawner already cd's here before running the command, so a
+	// harness that inherits its cwd (claude) ignores this. It exists
+	// for harnesses that want the directory passed EXPLICITLY as a
+	// flag (praxis: `-cwd <dir>`), which a manifest cannot express
+	// otherwise — without it, a {{.WorkDir}} template would silently
+	// expand to nothing on every launch.
+	WorkDir string
 }
 
 // BackgroundAgent is one entry from a harness's background-agent
@@ -72,18 +82,36 @@ type BackgroundAgent struct {
 	State     string // finer state, e.g. "working" / "blocked" / "done"
 }
 
+// BackgroundView describes how a user inspects a harness's background
+// sessions, so flow's messages can point them at the right place
+// without hardcoding one harness's product vocabulary.
+type BackgroundView struct {
+	// Surface names where background sessions live, phrased to
+	// follow a preposition — claude: "your Agent View".
+	Surface string
+
+	// Command lists or opens them — claude: "claude agents".
+	// Rendered inside backticks by callers.
+	Command string
+}
+
 // BackgroundLauncher is an OPTIONAL harness capability: hosting
 // terminal-free background sessions (claude's Agent View, via
 // `claude --bg`). flow selects this path when spawner.IsBackground() is
-// true ($FLOW_TERM=bg). A harness that does NOT implement it makes
-// `$FLOW_TERM=bg flow do <task>` fail cleanly — flow never silently
-// falls back to a terminal tab.
+// true ($FLOW_TERM=bg). A harness that returns nil from
+// Harness.Background makes `$FLOW_TERM=bg flow do <task>` fail cleanly
+// — flow never silently falls back to a terminal tab.
 //
 // Unlike the interactive path, flow does NOT pre-allocate the session id
 // here: a backgrounding harness mints (and manages) its own id. flow
 // captures the REAL id after spawn by querying the registry, so the
 // DB-authoritative binding contract holds without fighting the harness.
 type BackgroundLauncher interface {
+	// View returns the user-facing vocabulary for this harness's
+	// background-session surface. Used to phrase "check <surface>:
+	// `<command>`" without naming a specific harness.
+	View() BackgroundView
+
 	// SpawnBackground starts a fresh background session in workDir,
 	// running prompt, displayed as name. workDir is where the agent
 	// begins (and what its transcript/CLAUDE.md context is keyed to) —
@@ -116,7 +144,198 @@ type BackgroundLauncher interface {
 	BackgroundAgents() ([]BackgroundAgent, error)
 }
 
-// Harness is the contract every agent-CLI adapter implements.
+// Vocabulary is the agent-facing dialect of a harness: the names it
+// uses for the concepts flow's prompts and messages refer to. Flow
+// interpolates these instead of hardcoding Claude Code's idiom, so a
+// prompt built for one harness reads correctly in another.
+//
+// Every field is always populated — Harness.Vocab returns a value, not
+// a pointer, and adapters fill it from their own knowledge. AskTool is
+// the one field legitimately allowed to be empty: a harness with no
+// interactive-choice tool makes prompts fall back to plain prose
+// rather than naming a tool that does not exist.
+type Vocabulary struct {
+	// Product is the human-facing name used in flow's own output,
+	// e.g. "Claude" in "bind THIS Claude session to the task".
+	Product string
+
+	// ContextFile is the ambient project-instructions filename the
+	// harness reads automatically (claude: "CLAUDE.md"; codex and
+	// praxis: "AGENTS.md"). Prompts tell the agent to read it.
+	ContextFile string
+
+	// AskTool is the registered name of the harness's interactive
+	// multiple-choice tool (claude: "AskUserQuestion"; praxis:
+	// "ask"). Empty means the harness has none — callers must then
+	// phrase the instruction as plain prose.
+	AskTool string
+
+	// SkillHint is the harness-idiomatic instruction for loading
+	// flow's skill, e.g. "via the Skill tool" for claude or a plain
+	// "read <path>" for a harness with no skill mechanism.
+	SkillHint string
+}
+
+// Resumer is the OPTIONAL capability of continuing an existing session
+// by id. A harness that cannot resume returns nil from Harness.Resume;
+// flow then refuses to resume rather than silently starting a fresh
+// session against a task that already has a transcript.
+type Resumer interface {
+	// ResumeCmd builds the shell command to continue an existing
+	// session by id. opts.Inject (if any) is appended as the first
+	// turn after resume.
+	ResumeCmd(sessionID string, opts LaunchOpts) string
+}
+
+// HeadlessRunner is the OPTIONAL capability of running non-interactively.
+// Required by `flow done`'s close-out sweep and by `flow do --auto`; a
+// harness without it makes both fail cleanly instead of hanging on a
+// prompt no human will answer.
+type HeadlessRunner interface {
+	// SkipPermissionsRun executes a non-interactive prompt against
+	// the harness with per-tool approvals auto-allowed (used by
+	// `flow done`'s close-out sweep). Stdout/stderr are discarded;
+	// only the exit code matters.
+	SkipPermissionsRun(prompt string) error
+
+	// AutoRunArgv builds the argv for a headless, self-completing
+	// autonomous run (`flow do --auto`) pinned to sessionID. This is a
+	// third execution shape distinct from the other two:
+	//
+	//   - LaunchCmd/ResumeCmd build a SHELL STRING for an interactive
+	//     terminal tab (a human drives it).
+	//   - SkipPermissionsRun is sessionless and discards output (the
+	//     fire-and-forget close-out sweep).
+	//   - AutoRunArgv is headless like the sweep BUT pins the session
+	//     id — so a transcript exists for the run's own `flow done`
+	//     close-out sweep and for `flow transcript` — and returns argv
+	//     (not a shell string) so the detached supervisor can set the
+	//     process cwd and redirect stdout/stderr to the run log itself.
+	//
+	// opts.Inject (if any) is appended to the prompt behind
+	// InjectionMarker, exactly as LaunchCmd does. opts.SkipPermissions
+	// is honored via the harness's own flag (auto runs always set it —
+	// there is no human to approve tool calls). argv[0] is the binary
+	// name; the supervisor execs it via PATH lookup.
+	AutoRunArgv(sessionID, prompt string, opts LaunchOpts) []string
+}
+
+// TranscriptSource is the OPTIONAL capability of reading back a
+// session's conversation. Each impl owns both path resolution AND
+// format decoding, so callers never touch harness-specific bytes.
+type TranscriptSource interface {
+	// RenderTranscript reads the harness's on-disk transcript for
+	// (cwd, sessionID) and writes a normalized human-readable form
+	// to w. Each impl owns both path resolution AND format decoding
+	// — claude's jsonl, codex's event log, gemini's single-object
+	// json all converge to the same text shape on w.
+	//
+	// cwd is the directory the harness session was started in (NOT
+	// necessarily the task's work_dir; callers fall back to work_dir).
+	// compact omits tool results and thinking blocks. The whole
+	// transcript is rendered — there is no time cutoff. (An earlier
+	// design scoped output to entries after tasks.session_started, but
+	// that elided all real work on retrospective `flow do --here`
+	// binds, where session_started is stamped at bind time AFTER the
+	// conversation.) Returns an error if the transcript can't be found
+	// or decoded.
+	RenderTranscript(cwd, sessionID string, compact bool, w io.Writer) error
+}
+
+// SkillInstaller is the OPTIONAL capability of placing flow's skill
+// tree where the harness will discover it. A harness returning nil
+// from Harness.Skills has no skill mechanism flow can write to; flow
+// says so plainly rather than pretending the install succeeded.
+type SkillInstaller interface {
+	// SkillInstallPath returns where flow's skill markdown lives for
+	// this harness (e.g. ~/.claude/skills/flow/SKILL.md).
+	SkillInstallPath() (string, error)
+
+	// SkillVersionPath returns the sidecar file recording which
+	// flow binary version wrote the current skill content. Used by
+	// the auto-upgrade gate.
+	SkillVersionPath() (string, error)
+
+	// InstallSkill writes the skill tree rooted at SkillInstallPath's
+	// directory. The passed fs.FS is walked and every file is written
+	// preserving its relative path — so "SKILL.md" lands next to
+	// "references/<x>.md". Creates parent dirs as needed. Idempotent —
+	// callers gate "already installed" themselves.
+	InstallSkill(files fs.FS) error
+
+	// UninstallSkill removes this harness's registration of the skill.
+	// Whether that includes deleting the directory depends on
+	// OwnsSkillDir.
+	UninstallSkill() error
+
+	// OwnsSkillDir reports whether UninstallSkill will delete the skill
+	// directory, or only unregister the harness from it.
+	//
+	// Harnesses share directories in practice — praxis natively scans
+	// ~/.claude/skills, so its manifest points at claude's tree and
+	// must not delete it. Callers need this to describe what they did
+	// without claiming a removal that never happened.
+	OwnsSkillDir() bool
+}
+
+// Hook delivery strategies. A harness may use several at once; they
+// differ in what they cover and how strongly they guarantee it.
+const (
+	// StrategyConfigPatch registers flow's commands in the harness's
+	// own hook config. Deterministic, and the only strategy that
+	// covers sessions the user starts outside flow.
+	StrategyConfigPatch = "config-patch"
+
+	// StrategyPromptPrelude prepends flow's context to the launch
+	// prompt. Deterministic, but only for sessions flow spawns.
+	StrategyPromptPrelude = "prompt-prelude"
+
+	// StrategyInstructionDirective asks the agent, via the instructions
+	// file, to invoke flow's hook commands itself. Covers ad-hoc
+	// sessions and drift, but is best-effort: it depends on the agent
+	// complying.
+	StrategyInstructionDirective = "instruction-directive"
+)
+
+// HookWirer is the OPTIONAL capability of registering flow's hook
+// commands with the harness's own lifecycle-event system. A harness
+// returning nil from Harness.Hooks has no such system; flow reports
+// that instead of silently skipping the wiring.
+type HookWirer interface {
+	// InstallSessionStartHook idempotently registers `command` as a
+	// SessionStart hook (matcher: startup|resume equivalent). Returns
+	// (added=true) iff the on-disk hook config was actually modified.
+	InstallSessionStartHook(command string) (added bool, err error)
+
+	// UninstallSessionStartHook removes any SessionStart entry whose
+	// inner command matches `command`.
+	UninstallSessionStartHook(command string) (removed bool, err error)
+
+	// InstallUserPromptSubmitHook idempotently registers `command` as a
+	// UserPromptSubmit hook (no matcher). Fires on every user prompt;
+	// the command itself no-ops in unbound sessions and injects a tiny
+	// drift/close-out anchor in bound ones. Returns (added=true) iff the
+	// on-disk hook config was actually modified.
+	InstallUserPromptSubmitHook(command string) (added bool, err error)
+
+	// UninstallUserPromptSubmitHook removes any UserPromptSubmit entry
+	// matching `command`. Used by `flow skill uninstall`.
+	UninstallUserPromptSubmitHook(command string) (removed bool, err error)
+
+	// Strategies lists how this harness receives flow's hook context.
+	//
+	// Callers need it to describe what an install actually did. Without
+	// it, the Install* methods' added=false is ambiguous between
+	// "already registered" and "this harness registers nothing here
+	// because its strategies act elsewhere" — and reporting the wrong
+	// one tells the user their hooks are wired when they are not.
+	Strategies() []string
+}
+
+// Harness is the contract every agent-CLI adapter implements. The
+// methods below are REQUIRED; everything a harness may legitimately
+// lack lives behind the capability accessors at the bottom, each of
+// which returns nil when the harness does not support it.
 type Harness interface {
 	// Identity ---------------------------------------------------------
 
@@ -176,38 +395,6 @@ type Harness interface {
 	// spawner.SpawnTab.
 	LaunchCmd(sessionID, prompt string, opts LaunchOpts) string
 
-	// ResumeCmd builds the shell command to continue an existing
-	// session by id. opts.Inject (if any) is appended as the first
-	// turn after resume.
-	ResumeCmd(sessionID string, opts LaunchOpts) string
-
-	// SkipPermissionsRun executes a non-interactive prompt against
-	// the harness with per-tool approvals auto-allowed (used by
-	// `flow done`'s close-out sweep). Stdout/stderr are discarded;
-	// only the exit code matters.
-	SkipPermissionsRun(prompt string) error
-
-	// AutoRunArgv builds the argv for a headless, self-completing
-	// autonomous run (`flow do --auto`) pinned to sessionID. This is a
-	// third execution shape distinct from the two above:
-	//
-	//   - LaunchCmd/ResumeCmd build a SHELL STRING for an interactive
-	//     terminal tab (a human drives it).
-	//   - SkipPermissionsRun is sessionless and discards output (the
-	//     fire-and-forget close-out sweep).
-	//   - AutoRunArgv is headless like the sweep BUT pins the session
-	//     id — so a transcript exists for the run's own `flow done`
-	//     close-out sweep and for `flow transcript` — and returns argv
-	//     (not a shell string) so the detached supervisor can set the
-	//     process cwd and redirect stdout/stderr to the run log itself.
-	//
-	// opts.Inject (if any) is appended to the prompt behind
-	// InjectionMarker, exactly as LaunchCmd does. opts.SkipPermissions
-	// is honored via the harness's own flag (auto runs always set it —
-	// there is no human to approve tool calls). argv[0] is the binary
-	// name; the supervisor execs it via PATH lookup.
-	AutoRunArgv(sessionID, prompt string, opts LaunchOpts) []string
-
 	// Live-session detection -------------------------------------------
 
 	// LiveSessionIDs returns the count of running processes per
@@ -218,65 +405,40 @@ type Harness interface {
 	// no error means "nothing running."
 	LiveSessionIDs() (map[string]int, error)
 
-	// Transcripts ------------------------------------------------------
-
-	// RenderTranscript reads the harness's on-disk transcript for
-	// (cwd, sessionID) and writes a normalized human-readable form
-	// to w. Each impl owns both path resolution AND format decoding
-	// — claude's jsonl, codex's event log, gemini's single-object
-	// json all converge to the same text shape on w.
+	// Capabilities -----------------------------------------------------
 	//
-	// cwd is the directory the harness session was started in (NOT
-	// necessarily the task's work_dir — see tasks.session_cwd; for
-	// legacy NULL rows callers fall back to work_dir). compact omits
-	// tool results and thinking blocks. The whole transcript is
-	// rendered — there is no time cutoff. (An earlier design scoped
-	// output to entries after tasks.session_started, but that elided
-	// all real work on retrospective `flow do --here` binds, where
-	// session_started is stamped at bind time AFTER the conversation.)
-	// Returns an error if the transcript can't be found or decoded.
-	RenderTranscript(cwd, sessionID string, compact bool, w io.Writer) error
+	// Each accessor returns nil when the harness does not support that
+	// capability. Callers MUST nil-check and report the gap in the
+	// harness's own terms rather than assuming every adapter can do
+	// everything claude can. A nil accessor is a fact about the
+	// harness, not an error.
 
-	// Skill / rules file -----------------------------------------------
+	// Vocab returns the harness's agent-facing dialect. Always
+	// populated — a Vocabulary value, never nil.
+	Vocab() Vocabulary
 
-	// SkillInstallPath returns where flow's skill markdown lives for
-	// this harness (e.g. ~/.claude/skills/flow/SKILL.md).
-	SkillInstallPath() (string, error)
+	// Resume returns the resume capability, or nil if the harness
+	// cannot continue a session by id.
+	Resume() Resumer
 
-	// SkillVersionPath returns the sidecar file recording which
-	// flow binary version wrote the current skill content. Used by
-	// the auto-upgrade gate.
-	SkillVersionPath() (string, error)
+	// Headless returns the non-interactive execution capability, or
+	// nil if the harness has no headless mode. Gates `flow done`'s
+	// close-out sweep and `flow do --auto`.
+	Headless() HeadlessRunner
 
-	// InstallSkill writes the skill tree rooted at SkillInstallPath's
-	// directory. The passed fs.FS is walked and every file is written
-	// preserving its relative path — so "SKILL.md" lands next to
-	// "references/<x>.md". Creates parent dirs as needed. Idempotent —
-	// callers gate "already installed" themselves.
-	InstallSkill(files fs.FS) error
+	// Transcript returns the transcript-reading capability, or nil if
+	// the harness persists no readable conversation.
+	Transcript() TranscriptSource
 
-	// UninstallSkill removes the skill directory for this harness.
-	UninstallSkill() error
+	// Skills returns the skill-install capability, or nil if the
+	// harness has no skill mechanism flow can write to.
+	Skills() SkillInstaller
 
-	// Hooks ------------------------------------------------------------
+	// Hooks returns the hook-wiring capability, or nil if the harness
+	// has no lifecycle-event system.
+	Hooks() HookWirer
 
-	// InstallSessionStartHook idempotently registers `command` as a
-	// SessionStart hook (matcher: startup|resume equivalent). Returns
-	// (added=true) iff the on-disk hook config was actually modified.
-	InstallSessionStartHook(command string) (added bool, err error)
-
-	// UninstallSessionStartHook removes any SessionStart entry whose
-	// inner command matches `command`.
-	UninstallSessionStartHook(command string) (removed bool, err error)
-
-	// InstallUserPromptSubmitHook idempotently registers `command` as a
-	// UserPromptSubmit hook (no matcher). Fires on every user prompt;
-	// the command itself no-ops in unbound sessions and injects a tiny
-	// drift/close-out anchor in bound ones. Returns (added=true) iff the
-	// on-disk hook config was actually modified.
-	InstallUserPromptSubmitHook(command string) (added bool, err error)
-
-	// UninstallUserPromptSubmitHook removes any UserPromptSubmit entry
-	// matching `command`. Used by `flow skill uninstall`.
-	UninstallUserPromptSubmitHook(command string) (removed bool, err error)
+	// Background returns the background-session capability, or nil if
+	// the harness cannot run detached agents.
+	Background() BackgroundLauncher
 }

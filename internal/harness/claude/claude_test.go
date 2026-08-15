@@ -127,7 +127,9 @@ func TestLaunchCmd_PreservesByteIdentity(t *testing.T) {
 }
 
 func TestAutoRunArgv(t *testing.T) {
-	h := New()
+	// AutoRunArgv lives on the headless capability now; binding it
+	// here keeps every assertion below byte-identical.
+	h := New().Headless()
 	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
 	prompt := "do the thing"
 
@@ -156,7 +158,7 @@ func TestAutoRunArgv(t *testing.T) {
 }
 
 func TestResumeCmd_PreservesByteIdentity(t *testing.T) {
-	h := New()
+	h := New().Resume()
 	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
 
 	got := h.ResumeCmd(sessionID, harness.LaunchOpts{})

@@ -95,27 +95,36 @@ func cmdInit(args []string) int {
 	// Install the skill idempotently. Skip if already present; we never
 	// overwrite on init (use `flow skill update` for that).
 	h := defaultHarness()
-	skillPath, err := h.SkillInstallPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		if err := h.InstallSkill(skillFiles()); err != nil {
+	if sk := h.Skills(); sk == nil {
+		// Harness has nowhere for flow to put a skill tree. Init still
+		// succeeds — the DB and kb are the point — but say so plainly
+		// rather than reporting an install that never happened.
+		fmt.Fprintf(os.Stderr, "warning: harness %s has no skill install location; skipping skill install\n", h.Name())
+	} else {
+		skillPath, err := sk.SkillInstallPath()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-		if err := writeSkillVersion(Version); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
+		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+			if err := sk.InstallSkill(skillFiles()); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			if err := writeSkillVersion(Version); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
+			}
+			fmt.Printf("installed flow skill to %s\n", skillPath)
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
+			return 1
 		}
-		fmt.Printf("installed flow skill to %s\n", skillPath)
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
-		return 1
 	}
 
 	// Install the SessionStart hook idempotently.
-	if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
+	if hk := h.Hooks(); hk == nil {
+		fmt.Fprintf(os.Stderr, "warning: harness %s has no hook system; SessionStart hook not installed\n", h.Name())
+	} else if added, err := hk.InstallSessionStartHook(hookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
 	} else if added {
 		fmt.Println("installed SessionStart hook")

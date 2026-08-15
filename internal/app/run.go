@@ -36,7 +36,7 @@ func cmdRunPlaybook(args []string) int {
 	slug := args[0]
 	fs := flagSet("run playbook")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness (ignored when --here is set)")
-	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
+	here := fs.Bool("here", false, "bind THIS agent session to the new playbook run (no new tab); requires running inside an agent session")
 	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via `flow done`")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
@@ -87,7 +87,7 @@ func cmdRunPlaybook(args []string) int {
 		sid := currentSessionID()
 		if sid == "" {
 			fmt.Fprintf(os.Stderr,
-				"error: --here requires running inside a Claude Code session ($%s is unset)\n",
+				"error: --here requires running inside an agent session ($%s is unset)\n",
 				h.SessionIDEnvVar())
 			return 1
 		}
@@ -100,9 +100,9 @@ func cmdRunPlaybook(args []string) int {
 		priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
 		if lookupErr == nil {
 			fmt.Fprintf(os.Stderr,
-				"error: this Claude session is already bound to task %q. binding it to a new playbook run would orphan %q's transcript and is rejected by the session_id uniqueness invariant.\n"+
+				"error: this %s session is already bound to task %q. binding it to a new playbook run would orphan %q's transcript and is rejected by the session_id uniqueness invariant.\n"+
 					"  to start this playbook run in a separate session: flow run playbook %s\n",
-				priorBinding.Slug, priorBinding.Slug, pb.Slug)
+				ambientProduct(), priorBinding.Slug, priorBinding.Slug, pb.Slug)
 			return 1
 		}
 	}
