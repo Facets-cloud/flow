@@ -37,12 +37,12 @@ import (
 // via its harness. SkipPermissionsRun starts a FRESH session each call
 // (no pinned session id) — the owner's memory is its durable charter +
 // ledger, not a resumed transcript. Overridable in tests.
-var ownerTickRunner = func(h harness.Harness, prompt string) error {
+var ownerTickRunner = func(h harness.Harness, prompt string, opts harness.LaunchOpts) error {
 	hl := h.Headless()
 	if hl == nil {
 		return fmt.Errorf("harness %s has no headless mode, which owner ticks require", h.Name())
 	}
-	return hl.SkipPermissionsRun(prompt)
+	return hl.SkipPermissionsRun(prompt, opts)
 }
 
 // ownerTickLauncher starts the detached `flow __owner-tick <slug>`
@@ -91,7 +91,7 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 	if err != nil {
 		return fmt.Errorf("new session id: %w", err)
 	}
-	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{})
+	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{WorkDir: o.WorkDir})
 	var spawnEnv map[string]string
 	if root := os.Getenv("FLOW_ROOT"); root != "" {
 		spawnEnv = map[string]string{"FLOW_ROOT": root}
@@ -341,7 +341,7 @@ func cmdOwnerTick(args []string) int {
 		return 1
 	}
 	prompt := buildOwnerTickPrompt(o.Slug, ownerDir)
-	runErr := ownerTickRunner(h, prompt)
+	runErr := ownerTickRunner(h, prompt, harness.LaunchOpts{WorkDir: o.WorkDir})
 
 	status := "ok"
 	if runErr != nil {

@@ -508,6 +508,9 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+		if hooks := h.Hooks(); hooks != nil {
+			prompt = hooks.PreparePrompt(prompt, buildSessionStartInstructions(task.Slug))
+		}
 		command = h.LaunchCmd(sessionID, prompt, launchOpts)
 	} else {
 		// Resume path: the UUID we already have in the DB is what the
@@ -520,6 +523,9 @@ func cmdDo(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: harness %s cannot resume a session by id; task %s is already bound to %s\n",
 				h.Name(), task.Slug, sessionID)
 			return 1
+		}
+		if hooks := h.Hooks(); hooks != nil {
+			launchOpts.Inject = hooks.PreparePrompt(launchOpts.Inject, buildSessionStartInstructions(task.Slug))
 		}
 		command = rs.ResumeCmd(sessionID, launchOpts)
 	}

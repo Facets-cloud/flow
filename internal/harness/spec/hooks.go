@@ -22,13 +22,17 @@ func (a *Adapter) Hooks() harness.HookWirer {
 // Strategies lists how this harness receives flow's hook context.
 func (a *Adapter) Strategies() []string { return a.spec.Hooks.Strategies }
 
-// PromptPrelude reports whether this harness expects flow to prepend
-// the SessionStart context to the launch prompt it builds.
-//
-// This is the one strategy with nothing to install: it is a launch-time
-// behaviour, so `flow do` asks the harness rather than the config.
-func (a *Adapter) PromptPrelude() bool {
-	return a.spec.Hooks.Has(StrategyPromptPrelude)
+// PreparePrompt delivers SessionStart context for harnesses that declare
+// prompt-prelude. Other strategies act through config or instructions and
+// therefore leave the prompt untouched.
+func (a *Adapter) PreparePrompt(prompt, sessionStartContext string) string {
+	if !a.spec.Hooks.Has(StrategyPromptPrelude) || sessionStartContext == "" {
+		return prompt
+	}
+	if prompt == "" {
+		return sessionStartContext
+	}
+	return sessionStartContext + "\n\n" + prompt
 }
 
 func (a *Adapter) InstallSessionStartHook(command string) (bool, error) {

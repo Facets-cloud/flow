@@ -96,7 +96,10 @@ func (b Block) Apply(body string) (changed bool, err error) {
 		return false, err
 	}
 
-	before, after, found := split(string(existing), start, end)
+	before, after, found, splitErr := split(string(existing), start, end)
+	if splitErr != nil {
+		return false, fmt.Errorf("managed block %q has unmatched markers in %s; repair the file manually: %w", b.Name, b.Path, splitErr)
+	}
 	if !found {
 		// Append, keeping exactly one blank line between the user's
 		// content and ours.
@@ -128,7 +131,10 @@ func (b Block) Remove() (removed bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	before, after, found := split(string(existing), start, end)
+	before, after, found, splitErr := split(string(existing), start, end)
+	if splitErr != nil {
+		return false, fmt.Errorf("managed block %q has unmatched markers in %s; repair the file manually: %w", b.Name, b.Path, splitErr)
+	}
 	if !found {
 		return false, nil
 	}
@@ -146,28 +152,28 @@ func (b Block) Present() bool {
 	if err != nil {
 		return false
 	}
-	_, _, found := split(string(data), start, end)
-	return found
+	_, _, found, splitErr := split(string(data), start, end)
+	return splitErr == nil && found
 }
 
-// split cuts text into the parts before and after the managed region.
-//
-// The end marker is searched for AFTER the start marker so a stray
-// "…:end" earlier in the file cannot produce an inverted range that
-// would delete the user's content. A start with no following end is
-// treated as "not found": flow appends a fresh region rather than
-// guessing where a hand-truncated one was meant to stop.
-func split(text, start, end string) (before, after string, found bool) {
-	i := strings.Index(text, start)
-	if i < 0 {
-		return "", "", false
+// split cuts text into the parts before and after one well-formed managed
+// region. Any unmatched, duplicated, or out-of-order owned marker is an
+// error: flow cannot infer the intended boundary without risking user data.
+func split(text, start, end string) (before, after string, found bool, err error) {
+	startCount := strings.Count(text, start)
+	endCount := strings.Count(text, end)
+	if startCount == 0 && endCount == 0 {
+		return "", "", false, nil
 	}
-	rest := text[i+len(start):]
-	j := strings.Index(rest, end)
-	if j < 0 {
-		return "", "", false
+	if startCount != 1 || endCount != 1 {
+		return "", "", false, fmt.Errorf("found %d start marker(s) and %d end marker(s)", startCount, endCount)
+	}
+	i := strings.Index(text, start)
+	j := strings.Index(text, end)
+	if j < i {
+		return "", "", false, fmt.Errorf("end marker appears before start marker")
 	}
 	before = text[:i]
-	after = rest[j+len(end):]
-	return before, after, true
+	after = text[j+len(end):]
+	return before, after, true, nil
 }

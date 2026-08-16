@@ -96,10 +96,9 @@ func TestEncodeCwd(t *testing.T) {
 	}
 }
 
-// TestLaunchCmd_PreservesByteIdentity verifies the LaunchCmd output
-// is byte-identical to the legacy command string that the
-// pre-refactor do.go was producing — same flag order, same quoting,
-// same trailing --dangerously-skip-permissions placement.
+// TestLaunchCmd_PreservesByteIdentity verifies stable flag order and
+// shell quoting. Runtime session ids are quoted like every other data
+// value; the spec adapter is held to the same bytes.
 func TestLaunchCmd_PreservesByteIdentity(t *testing.T) {
 	h := New()
 	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
@@ -107,14 +106,14 @@ func TestLaunchCmd_PreservesByteIdentity(t *testing.T) {
 
 	// No injection, no skip-approvals.
 	got := h.LaunchCmd(sessionID, prompt, harness.LaunchOpts{})
-	want := "claude --session-id " + sessionID + " 'do the thing'"
+	want := "claude --session-id '" + sessionID + "' 'do the thing'"
 	if got != want {
 		t.Errorf("LaunchCmd plain:\n got=%q\nwant=%q", got, want)
 	}
 
 	// Skip-approvals appended at the END (matches legacy ordering).
 	got = h.LaunchCmd(sessionID, prompt, harness.LaunchOpts{SkipPermissions: true})
-	want = "claude --session-id " + sessionID + " 'do the thing' --dangerously-skip-permissions"
+	want = "claude --session-id '" + sessionID + "' 'do the thing' --dangerously-skip-permissions"
 	if got != want {
 		t.Errorf("LaunchCmd skip:\n got=%q\nwant=%q", got, want)
 	}
@@ -162,19 +161,19 @@ func TestResumeCmd_PreservesByteIdentity(t *testing.T) {
 	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
 
 	got := h.ResumeCmd(sessionID, harness.LaunchOpts{})
-	want := "claude --resume " + sessionID
+	want := "claude --resume '" + sessionID + "'"
 	if got != want {
 		t.Errorf("ResumeCmd plain:\n got=%q\nwant=%q", got, want)
 	}
 
 	got = h.ResumeCmd(sessionID, harness.LaunchOpts{SkipPermissions: true})
-	want = "claude --resume " + sessionID + " --dangerously-skip-permissions"
+	want = "claude --resume '" + sessionID + "' --dangerously-skip-permissions"
 	if got != want {
 		t.Errorf("ResumeCmd skip:\n got=%q\nwant=%q", got, want)
 	}
 
 	got = h.ResumeCmd(sessionID, harness.LaunchOpts{Inject: "follow up"})
-	want = "claude --resume " + sessionID + " '" + harness.InjectionMarker + "\nfollow up'"
+	want = "claude --resume '" + sessionID + "' '" + harness.InjectionMarker + "\nfollow up'"
 	if got != want {
 		t.Errorf("ResumeCmd inject:\n got=%q\nwant=%q", got, want)
 	}

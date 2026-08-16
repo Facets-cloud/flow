@@ -41,7 +41,7 @@ argv  = ["prx", "run", "agents", "-json"]          # cli/native/agents.go:86
 match = '"sessionId"\s*:\s*"([^"]+)"'
 
 [transcript]
-path   = "{{.Home}}/.praxis/agent/sessions/{{.SessionID}}/session.jsonl"
+path   = "{{envOr \"PRAXIS_CODING_AGENT_DIR\" .Home \"/.praxis/agent\"}}/sessions/{{.SessionID}}/session.jsonl"
 format = "jsonl"
 
 [transcript.map]

@@ -37,6 +37,9 @@ var PSRunner = func() ([]byte, error) {
 
 // ExecRunner runs a manifest-declared helper command, swappable in tests.
 var ExecRunner = func(argv []string) ([]byte, error) {
+	if err := validateExpandedArgv("exec command", argv); err != nil {
+		return nil, err
+	}
 	return exec.Command(argv[0], argv[1:]...).Output()
 }
 
@@ -127,13 +130,16 @@ func (a *Adapter) NewSessionID() (string, error) {
 	return "", fmt.Errorf("harness %s: unknown session strategy %q", a.spec.Name, a.spec.Session.Strategy)
 }
 
-// captureSessionID runs the manifest's minting command and pulls the id
-// out of its output. For harnesses that will not accept an externally
-// supplied id, this is how flow still ends up knowing it.
+// captureSessionID runs a pre-launch allocation command and pulls the id
+// out of its output. The command must create or reserve the same session
+// that launch/resume will use; this is not post-launch discovery.
 func (a *Adapter) captureSessionID() (string, error) {
 	argv, err := ExpandArgv(a.spec.Session.Argv, a.vars())
 	if err != nil {
 		return "", fmt.Errorf("harness %s: session.argv: %w", a.spec.Name, err)
+	}
+	if err := validateExpandedArgv("session.argv", argv); err != nil {
+		return "", fmt.Errorf("harness %s: %w", a.spec.Name, err)
 	}
 	out, err := ExecRunner(argv)
 	if err != nil {
@@ -153,7 +159,8 @@ func (a *Adapter) captureSessionID() (string, error) {
 }
 
 func (a *Adapter) ValidateSessionID(s string) error {
-	if !a.sessionRe.MatchString(s) {
+	match := a.sessionRe.FindStringIndex(s)
+	if match == nil || match[0] != 0 || match[1] != len(s) {
 		return fmt.Errorf("not a valid %s session id: %q", a.spec.Name, s)
 	}
 	return nil
@@ -233,17 +240,21 @@ func (a *Adapter) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 
 // ---------- headless ----------
 
-func (a *Adapter) SkipPermissionsRun(prompt string) error {
+func (a *Adapter) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) error {
 	if len(a.spec.Headless.RunArgv) == 0 {
 		return fmt.Errorf("harness %s declares no headless run_argv", a.spec.Name)
 	}
-	v := a.vars()
+	v := a.varsFor(opts)
 	v.Prompt = prompt
 	argv, err := ExpandArgv(a.spec.Headless.RunArgv, v)
 	if err != nil {
 		return fmt.Errorf("harness %s: headless.run_argv: %w", a.spec.Name, err)
 	}
+	if err := validateExpandedArgv("headless.run_argv", argv); err != nil {
+		return fmt.Errorf("harness %s: %w", a.spec.Name, err)
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = opts.WorkDir
 	return cmd.Run()
 }
 
@@ -258,6 +269,9 @@ func (a *Adapter) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts)
 	}
 	out, err := ExpandArgv(argv, v)
 	if err != nil {
+		return nil
+	}
+	if err := validateExpandedArgv("headless.auto_argv", out); err != nil {
 		return nil
 	}
 	return out
@@ -293,6 +307,9 @@ func (a *Adapter) LiveSessionIDs() (map[string]int, error) {
 		argv, err := ExpandArgv(a.spec.Liveness.Argv, a.vars())
 		if err != nil {
 			return nil, fmt.Errorf("harness %s: liveness.argv: %w", a.spec.Name, err)
+		}
+		if err := validateExpandedArgv("liveness.argv", argv); err != nil {
+			return nil, fmt.Errorf("harness %s: %w", a.spec.Name, err)
 		}
 		out, err := ExecRunner(argv)
 		if err != nil {

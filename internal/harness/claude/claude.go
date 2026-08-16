@@ -170,7 +170,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 	if opts.Inject != "" {
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	cmd := fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
+	cmd := fmt.Sprintf("claude --session-id %s %s", spawner.ShellQuote(sessionID), spawner.ShellQuote(prompt))
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
@@ -179,7 +179,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 
 // ResumeCmd builds `claude --resume <uuid> [<quoted-injection>] [--dangerously-skip-permissions]`.
 func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := "claude --resume " + sessionID
+	cmd := "claude --resume " + spawner.ShellQuote(sessionID)
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
@@ -191,8 +191,8 @@ func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 
 // ---------- headless ----------
 
-func (c *claude) SkipPermissionsRun(prompt string) error {
-	return SkipPermissionsRunner(prompt)
+func (c *claude) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) error {
+	return SkipPermissionsRunner(prompt, opts)
 }
 
 // AutoRunArgv builds `claude --session-id <uuid> -p <prompt>
@@ -217,8 +217,9 @@ func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) 
 // `claude -p <prompt> --dangerously-skip-permissions`. Stdout/stderr
 // are discarded because the sweep prompt instructs claude to write
 // files silently with no chat output.
-func runSkipPermissions(prompt string) error {
+func runSkipPermissions(prompt string, opts harness.LaunchOpts) error {
 	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
+	cmd.Dir = opts.WorkDir
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()
@@ -368,6 +369,10 @@ func settingsPath() (string, error) {
 	}
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
+
+// PreparePrompt is a no-op because Claude receives SessionStart context
+// through its native hook configuration.
+func (c *claude) PreparePrompt(prompt, _ string) string { return prompt }
 
 // Strategies: claude has a real lifecycle-event system, so flow's
 // context is delivered by patching ~/.claude/settings.json.

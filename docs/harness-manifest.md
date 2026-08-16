@@ -50,8 +50,8 @@ ls ~/.<agent>/*.json ~/.<agent>/*.toml 2>/dev/null
 ```
 
 Record what you could **not** establish as a comment in the manifest.
-An honest `# UNVERIFIED` beats a plausible invention — see
-[`pi.toml`](../examples/harnesses/pi.toml) for the format.
+An honest `# UNVERIFIED` beats a plausible invention — see the research
+checklist in [`TEMPLATE.toml`](../examples/harnesses/TEMPLATE.toml).
 
 ---
 
@@ -62,21 +62,21 @@ declare if the agent has it.
 
 ```toml
 schema = 1
-name   = "codex"          # the id stored in tasks.harness; must be unique
-binary = "codex"          # the executable, used for process matching
+name   = "agent"          # the id stored in tasks.harness; must be unique
+binary = "agent"          # the executable, used for process matching
 
 [session]
 strategy = "uuid7"        # uuid4 | uuid7 | exec-capture
 validate = '^[0-9a-f-]{36}$'   # REQUIRED — see "Why validate is required"
 
 [launch]
-argv = ["codex", "{{.Prompt}}"]
+argv = ["agent", "--session", "{{.SessionID}}", "{{.Prompt}}"]
 
 [liveness]
 probe = "none"            # ps | exec | none
 
 [vocab]
-product = "Codex"         # human-facing name used in flow's own output
+product = "Agent"         # human-facing name used in flow's own output
 ```
 
 ### `session_env` — optional, and often absent
@@ -88,17 +88,25 @@ session_env = "CLAUDE_CODE_SESSION_ID"
 The environment variable the agent exports **inside** a session. Flow
 reads it to answer "which task is THIS session bound to".
 
-Many agents publish nothing (codex and omp both mint ids internally and
-never export them). Omit the field. The harness still launches, resumes,
-installs skills and wires hooks — it just cannot support `flow do --here`
-or hook reverse-lookup, and `flow harness show` says so.
+Some agents publish nothing. Omit the field when that is true; the
+manifest can still work if the agent accepts Flow's chosen session id at
+launch and resume. It cannot support `flow do --here` or hook reverse
+lookup, and `flow harness show` says so.
+
+This is separate from **session ownership**. Flow allocates and stores an
+id before launching. If an agent instead mints its own id and offers no
+launch flag for Flow's id, the current contract cannot represent it: a
+UUID strategy would bind Flow to a session the agent never created.
+Codex and OMP currently fall into that category, so no shipped manifest
+claims support for them.
 
 ### Why `validate` is required
 
-Shell templates interpolate `{{.SessionID}}` **unquoted**, so generated
-commands are byte-identical to hand-written ones. That is only safe
-because this pattern gates every id first. A manifest without it would
-put unvalidated text into a shell command, so flow refuses to load it.
+Flow shell-quotes `{{.SessionID}}` like every other runtime data value.
+`validate` is still required: ids recovered from environment variables,
+process listings, and external capture commands must match the harness's
+actual identity format before Flow stores or uses them. Matching must
+cover the **entire** string; substring matches are rejected.
 
 ---
 
@@ -119,8 +127,8 @@ own terms, instead of failing at the moment you need it.
 
 ```toml
 [launch]
-argv            = ["codex", "-C", "{{.WorkDir}}", "{{.Prompt}}"]
-permission_flag = ["--dangerously-bypass-approvals-and-sandbox"]
+argv            = ["agent", "--cwd", "{{.WorkDir}}", "{{.Prompt}}"]
+permission_flag = ["--allow-all"]
 prelude         = "ulimit -n 65536"   # optional shell prefix
 ```
 
@@ -131,8 +139,8 @@ approvals. `prelude` is prepended with `&&`.
 
 ```toml
 [headless]
-run_argv  = ["codex", "exec", "{{.Prompt}}"]                       # sessionless one-shot
-auto_argv = ["codex", "exec", "resume", "{{.SessionID}}", "{{.Prompt}}"]  # session-pinned
+run_argv  = ["agent", "run", "--cwd", "{{.WorkDir}}", "{{.Prompt}}"]
+auto_argv = ["agent", "run", "--session", "{{.SessionID}}", "--cwd", "{{.WorkDir}}", "{{.Prompt}}"]
 ```
 
 `run_argv` powers `flow done`'s close-out sweep (output discarded, exit
@@ -145,7 +153,7 @@ a detached run itself.
 ```toml
 [liveness]
 probe = "ps"                                  # scan the process table
-match = 'codex\s+resume\s+([0-9a-f-]{36})'    # EXACTLY one capture group: the id
+match = 'agent\s+resume\s+([0-9a-f-]{36})'    # EXACTLY one capture group: the id
 ```
 
 `probe = "exec"` runs `argv` and matches against its output — for agents
@@ -176,7 +184,7 @@ template can derive. Use `*` and flow resolves it, taking the newest
 match:
 
 ```toml
-path = "{{.Home}}/.codex/sessions/*/*/*/rollout-*-{{.SessionID}}.jsonl"
+path = "{{.Home}}/.agent/sessions/*/run-*-{{.SessionID}}.jsonl"
 ```
 
 ### `[skills]`
@@ -196,7 +204,7 @@ require_frontmatter = ["name", "description"]
 
 ```toml
 [skills.pointer]
-file    = "{{.Home}}/.codex/AGENTS.md"
+file    = "{{.Home}}/.agent/AGENTS.md"
 comment = "html"                 # html | hash | slash
 block   = """
 # flow
@@ -206,8 +214,10 @@ When the user asks about tasks or projects, read {{.SkillPath}} and follow it.
 ```
 
 The block is written between `<!-- flow:managed:start -->` and
-`<!-- flow:managed:end -->`. Everything around it is preserved, updates
-replace only the region, and uninstall removes exactly it.
+`<!-- flow:managed:end -->`. Everything around a valid pair is preserved,
+updates replace only that region, and uninstall removes exactly it. If an
+owned marker is unmatched, duplicated, or out of order, install/uninstall
+returns a repair-required error without modifying the file.
 
 Two extra variables are available inside `block`: `{{.SkillPath}}` (the
 installed `SKILL.md`) and `{{.HookDirective}}` (the self-invocation
@@ -254,7 +264,7 @@ entry   = '{"hooks":[{"type":"command","command":"{{.Command}}"}]}'
 ```
 
 `entry` is a **template**, not a fixed struct, because entry shapes
-differ wildly — claude and codex want a nested object, praxis accepts a
+differ wildly — Claude wants a nested object, while Praxis accepts a
 bare `"{{.Command}}"` string. It is rendered and parsed before the file
 is touched, so malformed JSON fails without corrupting the config.
 Missing intermediate objects are created; other keys are preserved;

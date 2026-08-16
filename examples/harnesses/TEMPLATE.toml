@@ -28,19 +28,24 @@ name   = "myagent"        # stored in tasks.harness; must be unique
 binary = "myagent"        # the executable, used for process matching
 
 # The env var the agent exports INSIDE a session, if any. Omit it when
-# the agent mints ids privately (codex and omp both do) — you lose
-# `flow do --here` and hook reverse-lookup, nothing else.
+# none exists; that disables `flow do --here` and hook reverse-lookup.
+# This does NOT solve self-minted identity: the agent must accept Flow's
+# id on initial launch, or expose a separate allocation command Flow can
+# run before launch. If it only reveals an id after interactive launch,
+# the current manifest contract cannot represent it.
 # session_env = "MYAGENT_SESSION_ID"
 
 [session]
 # uuid4 | uuid7 | exec-capture
-#   exec-capture also needs argv + capture (one capture group = the id),
-#   for agents that will only tell you the id after they mint it.
+#   uuid*: Flow allocates the id and launch.argv MUST pass it to the agent.
+#   exec-capture: argv is a pre-launch allocation command whose output
+#   contains the id (capture has exactly one group). It is not post-launch
+#   discovery and must create/reserve the same resumable session.
 strategy = "uuid7"
 
-# REQUIRED. Shell templates interpolate {{.SessionID}} UNQUOTED so
-# generated commands match hand-written ones byte for byte; this pattern
-# is what makes that safe.
+# REQUIRED. Runtime values, including {{.SessionID}}, are shell-quoted.
+# Validation still gates ids captured from external processes/environment;
+# Flow requires the pattern to match the entire id.
 validate = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 # Set true only for cwd-keyed transcript layouts, so flow can confirm a
@@ -49,7 +54,7 @@ validate = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 [launch]
 # A SHELL template: each element is expanded, quoted iff it mentions a
-# data variable (.Prompt .Inject .WorkDir .Cwd .Home), then joined.
+# data variable (.SessionID .Prompt .Inject .WorkDir .Cwd .Home), then joined.
 # The trailing element folds an injection into the prompt as one arg.
 argv = ["myagent", "--cwd", "{{.WorkDir}}",
         "{{.Prompt}}{{if .Inject}}\n\n{{.InjectionMarker}}\n{{.Inject}}{{end}}"]
@@ -130,8 +135,9 @@ dir       = "{{.Home}}/.myagent/skills/flow"
 [hooks]
 # config-patch          deterministic, and the only one covering sessions
 #                       the user starts outside flow. Needs a JSON config.
-# prompt-prelude        flow prepends its context to the launch prompt.
-#                       Deterministic, but only for sessions flow spawns.
+# prompt-prelude        flow prepends its SessionStart context to launch
+#                       and supplies it as resume injection. Deterministic,
+#                       but only for sessions flow spawns.
 # instruction-directive the skills pointer block asks the agent to invoke
 #                       flow's hooks itself. Covers ad-hoc sessions and
 #                       drift; best-effort, needs discovery = "pointer".

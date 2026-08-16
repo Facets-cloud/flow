@@ -6,6 +6,7 @@ import (
 	"flow/internal/flowdb"
 	"flow/internal/harness/claude"
 	"flow/internal/harness/codex"
+	"flow/internal/harness/registry"
 	"flow/internal/iterm"
 	"flow/internal/spawner"
 	"io"
@@ -82,6 +83,65 @@ func stubITerm(t *testing.T) (*int64, func() string) {
 		mu.Lock()
 		defer mu.Unlock()
 		return lastScript
+	}
+}
+
+func TestPromptPreludeAppliedOnLaunchAndResume(t *testing.T) {
+	root := setupFlowRoot(t)
+	manifest := `
+schema = 1
+name = "prelude-agent"
+binary = "prelude-agent"
+
+[session]
+strategy = "uuid4"
+validate = '^[0-9a-f-]+$'
+
+[launch]
+argv = ["prelude-agent", "{{.Prompt}}"]
+
+[resume]
+argv = ["prelude-agent", "--resume", "{{.SessionID}}", "{{if .Inject}}{{.Inject}}{{end}}"]
+
+[liveness]
+probe = "none"
+
+[hooks]
+strategies = ["prompt-prelude"]
+
+[vocab]
+product = "Prelude Agent"
+`
+	manifestDir := filepath.Join(root, "harnesses")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "prelude-agent.toml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry.Reload()
+	t.Cleanup(registry.Reload)
+
+	seedTask(t, "prelude-task")
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET harness = ? WHERE slug = ?`, "prelude-agent", "prelude-task"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	_, lastScript := stubITerm(t)
+	if rc := cmdDo([]string{"prelude-task"}); rc != 0 {
+		t.Fatalf("launch rc=%d", rc)
+	}
+	if got := lastScript(); !strings.Contains(got, "re-load your task context") {
+		t.Fatalf("launch command missing SessionStart prelude:\n%s", got)
+	}
+
+	if rc := cmdDo([]string{"prelude-task"}); rc != 0 {
+		t.Fatalf("resume rc=%d", rc)
+	}
+	if got := lastScript(); !strings.Contains(got, "re-load your task context") {
+		t.Fatalf("resume command missing SessionStart prelude:\n%s", got)
 	}
 }
 
@@ -443,7 +503,7 @@ func TestCmdDoFreshAllocatesSessionID(t *testing.T) {
 	if strings.Contains(script, "--resume") {
 		t.Errorf("fresh spawn should not use --resume: %s", script)
 	}
-	if !strings.Contains(script, "--session-id "+pinnedSID) {
+	if !strings.Contains(script, "--session-id '"+pinnedSID+"'") {
 		t.Errorf("fresh spawn should pass --session-id %s: %s", pinnedSID, script)
 	}
 	if !strings.Contains(script, "fresh-task") {
@@ -573,7 +633,7 @@ func TestCmdDoResumesExistingSession(t *testing.T) {
 		t.Error("session_last_resumed should be set on resume")
 	}
 	script := getScript()
-	if !strings.Contains(script, "--resume existing-sid") {
+	if !strings.Contains(script, "--resume 'existing-sid'") {
 		t.Errorf("resume spawn should use --resume: %s", script)
 	}
 }
@@ -607,7 +667,7 @@ func TestCmdDoFreshRotatesStaleSession(t *testing.T) {
 	if strings.Contains(script, "--resume") {
 		t.Errorf("--fresh should not spawn --resume: %s", script)
 	}
-	if !strings.Contains(script, "--session-id "+pinnedSID) {
+	if !strings.Contains(script, "--session-id '"+pinnedSID+"'") {
 		t.Errorf("--fresh should spawn with --session-id %s: %s", pinnedSID, script)
 	}
 }
@@ -696,7 +756,7 @@ func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 		t.Fatalf("resume rc=%d", rc)
 	}
 	script = getScript()
-	if !strings.Contains(script, " claude --resume resume-sid") {
+	if !strings.Contains(script, " claude --resume 'resume-sid'") {
 		t.Errorf("resume spawn must invoke claude --resume <uuid>, got:\n%s", script)
 	}
 	if strings.Contains(script, "flowde") {
@@ -1137,7 +1197,7 @@ func TestCmdDoWithResumeAppendsPositionalArg(t *testing.T) {
 		t.Fatalf("rc=%d", rc)
 	}
 	script := getScript()
-	if !strings.Contains(script, "claude --resume resume-sid") {
+	if !strings.Contains(script, "claude --resume 'resume-sid'") {
 		t.Errorf("resume path should still emit --resume: %s", script)
 	}
 	if !strings.Contains(script, "[via flow do --with]") {
@@ -1252,7 +1312,7 @@ func TestCmdDoWithReopensDoneTask(t *testing.T) {
 	}
 
 	script := getScript()
-	if !strings.Contains(script, "claude --resume done-sid") {
+	if !strings.Contains(script, "claude --resume 'done-sid'") {
 		t.Errorf("reopen path should resume the existing session: %s", script)
 	}
 	if !strings.Contains(script, "[via flow do --with]") {

@@ -283,7 +283,10 @@ func cmdAutoExec(args []string) int {
 		_ = finalizeAutoRun(db, slug, "dead")
 		return 1
 	}
-	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr}
+	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, WorkDir: task.WorkDir}
+	if hooks := h.Hooks(); hooks != nil {
+		prompt = hooks.PreparePrompt(prompt, buildSessionStartInstructions(task.Slug))
+	}
 
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
 

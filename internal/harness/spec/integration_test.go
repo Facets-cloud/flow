@@ -7,7 +7,52 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"flow/internal/harness"
 )
+
+func TestPromptPreludePreparesBootstrapAndResumePrompts(t *testing.T) {
+	a := loadSpec(t, minimalManifest+`
+
+[hooks]
+strategies = ["prompt-prelude"]
+`)
+	hooks := a.Hooks()
+	if hooks == nil {
+		t.Fatal("prompt-prelude manifest has no hook capability")
+	}
+	if got, want := hooks.PreparePrompt("bootstrap", "session context"), "session context\n\nbootstrap"; got != want {
+		t.Errorf("bootstrap prompt = %q, want %q", got, want)
+	}
+	if got, want := hooks.PreparePrompt("", "session context"), "session context"; got != want {
+		t.Errorf("resume prompt = %q, want %q", got, want)
+	}
+}
+
+func TestHeadlessRunReceivesWorkDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	manifest := minimalManifest + `
+
+[headless]
+run_argv = ["sh", "-c", "printf %s \"$1\" > \"$2\"", "_", "{{.WorkDir}}", "{{.Home}}/captured-workdir"]
+`
+	a := loadSpec(t, manifest)
+	want := filepath.Join(home, "workspace with spaces")
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SkipPermissionsRun("prompt", harness.LaunchOpts{WorkDir: want}); err != nil {
+		t.Fatalf("SkipPermissionsRun: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(home, "captured-workdir"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("headless workdir = %q, want %q", got, want)
+	}
+}
 
 func skillTree() fstest.MapFS {
 	return fstest.MapFS{

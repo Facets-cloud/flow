@@ -2,10 +2,13 @@ package spec
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"flow/internal/spawner"
@@ -18,8 +21,10 @@ import (
 // string. That turns a typo like {{.Sesssion}} into a loud failure at
 // validate time instead of a command with a hole in it.
 type Vars struct {
-	// Validated / author-controlled — safe to interpolate unquoted.
-	SessionID       string
+	// SessionID is validated but still runtime data and shell-quoted.
+	SessionID string
+
+	// Author-controlled manifest metadata may remain literal.
 	InjectionMarker string
 	Name            string
 	Binary          string
@@ -36,16 +41,16 @@ type Vars struct {
 //
 // An argv element whose template text mentions any of these expands to
 // something the user (or a task brief) controls, so the element is
-// shell-quoted as a unit. Everything else — literal tokens like
-// "claude" or "--session-id", and the validated {{.SessionID}} — is
-// emitted bare, which is what makes a generated command byte-identical
-// to a hand-written one.
+// shell-quoted as a unit. This includes {{.SessionID}}: validation gates
+// identity shape, while quoting independently prevents shell interpretation.
+// Everything else — literal tokens like "claude" or "--session-id" — is
+// emitted bare.
 //
 // Adding a field to Vars means deciding which list it belongs in. Get
 // that wrong in the safe direction and a command gains redundant
 // quotes; get it wrong in the unsafe direction and you have a shell
 // injection. When in doubt, it is a data var.
-var dataVars = []string{".Prompt", ".Inject", ".WorkDir", ".Cwd", ".Home"}
+var dataVars = []string{".SessionID", ".Prompt", ".Inject", ".WorkDir", ".Cwd", ".Home"}
 
 // funcs are the helpers a manifest may call.
 var funcs = template.FuncMap{
@@ -65,11 +70,148 @@ var funcs = template.FuncMap{
 	},
 }
 
-// checkTemplate parses one template element, so a malformed action is
-// reported against its manifest key at load time.
-func checkTemplate(s string) error {
-	_, err := template.New("t").Funcs(funcs).Option("missingkey=error").Parse(s)
-	return err
+// checkTemplate parses and executes one template element against every
+// supplied context. Parsing alone cannot reject a typo such as
+// {{.SesssionID}}: text/template resolves struct fields only at execution.
+// Callers supply both populated and empty contexts so unknown fields in
+// either side of a conditional are reached during validation.
+func checkTemplate(s string, contexts ...any) error {
+	t, err := template.New("t").Funcs(funcs).Option("missingkey=error").Parse(s)
+	if err != nil {
+		return err
+	}
+	if err := validateTemplateFields(t, contexts); err != nil {
+		return err
+	}
+	for _, data := range contexts {
+		if err := t.Execute(io.Discard, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTemplateFields walks every branch in the parse tree. Executing a
+// populated and an empty context is not sufficient: nested conditionals can
+// make a typo unreachable in both samples while still reachable at runtime.
+func validateTemplateFields(t *template.Template, contexts []any) error {
+	types := make([]reflect.Type, 0, len(contexts))
+	for _, context := range contexts {
+		typ := reflect.TypeOf(context)
+		for typ != nil && typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if typ != nil {
+			types = append(types, typ)
+		}
+	}
+	for _, tmpl := range t.Templates() {
+		if tmpl.Tree == nil || tmpl.Tree.Root == nil {
+			continue
+		}
+		if err := validateTemplateNode(tmpl.Tree.Root, types); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTemplateNode(node parse.Node, contexts []reflect.Type) error {
+	if node == nil {
+		return nil
+	}
+	value := reflect.ValueOf(node)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return nil
+	}
+	switch n := node.(type) {
+	case *parse.ListNode:
+		for _, child := range n.Nodes {
+			if err := validateTemplateNode(child, contexts); err != nil {
+				return err
+			}
+		}
+	case *parse.ActionNode:
+		return validateTemplateNode(n.Pipe, contexts)
+	case *parse.IfNode:
+		return validateTemplateBranch(n.Pipe, n.List, n.ElseList, contexts)
+	case *parse.RangeNode:
+		return validateTemplateBranch(n.Pipe, n.List, n.ElseList, contexts)
+	case *parse.WithNode:
+		return validateTemplateBranch(n.Pipe, n.List, n.ElseList, contexts)
+	case *parse.TemplateNode:
+		return validateTemplateNode(n.Pipe, contexts)
+	case *parse.PipeNode:
+		for _, command := range n.Cmds {
+			if err := validateTemplateNode(command, contexts); err != nil {
+				return err
+			}
+		}
+	case *parse.CommandNode:
+		for _, arg := range n.Args {
+			if err := validateTemplateNode(arg, contexts); err != nil {
+				return err
+			}
+		}
+	case *parse.FieldNode:
+		if !templateFieldAllowed(n.Ident, contexts) {
+			return fmt.Errorf("unknown template variable .%s", strings.Join(n.Ident, "."))
+		}
+	case *parse.ChainNode:
+		if _, ok := n.Node.(*parse.DotNode); ok {
+			if !templateFieldAllowed(n.Field, contexts) {
+				return fmt.Errorf("unknown template variable .%s", strings.Join(n.Field, "."))
+			}
+			return nil
+		}
+		return validateTemplateNode(n.Node, contexts)
+	}
+	return nil
+}
+
+func validateTemplateBranch(pipe *parse.PipeNode, list, elseList *parse.ListNode, contexts []reflect.Type) error {
+	for _, node := range []parse.Node{pipe, list, elseList} {
+		if err := validateTemplateNode(node, contexts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func templateFieldAllowed(path []string, contexts []reflect.Type) bool {
+	for _, context := range contexts {
+		typ := context
+		valid := true
+		for _, name := range path {
+			for typ.Kind() == reflect.Pointer {
+				typ = typ.Elem()
+			}
+			if typ.Kind() != reflect.Struct {
+				valid = false
+				break
+			}
+			field, ok := typ.FieldByName(name)
+			if !ok {
+				valid = false
+				break
+			}
+			typ = field.Type
+		}
+		if valid {
+			return true
+		}
+	}
+	return false
+}
+
+func validateExpandedArgv(field string, argv []string) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("%s expanded to empty argv", field)
+	}
+	if strings.TrimSpace(argv[0]) == "" {
+		return fmt.Errorf("%s expanded to a blank executable", field)
+	}
+	return nil
 }
 
 // expandOne renders a single template element.
@@ -179,6 +321,7 @@ func isPurelyConditional(text string) bool {
 // author-controlled and emitted verbatim.
 func ExpandShell(argv []string, prelude string, v Vars) (string, error) {
 	parts := make([]string, 0, len(argv))
+	rawParts := make([]string, 0, len(argv))
 	for i, elem := range argv {
 		out, err := expandOne(elem, v)
 		if err != nil {
@@ -187,10 +330,14 @@ func ExpandShell(argv []string, prelude string, v Vars) (string, error) {
 		if out == "" && isPurelyConditional(elem) {
 			continue
 		}
+		rawParts = append(rawParts, out)
 		if needsQuoting(elem) {
 			out = spawner.ShellQuote(out)
 		}
 		parts = append(parts, out)
+	}
+	if err := validateExpandedArgv("command", rawParts); err != nil {
+		return "", err
 	}
 	cmd := strings.Join(parts, " ")
 	if prelude != "" {

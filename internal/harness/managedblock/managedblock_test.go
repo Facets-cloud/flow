@@ -159,39 +159,62 @@ func TestRemoveOnAbsentFileIsNoOp(t *testing.T) {
 	}
 }
 
-// TestTruncatedBlockIsRepaired: a hand-edited file with a start marker
-// and no end must not cause flow to eat the rest of the file.
-func TestTruncatedBlockIsRepaired(t *testing.T) {
+// TestTruncatedBlockRequiresManualRepair: flow cannot infer where an owned
+// block was meant to end. Mutating it risks deleting user content, including
+// on a later Apply that could pair the old start with a newly appended end.
+func TestTruncatedBlockRequiresManualRepair(t *testing.T) {
 	b := newBlock(t, "flow:managed")
 	broken := "before\n\n<!-- flow:managed:start -->\nhalf a block\n\nafter\n"
 	if err := os.WriteFile(b.Path, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Apply("repaired"); err != nil {
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := b.Apply("replacement"); err == nil || !strings.Contains(err.Error(), "unmatched") {
+			t.Fatalf("Apply attempt %d error = %v, want unmatched-marker repair error", attempt, err)
+		}
+		if got := read(t, b.Path); got != broken {
+			t.Fatalf("Apply attempt %d modified a truncated file:\n%s", attempt, got)
+		}
+	}
+	if _, err := b.Remove(); err == nil || !strings.Contains(err.Error(), "unmatched") {
+		t.Fatalf("Remove error = %v, want unmatched-marker repair error", err)
+	}
+	if got := read(t, b.Path); got != broken {
+		t.Fatalf("Remove modified a truncated file:\n%s", got)
+	}
+}
+
+func TestUnmatchedEndMarkerRequiresManualRepair(t *testing.T) {
+	b := newBlock(t, "flow:managed")
+	broken := "before\n<!-- flow:managed:end -->\nafter\n"
+	if err := os.WriteFile(b.Path, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := read(t, b.Path)
-	if !strings.Contains(got, "before") || !strings.Contains(got, "after") {
-		t.Errorf("a truncated marker caused content loss:\n%s", got)
+	if _, err := b.Apply("replacement"); err == nil || !strings.Contains(err.Error(), "unmatched") {
+		t.Fatalf("Apply error = %v, want unmatched-marker repair error", err)
 	}
-	if !strings.Contains(got, "repaired") {
-		t.Errorf("new content not written:\n%s", got)
+	if _, err := b.Remove(); err == nil || !strings.Contains(err.Error(), "unmatched") {
+		t.Fatalf("Remove error = %v, want unmatched-marker repair error", err)
+	}
+	if got := read(t, b.Path); got != broken {
+		t.Fatalf("unmatched end marker file was modified:\n%s", got)
 	}
 }
 
 // TestStrayEndMarkerBeforeStart guards the inverted-range case: an end
-// marker appearing before the start must not delete everything between.
+// marker appearing before the start must produce an error without deleting
+// anything between it and a later otherwise-valid block.
 func TestStrayEndMarkerBeforeStart(t *testing.T) {
 	b := newBlock(t, "flow:managed")
 	tricky := "<!-- flow:managed:end -->\nprecious\n<!-- flow:managed:start -->\nbody\n<!-- flow:managed:end -->\n"
 	if err := os.WriteFile(b.Path, []byte(tricky), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Apply("new body"); err != nil {
-		t.Fatal(err)
+	if _, err := b.Apply("new body"); err == nil || !strings.Contains(err.Error(), "unmatched") {
+		t.Fatalf("Apply error = %v, want unmatched-marker repair error", err)
 	}
-	if got := read(t, b.Path); !strings.Contains(got, "precious") {
-		t.Errorf("content between a stray end marker and the real start was eaten:\n%s", got)
+	if got := read(t, b.Path); got != tricky {
+		t.Errorf("malformed marker file was modified:\n%s", got)
 	}
 }
 

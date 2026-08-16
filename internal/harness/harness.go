@@ -196,7 +196,7 @@ type HeadlessRunner interface {
 	// the harness with per-tool approvals auto-allowed (used by
 	// `flow done`'s close-out sweep). Stdout/stderr are discarded;
 	// only the exit code matters.
-	SkipPermissionsRun(prompt string) error
+	SkipPermissionsRun(prompt string, opts LaunchOpts) error
 
 	// AutoRunArgv builds the argv for a headless, self-completing
 	// autonomous run (`flow do --auto`) pinned to sessionID. This is a
@@ -321,6 +321,12 @@ type HookWirer interface {
 	// UninstallUserPromptSubmitHook removes any UserPromptSubmit entry
 	// matching `command`. Used by `flow skill uninstall`.
 	UninstallUserPromptSubmitHook(command string) (removed bool, err error)
+
+	// PreparePrompt applies any launch-time hook delivery strategy to a
+	// prompt. Config-backed harnesses return prompt unchanged; a harness
+	// using prompt-prelude prepends sessionStartContext. An empty prompt is
+	// valid on resume and produces only the context payload.
+	PreparePrompt(prompt, sessionStartContext string) string
 
 	// Strategies lists how this harness receives flow's hook context.
 	//

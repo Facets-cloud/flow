@@ -502,20 +502,19 @@ true rather than from what was planned.
 
 ### Corrections this document owes
 
-**`session.validate` is required, not optional.** Shell templates
-interpolate `{{.SessionID}}` *unquoted* so generated commands match
-hand-written ones byte for byte. That is only safe because a regexp
-gates every id first, which promotes the field from nicety to load-
-bearing invariant. A manifest without it is rejected at load.
+**`session.validate` is required, not optional.** Runtime session ids are
+shell-quoted, but ids recovered from environment variables, process
+listings, and external capture commands are still untrusted identity.
+The regexp must match the entire id (substring matches are rejected),
+and a manifest without it is rejected at load.
 
-**Quoting is per-variable, not per-boundary.** "Argv arrays, shell-quote
-at the boundary" was wrong twice: `spawner.ShellQuote` always wraps, and
-claude emits neither its binary nor its session id quoted. The rule that
-reproduces real commands: an argv element is quoted iff its *template
-text* references a data-class variable (`.Prompt`, `.Inject`, `.WorkDir`,
-`.Cwd`, `.Home`). Literal tokens and the validated `.SessionID` stay
-bare. Deciding from template text rather than the expansion is
-deliberate — after expansion the provenance is gone.
+**Quoting is per-variable, not per-boundary.** `spawner.ShellQuote`
+always wraps. An argv element is quoted iff its *template text*
+references a data-class variable (`.SessionID`, `.Prompt`, `.Inject`,
+`.WorkDir`, `.Cwd`, `.Home`). Literal tokens stay bare. Deciding from
+template text rather than the expansion is deliberate — after expansion
+the provenance is gone. The native Claude adapter quotes the same values,
+so the differential test remains byte-identical.
 
 **Empty has two meanings.** The differential test caught this on its
 first run. `{{if .Inject}}…{{end}}` expanding to empty means "this
@@ -528,15 +527,24 @@ every later argument left.
 
 **`LaunchOpts` gained `WorkDir`.** `Harness.LaunchCmd` had no workdir
 parameter — the spawner `cd`s separately — so a `{{.WorkDir}}` template
-would have silently expanded to nothing forever. Harnesses that want the
-directory as an explicit flag (praxis: `-cwd`) now get it. Claude
-ignores it.
+would have silently expanded to nothing forever. Launch, resume, auto,
+owner ticks, and close-out sweeps now carry the task/owner workdir. Native
+and manifest headless runners also set the child process directory.
 
 **`claude.toml` lives in `internal/harness/spec/testdata/`, not embedded.**
 The native adapter wins registry precedence, so an embedded copy could
 never run in production — it would be dead weight that drifts. Its job
 is to fail the build when the schema stops being able to express a real
 harness, and a testdata file does that job exactly as well.
+
+**Self-minted post-launch ids are not representable yet.** Flow allocates
+and stores a session id before spawning. UUID strategies therefore require
+`launch.argv` to pass that exact id to the agent; `exec-capture` must be a
+pre-launch allocation command that creates/reserves the same session.
+Codex and OMP mint only after interactive launch and accept no caller id
+there, so their earlier example manifests bound Flow to nonexistent
+sessions. Those examples were removed rather than shipping launch-only
+configurations that fail resume, transcript, liveness, and completion.
 
 ### P2b corrections
 
@@ -603,7 +611,6 @@ from their own manifests, verified against a real settings.json.
 | `prompt_delivery = "stdin"` | No longer needed for praxis — `prx run -prompt <string>` takes the prompt directly, so `[headless]` is expressible as ordinary argv. The key stays absent until a harness appears that genuinely only reads stdin. |
 | `[transcript.map].timestamp`, `.tools` | Only the analytics phase reads them. Every key in the schema today does something. |
 | `config_patch.format` (toml/yaml) | Both harnesses flow has met use JSON. Adding the key is non-breaking when a TOML-config harness appears. |
-| prompt-prelude injection into the bootstrap prompt | The strategy is declared, validated and reported; the prompt builders it hooks into are rewritten in P3, so the injection lands with them. |
 
 ### What shipped
 
@@ -613,6 +620,8 @@ from their own manifests, verified against a real settings.json.
   (user toml › native), per-manifest error isolation, `Reload` for tests.
 - `internal/harness/spec` — schema + strict decode, three-context
   template engine, adapter, jsonl transcript decoder.
+- `prompt-prelude` — SessionStart context is applied to fresh launch and
+  auto prompts, and carried through `.Inject` on resume.
 - `flow harness list | show <name> | validate <file>`.
 - Dependency added: `github.com/BurntSushi/toml` v1.6.0 (pure Go, no
   CGO), chosen over stdlib JSON because manifests are regexp-dense and

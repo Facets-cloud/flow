@@ -197,16 +197,13 @@ func skillInstall(args []string, forceDefault bool) int {
 	// meant to protect a user's pre-existing file.
 	written := map[string]string{}
 
-	var failed, installed int
+	var failed int
 	for _, h := range targets {
-		switch installOne(h, *force, *skipHook, len(targets) > 1, written) {
-		case 0:
-			installed++
-		default:
+		if installOne(h, *force, *skipHook, len(targets) > 1, written) != 0 {
 			failed++
 		}
 	}
-	if installed == 0 && failed > 0 {
+	if failed > 0 {
 		return 1
 	}
 	return 0
@@ -342,23 +339,24 @@ func uninstallOne(h harness.Harness, keepHook, multi bool) int {
 		return 1
 	}
 	skillDir := filepath.Dir(dest)
-	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
-		fmt.Printf("%sflow skill not installed at %s — nothing to do\n", p, skillDir)
-	} else {
-		// UninstallSkill also removes any managed block this harness
-		// wrote, and leaves the directory alone when the manifest says
-		// another harness owns it.
-		if err := sk.UninstallSkill(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s%v\n", p, err)
-			return 1
-		}
-		if sk.OwnsSkillDir() {
-			fmt.Printf("%suninstalled flow skill from %s\n", p, skillDir)
-		} else {
-			// Saying "uninstalled" here would be a false claim: the
-			// directory belongs to another harness and still exists.
-			fmt.Printf("%sunregistered from %s (left in place — another harness owns it)\n", p, skillDir)
-		}
+	_, statErr := os.Stat(skillDir)
+	wasAbsent := os.IsNotExist(statErr)
+	// Always call the idempotent uninstaller: pointer-discovery harnesses
+	// may still own a managed instructions block even when their skill
+	// directory was removed independently.
+	if err := sk.UninstallSkill(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s%v\n", p, err)
+		return 1
+	}
+	switch {
+	case wasAbsent:
+		fmt.Printf("%sunregistered flow skill from %s (skill tree already absent)\n", p, skillDir)
+	case sk.OwnsSkillDir():
+		fmt.Printf("%suninstalled flow skill from %s\n", p, skillDir)
+	default:
+		// Saying "uninstalled" here would be a false claim: the
+		// directory belongs to another harness and still exists.
+		fmt.Printf("%sunregistered from %s (left in place — another harness owns it)\n", p, skillDir)
 	}
 
 	if keepHook {

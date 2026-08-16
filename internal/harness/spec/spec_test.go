@@ -99,7 +99,14 @@ func TestValidateRejects(t *testing.T) {
 		{
 			"unknown template variable",
 			func(m string) string { return strings.Replace(m, "{{.Prompt}}", "{{.Nonexistent}}", 1) },
-			"", // parses fine; caught at execution — see TestUnknownVariableFailsLoudly
+			"launch.argv",
+		},
+		{
+			"unknown variable hidden in nested conditional",
+			func(m string) string {
+				return strings.Replace(m, "{{.Prompt}}", "{{if .Prompt}}{{if .Inject}}{{.Prompt}}{{else}}{{.SesssionID}}{{end}}{{end}}", 1)
+			},
+			"launch.argv",
 		},
 		{
 			"missing vocab.product",
@@ -116,9 +123,6 @@ func TestValidateRejects(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.wantSub == "" {
-				t.Skip("validated at execution time, not load time")
-			}
 			_, err := Decode([]byte(tc.mutate(minimalManifest)), "test.toml")
 			if err == nil {
 				t.Fatalf("expected rejection, got none")
@@ -139,6 +143,93 @@ func TestUnknownVariableFailsLoudly(t *testing.T) {
 	if err == nil {
 		t.Fatal("unknown template variable expanded silently; it must error")
 	}
+}
+
+func TestValidateSessionIDRequiresFullMatch(t *testing.T) {
+	manifest := strings.Replace(minimalManifest, "validate = '^[a-z0-9-]+$'", "validate = '[a-z]+'", 1)
+	a := loadSpec(t, manifest)
+	if err := a.ValidateSessionID("valid; rm -rf /tmp/example"); err == nil {
+		t.Fatal("session.validate accepted a substring match; the entire id must match")
+	}
+}
+
+func TestSessionIDShellQuotingRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh available")
+	}
+	manifest := strings.Replace(minimalManifest,
+		`argv = ["demo", "--id", "{{.SessionID}}", "{{.Prompt}}"]`,
+		`argv = ["printf", "%s", "{{.SessionID}}"]`, 1)
+	manifest = strings.Replace(manifest, "validate = '^[a-z0-9-]+$'", "validate = '^[^/\\\\]+$'", 1)
+	a := loadSpec(t, manifest)
+	hostile := "safe; printf PWNED"
+	cmdline := a.LaunchCmd(hostile, "", harness.LaunchOpts{})
+	out, err := exec.Command("sh", "-c", cmdline).Output()
+	if err != nil {
+		t.Fatalf("running %q: %v", cmdline, err)
+	}
+	if string(out) != hostile {
+		t.Errorf("session id was interpreted by the shell\n  sent: %q\n  got:  %q\n  cmd:  %s", hostile, out, cmdline)
+	}
+}
+
+// TestRenderedArgvMustContainExecutable proves conditional templates cannot
+// erase the executable and reach exec.Command or a manifest runner.
+func TestRenderedArgvMustContainExecutable(t *testing.T) {
+	t.Run("headless", func(t *testing.T) {
+		a := loadSpec(t, minimalManifest+`
+
+[headless]
+run_argv = ["{{if .Inject}}true{{end}}"]
+`)
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("SkipPermissionsRun panicked on empty argv: %v", r)
+			}
+		}()
+		if err := a.SkipPermissionsRun("prompt", harness.LaunchOpts{}); err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Fatalf("SkipPermissionsRun error = %v, want empty argv error", err)
+		}
+	})
+
+	t.Run("session exec-capture", func(t *testing.T) {
+		manifest := strings.Replace(minimalManifest,
+			`strategy = "uuid4"`,
+			`strategy = "exec-capture"
+argv = ["{{if .Inject}}true{{end}}"]
+capture = 'id: ([a-z0-9-]+)'`, 1)
+		a := loadSpec(t, manifest)
+		old := ExecRunner
+		called := false
+		ExecRunner = func([]string) ([]byte, error) { called = true; return []byte("id: abc"), nil }
+		t.Cleanup(func() { ExecRunner = old })
+		if _, err := a.NewSessionID(); err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Fatalf("NewSessionID error = %v, want empty argv error", err)
+		}
+		if called {
+			t.Fatal("exec-capture runner received empty argv")
+		}
+	})
+
+	t.Run("liveness exec", func(t *testing.T) {
+		manifest := strings.Replace(minimalManifest,
+			`probe = "ps"
+match = '--id ([a-z0-9-]+)'`,
+			`probe = "exec"
+match = '--id ([a-z0-9-]+)'
+argv = ["{{if .Inject}}true{{end}}"]`, 1)
+		a := loadSpec(t, manifest)
+		old := ExecRunner
+		called := false
+		ExecRunner = func([]string) ([]byte, error) { called = true; return nil, nil }
+		t.Cleanup(func() { ExecRunner = old })
+		if _, err := a.LiveSessionIDs(); err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Fatalf("LiveSessionIDs error = %v, want empty argv error", err)
+		}
+		if called {
+			t.Fatal("liveness runner received empty argv")
+		}
+	})
 }
 
 // TestShellQuotingRoundTrip is the real proof that rendered commands are

@@ -62,6 +62,13 @@ func cmdHookSessionStart(args []string) int {
 		return emitAmbientSkillHint()
 	}
 
+	return emitSessionStartContext(buildSessionStartInstructions(slug))
+}
+
+// buildSessionStartInstructions is shared by native/config hooks and the
+// prompt-prelude strategy. Keeping one payload prevents manifest-driven
+// sessions from receiving a weaker bootstrap contract than native hooks.
+func buildSessionStartInstructions(slug string) string {
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
 			"Before doing anything else in this turn, re-load your task context — "+
@@ -90,8 +97,7 @@ func cmdHookSessionStart(args []string) int {
 			"file on the fly — no permission needed — per the flow skill's §4.10.",
 		slug,
 	)
-
-	return emitSessionStartContext(instructions + appendStaleVersionHint())
+	return instructions + appendStaleVersionHint()
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart

@@ -2,6 +2,7 @@ package app
 
 import (
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"fmt"
 	"os"
 )
@@ -103,7 +104,10 @@ func cmdDone(args []string) int {
 			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: harness %s has no headless mode\n", h.Name())
 		default:
-			if err := h.Headless().SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
+			if err := h.Headless().SkipPermissionsRun(
+				buildCloseoutSweepPrompt(task.Slug, projectSlug),
+				harness.LaunchOpts{WorkDir: task.WorkDir},
+			); err != nil {
 				fmt.Println()
 				fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
 			} else {

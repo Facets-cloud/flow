@@ -437,11 +437,11 @@ func (s *Spec) Validate() error {
 		if len(s.Session.Argv) == 0 {
 			bad("session.argv is required for strategy = exec-capture")
 		}
+		checkTemplates(bad, "session.argv", s.Session.Argv)
 		checkOneGroup(bad, "session.capture", s.Session.Capture, true)
 	}
 	if s.Session.Validate == "" {
-		bad("session.validate is required: shell templates interpolate the session id unquoted, " +
-			"and this pattern is what makes that safe")
+		bad("session.validate is required so captured and ambient session ids can be rejected before use")
 	} else if _, err := regexp.Compile(s.Session.Validate); err != nil {
 		bad("session.validate is not a valid regexp: %v", err)
 	}
@@ -454,11 +454,15 @@ func (s *Spec) Validate() error {
 		bad("launch.argv is required")
 	}
 	checkTemplates(bad, "launch.argv", s.Launch.Argv)
+	checkTemplates(bad, "launch.permission_flag", s.Launch.PermissionFlag)
+	checkTemplates(bad, "launch.prelude", []string{s.Launch.Prelude})
 	if s.Resume != nil {
 		if len(s.Resume.Argv) == 0 {
 			bad("resume.argv is required when [resume] is present (omit the table if the harness cannot resume)")
 		}
 		checkTemplates(bad, "resume.argv", s.Resume.Argv)
+		checkTemplates(bad, "resume.permission_flag", s.Resume.PermissionFlag)
+		checkTemplates(bad, "resume.prelude", []string{s.Resume.Prelude})
 	}
 
 	// --- headless ----------------------------------------------------
@@ -480,6 +484,7 @@ func (s *Spec) Validate() error {
 	if s.Liveness.Probe == "exec" && len(s.Liveness.Argv) == 0 {
 		bad("liveness.argv is required for probe = exec")
 	}
+	checkTemplates(bad, "liveness.argv", s.Liveness.Argv)
 
 	// --- transcript --------------------------------------------------
 	if s.Transcript != nil {
@@ -519,7 +524,7 @@ func (s *Spec) Validate() error {
 					bad("skills.pointer.comment = %q; want html, hash or slash", p.Comment)
 				}
 				checkTemplates(bad, "skills.pointer.file", []string{p.File})
-				checkTemplates(bad, "skills.pointer.block", []string{p.Block})
+				checkTemplates(bad, "skills.pointer.block", []string{p.Block}, validationBlockContexts()...)
 			}
 		}
 	}
@@ -559,7 +564,7 @@ func (s *Spec) Validate() error {
 					if ev.Entry == "" {
 						bad("hooks.config_patch.events.%s.entry is required", name)
 					}
-					checkTemplates(bad, "hooks.config_patch.events."+name+".entry", []string{ev.Entry})
+					checkTemplates(bad, "hooks.config_patch.events."+name+".entry", []string{ev.Entry}, validationEntryContexts()...)
 				}
 			}
 		}
@@ -613,12 +618,47 @@ func checkOneGroup(bad func(string, ...any), field, pattern string, required boo
 	}
 }
 
-// checkTemplates parses each element so a malformed action is reported
-// against its manifest key instead of panicking at spawn time.
-func checkTemplates(bad func(string, ...any), field string, elems []string) {
+// checkTemplates parses and executes each element so malformed actions and
+// unknown variables are reported against their manifest key at load time.
+func checkTemplates(bad func(string, ...any), field string, elems []string, contexts ...any) {
+	if len(contexts) == 0 {
+		contexts = validationVarsContexts()
+	}
 	for i, e := range elems {
-		if err := checkTemplate(e); err != nil {
+		if err := checkTemplate(e, contexts...); err != nil {
 			bad("%s[%d]: %v", field, i, err)
 		}
+	}
+}
+
+func populatedValidationVars() Vars {
+	return Vars{
+		SessionID:       "session-id",
+		InjectionMarker: "injection-marker",
+		Name:            "harness",
+		Binary:          "binary",
+		Prompt:          "prompt",
+		Inject:          "inject",
+		WorkDir:         "/workdir",
+		Cwd:             "/cwd",
+		Home:            "/home",
+	}
+}
+
+func validationVarsContexts() []any {
+	return []any{populatedValidationVars(), Vars{}}
+}
+
+func validationBlockContexts() []any {
+	return []any{
+		blockVars{Vars: populatedValidationVars(), SkillPath: "/skills/flow/SKILL.md", HookDirective: "hook directive"},
+		blockVars{},
+	}
+}
+
+func validationEntryContexts() []any {
+	return []any{
+		entryVars{Vars: populatedValidationVars(), Command: "flow hook session-start", Event: EventSessionStart},
+		entryVars{},
 	}
 }

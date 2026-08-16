@@ -155,23 +155,26 @@ manifest**, not a code change.
   harness without native background. There is no `[background]` table:
   supervised background is derivable from `[headless]`, so declaring it
   would be redundant.
-- **Quoting rule:** shell templates interpolate `{{.SessionID}}`
-  unquoted — which is why `session.validate` is a required manifest
-  field. An argv element is shell-quoted iff its template text mentions
-  a data variable (`.Prompt .Inject .WorkDir .Cwd .Home`).
+- **Quoting rule:** an argv element is shell-quoted iff its template text
+  mentions a runtime data variable (`.SessionID .Prompt .Inject .WorkDir
+  .Cwd .Home`). `session.validate` remains required to reject malformed
+  ids captured from environment/process output; matches must cover the
+  entire id.
 - **`testdata/claude.toml` + `claude_equivalence_test.go`** pin the
   generic engine to byte-identical output with the hand-written claude
   adapter. If you change either, that test is the gate.
 - **Authoring reference:** `docs/harness-manifest.md` (written so a
   coding agent can read it and produce a manifest). Working examples in
-  `examples/harnesses/` — claude, praxis, codex, omp, plus an annotated
+  `examples/harnesses/` — claude, praxis, plus an annotated
   `TEMPLATE.toml`. `TestShippedExamplesAreValid` fails the build if a
   schema change invalidates a published example.
-- **Only ship a manifest whose fields were verified** against a running
-  binary, a file on disk, or source. An invented flag passes
-  `flow harness validate` (structure only) and fails at spawn time.
-  Leave the table out and say why — see `codex.toml`'s
-  `[transcript.map]`.
+- **Only ship a manifest whose full lifecycle was verified** against a
+  running binary, a file on disk, or source. Flow stores the session id
+  before launch, so the agent must accept that id at launch (or expose a
+  pre-launch allocation command). Codex and OMP self-mint after launch
+  and are intentionally not shipped. An invented flag or identity map
+  can pass structural validation and then silently target the wrong
+  session.
 - Design and phasing:
   `docs/superpowers/specs/2026-08-15-pluggable-harness-architecture-design.md`.
 

@@ -145,6 +145,14 @@ func TestAutoExecAppendsInjection(t *testing.T) {
 	if !gotOpts.SkipPermissions {
 		t.Errorf("auto runs must set SkipPermissions")
 	}
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "auto-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOpts.WorkDir != task.WorkDir {
+		t.Errorf("opts.WorkDir = %q, want task work_dir %q", gotOpts.WorkDir, task.WorkDir)
+	}
 }
 
 // TestCmdDoAutoRefusesWhenAlreadyRunning: a second --auto launch while a
