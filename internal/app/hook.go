@@ -117,12 +117,12 @@ func appendStaleVersionHint() string {
 }
 
 // lookupBoundTask returns the task whose session_id matches
-// $CLAUDE_CODE_SESSION_ID, or nil if no such task exists, the env var
+// the active harness's session-id environment variable, or nil if no such task exists, the env var
 // is unset, or the DB lookup fails. Hook code must never fail loud — a
 // hook error blocks the user's session — so all errors are swallowed
 // and treated as "unbound".
 func lookupBoundTask() *flowdb.Task {
-	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	sid := currentSessionID()
 	if sid == "" {
 		return nil
 	}

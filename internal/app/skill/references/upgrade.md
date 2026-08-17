@@ -27,8 +27,8 @@ via `AskUserQuestion`.
    one (typically at `/usr/local/bin/flow`; confirm with
    `which flow` if unsure).
 4. Run `flow skill update` to refresh the embedded skill on disk and
-   re-wire both the SessionStart and UserPromptSubmit hooks in
-   `~/.claude/settings.json`. (The auto-upgrade path runs the same
+   re-wire the supported hooks in the active harness configuration
+   (`~/.claude/settings.json` or `~/.codex/hooks.json`). (The auto-upgrade path runs the same
    refresh on the next `flow` invocation, but explicit is better and
    surfaces any errors immediately.)
 5. Run `flow --version` again and confirm the version changed. If it

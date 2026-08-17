@@ -30,6 +30,52 @@ func TestAmbientHarness(t *testing.T) {
 	if got.Name() != harness.NameClaude {
 		t.Errorf("ambientHarness = %v, want claude", got.Name())
 	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "019ff4b1-6162-7263-974f-f5f1866ad0fe")
+	got = ambientHarness()
+	if got == nil {
+		t.Fatal("ambientHarness with $CODEX_THREAD_ID set = nil, want codex")
+	}
+	if got.Name() != harness.NameCodex {
+		t.Errorf("ambientHarness = %v, want codex", got.Name())
+	}
+}
+
+func TestHarnessForSpawnPrefersCodexAmbient(t *testing.T) {
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	t.Setenv("CODEX_THREAD_ID", "019ff4b1-6162-7263-974f-f5f1866ad0fe")
+	h, err := harnessForSpawn(&flowdb.Task{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Name() != harness.NameCodex {
+		t.Errorf("harnessForSpawn ambient=%q, want codex", h.Name())
+	}
+}
+
+func TestCmdDoHereBindsCodexSession(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "codex-here")
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	const sid = "019ff4b1-6162-7263-974f-f5f1866ad0fe"
+	t.Setenv("CODEX_THREAD_ID", sid)
+	if rc := cmdDoHere("codex-here", false); rc != 0 {
+		t.Fatalf("cmdDoHere rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	defer db.Close()
+	task, err := flowdb.GetTask(db, "codex-here")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Harness.String != "codex" || task.SessionID.String != sid || task.Status != "in-progress" {
+		t.Errorf("bound task = %+v, want codex/%s/in-progress", task, sid)
+	}
 }
 
 // TestHarnessForTask covers the column → adapter lookup. NULL and
@@ -124,7 +170,7 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 
 	// Simulate a future build having pinned the task.
 	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET harness='codex' WHERE slug='future-pin'`); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET harness='gemini' WHERE slug='future-pin'`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -135,7 +181,7 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 		t.Fatalf("cmdDo rc=%d, want non-zero (unsupported pin should refuse)", rc)
 	}
 	got := stderr()
-	if !strings.Contains(got, "codex") || !strings.Contains(got, "isn't supported") {
+	if !strings.Contains(got, "gemini") || !strings.Contains(got, "isn't supported") {
 		t.Errorf("stderr should name the unsupported harness; got:\n%s", got)
 	}
 
@@ -144,8 +190,8 @@ func TestCmdDoRefusesUnsupportedHarnessPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Harness.String != "codex" {
-		t.Errorf("refusal should preserve the pin; got %q, want codex",
+	if task.Harness.String != "gemini" {
+		t.Errorf("refusal should preserve the pin; got %q, want gemini",
 			task.Harness.String)
 	}
 	if task.SessionID.Valid {

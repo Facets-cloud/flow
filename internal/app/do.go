@@ -100,9 +100,10 @@ func cmdDo(args []string) int {
 	}
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
+	harnessName := fs.String("harness", "", "harness for a new task session (one of: "+registeredHarnessNames()+")")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
-	force := fs.Bool("force", false, "open even if the task's Claude session is already running elsewhere")
-	here := fs.Bool("here", false, "bind THIS Claude session to the task (no new tab); requires running inside a Claude Code session")
+	force := fs.Bool("force", false, "open even if the task's harness session is already running elsewhere")
+	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires a supported harness session")
 	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
@@ -127,6 +128,10 @@ func cmdDo(args []string) int {
 	}
 	if injectionText != "" && *here {
 		fmt.Fprintln(os.Stderr, "error: --with/--with-file cannot be used with --here (no session is spawned to inject into)")
+		return 2
+	}
+	if *harnessName != "" && *here {
+		fmt.Fprintln(os.Stderr, "error: --harness cannot be used with --here (the current session's harness is already fixed)")
 		return 2
 	}
 
@@ -183,10 +188,23 @@ func cmdDo(args []string) int {
 	// before, task.harness is set and binding; otherwise detect from
 	// the current process's ambient harness env (so `flow do` from
 	// inside codex picks codex), falling back to claude.
-	h, err := harnessForSpawn(task)
+	h, err := harnessForExplicitSpawn(task, *harnessName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	// A task can be bound to the thread that is running this very flow
+	// command (for example after `flow do --here`). Starting `codex resume`
+	// for that thread opens a second writer and Codex rejects it during TUI
+	// bootstrap. `ps` cannot reliably see the host-owned Codex process, so
+	// detect this direct identity match before the best-effort live-process
+	// guard below. --fresh is the explicit escape hatch for a new thread.
+	ambient := ambientHarness()
+	if !*fresh && task.SessionID.Valid && task.SessionID.String != "" &&
+		ambient != nil && ambient.Name() == h.Name() &&
+		strings.EqualFold(task.SessionID.String, currentSessionID()) {
+		fmt.Printf("Already open: %s — this is the current session\n", task.Slug)
+		return 0
 	}
 
 	// Background-agent mode ($FLOW_TERM=bg): spawn a terminal-free
@@ -528,6 +546,32 @@ func cmdDo(args []string) int {
 		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
 	}
 	return 0
+}
+
+// harnessForExplicitSpawn applies `flow do --harness <name>` to an
+// unbootstrapped task. Harness is intentionally a first-session choice: once
+// a task has a session id, its stored harness owns its transcript and resume
+// path. Changing it here would silently transfer an in-flight task, so the
+// explicit `--harness` selector refuses instead of acting like --force.
+func harnessForExplicitSpawn(task *flowdb.Task, requested string) (harness.Harness, error) {
+	if requested == "" {
+		return harnessForSpawn(task)
+	}
+	if task != nil && task.SessionID.Valid && task.SessionID.String != "" {
+		current, err := harnessForTask(task)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf(
+			"task %q already has a %s session; --harness only selects the first session for an unbootstrapped task",
+			task.Slug, current.Name(),
+		)
+	}
+	h, err := harnessByName(requested)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --harness %q (available: %s)", requested, registeredHarnessNames())
+	}
+	return h, nil
 }
 
 // backgroundLauncherFor returns the harness's BackgroundLauncher
