@@ -7,6 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.26] — 2026-08-17
+
+### Added
+
+- **Codex harness support.** Tasks can now launch and resume Codex threads,
+  persist their harness and transcript path, install the flow skill and
+  SessionStart hook under `~/.codex`, and use Codex for transcript rendering
+  and close-out sweeps. `flow do <task> --harness codex` explicitly chooses
+  Codex for a task's first session; a task with an existing session remains
+  pinned to its original harness and cannot be transferred implicitly.
+  This implementation builds on the Codex-session groundwork from
+  [#22](https://github.com/Facets-cloud/flow/pull/22) by
+  [@sillanaresh](https://github.com/sillanaresh).
+
 ### Changed
 
 - **Skill token footprint cut ~55% via progressive disclosure.** The flow
