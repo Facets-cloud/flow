@@ -362,6 +362,18 @@ func (c *claude) UninstallUserPromptSubmitHook(command string) (bool, error) {
 	return uninstallHook("UserPromptSubmit", command)
 }
 
+// InstallNotificationHook registers a Notification hook. This event
+// supports a matcher, which Claude Code tests against the payload's
+// notification_type — so passing one keeps flow from being executed at
+// all for event types it would only ignore.
+func (c *claude) InstallNotificationHook(command, matcher string) (bool, error) {
+	return installHook("Notification", matcher, command)
+}
+
+func (c *claude) UninstallNotificationHook(command string) (bool, error) {
+	return uninstallHook("Notification", command)
+}
+
 // installHook idempotently adds a hook entry for `event` to
 // ~/.claude/settings.json. matcher may be empty — some events don't
 // use one and the field is omitted. command is both the literal

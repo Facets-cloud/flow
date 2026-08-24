@@ -10,16 +10,16 @@ import (
 // (Runner, OpenURL, WriteScript, removeScript) so tests can assert on
 // exactly what SpawnTab did. Restore originals on cleanup.
 type warpStubs struct {
-	writeCalls    []string // bodies passed to WriteScript
-	openCalls     []string // URIs passed to OpenURL
-	runnerCalls   [][]string
-	removeCalls   []string
-	scriptPath    string // returned by WriteScript stub
-	writeErr      error
-	openErr       error
-	runnerErr     error
-	removeErr     error
-	t             *testing.T
+	writeCalls  []string // bodies passed to WriteScript
+	openCalls   []string // URIs passed to OpenURL
+	runnerCalls [][]string
+	removeCalls []string
+	scriptPath  string // returned by WriteScript stub
+	writeErr    error
+	openErr     error
+	runnerErr   error
+	removeErr   error
+	t           *testing.T
 }
 
 func newWarpStubs(t *testing.T) *warpStubs {
@@ -221,7 +221,7 @@ func TestAppleScriptHasWasRunningBranch(t *testing.T) {
 		"delay 1.8",
 		"end if",
 		`keystroke "bash `,
-		"delay 0.5", // settle delay between typed text and CR — load-bearing
+		"delay 0.5",                      // settle delay between typed text and CR — load-bearing
 		`keystroke (ASCII character 13)`, // PTY-level CR — bypasses Warp's synthetic-Return filter
 	} {
 		if !strings.Contains(script, want) {
@@ -356,6 +356,75 @@ func TestShellQuote(t *testing.T) {
 		if got := ShellQuote(tc.in); got != tc.want {
 			t.Errorf("ShellQuote(%q) = %q; want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// stubActivateApp replaces ActivateApp with a stub recording call count
+// and returning err. Restores the original on cleanup.
+func stubActivateApp(t *testing.T, err error) *int {
+	t.Helper()
+	calls := 0
+	old := ActivateApp
+	ActivateApp = func() error {
+		calls++
+		return err
+	}
+	t.Cleanup(func() { ActivateApp = old })
+	return &calls
+}
+
+// TestFocusSessionActivatesButReportsMiss is the core contract: Warp
+// can be foregrounded but its tabs cannot be enumerated or selected, so
+// FocusSession must activate the app AND still return false so callers
+// fall through to their "switch to that tab manually" guidance.
+func TestFocusSessionActivatesButReportsMiss(t *testing.T) {
+	calls := stubActivateApp(t, nil)
+
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
+	if err != nil {
+		t.Fatalf("FocusSession: unexpected error %v", err)
+	}
+	if focused {
+		t.Error("FocusSession must report a miss — Warp cannot select a specific tab")
+	}
+	if *calls != 1 {
+		t.Errorf("expected Warp to be activated once, got %d calls", *calls)
+	}
+}
+
+// TestFocusSessionEmptyID mirrors the iterm/terminal contract: an empty
+// session ID is a no-op miss that must not touch the terminal at all.
+func TestFocusSessionEmptyID(t *testing.T) {
+	calls := stubActivateApp(t, nil)
+
+	focused, err := FocusSession("", "claude")
+	if err != nil {
+		t.Fatalf("FocusSession: unexpected error %v", err)
+	}
+	if focused {
+		t.Error("empty session ID must not report a focus")
+	}
+	if *calls != 0 {
+		t.Errorf("empty session ID must not activate Warp, got %d calls", *calls)
+	}
+}
+
+// TestFocusSessionActivateErrorStillMiss asserts a failed activation is
+// swallowed rather than surfaced as a backend error. The caller's
+// fallback path is identical either way, so a failed `open` is not
+// worth failing the whole focus attempt over.
+func TestFocusSessionActivateErrorStillMiss(t *testing.T) {
+	calls := stubActivateApp(t, errors.New("open: application not found"))
+
+	focused, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude")
+	if err != nil {
+		t.Fatalf("activation failure must not surface as an error, got %v", err)
+	}
+	if focused {
+		t.Error("activation failure must report a miss")
+	}
+	if *calls != 1 {
+		t.Errorf("expected one activation attempt, got %d", *calls)
 	}
 }
 

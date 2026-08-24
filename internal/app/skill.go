@@ -43,6 +43,20 @@ const hookCommand = "flow hook session-start"
 // — changing it would orphan existing installations.
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
+// notificationHookCommand is the exact string settings.json records as
+// the Notification hook handler. It posts a macOS banner when a session
+// blocks on input. Stable — changing it would orphan existing
+// installations.
+const notificationHookCommand = "flow hook notification"
+
+// notificationHookMatcher filters the Notification event down to the
+// two types that mean "this session is blocked waiting on a human".
+// Claude Code matches this against the payload's notification_type, so
+// flow is never executed for the other types (auth_success,
+// elicitation_*, agent_needs_input, agent_completed) — a banner for
+// each of those would be noise across many open tabs.
+const notificationHookMatcher = "permission_prompt|idle_prompt"
+
 // readSkillVersion returns the version string recorded in the
 // harness's skill-version sidecar, or "" if missing/unreadable.
 func readSkillVersion() string {
@@ -110,6 +124,7 @@ func maybeAutoUpgradeSkill() {
 	_ = writeSkillVersion(Version)
 	_, _ = h.InstallSessionStartHook(hookCommand)
 	_, _ = h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand)
+	_, _ = h.InstallNotificationHook(notificationHookCommand, notificationHookMatcher)
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
@@ -186,6 +201,15 @@ func skillInstall(args []string, forceDefault bool) int {
 	} else {
 		fmt.Println("UserPromptSubmit hook already installed — leaving as is")
 	}
+	if added, err := h.InstallNotificationHook(notificationHookCommand, notificationHookMatcher); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install Notification hook: %v\n", err)
+		return 0
+	} else if added {
+		fmt.Println("installed Notification hook (macOS banner when a session needs input)")
+	} else {
+		fmt.Println("Notification hook already installed — leaving as is")
+	}
+	ensureNotifierInstalled()
 	return 0
 }
 
@@ -215,6 +239,11 @@ func skillUninstall(args []string) int {
 	if *keepHook {
 		fmt.Println("--keep-hook: leaving SessionStart hook in place")
 		return 0
+	}
+	if removed, err := h.UninstallNotificationHook(notificationHookCommand); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not remove Notification hook: %v\n", err)
+	} else if removed {
+		fmt.Println("removed Notification hook")
 	}
 	if removed, err := h.UninstallSessionStartHook(hookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not remove SessionStart hook: %v\n", err)

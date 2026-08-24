@@ -318,6 +318,57 @@ This is the lane scheduled playbooks use to fire instructions at
 existing tasks without manual intervention. `flow run playbook <slug>`
 accepts the same flags for ad-hoc per-run instructions.
 
+### Desktop notifications
+
+When you're running several task tabs at once, a session that stops to
+ask a question can sit unnoticed for a long time. flow installs a
+Claude Code `Notification` hook that raises a macOS banner the moment a
+session blocks on you — titled with the flow task, so you know which tab
+is asking without hunting.
+
+Click the banner and flow brings that tab to the front.
+
+```bash
+# Focus the tab running a session — what the banner click invokes.
+flow focus <session-id>
+flow focus <task-slug>      # same thing, if the task has been opened
+```
+
+Banners fire on the two notification types that mean "blocked waiting on
+a human" (`permission_prompt` and `idle_prompt`), and are grouped per
+session so a chatty task replaces its own banner instead of burying the
+others. Autonomous `flow do --auto` runs also notify when they finish or
+die, since they have no tab to watch.
+
+**Three setup notes:**
+
+- **Keep the installed binary current.** The banner's click action invokes
+  the flow binary that posted it, by absolute path. If you build from
+  source, run `make install` so `~/.local/bin/flow` isn't a stale copy
+  without the `focus` subcommand.
+
+- **Clickable banners need `terminal-notifier`.** macOS only lets a
+  registered app attach an action to a notification, which `osascript`
+  cannot do. `flow init` installs it via Homebrew automatically. Without
+  it you still get banners — they just aren't clickable. To install it
+  yourself: `brew install terminal-notifier`.
+- **Make the banners stick around.** By default macOS shows them as
+  *banners*, which auto-dismiss after a few seconds — easy to miss, which
+  defeats the point. In System Settings → Notifications → **terminal-notifier**,
+  set **Alert style** to **Alerts** and they stay on screen until you
+  dismiss or click them (the same behaviour Calendar uses for events).
+  macOS reserves this choice for you; no CLI flag can set it.
+
+  Blocked-session banners are posted with `-ignoreDnD`, so a Focus mode
+  won't hide them — a stalled session is exactly what shouldn't be
+  silenced. Auto-run completion banners deliberately don't do this.
+
+Terminal support for click-to-focus matches what each terminal exposes:
+iTerm2, Terminal.app, kitty and zellij focus the exact tab. Ghostty does
+too, once its 1.4.0 release lands (the `tty` property the lookup needs
+isn't in 1.3.x). Warp exposes no scripting surface for selecting a tab,
+so a click foregrounds the app and leaves the tab switch to you.
+
 ### `flow stats`
 
 Show usage & ROI analytics derived from your own flow history — how many

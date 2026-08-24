@@ -53,8 +53,11 @@ func TestFocusSessionMatchesAndFocuses(t *testing.T) {
 		t.Fatalf("RunnerOutput called with %d args; want >=2", len(captured))
 	}
 	script := captured[1]
-	if !strings.Contains(script, `tell application "iTerm2"`) {
-		t.Errorf("script does not target iTerm2: %s", script)
+	// "iTerm", not "iTerm2" — the bundle registers under the former and
+	// macOS rejects the latter with -1728. See
+	// TestAppleScriptAppNameIsITerm.
+	if !strings.Contains(script, `tell application "iTerm"`) {
+		t.Errorf("script does not target iTerm: %s", script)
 	}
 	if !strings.Contains(script, `if tty of s is "/dev/ttys012"`) {
 		t.Errorf("script does not match /dev/ttys012: %s", script)
@@ -213,4 +216,53 @@ func stubRunnerOutput(t *testing.T, fn func([]string) ([]byte, error)) {
 	old := RunnerOutput
 	RunnerOutput = fn
 	t.Cleanup(func() { RunnerOutput = old })
+}
+
+// TestAppleScriptAppNameIsITerm pins the application name used by BOTH
+// scripts this package emits.
+//
+// Regression guard: focusByTTY previously said `tell application
+// "iTerm2"`, which macOS rejects with -1728 ("Can't get application") —
+// the product is branded iTerm2 but its bundle registers as "iTerm".
+// SpawnTab always had it right, so the mismatch went unnoticed until
+// click-to-focus was wired up and never worked on iTerm2.
+func TestAppleScriptAppNameIsITerm(t *testing.T) {
+	var spawnScript string
+	oldRunner := Runner
+	Runner = func(args []string) error {
+		if len(args) >= 2 {
+			spawnScript = args[1]
+		}
+		return nil
+	}
+	t.Cleanup(func() { Runner = oldRunner })
+
+	var focusScript string
+	oldRO := RunnerOutput
+	RunnerOutput = func(args []string) ([]byte, error) {
+		if len(args) >= 2 {
+			focusScript = args[1]
+		}
+		return []byte("miss"), nil
+	}
+	t.Cleanup(func() { RunnerOutput = oldRO })
+
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+	if _, err := focusByTTY("/dev/ttys012"); err != nil {
+		t.Fatalf("focusByTTY: %v", err)
+	}
+
+	for name, script := range map[string]string{
+		"SpawnTab":   spawnScript,
+		"focusByTTY": focusScript,
+	} {
+		if !strings.Contains(script, `tell application "iTerm"`) {
+			t.Errorf(`%s: missing `+"`"+`tell application "iTerm"`+"`"+`:\n%s`, name, script)
+		}
+		if strings.Contains(script, `application "iTerm2"`) {
+			t.Errorf(`%s: uses "iTerm2", which macOS rejects with -1728; the bundle is named "iTerm"`, name)
+		}
+	}
 }

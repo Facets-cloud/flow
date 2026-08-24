@@ -21,7 +21,7 @@ import (
 //     sessions are a no-op.
 func cmdHook(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit)")
+		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit|notification)")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
@@ -30,6 +30,8 @@ func cmdHook(args []string) int {
 		return cmdHookSessionStart(rest)
 	case "user-prompt-submit":
 		return cmdHookUserPromptSubmit(rest)
+	case "notification":
+		return cmdHookNotification(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown hook subcommand %q\n", sub)
 		return 2

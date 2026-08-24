@@ -121,6 +121,48 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	return nil
 }
 
+// ActivateApp foregrounds Warp via `open -a Warp`. Tests override this
+// to observe FocusSession's activation without launching Warp.
+var ActivateApp = func() error {
+	cmd := exec.Command("open", "-a", "Warp")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("open -a Warp failed: %v: %s", err, string(out))
+	}
+	return nil
+}
+
+// FocusSession foregrounds Warp but always reports a miss.
+//
+// This is a deliberate half-measure, not an oversight. Every other
+// backend's FocusSession works by matching a tab/pane to the harness
+// process's controlling tty — iTerm2 and Terminal.app walk their
+// AppleScript object model comparing a `tty` property, kitty matches
+// `kitty @ ls` JSON, zellij matches `list-panes` output. Warp exposes
+// none of that: no AppleScript dictionary, no CLI, no IPC socket (see
+// the package doc above). There is no supported way to enumerate Warp's
+// tabs, let alone select one by tty.
+//
+// So the most flow can honestly do is foreground the app and leave the
+// user one manual tab-switch away. Returning (false, nil) rather than
+// (true, nil) is the important part of the contract: per the
+// spawner.FocusSession doc, (false, nil) means "fall through", so
+// callers still print their "session running elsewhere — switch to
+// that tab" guidance. Claiming (true, nil) would suppress that hint
+// and assert a tab switch that never happened, which is actively
+// misleading when several Warp tabs are open.
+//
+// An activation failure is also reported as (false, nil) rather than an
+// error: the caller's fallback path is identical either way, and a
+// failed `open` is not worth surfacing as a backend fault.
+func FocusSession(sessionID, binary string) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+	_ = ActivateApp()
+	return false, nil
+}
+
 // ShellQuote wraps s in single quotes with proper escaping. Identical
 // to iterm.ShellQuote / terminal.ShellQuote / zellij.ShellQuote.
 func ShellQuote(s string) string {

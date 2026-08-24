@@ -165,7 +165,13 @@ func ttyForHarnessSession(sessionID, binary string) (string, error) {
 // osascript's exit code.
 func focusByTTY(tty string) (bool, error) {
 	safeTTY := escapeAppleScriptString(tty)
-	script := fmt.Sprintf(`tell application "iTerm2"
+	// The application name is "iTerm", NOT "iTerm2" — the product is
+	// called iTerm2 but its bundle registers as "iTerm", and
+	// `tell application "iTerm2"` fails outright with -1728 ("Can't get
+	// application"). SpawnTab above has always used the correct name;
+	// this script did not, which meant focus-by-tty could never succeed
+	// on iTerm2. Keep the two in sync.
+	script := fmt.Sprintf(`tell application "iTerm"
   activate
   repeat with w in windows
     repeat with t in tabs of w
