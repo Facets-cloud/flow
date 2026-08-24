@@ -177,12 +177,30 @@ func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) 
 	return argv
 }
 
+// sweepModel returns the model the headless close-out sweep runs on.
+// Reads the FLOW_SWEEP_MODEL env var; defaults to "sonnet". The sweep
+// is bounded, template-driven distillation (KB scoop + project update)
+// — it doesn't need a top-tier model, and pinning it keeps every task
+// closure off the user's interactive default (which may be a premium
+// tier like Opus). Mirrors the FLOW_STALE_DAYS env convention. The
+// "sonnet" alias is used rather than a dated model id so it survives
+// model-id churn.
+func sweepModel() string {
+	if m := strings.TrimSpace(os.Getenv("FLOW_SWEEP_MODEL")); m != "" {
+		return m
+	}
+	return "sonnet"
+}
+
 // runSkipPermissions is the default SkipPermissionsRunner — execs
-// `claude -p <prompt> --dangerously-skip-permissions`. Stdout/stderr
-// are discarded because the sweep prompt instructs claude to write
-// files silently with no chat output.
+// `claude -p <prompt> --model <sweepModel> --dangerously-skip-permissions`.
+// Stdout/stderr are discarded because the sweep prompt instructs claude
+// to write files silently with no chat output. The --model pin (default
+// "sonnet") keeps the close-out sweep off the user's interactive default;
+// override via FLOW_SWEEP_MODEL.
 func runSkipPermissions(prompt string) error {
-	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
+	cmd := exec.Command("claude", "-p", prompt,
+		"--model", sweepModel(), "--dangerously-skip-permissions")
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()

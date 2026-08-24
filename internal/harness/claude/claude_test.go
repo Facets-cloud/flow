@@ -245,3 +245,22 @@ func TestLiveSessions_PSError(t *testing.T) {
 		t.Errorf("expected error, got nil (live=%v)", live)
 	}
 }
+
+// TestSweepModel verifies close-out sweep model resolution: defaults to
+// "sonnet" and honors FLOW_SWEEP_MODEL (trimmed) when set.
+func TestSweepModel(t *testing.T) {
+	t.Setenv("FLOW_SWEEP_MODEL", "")
+	if got := sweepModel(); got != "sonnet" {
+		t.Errorf("default sweepModel() = %q, want %q", got, "sonnet")
+	}
+
+	t.Setenv("FLOW_SWEEP_MODEL", "opus")
+	if got := sweepModel(); got != "opus" {
+		t.Errorf("override sweepModel() = %q, want %q", got, "opus")
+	}
+
+	t.Setenv("FLOW_SWEEP_MODEL", "  claude-sonnet-5  ")
+	if got := sweepModel(); got != "claude-sonnet-5" {
+		t.Errorf("trimmed sweepModel() = %q, want %q", got, "claude-sonnet-5")
+	}
+}
