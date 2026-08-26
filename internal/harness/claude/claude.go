@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -214,15 +213,14 @@ func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) 
 }
 
 // runSkipPermissions is the default SkipPermissionsRunner — execs
-// `claude -p <prompt> --dangerously-skip-permissions`. Stdout/stderr
-// are discarded because the sweep prompt instructs claude to write
-// files silently with no chat output.
+// `claude -p <prompt> --dangerously-skip-permissions`. Stdout is
+// discarded because the sweep prompt instructs claude to write files
+// silently with no chat output; stderr is kept and folded into the
+// error so a failed sweep says why, not just "exit status 1".
 func runSkipPermissions(prompt string, opts harness.LaunchOpts) error {
 	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
 	cmd.Dir = opts.WorkDir
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	return harness.RunCapturingStderr(cmd)
 }
 
 // ---------- live-session detection ----------

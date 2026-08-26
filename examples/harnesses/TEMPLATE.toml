@@ -80,8 +80,16 @@ permission_flag = ["--yolo"]
 # run_argv: sessionless one-shot for `flow done`'s close-out sweep.
 # auto_argv: session-pinned, keeps a transcript; powers `flow do --auto`
 # and lets `$FLOW_TERM=bg` run supervised in the background.
-run_argv  = ["myagent", "--print", "{{.Prompt}}"]
-auto_argv = ["myagent", "--print", "--resume", "{{.SessionID}}", "{{.Prompt}}"]
+#
+# State the agent's run limits HERE. A headless mode usually defaults to
+# something sized for a one-shot question — a turn cap, a time budget —
+# and hitting it exits non-zero, which flow can only report as a failed
+# sweep or a dead auto run. Read `--help` for those defaults and size
+# each shape on its own: a close-out sweep is bounded work, an auto run
+# executes a whole task. praxis.toml is the worked example.
+run_argv  = ["myagent", "--print", "--max-turns", "150", "{{.Prompt}}"]
+auto_argv = ["myagent", "--print", "--max-turns", "1500",
+             "--resume", "{{.SessionID}}", "{{.Prompt}}"]
 
 [liveness]
 # ps   — scan the process table for `binary`

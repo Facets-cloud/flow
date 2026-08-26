@@ -108,8 +108,13 @@ func cmdDone(args []string) int {
 				buildCloseoutSweepPrompt(task.Slug, projectSlug),
 				harness.LaunchOpts{WorkDir: task.WorkDir},
 			); err != nil {
+				// The status flip already landed, so this is a warning —
+				// but the distillation is the point of closing, and it is
+				// recoverable: re-running done re-runs the sweep.
 				fmt.Println()
 				fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  the status flip stands; the KB + project distillation did not run.\n")
+				fmt.Fprintf(os.Stderr, "  retry just the sweep with: flow done %s\n", task.Slug)
 			} else {
 				fmt.Println(" done")
 			}

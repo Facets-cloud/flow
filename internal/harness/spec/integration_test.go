@@ -54,6 +54,26 @@ run_argv = ["sh", "-c", "printf %s \"$1\" > \"$2\"", "_", "{{.WorkDir}}", "{{.Ho
 	}
 }
 
+// TestHeadlessRunFailureSurfacesHarnessStderr pins the debuggability
+// contract for manifest-driven harnesses: when the declared argv fails,
+// the harness's own message must reach the caller. Without it a wrong
+// flag or a default cap in the harness's headless mode is invisible —
+// `flow done` can only say "exit status 1".
+func TestHeadlessRunFailureSurfacesHarnessStderr(t *testing.T) {
+	a := loadSpec(t, minimalManifest+`
+
+[headless]
+run_argv = ["sh", "-c", "echo 'native: agent: max turns reached' >&2; exit 1"]
+`)
+	err := a.SkipPermissionsRun("prompt", harness.LaunchOpts{})
+	if err == nil {
+		t.Fatal("SkipPermissionsRun on a failing argv returned nil")
+	}
+	if !strings.Contains(err.Error(), "native: agent: max turns reached") {
+		t.Errorf("error dropped the harness's stderr: %v", err)
+	}
+}
+
 func skillTree() fstest.MapFS {
 	return fstest.MapFS{
 		"SKILL.md":            &fstest.MapFile{Data: []byte("---\nname: flow\ndescription: task manager\n---\n\nbody\n")},

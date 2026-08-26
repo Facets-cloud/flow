@@ -30,10 +30,21 @@ permission_flag = ["-permission-mode", "yolo"]
 # sibling -prompt-file reads a file or stdin and overrides it), so the
 # prompt is expressible directly. This is what gives praxis `flow done`'s
 # close-out sweep, `flow do --auto`, and supervised $FLOW_TERM=bg.
-run_argv  = ["prx", "run", "-permission-mode", "yolo",
+#
+# -max-turns is load-bearing, not tuning. `prx run` defaults to 25
+# (cli/native/main.go:289) and headless treats the cap as a HARD failure:
+# agent/loop.go returns ErrMaxTurns, main.go prints "native: agent: max
+# turns reached" and exits 1 — where the TUI shows the same stop as soft
+# (tui/cards_error.go:46-64). A close-out sweep that pages through a long
+# transcript blows 25 turns and reports as a failed sweep after doing most
+# of its work. And 0 does NOT mean unbounded: agent/agent.go:120 coerces
+# <= 0 back to 25, so the ceiling has to be an explicit number.
+run_argv  = ["prx", "run", "-permission-mode", "yolo", "-max-turns", "150",
              "-cwd", "{{.WorkDir}}", "-prompt", "{{.Prompt}}"]
+# An auto run executes a whole task rather than a bounded sweep, so its
+# ceiling is an order of magnitude higher.
 auto_argv = ["prx", "run", "-session", "{{.SessionID}}", "-permission-mode", "yolo",
-             "-cwd", "{{.WorkDir}}", "-prompt", "{{.Prompt}}"]
+             "-max-turns", "1500", "-cwd", "{{.WorkDir}}", "-prompt", "{{.Prompt}}"]
 
 [liveness]
 probe = "exec"

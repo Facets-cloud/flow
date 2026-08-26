@@ -143,10 +143,21 @@ run_argv  = ["agent", "run", "--cwd", "{{.WorkDir}}", "{{.Prompt}}"]
 auto_argv = ["agent", "run", "--session", "{{.SessionID}}", "--cwd", "{{.WorkDir}}", "{{.Prompt}}"]
 ```
 
-`run_argv` powers `flow done`'s close-out sweep (output discarded, exit
-code only). `auto_argv` powers `flow do --auto` and keeps a transcript.
-Declaring `[headless]` also makes `$FLOW_TERM=bg` work: flow supervises
-a detached run itself.
+`run_argv` powers `flow done`'s close-out sweep (stdout discarded; a
+failing run's stderr tail rides back in flow's warning, so whatever the
+agent prints there is the diagnosis a user gets). `auto_argv` powers
+`flow do --auto` and keeps a transcript. Declaring `[headless]` also
+makes `$FLOW_TERM=bg` work: flow supervises a detached run itself.
+
+**Set the agent's run limits explicitly.** A headless mode usually ships
+defaults tuned for a one-shot question — a turn cap, a time budget — and
+hitting one is a non-zero exit, which flow can only report as a failed
+sweep or a dead auto run. praxis is the worked example: `prx run`
+defaults to `-max-turns 25` and exits 1 with `agent: max turns reached`,
+where its TUI treats the same stop as soft, and `0` is coerced back to
+25 rather than meaning unbounded. Read the agent's `--help` for these
+defaults and state them, sized per shape: a close-out sweep is bounded
+work, an auto run executes a whole task.
 
 ### `[liveness]`
 

@@ -194,8 +194,10 @@ type Resumer interface {
 type HeadlessRunner interface {
 	// SkipPermissionsRun executes a non-interactive prompt against
 	// the harness with per-tool approvals auto-allowed (used by
-	// `flow done`'s close-out sweep). Stdout/stderr are discarded;
-	// only the exit code matters.
+	// `flow done`'s close-out sweep and owner ticks). Stdout is
+	// discarded, but a failure MUST carry what the harness wrote to
+	// stderr — see RunCapturingStderr. A bare exit code is not a
+	// diagnosis, and this path has no other observer.
 	SkipPermissionsRun(prompt string, opts LaunchOpts) error
 
 	// AutoRunArgv builds the argv for a headless, self-completing
@@ -204,7 +206,7 @@ type HeadlessRunner interface {
 	//
 	//   - LaunchCmd/ResumeCmd build a SHELL STRING for an interactive
 	//     terminal tab (a human drives it).
-	//   - SkipPermissionsRun is sessionless and discards output (the
+	//   - SkipPermissionsRun is sessionless and keeps only stderr (the
 	//     fire-and-forget close-out sweep).
 	//   - AutoRunArgv is headless like the sweep BUT pins the session
 	//     id — so a transcript exists for the run's own `flow done`

@@ -255,7 +255,9 @@ func (a *Adapter) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) err
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = opts.WorkDir
-	return cmd.Run()
+	// Keep stderr: a manifest can only be debugged from what the
+	// harness itself says when the run fails.
+	return harness.RunCapturingStderr(cmd)
 }
 
 func (a *Adapter) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []string {
