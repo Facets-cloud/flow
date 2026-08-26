@@ -10,3 +10,7 @@
 
 # git worktrees for isolated feature work
 /.worktrees/
+/.codex/worktrees/
+
+# macOS metadata
+.DS_Store

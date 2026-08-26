@@ -2,6 +2,11 @@ package app
 
 import (
 	"database/sql"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -370,4 +375,77 @@ func TestHarnessForSpawn_AllPathsLandOnClaudeToday(t *testing.T) {
 		t.Error("harnessForSpawn return doesn't satisfy harness.Harness")
 	}
 	_ = claude.New() // import-keep
+}
+
+// TestAppLayerNamesNoHarnessInternals is the ratchet for the de-leak
+// refactor: no source file in internal/app may contain a STRING LITERAL
+// naming any registered harness's session-id env var or binary.
+//
+// The forbidden set is derived from the registry rather than written
+// out, so it grows automatically as harnesses are added — a codex
+// adapter makes "codex" and "CODEX_..." forbidden here for free.
+//
+// Comments are deliberately not scanned: prose that says "claude's impl
+// stats the jsonl path" is documentation, not coupling. What matters is
+// that no code path can BEHAVE differently for one harness because its
+// name was baked in.
+//
+// This test exists because four such bypasses (hook.go's env lookup,
+// auto.go's env strip, stats' transcript root, the spawners' flag
+// regexes) survived a full test suite that only ever ran claude.
+func TestAppLayerNamesNoHarnessInternals(t *testing.T) {
+	// stats.go still builds claude's transcript root directly; that
+	// bypass is scheduled for the analytics phase, which replaces it
+	// with a normalized transcript-event source. Remove this exemption
+	// then — do not add to it.
+	exempt := map[string]string{
+		"stats.go": "claude transcript root; removed when stats moves to normalized events",
+	}
+
+	forbidden := map[string]string{}
+	for _, h := range allHarnesses() {
+		forbidden[h.SessionIDEnvVar()] = "session-id env var"
+		forbidden[h.Binary()] = "binary name"
+	}
+
+	files, err := filepath.Glob(filepath.Join(".", "*.go"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	scanned := 0
+	for _, file := range files {
+		base := filepath.Base(file)
+		if strings.HasSuffix(base, "_test.go") {
+			continue
+		}
+		if _, skip := exempt[base]; skip {
+			continue
+		}
+		fset := token.NewFileSet()
+		af, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		scanned++
+		ast.Inspect(af, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			val, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+			for needle, kind := range forbidden {
+				if strings.Contains(val, needle) {
+					t.Errorf("%s: string literal names a harness %s (%q); ask the harness instead of naming it\n  literal: %q",
+						fset.Position(lit.Pos()), kind, needle, val)
+				}
+			}
+			return true
+		})
+	}
+	if scanned == 0 {
+		t.Fatal("scanned no files — glob or package layout changed")
+	}
 }

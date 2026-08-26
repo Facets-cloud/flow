@@ -1,0 +1,98 @@
+# Praxis (prx) — verified against github.com/Facets-cloud/praxis-harness source.
+#
+# Install:  cp praxis.toml ~/.flow/harnesses/
+# Check:    flow harness validate ~/.flow/harnesses/praxis.toml
+# Apply:    flow skill install --harness praxis
+
+# Praxis, grounded in github.com/Facets-cloud/praxis-harness source.
+schema      = 1
+name        = "praxis"
+binary      = "prx"
+session_env = "PRAXIS_SESSION_ID"
+
+[session]
+strategy   = "uuid7"                 # session/session.go:211-218
+validate   = '^[^/\\]+$'             # session/layout.go:20-22 — path-safe, not UUID-shaped
+verify_cwd = false                   # transcripts are id-keyed, not cwd-keyed
+
+[launch]                             # TUI face: tui/run.go:554-566
+argv = ["prx", "chat", "-session-id", "{{.SessionID}}", "-cwd", "{{.WorkDir}}",
+        "-prompt", "{{.Prompt}}{{if .Inject}}\n\n{{.InjectionMarker}}\n{{.Inject}}{{end}}"]
+permission_flag = ["-permission-mode", "yolo"]     # praxis/options.go:27
+
+[resume]                             # tui/run.go:600
+argv = ["prx", "chat", "-resume", "{{.SessionID}}", "-cwd", "{{.WorkDir}}",
+        "{{if .Inject}}{{.InjectionMarker}}\n{{.Inject}}{{end}}"]
+permission_flag = ["-permission-mode", "yolo"]
+
+[headless]
+# `prx run` — cli/native/main.go. -prompt takes a plain string (the
+# sibling -prompt-file reads a file or stdin and overrides it), so the
+# prompt is expressible directly. This is what gives praxis `flow done`'s
+# close-out sweep, `flow do --auto`, and supervised $FLOW_TERM=bg.
+#
+# -max-turns is load-bearing, not tuning. `prx run` defaults to 25
+# (cli/native/main.go:289) and headless treats the cap as a HARD failure:
+# agent/loop.go returns ErrMaxTurns, main.go prints "native: agent: max
+# turns reached" and exits 1 — where the TUI shows the same stop as soft
+# (tui/cards_error.go:46-64). A close-out sweep that pages through a long
+# transcript blows 25 turns and reports as a failed sweep after doing most
+# of its work. And 0 does NOT mean unbounded: agent/agent.go:120 coerces
+# <= 0 back to 25, so the ceiling has to be an explicit number.
+run_argv  = ["prx", "run", "-permission-mode", "yolo", "-max-turns", "150",
+             "-cwd", "{{.WorkDir}}", "-prompt", "{{.Prompt}}"]
+# An auto run executes a whole task rather than a bounded sweep, so its
+# ceiling is an order of magnitude higher.
+auto_argv = ["prx", "run", "-session", "{{.SessionID}}", "-permission-mode", "yolo",
+             "-max-turns", "1500", "-cwd", "{{.WorkDir}}", "-prompt", "{{.Prompt}}"]
+
+[liveness]
+probe = "exec"
+argv  = ["prx", "run", "agents", "-json"]          # cli/native/agents.go:86
+match = '"sessionId"\s*:\s*"([^"]+)"'
+
+[transcript]
+path   = "{{envOr \"PRAXIS_CODING_AGENT_DIR\" .Home \"/.praxis/agent\"}}/sessions/{{.SessionID}}/session.jsonl"
+format = "jsonl"
+
+[transcript.map]
+role       = "message.role"
+text       = "message.content[].text"
+tool_block = "toolCall"                             # ai/types.go:56 — camelCase
+tool_name  = "message.content[].name"
+
+[skills]
+# praxis has its OWN skills directory, <AgentDir>/skills, and it ranks
+# FIRST among the user dirs it scans (systemprompt/discovery.go:114).
+# It also falls back to ~/.claude/skills and ~/.codex/skills, but the
+# loader is first-name-wins — so installing into claude's tree instead
+# would be shadowed by anything already sitting in praxis's own.
+discovery = "native"
+dir       = "{{envOr \"PRAXIS_CODING_AGENT_DIR\" .Home \"/.praxis/agent\"}}/skills/flow"
+# skill/skill.go:118-120 rejects a SKILL.md with no description outright.
+require_frontmatter = ["name", "description"]
+
+[hooks]
+# praxis has real hooks AND deliberately aliases Claude Code's event
+# names (praxis/native_command_hooks.go:249-253), so config-patch works.
+strategies = ["config-patch"]
+
+[hooks.config_patch]
+# settings.go:172 — same AgentDir root as the skills and session dirs.
+file = "{{envOr \"PRAXIS_CODING_AGENT_DIR\" .Home \"/.praxis/agent\"}}/settings.json"
+
+[hooks.config_patch.events.SessionStart]
+# praxis accepts a bare command string (:630-654) — a different entry
+# shape from claude's nested object, which is why entry is a template.
+pointer = "/hooks/SessionStart"
+entry   = '"{{.Command}}"'
+
+[hooks.config_patch.events.UserPromptSubmit]
+pointer = "/hooks/UserPromptSubmit"
+entry   = '"{{.Command}}"'
+
+[vocab]
+product      = "Praxis"
+context_file = "AGENTS.md"                          # projectcontext.go:138
+ask_tool     = "ask"                                # tool/external.go:53
+skill_hint   = "load the flow skill (praxis discovers it under its agent dir)"

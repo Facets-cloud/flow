@@ -3,6 +3,7 @@ module flow
 go 1.25.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/fogleman/gg v1.3.0
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
 	github.com/mattn/go-isatty v0.0.20

@@ -53,10 +53,10 @@ func TestCommands(t *testing.T) {
 	if got := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}); !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume ") {
 		t.Errorf("LaunchCmd skip=%q", got)
 	}
-	if got := h.ResumeCmd(testThreadID, harness.LaunchOpts{Inject: "follow up"}); !strings.Contains(got, harness.InjectionMarker+"\nfollow up") {
+	if got := h.Resume().ResumeCmd(testThreadID, harness.LaunchOpts{Inject: "follow up"}); !strings.Contains(got, harness.InjectionMarker+"\nfollow up") {
 		t.Errorf("ResumeCmd missing injection: %q", got)
 	}
-	argv := h.AutoRunArgv(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true})
+	argv := h.Headless().AutoRunArgv(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true})
 	want := []string{"codex", "exec", "resume", "--dangerously-bypass-approvals-and-sandbox", testThreadID, "work"}
 	if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("AutoRunArgv=%q, want %q", argv, want)
@@ -114,15 +114,15 @@ func TestSkillAndSessionStartHook(t *testing.T) {
 	t.Setenv("HOME", home)
 	h := New()
 	files := os.DirFS(t.TempDir())
-	if err := h.InstallSkill(files); err != nil {
+	if err := h.Skills().InstallSkill(files); err != nil {
 		t.Fatalf("InstallSkill empty fs: %v", err)
 	}
 	// An empty filesystem still establishes the destination path through
 	// the harness's path methods, while hooks must be written separately.
-	if added, err := h.InstallSessionStartHook("flow hook session-start"); err != nil || !added {
+	if added, err := h.Hooks().InstallSessionStartHook("flow hook session-start"); err != nil || !added {
 		t.Fatalf("InstallSessionStartHook added=%v err=%v", added, err)
 	}
-	if added, err := h.InstallSessionStartHook("flow hook session-start"); err != nil || added {
+	if added, err := h.Hooks().InstallSessionStartHook("flow hook session-start"); err != nil || added {
 		t.Fatalf("idempotent install added=%v err=%v", added, err)
 	}
 	raw, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
@@ -132,7 +132,7 @@ func TestSkillAndSessionStartHook(t *testing.T) {
 	if !strings.Contains(string(raw), "startup|resume") || !strings.Contains(string(raw), "flow hook session-start") {
 		t.Errorf("unexpected hooks file: %s", raw)
 	}
-	if removed, err := h.UninstallSessionStartHook("flow hook session-start"); err != nil || !removed {
+	if removed, err := h.Hooks().UninstallSessionStartHook("flow hook session-start"); err != nil || !removed {
 		t.Fatalf("UninstallSessionStartHook removed=%v err=%v", removed, err)
 	}
 }

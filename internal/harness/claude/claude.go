@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -56,6 +55,42 @@ type claude struct{}
 func (c *claude) Name() harness.Name      { return harness.NameClaude }
 func (c *claude) Binary() string          { return "claude" }
 func (c *claude) SessionIDEnvVar() string { return "CLAUDE_CODE_SESSION_ID" }
+
+// Vocab returns Claude Code's agent-facing idiom. These are the exact
+// names flow's prompts and user-facing copy used to hardcode.
+func (c *claude) Vocab() harness.Vocabulary {
+	return harness.Vocabulary{
+		Product:     "Claude",
+		ContextFile: "CLAUDE.md",
+		AskTool:     "AskUserQuestion",
+		SkillHint:   "via the Skill tool",
+	}
+}
+
+// ---------- capabilities ----------
+//
+// Claude Code supports every capability flow models, so each accessor
+// returns the receiver. A harness lacking one returns nil instead.
+
+func (c *claude) Resume() harness.Resumer                { return c }
+func (c *claude) Headless() harness.HeadlessRunner       { return c }
+func (c *claude) Transcript() harness.TranscriptSource   { return c }
+func (c *claude) Skills() harness.SkillInstaller         { return c }
+func (c *claude) Hooks() harness.HookWirer               { return c }
+func (c *claude) Background() harness.BackgroundLauncher { return c }
+
+// Compile-time proof that the receiver really satisfies every
+// capability it hands out — so a dropped method surfaces here rather
+// than as a nil accessor at runtime.
+var (
+	_ harness.Harness            = (*claude)(nil)
+	_ harness.Resumer            = (*claude)(nil)
+	_ harness.HeadlessRunner     = (*claude)(nil)
+	_ harness.TranscriptSource   = (*claude)(nil)
+	_ harness.SkillInstaller     = (*claude)(nil)
+	_ harness.HookWirer          = (*claude)(nil)
+	_ harness.BackgroundLauncher = (*claude)(nil)
+)
 
 // ---------- session allocation ----------
 
@@ -134,7 +169,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 	if opts.Inject != "" {
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	cmd := fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
+	cmd := fmt.Sprintf("claude --session-id %s %s", spawner.ShellQuote(sessionID), spawner.ShellQuote(prompt))
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
@@ -143,7 +178,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 
 // ResumeCmd builds `claude --resume <uuid> [<quoted-injection>] [--dangerously-skip-permissions]`.
 func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := "claude --resume " + sessionID
+	cmd := "claude --resume " + spawner.ShellQuote(sessionID)
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
@@ -155,8 +190,8 @@ func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 
 // ---------- headless ----------
 
-func (c *claude) SkipPermissionsRun(prompt string) error {
-	return SkipPermissionsRunner(prompt)
+func (c *claude) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) error {
+	return SkipPermissionsRunner(prompt, opts)
 }
 
 // AutoRunArgv builds `claude --session-id <uuid> -p <prompt>
@@ -178,14 +213,14 @@ func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) 
 }
 
 // runSkipPermissions is the default SkipPermissionsRunner — execs
-// `claude -p <prompt> --dangerously-skip-permissions`. Stdout/stderr
-// are discarded because the sweep prompt instructs claude to write
-// files silently with no chat output.
-func runSkipPermissions(prompt string) error {
+// `claude -p <prompt> --dangerously-skip-permissions`. Stdout is
+// discarded because the sweep prompt instructs claude to write files
+// silently with no chat output; stderr is kept and folded into the
+// error so a failed sweep says why, not just "exit status 1".
+func runSkipPermissions(prompt string, opts harness.LaunchOpts) error {
 	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	cmd.Dir = opts.WorkDir
+	return harness.RunCapturingStderr(cmd)
 }
 
 // ---------- live-session detection ----------
@@ -288,36 +323,24 @@ func (c *claude) SkillVersionPath() (string, error) {
 	return filepath.Join(filepath.Dir(skill), "VERSION"), nil
 }
 
-// InstallSkill writes the skill tree (SKILL.md + references/*.md) into
-// the directory that holds SkillInstallPath, preserving each file's
-// relative path. Creates parent dirs as needed. Files already on disk
-// that aren't in the tree (e.g. the VERSION sidecar) are left untouched.
+// OwnsSkillDir is true: ~/.claude/skills/flow is claude's own tree, so
+// uninstalling claude really does delete it.
+func (c *claude) OwnsSkillDir() bool { return true }
+
+// InstallSkill makes the skill directory match the embedded tree
+// exactly, preserving each file's relative path and creating parent
+// dirs as needed.
+//
+// Files under the directory that are NOT in the tree are removed, so a
+// renamed reference does not survive as an orphan describing a workflow
+// that no longer exists. The VERSION sidecar is kept — flow writes it
+// separately.
 func (c *claude) InstallSkill(files fs.FS) error {
 	p, err := c.SkillInstallPath()
 	if err != nil {
 		return err
 	}
-	base := filepath.Dir(p)
-	return fs.WalkDir(files, ".", func(rel string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		content, err := fs.ReadFile(files, rel)
-		if err != nil {
-			return fmt.Errorf("read embedded %s: %w", rel, err)
-		}
-		target := filepath.Join(base, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("create %s: %w", filepath.Dir(target), err)
-		}
-		if err := os.WriteFile(target, content, 0o644); err != nil {
-			return fmt.Errorf("write %s: %w", target, err)
-		}
-		return nil
-	})
+	return harness.SyncTree(files, filepath.Dir(p), harness.SkillVersionFile)
 }
 
 // UninstallSkill removes the skill directory entirely (SKILL.md plus
@@ -344,6 +367,14 @@ func settingsPath() (string, error) {
 	}
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
+
+// PreparePrompt is a no-op because Claude receives SessionStart context
+// through its native hook configuration.
+func (c *claude) PreparePrompt(prompt, _ string) string { return prompt }
+
+// Strategies: claude has a real lifecycle-event system, so flow's
+// context is delivered by patching ~/.claude/settings.json.
+func (c *claude) Strategies() []string { return []string{harness.StrategyConfigPatch} }
 
 func (c *claude) InstallSessionStartHook(command string) (bool, error) {
 	return installHook("SessionStart", hookMatcher, command)

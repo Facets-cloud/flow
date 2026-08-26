@@ -220,6 +220,18 @@ func TestDetectFlowTermInvalidFallsThrough(t *testing.T) {
 	}
 }
 
+func TestSpawnTabRejectsEmptyCommand(t *testing.T) {
+	Override = BackendITerm
+	t.Cleanup(func() { Override = "" })
+	calls := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "  ", nil); err == nil {
+		t.Fatal("SpawnTab accepted an empty rendered command")
+	}
+	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.kitty || *calls.warp || *calls.ghostty {
+		t.Fatal("empty command reached a terminal backend")
+	}
+}
+
 // TestSpawnTabRoutesToITerm asserts the iterm Runner is the one called
 // when Detect() resolves to BackendITerm.
 func TestSpawnTabRoutesToITerm(t *testing.T) {

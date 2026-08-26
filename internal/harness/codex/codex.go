@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -31,6 +30,43 @@ type codex struct{}
 func (c *codex) Name() harness.Name      { return harness.NameCodex }
 func (c *codex) Binary() string          { return "codex" }
 func (c *codex) SessionIDEnvVar() string { return "CODEX_THREAD_ID" }
+
+// ---------- capabilities ----------
+
+// Vocab is codex's dialect. AskTool is deliberately empty: codex has no
+// interactive multiple-choice tool, so flow's prompts fall back to prose
+// instead of naming a tool that does not exist.
+func (c *codex) Vocab() harness.Vocabulary {
+	return harness.Vocabulary{
+		Product:     "Codex",
+		ContextFile: "AGENTS.md",
+		AskTool:     "",
+		SkillHint:   "by reading the flow skill under ~/.codex/skills/flow",
+	}
+}
+
+func (c *codex) Resume() harness.Resumer              { return c }
+func (c *codex) Headless() harness.HeadlessRunner     { return c }
+func (c *codex) Transcript() harness.TranscriptSource { return c }
+func (c *codex) Skills() harness.SkillInstaller       { return c }
+func (c *codex) Hooks() harness.HookWirer             { return c }
+
+// Background is nil: codex exposes no detached-agent registry of its
+// own, so `$FLOW_TERM=bg` falls back to flow's own --auto supervisor
+// rather than pretending an Agent View exists.
+func (c *codex) Background() harness.BackgroundLauncher { return nil }
+
+// Compile-time proof that the receiver really satisfies every
+// capability it hands out — so a dropped method surfaces here rather
+// than as a nil accessor at runtime.
+var (
+	_ harness.Harness          = (*codex)(nil)
+	_ harness.Resumer          = (*codex)(nil)
+	_ harness.HeadlessRunner   = (*codex)(nil)
+	_ harness.TranscriptSource = (*codex)(nil)
+	_ harness.SkillInstaller   = (*codex)(nil)
+	_ harness.HookWirer        = (*codex)(nil)
+)
 
 // Codex thread ids are lowercase UUIDs. Codex currently creates UUIDv7
 // threads, while older saved threads may use other RFC-4122 versions.
@@ -77,11 +113,14 @@ func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	return cmd
 }
 
-func (c *codex) SkipPermissionsRun(prompt string) error {
+// SkipPermissionsRun runs the close-out sweep. Stdout is discarded (the
+// sweep prompt asks for silent file writes), but stderr is kept and
+// folded into the error: a bare exit code is not a diagnosis, and this
+// path has no other observer.
+func (c *codex) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) error {
 	cmd := exec.Command("codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	cmd.Dir = opts.WorkDir
+	return harness.RunCapturingStderr(cmd)
 }
 
 func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []string {
@@ -170,29 +209,19 @@ func (c *codex) SkillVersionPath() (string, error) {
 	return filepath.Join(filepath.Dir(p), "VERSION"), nil
 }
 
+// OwnsSkillDir is true: ~/.codex/skills/flow is flow's own tree under
+// codex's home, so uninstalling really does delete it.
+func (c *codex) OwnsSkillDir() bool { return true }
+
+// InstallSkill makes the skill directory equal the embedded tree — same
+// pruning contract as every other harness, so a renamed reference does
+// not leave an orphan behind forever.
 func (c *codex) InstallSkill(files fs.FS) error {
 	p, err := c.SkillInstallPath()
 	if err != nil {
 		return err
 	}
-	base := filepath.Dir(p)
-	return fs.WalkDir(files, ".", func(rel string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		content, err := fs.ReadFile(files, rel)
-		if err != nil {
-			return fmt.Errorf("read embedded %s: %w", rel, err)
-		}
-		target := filepath.Join(base, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("create %s: %w", filepath.Dir(target), err)
-		}
-		return os.WriteFile(target, content, 0o644)
-	})
+	return harness.SyncTree(files, filepath.Dir(p), harness.SkillVersionFile)
 }
 
 func (c *codex) UninstallSkill() error {
@@ -205,6 +234,14 @@ func (c *codex) UninstallSkill() error {
 	}
 	return os.RemoveAll(filepath.Dir(p))
 }
+
+// PreparePrompt is a no-op: codex receives flow's SessionStart context
+// through its own hooks.json, not through the prompt.
+func (c *codex) PreparePrompt(prompt, _ string) string { return prompt }
+
+// Strategies: codex has a real lifecycle-event system, so flow's
+// context is delivered by patching ~/.codex/hooks.json.
+func (c *codex) Strategies() []string { return []string{harness.StrategyConfigPatch} }
 
 func (c *codex) InstallSessionStartHook(command string) (bool, error) {
 	return installHook("SessionStart", "startup|resume", command)

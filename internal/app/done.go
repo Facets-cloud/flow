@@ -2,6 +2,7 @@ package app
 
 import (
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"fmt"
 	"os"
 )
@@ -61,11 +62,11 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr,
 			"error: task %q has no session_id — flow done requires at least one prior `flow do` (or `flow do --here`) to have attached a session whose transcript the sweep can read.\n"+
 				"  options:\n"+
-				"    - if you've been working on this task in the current Claude session, bind it now and retry close-out:\n"+
+				"    - if you've been working on this task in the current %s session, bind it now and retry close-out:\n"+
 				"        flow do --here %s   (then re-run: flow done %s)\n"+
 				"    - if it was never worked on and isn't relevant, archive it instead:\n"+
 				"        flow archive %s\n",
-			task.Slug, task.Slug, task.Slug, task.Slug)
+			task.Slug, ambientProduct(), task.Slug, task.Slug, task.Slug)
 		return 1
 	}
 
@@ -90,18 +91,33 @@ func cmdDone(args []string) int {
 		if task.ProjectSlug.Valid {
 			projectSlug = task.ProjectSlug.String
 		}
+		// The status flip is the contract; the sweep is best-effort,
+		// so every way of not running it is a warning, never a failure.
 		h, lookupErr := harnessForTask(task)
-		if lookupErr != nil {
-			// Task pinned to an unsupported harness — skip the
-			// sweep but keep the status flip (the flip is the
-			// contract; the sweep is best-effort).
+		switch {
+		case lookupErr != nil:
+			// Task pinned to a harness this binary doesn't support.
 			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
-		} else if err := h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
+		case h.Headless() == nil:
+			// Harness has no non-interactive mode to sweep with.
 			fmt.Println()
-			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
-		} else {
-			fmt.Println(" done")
+			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: harness %s has no headless mode\n", h.Name())
+		default:
+			if err := h.Headless().SkipPermissionsRun(
+				buildCloseoutSweepPrompt(task.Slug, projectSlug),
+				harness.LaunchOpts{WorkDir: task.WorkDir},
+			); err != nil {
+				// The status flip already landed, so this is a warning —
+				// but the distillation is the point of closing, and it is
+				// recoverable: re-running done re-runs the sweep.
+				fmt.Println()
+				fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  the status flip stands; the KB + project distillation did not run.\n")
+				fmt.Fprintf(os.Stderr, "  retry just the sweep with: flow done %s\n", task.Slug)
+			} else {
+				fmt.Println(" done")
+			}
 		}
 	}
 	return 0

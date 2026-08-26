@@ -50,7 +50,11 @@ import (
 // from the __auto-exec process the launcher pointed at the log file).
 // Overridable in tests.
 var autoRunner = func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
-	argv := h.AutoRunArgv(sessionID, prompt, opts)
+	hl := h.Headless()
+	if hl == nil {
+		return fmt.Errorf("harness %s has no headless mode, which `flow do --auto` requires", h.Name())
+	}
+	argv := hl.AutoRunArgv(sessionID, prompt, opts)
 	if len(argv) == 0 {
 		return fmt.Errorf("harness %s returned empty auto-run argv", h.Name())
 	}
@@ -123,24 +127,30 @@ var processAlive = func(pid int) bool {
 }
 
 // autoChildEnv builds the environment for the detached supervisor. It
-// inherits the parent's environment (so PATH finds the selected harness and
-// FLOW_ROOT points at the same store) but strips every registered harness
-// session id. Those ids belong to the dispatch session, not the headless run,
-// and leaking one would confuse reverse-lookups inside the autonomous session.
+// inherits the parent's environment (so PATH finds the harness binary
+// and FLOW_ROOT points at the same store) but strips the session-id env
+// var of EVERY registered harness — those belong to the dispatch
+// session, not the headless run, and leaking one would make flow's
+// reverse-lookup inside the autonomous session resolve to the
+// dispatching task. Stripping all of them (not just the ambient one)
+// also covers a cross-harness dispatch, where the parent and the
+// headless child are different harnesses.
 func autoChildEnv() []string {
+	harnesses := allHarnesses()
+	prefixes := make([]string, 0, len(harnesses))
+	for _, h := range harnesses {
+		prefixes = append(prefixes, h.SessionIDEnvVar()+"=")
+	}
 	in := os.Environ()
 	out := make([]string, 0, len(in))
+next:
 	for _, kv := range in {
-		isSessionEnv := false
-		for _, h := range allHarnesses() {
-			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
-				isSessionEnv = true
-				break
+		for _, p := range prefixes {
+			if strings.HasPrefix(kv, p) {
+				continue next
 			}
 		}
-		if !isSessionEnv {
-			out = append(out, kv)
-		}
+		out = append(out, kv)
 	}
 	return out
 }
@@ -273,7 +283,10 @@ func cmdAutoExec(args []string) int {
 		_ = finalizeAutoRun(db, slug, "dead")
 		return 1
 	}
-	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr}
+	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, WorkDir: task.WorkDir}
+	if hooks := h.Hooks(); hooks != nil {
+		prompt = hooks.PreparePrompt(prompt, buildSessionStartInstructions(task.Slug))
+	}
 
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
 

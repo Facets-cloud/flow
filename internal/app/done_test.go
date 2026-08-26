@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/harness/claude"
 	"testing"
 )
@@ -14,14 +15,15 @@ import (
 // close-out template names the slug verbatim).
 type capturedClaudeCall struct {
 	prompt string
+	opts   harness.LaunchOpts
 }
 
 func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 	t.Helper()
 	old := claude.SkipPermissionsRunner
 	calls := &[]capturedClaudeCall{}
-	claude.SkipPermissionsRunner = func(prompt string) error {
-		*calls = append(*calls, capturedClaudeCall{prompt: prompt})
+	claude.SkipPermissionsRunner = func(prompt string, opts harness.LaunchOpts) error {
+		*calls = append(*calls, capturedClaudeCall{prompt: prompt, opts: opts})
 		return retErr
 	}
 	t.Cleanup(func() { claude.SkipPermissionsRunner = old })
@@ -30,7 +32,7 @@ func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 
 func TestCmdDoneHappyPath(t *testing.T) {
 	setupFlowRoot(t)
-	stubClaudeRunner(t, nil)
+	calls := stubClaudeRunner(t, nil)
 	if rc := cmdAdd([]string{"task", "Some Task"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
@@ -54,6 +56,12 @@ func TestCmdDoneHappyPath(t *testing.T) {
 	}
 	if task.Status != "done" {
 		t.Errorf("status: got %q, want done", task.Status)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("close-out calls = %d, want 1", len(*calls))
+	}
+	if got := (*calls)[0].opts.WorkDir; got != task.WorkDir {
+		t.Errorf("close-out workdir = %q, want task work_dir %q", got, task.WorkDir)
 	}
 }
 

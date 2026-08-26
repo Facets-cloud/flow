@@ -77,6 +77,8 @@ func Run(args []string) int {
 		return cmdStats(rest)
 	case "hook":
 		return cmdHook(rest)
+	case "harness":
+		return cmdHarness(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -100,10 +102,15 @@ Create:
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>]
 
 Sessions:
-  flow do                <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions]
-  flow do --auto         <ref> [--harness claude|codex] (run headlessly in the background; self-completes via flow done)
+  flow do                <ref> [--harness <name>] [--fresh] [--dangerously-skip-permissions]
+  flow do --auto         <ref> [--harness <name>] (run headlessly in the background; self-completes via flow done)
   flow done              <ref>
-  flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  flow hook session-start                      (SessionStart hook handler — wired by flow skill install)
+
+Harnesses:
+  flow harness list
+  flow harness show     <name>
+  flow harness validate <file.toml>            (check a manifest before installing it)
 
 Read:
   flow show task       [<ref>]
@@ -123,7 +130,7 @@ Edit / mutate:
                             [--waiting "<who or what>"] [--clear-waiting]
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
   flow update project <ref> [--priority h|m|l]
-  flow do        <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard)
+  flow do        <ref> [--harness <name>] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard; names from flow harness list)
   flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>

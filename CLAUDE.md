@@ -109,8 +109,86 @@ flow/
   tasks/<slug>/updates/*.md
 ```
 
+## Harness architecture (pluggable coding agents)
+
+flow drives a coding agent through `harness.Harness`
+(`internal/harness/harness.go`). Adding an agent should be a **TOML
+manifest**, not a code change.
+
+- **Capability accessors return nil when unsupported.** 8 methods are
+  required (Name, Binary, SessionIDEnvVar, NewSessionID,
+  ValidateSessionID, ValidateSession, LaunchCmd, LiveSessionIDs);
+  `Resume() Headless() Transcript() Skills() Hooks() Background()`
+  return nil if the harness lacks them, and `Vocab()` always returns a
+  populated `Vocabulary`. **Always nil-check and report the gap** —
+  never assume claude-level capability.
+- **Only `internal/harness/registry` imports a concrete adapter.**
+  `internal/app` uses `harness` + `registry` and never names a harness.
+  `TestAppLayerNamesNoHarnessInternals` enforces this by AST-scanning
+  every non-test file in `internal/app` for string literals containing
+  any registered harness's `SessionIDEnvVar()` or `Binary()`. The
+  forbidden set comes from the registry, so it covers new harnesses
+  automatically. It exempts only `stats.go`, pending the analytics phase.
+- **Manifests** live in `$FLOW_ROOT/harnesses/*.toml`, load via
+  `internal/harness/spec`, and SHADOW a built-in of the same name (the
+  shadowing is reported by `flow harness list`). A bad manifest disables
+  only itself. Debug with `flow harness list|show <name>|validate <file>`.
+- **Skills reach every harness two ways.** `discovery = "native"` writes
+  the tree where the harness already scans; `discovery = "pointer"`
+  also injects a marker-delimited block (`internal/harness/managedblock`)
+  into the harness's instructions file. `owns_dir = false` means
+  uninstall must NOT delete the tree, for a manifest deliberately
+  pointed at a directory another harness owns.
+- **Point a manifest at the harness's OWN skill dir.** Agents that also
+  scan a sibling's directory (praxis reads `~/.claude/skills` and
+  `~/.codex/skills` as fallbacks) rank their own first and load
+  first-name-wins, so installing into the sibling's tree is silently
+  shadowed by anything already in the native one. Praxis's is
+  `$PRAXIS_CODING_AGENT_DIR`/`~/.praxis/agent` + `/skills`.
+- **Hooks are a strategy ladder**, not a yes/no: `config-patch` (JSON
+  config, deterministic, covers ad-hoc sessions), `prompt-prelude`
+  (flow-spawned sessions only), `instruction-directive` (rides in the
+  pointer block; best-effort). `flow skill install` performs every
+  declared strategy for EVERY registered harness — `--harness <name>`
+  narrows it.
+- **`$FLOW_TERM=bg` falls back to the `--auto` supervisor** for any
+  harness without native background. There is no `[background]` table:
+  supervised background is derivable from `[headless]`, so declaring it
+  would be redundant.
+- **Quoting rule:** an argv element is shell-quoted iff its template text
+  mentions a runtime data variable (`.SessionID .Prompt .Inject .WorkDir
+  .Cwd .Home`). `session.validate` remains required to reject malformed
+  ids captured from environment/process output; matches must cover the
+  entire id.
+- **`testdata/claude.toml` + `claude_equivalence_test.go`** pin the
+  generic engine to byte-identical output with the hand-written claude
+  adapter. If you change either, that test is the gate.
+- **Authoring reference:** `docs/harness-manifest.md` (written so a
+  coding agent can read it and produce a manifest). Working examples in
+  `examples/harnesses/` — claude, praxis, plus an annotated
+  `TEMPLATE.toml`. `TestShippedExamplesAreValid` fails the build if a
+  schema change invalidates a published example.
+- **Only ship a manifest whose full lifecycle was verified** against a
+  running binary, a file on disk, or source. Flow stores the session id
+  before launch, so the agent must accept that id at launch (or expose a
+  pre-launch allocation command). An invented flag or identity map can
+  pass structural validation and then silently target the wrong session.
+- **Core adapters are for lifecycles that need logic; manifests are for
+  everything else.** `registry.natives` holds claude and codex, and that
+  list is pinned by `TestNoManifestDirLeavesNatives`. Codex earns its Go
+  adapter because it self-mints: `NewSessionID` runs a probe and parses
+  the thread id back out, which argv templates cannot express. OMP is in
+  the same boat and is not shipped at all. Adding a harness that merely
+  needs different flags is a manifest, not a package.
+- Design and phasing:
+  `docs/superpowers/specs/2026-08-15-pluggable-harness-architecture-design.md`.
+
 ## Things to watch out for
 
 - `hookCommand` (SessionStart) and `userPromptSubmitHookCommand` (UserPromptSubmit) in `internal/app/skill.go` are the exact strings matched in `~/.claude/settings.json`. Changing either orphans existing installations.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
+- `internal/stats` still imports `internal/harness/claude` directly — the last remaining harness bypass, scheduled for the analytics phase.
+- The registry caches its resolution per process. Tests that write manifests into a temp `$FLOW_ROOT` must call `registry.Reload()`.
+- **`SKILL.md` frontmatter must be single-line scalars.** Not every harness parses YAML — praxis reads frontmatter with a line-based subset, so `description: |` arrives as the literal `"|"`. The skill still loads and reports itself invocable, it just has a useless catalog entry, and `require_frontmatter` cannot catch it (the key is present, the value is junk). `TestSkillFrontmatterSurvivesLineBasedParsers` guards it.
+- **Skill install prunes.** `harness.SyncTree` makes the installed directory equal the embedded tree plus `VERSION`; anything else is deleted. Without it every corpus rename left an orphan on disk forever — flow manufacturing the exact drift it exists to prevent. Both adapters share it, and the claude differential test compares the resulting trees.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.

@@ -1,0 +1,176 @@
+# TEMPLATE — copy this, fill it in, delete what does not apply.
+#
+#   cp TEMPLATE.toml ~/.flow/harnesses/myagent.toml
+#   flow harness validate ~/.flow/harnesses/myagent.toml
+#   flow harness show myagent          # read the RENDERED sample commands
+#   flow skill install --harness myagent
+#
+# Full field reference: docs/harness-manifest.md
+#
+# ─────────────────────────────────────────────────────────────────────
+# BEFORE YOU EDIT: establish the facts. Do not guess flags — a wrong one
+# passes validation (which checks structure, not existence) and fails at
+# spawn time, or silently does nothing.
+#
+#   myagent --version
+#   myagent --help                 # subcommands and global flags
+#   myagent <sub> --help           # resume / exec / print subcommands
+#   strings "$(command -v myagent)" | grep -oE '[A-Z][A-Z0-9_]{2,}_SESSION[A-Z0-9_]*' | sort -u
+#   find ~/.myagent -name '*.jsonl' | head -3
+#
+# Anything you cannot establish: leave the table OUT and write a comment
+# saying so. flow reports a missing capability honestly; a wrong one
+# fails at the worst moment.
+# ─────────────────────────────────────────────────────────────────────
+
+schema = 1
+name   = "myagent"        # stored in tasks.harness; must be unique
+binary = "myagent"        # the executable, used for process matching
+
+# The env var the agent exports INSIDE a session, if any. Omit it when
+# none exists; that disables `flow do --here` and hook reverse-lookup.
+# This does NOT solve self-minted identity: the agent must accept Flow's
+# id on initial launch, or expose a separate allocation command Flow can
+# run before launch. If it only reveals an id after interactive launch,
+# the current manifest contract cannot represent it.
+# session_env = "MYAGENT_SESSION_ID"
+
+[session]
+# uuid4 | uuid7 | exec-capture
+#   uuid*: Flow allocates the id and launch.argv MUST pass it to the agent.
+#   exec-capture: argv is a pre-launch allocation command whose output
+#   contains the id (capture has exactly one group). It is not post-launch
+#   discovery and must create/reserve the same resumable session.
+strategy = "uuid7"
+
+# REQUIRED. Runtime values, including {{.SessionID}}, are shell-quoted.
+# Validation still gates ids captured from external processes/environment;
+# Flow requires the pattern to match the entire id.
+validate = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+# Set true only for cwd-keyed transcript layouts, so flow can confirm a
+# session really belongs to the task's work_dir before binding it.
+# verify_cwd = false
+
+[launch]
+# A SHELL template: each element is expanded, quoted iff it mentions a
+# data variable (.SessionID .Prompt .Inject .WorkDir .Cwd .Home), then joined.
+# The trailing element folds an injection into the prompt as one arg.
+argv = ["myagent", "--cwd", "{{.WorkDir}}",
+        "{{.Prompt}}{{if .Inject}}\n\n{{.InjectionMarker}}\n{{.Inject}}{{end}}"]
+# Appended when the caller asks to skip tool approvals.
+permission_flag = ["--yolo"]
+# Optional shell prefix, joined with " && ".
+# prelude = "ulimit -n 65536"
+
+# ---- OPTIONAL from here down. Omit a table, lose exactly that. ----
+
+[resume]
+# Continuing a session by id. Without this, `flow do` on an already
+# bound task refuses rather than stranding its transcript.
+# An element made ENTIRELY of conditionals disappears when empty; one
+# with unconditional content (like {{.Prompt}}) keeps its slot as ''.
+argv = ["myagent", "--cwd", "{{.WorkDir}}", "--resume", "{{.SessionID}}",
+        "{{if .Inject}}{{.InjectionMarker}}\n{{.Inject}}{{end}}"]
+permission_flag = ["--yolo"]
+
+[headless]
+# ARGV templates — passed to exec, never a shell, so no quoting happens
+# and quotes/$(…)/newlines in a prompt are inert.
+# run_argv: sessionless one-shot for `flow done`'s close-out sweep.
+# auto_argv: session-pinned, keeps a transcript; powers `flow do --auto`
+# and lets `$FLOW_TERM=bg` run supervised in the background.
+#
+# State the agent's run limits HERE. A headless mode usually defaults to
+# something sized for a one-shot question — a turn cap, a time budget —
+# and hitting it exits non-zero, which flow can only report as a failed
+# sweep or a dead auto run. Read `--help` for those defaults and size
+# each shape on its own: a close-out sweep is bounded work, an auto run
+# executes a whole task. praxis.toml is the worked example.
+run_argv  = ["myagent", "--print", "--max-turns", "150", "{{.Prompt}}"]
+auto_argv = ["myagent", "--print", "--max-turns", "1500",
+             "--resume", "{{.SessionID}}", "{{.Prompt}}"]
+
+[liveness]
+# ps   — scan the process table for `binary`
+# exec — run argv and match its output (agents with a registry command)
+# none — never report a live session
+probe = "ps"
+# EXACTLY one capture group, and it must be the session id.
+match = '--resume[ =]([0-9a-f-]{36})'
+# argv = ["myagent", "sessions", "--json"]   # required for probe = "exec"
+
+[transcript]
+# Use * when the filename embeds a creation timestamp you cannot derive
+# from a session id; flow globs and takes the newest match.
+path   = "{{.Home}}/.myagent/sessions/{{.SessionID}}.jsonl"
+format = "jsonl"
+
+[transcript.map]
+# Dotted paths into each JSON record. "[]" iterates an array. A path
+# that does not resolve yields nothing, which is normal — records are
+# heterogeneous and a tool-call block has no .text.
+role       = "message.role"
+text       = "message.content[].text"      # REQUIRED
+tool_block = "toolCall"                    # the "type" VALUE marking a tool call
+tool_name  = "message.content[].name"
+
+[skills]
+# native  — the agent already scans `dir`; just write the tree
+# pointer — it scans nothing; also inject a block into a file it DOES read
+#
+# Point at the agent's OWN skills dir. Several agents also scan a
+# sibling's as a fallback but rank their own first and resolve
+# first-name-wins, so installing into the sibling's is silently shadowed.
+discovery = "native"
+dir       = "{{.Home}}/.myagent/skills/flow"
+# false ⇒ uninstall must NOT delete the directory (another agent owns it)
+# owns_dir = true
+# Keys the agent demands in SKILL.md; checked BEFORE writing, so a skill
+# it would silently ignore fails loudly instead.
+# require_frontmatter = ["name", "description"]
+
+# Required when discovery = "pointer".
+# [skills.pointer]
+# file    = "{{.Home}}/.myagent/AGENTS.md"
+# comment = "html"          # html | hash | slash
+# block   = """
+# # flow
+# When the user asks about tasks or projects, read {{.SkillPath}} and follow it.
+# {{.HookDirective}}
+# """
+
+[hooks]
+# config-patch          deterministic, and the only one covering sessions
+#                       the user starts outside flow. Needs a JSON config.
+# prompt-prelude        flow prepends its SessionStart context to launch
+#                       and supplies it as resume injection. Deterministic,
+#                       but only for sessions flow spawns.
+# instruction-directive the skills pointer block asks the agent to invoke
+#                       flow's hooks itself. Covers ad-hoc sessions and
+#                       drift; best-effort, needs discovery = "pointer".
+#
+# An agent with no hook system reaches near-parity with the last two.
+strategies = ["config-patch"]
+
+[hooks.config_patch]
+file = "{{.Home}}/.myagent/settings.json"
+
+[hooks.config_patch.events.SessionStart]
+# Slash path to the ARRAY of entries; missing objects are created.
+pointer = "/hooks/SessionStart"
+# A TEMPLATE, because entry shapes differ wildly between agents — some
+# want a nested object, some accept a bare "{{.Command}}" string. It is
+# rendered and parsed before the file is touched.
+entry   = '{"matcher":"startup|resume","hooks":[{"type":"command","command":"{{.Command}}"}]}'
+
+[hooks.config_patch.events.UserPromptSubmit]
+pointer = "/hooks/UserPromptSubmit"
+entry   = '{"hooks":[{"type":"command","command":"{{.Command}}"}]}'
+
+[vocab]
+# The agent-facing dialect, so flow's prompts read correctly here.
+product      = "MyAgent"       # REQUIRED — used in flow's own output
+context_file = "AGENTS.md"     # ambient instructions file it reads
+ask_tool     = ""              # interactive-choice tool; "" ⇒ fall back to prose
+skill_hint   = "read the flow skill under ~/.myagent/skills/flow"

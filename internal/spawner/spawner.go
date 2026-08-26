@@ -31,7 +31,9 @@ import (
 	"flow/internal/terminal"
 	"flow/internal/warp"
 	"flow/internal/zellij"
+	"fmt"
 	"os"
+	"strings"
 )
 
 // Backend identifies which terminal app a SpawnTab call targets.
@@ -104,6 +106,9 @@ func Detect() Backend {
 // SpawnTab opens a tab in the auto-detected backend. The contract
 // matches every backend's SpawnTab.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("refusing to spawn an empty harness command")
+	}
 	switch Detect() {
 	case BackendZellij:
 		return zellij.SpawnTab(title, cwd, command, envVars)

@@ -217,7 +217,37 @@ func cmdDo(args []string) int {
 			fmt.Fprintln(os.Stderr, "error: $FLOW_TERM=bg cannot be combined with --auto (both spawn their own session; pick one)")
 			return 2
 		}
-		return cmdDoBackground(db, task, h, *fresh, *dangerSkip, injectionText)
+		switch {
+		case h.Background() != nil:
+			// The harness hosts background sessions itself, so it owns
+			// the session and the user can reply to it in place.
+			return cmdDoBackground(db, task, h, *fresh, *dangerSkip, injectionText)
+
+		case h.Headless() != nil:
+			// No native background mode, but the harness CAN run
+			// non-interactively — so flow supervises it instead. This is
+			// the same detached machinery `--auto` already uses: own
+			// session via Setsid, cwd set, stdout/stderr to a run log,
+			// pid and status in the DB.
+			//
+			// Setting *auto here deliberately re-enters the autonomous
+			// path below rather than duplicating it. What the user gives
+			// up versus a native background agent is live two-way
+			// attach, which a headless process could not offer anyway;
+			// status, logs, transcript and resume all still work.
+			fmt.Fprintf(os.Stderr,
+				"note: harness %s has no native background mode — running as a flow-supervised detached session instead.\n"+
+					"  no live attach; follow it with `flow show task %s` and `flow transcript %s`\n",
+				h.Name(), task.Slug, task.Slug)
+			*auto = true
+			*dangerSkip = true // nobody is present to approve tool calls
+
+		default:
+			fmt.Fprintf(os.Stderr,
+				"error: $FLOW_TERM=bg requested a background session, but harness %q has neither a background mode nor a headless mode to supervise — unset FLOW_TERM to open a terminal tab instead\n",
+				h.Name())
+			return 1
+		}
 	}
 
 	// The focus-an-existing-tab behavior only makes sense for the
@@ -452,6 +482,7 @@ func cmdDo(args []string) int {
 	launchOpts := harness.LaunchOpts{
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
+		WorkDir:         task.WorkDir,
 	}
 	if needsBootstrap {
 		// Fresh bootstrap path. For pre-allocating harnesses (claude),
@@ -477,11 +508,26 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+		if hooks := h.Hooks(); hooks != nil {
+			prompt = hooks.PreparePrompt(prompt, buildSessionStartInstructions(task.Slug))
+		}
 		command = h.LaunchCmd(sessionID, prompt, launchOpts)
 	} else {
 		// Resume path: the UUID we already have in the DB is what the
 		// harness used when it first wrote its transcript.
-		command = h.ResumeCmd(sessionID, launchOpts)
+		rs := h.Resume()
+		if rs == nil {
+			// Refuse rather than silently starting a fresh session:
+			// the task already has a transcript, and launching anew
+			// would strand it.
+			fmt.Fprintf(os.Stderr, "error: harness %s cannot resume a session by id; task %s is already bound to %s\n",
+				h.Name(), task.Slug, sessionID)
+			return 1
+		}
+		if hooks := h.Hooks(); hooks != nil {
+			launchOpts.Inject = hooks.PreparePrompt(launchOpts.Inject, buildSessionStartInstructions(task.Slug))
+		}
+		command = rs.ResumeCmd(sessionID, launchOpts)
 	}
 	// Env propagation. Flow never injects harness-specific env vars
 	// (the harness exports its own session id env; flow only reads
@@ -580,11 +626,11 @@ func harnessForExplicitSpawn(task *flowdb.Task, requested string) (harness.Harne
 // silently falls back to a terminal tab when the pinned harness lacks
 // the capability.
 func backgroundLauncherFor(h harness.Harness) (harness.BackgroundLauncher, error) {
-	bg, ok := h.(harness.BackgroundLauncher)
-	if !ok {
+	bg := h.Background()
+	if bg == nil {
 		return nil, fmt.Errorf(
-			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (only claude does today) — unset FLOW_TERM to open a terminal tab instead",
-			h.Name())
+			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (%s) — unset FLOW_TERM to open a terminal tab instead",
+			h.Name(), backgroundCapableNames())
 	}
 	return bg, nil
 }
@@ -673,8 +719,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// there, so just point the user at it. (A live bg session keeps a
 		// pid; an exited one — stopped/failed/done — has none.)
 		if a := bgAgentInRegistry(bg, sid); a != nil && a.PID > 0 {
-			fmt.Printf("%s is open in your Agent View (%s, %s) — run `claude agents` to view or reply\n",
-				task.Slug, a.ShortID, bgStateLabel(a))
+			view := bg.View()
+			fmt.Printf("%s is open in %s (%s, %s) — run `%s` to view or reply\n",
+				task.Slug, view.Surface, a.ShortID, bgStateLabel(a), view.Command)
 			return 0
 		}
 
@@ -702,8 +749,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 			return 1
 		}
 		bumpWorkdirUsed(db, task.WorkDir)
-		fmt.Printf("Resumed %s in background (prior session was no longer tracked; brought the conversation back as %s · session %s)\n  check your Agent View: `claude agents`\n",
-			task.Slug, agent.ShortID, agent.SessionID)
+		view := bg.View()
+		fmt.Printf("Resumed %s in background (prior session was no longer tracked; brought the conversation back as %s · session %s)\n  check %s: `%s`\n",
+			task.Slug, agent.ShortID, agent.SessionID, view.Surface, view.Command)
 		return 0
 	}
 
@@ -736,8 +784,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		return 1
 	}
 	bumpWorkdirUsed(db, task.WorkDir)
-	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  check your Agent View: `claude agents`\n",
-		task.Slug, agent.SessionID, agent.ShortID, title)
+	view := bg.View()
+	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  check %s: `%s`\n",
+		task.Slug, agent.SessionID, agent.ShortID, title, view.Surface, view.Command)
 	return 0
 }
 
@@ -987,9 +1036,9 @@ func cmdDoHere(query string, force bool) int {
 	priorBinding, lookupErr := flowdb.TaskBySessionID(db, sid)
 	if lookupErr == nil && priorBinding.Slug != task.Slug {
 		fmt.Fprintf(os.Stderr,
-			"error: this Claude session is already bound to task %q. binding it to %q would orphan %q's transcript and is rejected by the session_id uniqueness invariant. --force does not override this.\n"+
+			"error: this %s session is already bound to task %q. binding it to %q would orphan %q's transcript and is rejected by the session_id uniqueness invariant. --force does not override this.\n"+
 				"  to start work on %q in a separate session: flow do %s\n",
-			priorBinding.Slug, task.Slug, priorBinding.Slug, task.Slug, task.Slug)
+			ambientProduct(), priorBinding.Slug, task.Slug, priorBinding.Slug, task.Slug, task.Slug)
 		return 1
 	}
 
@@ -1021,14 +1070,14 @@ func cmdDoHere(query string, force bool) int {
 	// no-op since its sessions are sid-only.
 	if err := h.ValidateSession(task.WorkDir, sid); err != nil {
 		fmt.Fprintf(os.Stderr,
-			"error: can't bind this session to task %q — the claude transcript isn't where work_dir says it should be:\n"+
+			"error: can't bind this session to task %q — the %s transcript isn't where work_dir says it should be:\n"+
 				"  %v\n"+
-				"this means claude was started in a different directory than task.work_dir, OR work_dir is set wrong.\n"+
+				"this means %s was started in a different directory than task.work_dir, OR work_dir is set wrong.\n"+
 				"pick one of:\n"+
-				"  - open it in a new tab (recommended):           flow do %s\n"+
-				"  - point work_dir at where claude actually runs: flow update task %s --work-dir <real-cwd>\n"+
+				"  - open it in a new tab (recommended):      flow do %s\n"+
+				"  - point work_dir at the real session cwd:  flow update task %s --work-dir <real-cwd>\n"+
 				"    (allowed because the new work_dir must match the session's real on-disk location)\n",
-			task.Slug, err, task.Slug, task.Slug)
+			task.Slug, h.Vocab().Product, err, h.Vocab().Product, task.Slug, task.Slug)
 		return 1
 	}
 

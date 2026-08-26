@@ -64,9 +64,9 @@ func showTaskCmd(args []string) int {
 		if lookupErr != nil {
 			if isNoBindingErr(lookupErr) {
 				if currentSessionID() == "" {
-					fmt.Fprintln(os.Stderr, "error: no task ref given and not running inside a Claude session ($CLAUDE_CODE_SESSION_ID unset)")
+					fmt.Fprintf(os.Stderr, "error: no task ref given and not running inside an agent session (%s unset)\n", sessionEnvVarList())
 				} else {
-					fmt.Fprintln(os.Stderr, "error: no task ref given and this Claude session is not bound to a task — pass a slug or run `flow do --here <slug>` first")
+					fmt.Fprintf(os.Stderr, "error: no task ref given and this %s session is not bound to a task — pass a slug or run `flow do --here <slug>` first\n", ambientProduct())
 				}
 				return 1
 			}
@@ -122,9 +122,9 @@ func showProjectCmd(args []string) int {
 		if lookupErr != nil {
 			if isNoBindingErr(lookupErr) {
 				if currentSessionID() == "" {
-					fmt.Fprintln(os.Stderr, "error: no project ref given and not running inside a Claude session ($CLAUDE_CODE_SESSION_ID unset)")
+					fmt.Fprintf(os.Stderr, "error: no project ref given and not running inside an agent session (%s unset)\n", sessionEnvVarList())
 				} else {
-					fmt.Fprintln(os.Stderr, "error: no project ref given and this Claude session is not bound to a task")
+					fmt.Fprintf(os.Stderr, "error: no project ref given and this %s session is not bound to a task\n", ambientProduct())
 				}
 				return 1
 			}

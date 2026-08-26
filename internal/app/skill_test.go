@@ -2,11 +2,14 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"flow/internal/harness/registry"
 )
 
 // skillCorpus concatenates SKILL.md and every references/*.md into one
@@ -185,6 +188,88 @@ func TestSkillUninstallIdempotent(t *testing.T) {
 	// Nothing installed — uninstall should still succeed.
 	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
 		t.Errorf("uninstall on empty home rc=%d", rc)
+	}
+}
+
+func writeTestHarnessManifest(t *testing.T, root, name, skills string) {
+	t.Helper()
+	manifest := fmt.Sprintf(`
+schema = 1
+name = %q
+binary = "true"
+
+[session]
+strategy = "uuid4"
+validate = '^[a-z0-9-]+$'
+
+[launch]
+argv = ["true", "{{.Prompt}}"]
+
+[liveness]
+probe = "none"
+
+%s
+
+[vocab]
+product = %q
+`, name, skills, name)
+	dir := filepath.Join(root, "harnesses")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry.Reload()
+	t.Cleanup(registry.Reload)
+}
+
+func TestSkillInstallReturnsFailureWhenAnyHarnessFails(t *testing.T) {
+	root := setupFlowRoot(t)
+	home := os.Getenv("HOME")
+	blocked := filepath.Join(home, "blocked")
+	if err := os.WriteFile(blocked, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTestHarnessManifest(t, root, "broken-skill", `[skills]
+discovery = "native"
+dir = "{{.Home}}/blocked/flow"`)
+
+	// The built-in harness succeeds while broken-skill fails because its
+	// parent is a regular file. A partial install must still be non-zero.
+	if rc := skillInstall([]string{"--force"}, false); rc == 0 {
+		t.Fatal("partial multi-harness install returned success")
+	}
+}
+
+func TestSkillUninstallRemovesPointerWhenSkillDirIsMissing(t *testing.T) {
+	root := setupFlowRoot(t)
+	home := os.Getenv("HOME")
+	writeTestHarnessManifest(t, root, "pointer-agent", `[skills]
+discovery = "pointer"
+dir = "{{.Home}}/.pointer-agent/skills/flow"
+
+[skills.pointer]
+file = "{{.Home}}/AGENTS.md"
+comment = "html"
+block = "Read {{.SkillPath}}"`)
+
+	if rc := skillInstall([]string{"--harness", "pointer-agent", "--force"}, false); rc != 0 {
+		t.Fatalf("install rc=%d", rc)
+	}
+	pointerFile := filepath.Join(home, "AGENTS.md")
+	if got, err := os.ReadFile(pointerFile); err != nil || !strings.Contains(string(got), "flow:managed:start") {
+		t.Fatalf("managed pointer was not installed: %v\n%s", err, got)
+	}
+	if err := os.RemoveAll(filepath.Join(home, ".pointer-agent", "skills", "flow")); err != nil {
+		t.Fatal(err)
+	}
+
+	if rc := skillUninstall([]string{"--harness", "pointer-agent"}); rc != 0 {
+		t.Fatalf("uninstall rc=%d", rc)
+	}
+	if got, err := os.ReadFile(pointerFile); err == nil && strings.Contains(string(got), "flow:managed:start") {
+		t.Fatalf("managed pointer survived uninstall after skill dir disappeared:\n%s", got)
 	}
 }
 
@@ -644,5 +729,64 @@ func TestPlaybookRunBootstrapMentionsPersistAdjustments(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("playbook-run bootstrap prompt missing %q; got:\n%s", want, prompt)
 		}
+	}
+}
+
+// TestSkillFrontmatterSurvivesLineBasedParsers guards a failure with no
+// error path.
+//
+// Not every harness parses YAML. Praxis reads frontmatter with a
+// line-based subset (skill/skill.go:172-190): for `description: |` it
+// takes what follows on THAT line and drops the continuation, leaving
+// the description as the literal "|". The skill still loads and still
+// reports itself invocable — it just arrives in the catalog with a
+// one-character description, so the model never learns when to use it.
+//
+// require_frontmatter cannot catch this: the key is present, the VALUE
+// is unusable. A single-line scalar is valid YAML for every parser, so
+// the corpus targets the least capable one it will meet.
+func TestSkillFrontmatterSurvivesLineBasedParsers(t *testing.T) {
+	data, err := fs.ReadFile(skillFiles(), "SKILL.md")
+	if err != nil {
+		t.Fatalf("read embedded SKILL.md: %v", err)
+	}
+	text := string(data)
+	if !strings.HasPrefix(text, "---\n") {
+		t.Fatal("SKILL.md has no frontmatter block")
+	}
+	end := strings.Index(text[4:], "\n---")
+	if end < 0 {
+		t.Fatal("SKILL.md frontmatter is not terminated")
+	}
+	frontmatter := text[4 : 4+end]
+
+	// Parse exactly as a line-based subset would: take what follows the
+	// key on its own line, nothing more.
+	got := map[string]string{}
+	for _, line := range strings.Split(frontmatter, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found {
+			continue
+		}
+		if _, seen := got[key]; !seen {
+			got[key] = strings.TrimSpace(value)
+		}
+	}
+
+	for _, key := range []string{"name", "description"} {
+		value, ok := got[key]
+		switch {
+		case !ok:
+			t.Errorf("frontmatter key %q is missing; harnesses that require it reject the skill outright", key)
+		case value == "":
+			t.Errorf("frontmatter key %q has no value on its own line", key)
+		case value == "|" || value == ">" || strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">"):
+			t.Errorf("frontmatter key %q uses a YAML block scalar (%q); a line-based parser reads only that marker. "+
+				"Put the whole value on one line.", key, value)
+		}
+	}
+	// A description that survives parsing but says nothing is no better.
+	if d := got["description"]; len(d) < 40 {
+		t.Errorf("description is only %d chars (%q) — too short to drive skill selection", len(d), d)
 	}
 }

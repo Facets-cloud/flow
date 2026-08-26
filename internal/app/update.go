@@ -193,8 +193,8 @@ func cmdUpdateTask(args []string) int {
 			fmt.Fprintf(os.Stderr,
 				"error: cannot set status to %q without a session_id.\n"+
 					"  to start work on this task, run one of:\n"+
-					"    flow do %s          (spawns a new Claude session in a new tab)\n"+
-					"    flow do --here %s   (binds this Claude session to the task)\n",
+					"    flow do %s          (spawns a new agent session in a new tab)\n"+
+					"    flow do --here %s   (binds this agent session to the task)\n",
 				*status, task.Slug, task.Slug)
 			return 1
 		}

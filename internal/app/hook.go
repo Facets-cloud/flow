@@ -62,6 +62,13 @@ func cmdHookSessionStart(args []string) int {
 		return emitAmbientSkillHint()
 	}
 
+	return emitSessionStartContext(buildSessionStartInstructions(slug))
+}
+
+// buildSessionStartInstructions is shared by native/config hooks and the
+// prompt-prelude strategy. Keeping one payload prevents manifest-driven
+// sessions from receiving a weaker bootstrap contract than native hooks.
+func buildSessionStartInstructions(slug string) string {
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
 			"Before doing anything else in this turn, re-load your task context — "+
@@ -90,8 +97,7 @@ func cmdHookSessionStart(args []string) int {
 			"file on the fly — no permission needed — per the flow skill's §4.10.",
 		slug,
 	)
-
-	return emitSessionStartContext(instructions + appendStaleVersionHint())
+	return instructions + appendStaleVersionHint()
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
@@ -116,13 +122,25 @@ func appendStaleVersionHint() string {
 	)
 }
 
-// lookupBoundTask returns the task whose session_id matches
-// the active harness's session-id environment variable, or nil if no such task exists, the env var
-// is unset, or the DB lookup fails. Hook code must never fail loud — a
-// hook error blocks the user's session — so all errors are swallowed
-// and treated as "unbound".
+// lookupBoundTask returns the task whose session_id matches the
+// session-id env var of the harness running THIS process, or nil if no
+// such task exists, no harness is detectable, or the DB lookup fails.
+//
+// The harness is resolved from the ambient environment rather than
+// assumed: each adapter names its own session-id var, so this hook
+// works from inside any registered harness. ambientHarness() also
+// returns nil when several harnesses claim the process at once — in
+// that case flow treats the session as unbound rather than guessing
+// which id is authoritative.
+//
+// Hook code must never fail loud — a hook error blocks the user's
+// session — so all errors are swallowed and treated as "unbound".
 func lookupBoundTask() *flowdb.Task {
-	sid := currentSessionID()
+	h := ambientHarness()
+	if h == nil {
+		return nil
+	}
+	sid := os.Getenv(h.SessionIDEnvVar())
 	if sid == "" {
 		return nil
 	}

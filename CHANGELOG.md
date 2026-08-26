@@ -7,6 +7,46 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **`flow done`'s close-out sweep no longer dies at praxis's turn cap.**
+  Closing a praxis-bound task flipped the status and then printed
+  `warning: close-out sweep failed: exit status 1` — 28 times between
+  2026-08-16 and 08-26 against 4 successes, while the claude harness
+  failed zero times. `prx run` defaults to `-max-turns 25` and its
+  headless runner treats the cap as a hard error (`native: agent: max
+  turns reached`, exit 1) where its TUI treats the same stop as soft, so
+  every sweep that paged through a long transcript failed *after* doing
+  most of its work — and the KB + project-update distillation, the whole
+  reason closing a task matters, was silently lost each time. The shipped
+  praxis manifest now states the ceiling explicitly (150 for the sweep,
+  1500 for a `flow do --auto` run; `0` is not "unbounded" — praxis
+  coerces it back to 25). **Existing installs must refresh their copy:**
+  `cp examples/harnesses/praxis.toml ~/.flow/harnesses/`.
+- **A failed close-out sweep now says why.** Both the manifest engine and
+  the claude adapter discarded the harness's stderr, so `flow done` could
+  only ever report `exit status N` — which is why the turn-cap bug went
+  undiagnosed for ten days. The headless runner now keeps stderr and
+  folds a bounded tail into the error, and `flow done` adds that the
+  status flip stands and that re-running it retries just the sweep.
+- **`SyncTree` no longer errors when there is nothing to prune.** Syncing
+  an empty tree into a directory that does not exist yet failed with an
+  `lstat` error instead of doing nothing.
+
+### Changed
+
+- **Codex stays a core harness under the manifest architecture.** The
+  pluggable-manifest work replaced the flat `harness.Harness` method set
+  with capability accessors, which the hand-written codex adapter (shipped
+  in alpha.26) predates. Codex is now ported to those accessors and
+  registered in `registry.natives` beside claude — hand-written because it
+  self-mints its thread id (a probe run whose output must be parsed before
+  launch, which argv templates cannot express), while every other agent is
+  a manifest. `TestNoManifestDirLeavesNatives` pins that core set. Its
+  close-out sweep now keeps stderr like the others, and its skill install
+  goes through the shared `SyncTree`, so a renamed reference is pruned from
+  `~/.codex/skills/flow` instead of lingering forever.
+
 ## [0.1.0-alpha.26] — 2026-08-17
 
 ### Added
