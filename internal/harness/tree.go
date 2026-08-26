@@ -66,7 +66,14 @@ func SyncTree(files fs.FS, dir string, keep ...string) error {
 
 // pruneOrphans removes files under dir whose path (relative to dir) is
 // not in want, then drops directories left empty.
+//
+// A dir that does not exist has nothing to prune — that is a no-op, not
+// an error. It happens whenever the source tree is empty (nothing was
+// written, so nothing created the directory either).
 func pruneOrphans(dir string, want map[string]bool) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	}
 	var emptyCandidates []string
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

@@ -34,6 +34,12 @@ spawning, so a UUID4/UUID7 manifest for either agent would bind Flow to a
 session that the agent never created. Launch might appear to work, but
 resume, transcripts, liveness, and completion would target the wrong id.
 
+That is precisely why **codex ships as a core adapter**
+(`internal/harness/codex`) rather than as a manifest: minting its thread
+id takes a probe run whose output has to be parsed before launch — Go
+code, not argv templates. A harness needs a hand-written adapter exactly
+when its lifecycle needs logic; everything else is a manifest.
+
 A plausible-looking manifest with an invented flag or identity mapping is
 worse than none: it passes `flow harness validate` (which checks structure,
 not whether a binary honors the lifecycle) and then fails at spawn time —

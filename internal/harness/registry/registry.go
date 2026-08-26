@@ -18,6 +18,7 @@ import (
 
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/codex"
 	"flow/internal/harness/spec"
 )
 
@@ -33,6 +34,7 @@ const FallbackName = harness.NameClaude
 // stateless, so this is built once at init rather than per call.
 var natives = []harness.Harness{
 	claude.New(),
+	codex.New(),
 }
 
 // ManifestDir is where user-authored harness manifests live.

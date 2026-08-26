@@ -97,8 +97,12 @@ This is separate from **session ownership**. Flow allocates and stores an
 id before launching. If an agent instead mints its own id and offers no
 launch flag for Flow's id, the current contract cannot represent it: a
 UUID strategy would bind Flow to a session the agent never created.
-Codex and OMP currently fall into that category, so no shipped manifest
-claims support for them.
+Codex and OMP fall into that category, so no shipped manifest claims
+support for them — codex is instead a **core adapter**
+(`internal/harness/codex`), which can mint its thread id with a probe
+run and parse the id back out before launch. That is the dividing line:
+lifecycle that needs logic gets a hand-written adapter registered in
+`internal/harness/registry`; everything else is a manifest.
 
 ### Why `validate` is required
 

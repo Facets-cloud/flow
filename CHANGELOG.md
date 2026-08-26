@@ -29,6 +29,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   undiagnosed for ten days. The headless runner now keeps stderr and
   folds a bounded tail into the error, and `flow done` adds that the
   status flip stands and that re-running it retries just the sweep.
+- **`SyncTree` no longer errors when there is nothing to prune.** Syncing
+  an empty tree into a directory that does not exist yet failed with an
+  `lstat` error instead of doing nothing.
+
+### Changed
+
+- **Codex stays a core harness under the manifest architecture.** The
+  pluggable-manifest work replaced the flat `harness.Harness` method set
+  with capability accessors, which the hand-written codex adapter (shipped
+  in alpha.26) predates. Codex is now ported to those accessors and
+  registered in `registry.natives` beside claude — hand-written because it
+  self-mints its thread id (a probe run whose output must be parsed before
+  launch, which argv templates cannot express), while every other agent is
+  a manifest. `TestNoManifestDirLeavesNatives` pins that core set. Its
+  close-out sweep now keeps stderr like the others, and its skill install
+  goes through the shared `SyncTree`, so a renamed reference is pruned from
+  `~/.codex/skills/flow` instead of lingering forever.
 
 ## [0.1.0-alpha.26] — 2026-08-17
 

@@ -3,6 +3,7 @@ package registry
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -183,8 +184,12 @@ func TestNoManifestDirLeavesNatives(t *testing.T) {
 	Reload()
 	t.Cleanup(Reload)
 
-	if got := names(t); len(got) != 1 || got[0] != "claude" {
-		t.Errorf("with no manifests, All() = %v, want [claude]", got)
+	// The core set: hand-written adapters compiled into the binary.
+	// Everything else is a manifest. Changing this list is a deliberate
+	// decision about what flow ships, so it is pinned here.
+	wantNatives := []string{"claude", "codex"}
+	if got := names(t); !reflect.DeepEqual(got, wantNatives) {
+		t.Errorf("with no manifests, All() = %v, want %v", got, wantNatives)
 	}
 	if errs := Errors(); len(errs) != 0 {
 		t.Errorf("an absent manifest dir should not be an error: %v", errs)

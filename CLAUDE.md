@@ -171,10 +171,15 @@ manifest**, not a code change.
 - **Only ship a manifest whose full lifecycle was verified** against a
   running binary, a file on disk, or source. Flow stores the session id
   before launch, so the agent must accept that id at launch (or expose a
-  pre-launch allocation command). Codex and OMP self-mint after launch
-  and are intentionally not shipped. An invented flag or identity map
-  can pass structural validation and then silently target the wrong
-  session.
+  pre-launch allocation command). An invented flag or identity map can
+  pass structural validation and then silently target the wrong session.
+- **Core adapters are for lifecycles that need logic; manifests are for
+  everything else.** `registry.natives` holds claude and codex, and that
+  list is pinned by `TestNoManifestDirLeavesNatives`. Codex earns its Go
+  adapter because it self-mints: `NewSessionID` runs a probe and parses
+  the thread id back out, which argv templates cannot express. OMP is in
+  the same boat and is not shipped at all. Adding a harness that merely
+  needs different flags is a manifest, not a package.
 - Design and phasing:
   `docs/superpowers/specs/2026-08-15-pluggable-harness-architecture-design.md`.
 

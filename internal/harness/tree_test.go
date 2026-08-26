@@ -91,6 +91,19 @@ func TestSyncTreeRemovesEmptiedDirectories(t *testing.T) {
 	}
 }
 
+// TestSyncTreeEmptySourceIsNoop: an empty source writes nothing, so
+// nothing creates the destination either — and pruning a directory that
+// does not exist must be a no-op rather than an lstat error.
+func TestSyncTreeEmptySourceIsNoop(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "never-created")
+	if err := harness.SyncTree(fstest.MapFS{}, dir); err != nil {
+		t.Fatalf("SyncTree with an empty source: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("empty source created %s: %v", dir, err)
+	}
+}
+
 // TestSyncTreeIsIdempotent: running it twice changes nothing.
 func TestSyncTreeIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
