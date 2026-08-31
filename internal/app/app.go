@@ -140,8 +140,8 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
   flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]
                                      (message a human — pending + escalation schedule until
                                       answered — or the session bound to a task; alias: msg)
-  flow inbox                         (what's pending for you)
-  flow inbox pop [--wait] [--timeout <s>]  (consume the oldest, one at a time; --wait blocks
+  flow inbox [--me]                  (what's pending for you; --me = as the human even in a bound session)
+  flow inbox pop [--wait] [--timeout <s>] [--me]  (consume the oldest, one at a time; --wait blocks
                                             until mail arrives — park a Monitor on it)
   flow inbox ack [<id>]              (answer by hand; replying in the sending session acks automatically)
   flow inbox due                     (escalation feed for YOUR notifier script: prints due

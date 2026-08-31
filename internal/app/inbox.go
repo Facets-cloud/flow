@@ -26,7 +26,7 @@ import (
 // means nothing was popped (empty inbox, or --wait timed out).
 func cmdInbox(args []string) int {
 	if len(args) == 0 {
-		return inboxList()
+		return inboxList(nil)
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -39,10 +39,19 @@ func cmdInbox(args []string) int {
 	case "stats":
 		return inboxStats(rest)
 	case "ls", "list":
-		return inboxList()
+		return inboxList(rest)
 	}
-	fmt.Fprintf(os.Stderr, "error: unknown inbox subcommand %q (pop|ack|due|stats)\n", sub)
-	return 2
+	return inboxList(args) // allow `flow inbox --me`
+}
+
+// inboxIdentity resolves the consuming identity, honoring --me (act as
+// the human even inside a bound session).
+func inboxIdentity(me bool) busSender {
+	s := currentBusSender()
+	if me {
+		s.TaskSlug = ""
+	}
+	return s
 }
 
 // pendingForIdentity returns the pending rows for the current identity.
@@ -53,14 +62,19 @@ func pendingForIdentity(db *sql.DB, s busSender) ([]*flowdb.BusMessage, error) {
 	return flowdb.PendingForHuman(db, s.Assignee)
 }
 
-func inboxList() int {
+func inboxList(args []string) int {
+	fs := flagSet("inbox")
+	me := fs.Bool("me", false, "act as the human (self), ignoring any session binding")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	db, err := openBusDB()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	defer db.Close()
-	s := currentBusSender()
+	s := inboxIdentity(*me)
 	rows, err := pendingForIdentity(db, s)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -124,6 +138,7 @@ func inboxPop(args []string) int {
 	fs := flagSet("inbox pop")
 	wait := fs.Bool("wait", false, "block until a message arrives, then pop it")
 	timeout := fs.Int("timeout", 3600, "seconds --wait blocks before giving up")
+	me := fs.Bool("me", false, "act as the human (self), ignoring any session binding")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -133,7 +148,7 @@ func inboxPop(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	s := currentBusSender()
+	s := inboxIdentity(*me)
 
 	if !*wait {
 		m, err := popOne(db, s)
