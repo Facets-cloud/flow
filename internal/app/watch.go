@@ -1,43 +1,48 @@
 package app
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
-	"time"
+	"strings"
 
 	"flow/internal/flowdb"
 )
 
 // cmdWatch manages broadcast subscriptions:
 //
-//   flow watch <task-slug|project-slug|assignee>   subscribe
-//   flow watch --list                              your subscriptions
-//   flow watch --rm <target>                       unsubscribe
-//   flow watch --follow                            live feed (human)
+//	flow watch <task-slug|project-slug|assignee>   subscribe
+//	flow watch --list                              your subscriptions
+//	flow watch --rm <target>                       unsubscribe
+//	flow watch --me <target>                       subscribe as the human even
+//	                                               from inside a bound session
 //
 // The subscriber is the current identity: a bound session watches as
-// "self/<its-task-slug>"; an unbound/human invocation watches as
-// "self". Posts fan out only to watchers subscribed at post time.
+// "self/<its-task-slug>"; an unbound/human invocation (or --me) watches
+// as "self". Posts fan out only to watchers subscribed at post time.
+// Consume the resulting messages with `flow inbox` / `flow inbox pop`.
 func cmdWatch(args []string) int {
+	target := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		target, args = args[0], args[1:]
+	}
 	fs := flagSet("watch")
 	list := fs.Bool("list", false, "list this identity's watches")
 	rm := fs.String("rm", "", "unsubscribe from a target")
-	follow := fs.Bool("follow", false, "stream your pages + posts live (human feed)")
+	me := fs.Bool("me", false, "act as the human (self), ignoring any session binding")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	db, err := openPagerDB()
+	db, err := openBusDB()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	defer db.Close()
 
-	s := currentSender()
-	watcher := pagerSelf
-	if s.TaskSlug != "" {
-		watcher = pagerSelf + "/" + s.TaskSlug
+	s := currentBusSender()
+	watcher := s.identity()
+	if *me {
+		watcher = busSelf
 	}
 
 	switch {
@@ -67,43 +72,16 @@ func cmdWatch(args []string) int {
 			fmt.Printf("%s was not watching %s\n", watcher, *rm)
 		}
 		return 0
-	case *follow:
-		return watchFollow(db)
 	}
 
-	rest := fs.Args()
-	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: flow watch <task-slug|project-slug|assignee> | --list | --rm <target> | --follow")
+	if target == "" || len(fs.Args()) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: flow watch <task-slug|project-slug|assignee> [--me] | --list | --rm <target>")
 		return 2
 	}
-	target := rest[0]
 	if err := flowdb.AddWatch(db, watcher, target); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	fmt.Printf("%s now watches %s — future posts arrive as messages\n", watcher, target)
+	fmt.Printf("%s now watches %s — future posts arrive in `flow inbox`\n", watcher, target)
 	return 0
-}
-
-// watchFollow streams the human's pages + posts until interrupted.
-func watchFollow(pdb *sql.DB) int {
-	fmt.Println("following your feed (ctrl-c to stop)")
-	for {
-		pages, _ := flowdb.PendingHumanPages(pdb, pagerSelf)
-		posts, _ := flowdb.PendingPostsForHuman(pdb, pagerSelf)
-		rows := append(pages, posts...)
-		if len(rows) > 0 {
-			printPageRows(rows)
-			var ids []string
-			for _, m := range rows {
-				if m.Kind == "page" {
-					_, _ = flowdb.AckPageByID(pdb, m.ID, "watch-follow")
-				} else {
-					ids = append(ids, m.ID)
-				}
-			}
-			_ = flowdb.MarkDelivered(pdb, ids)
-		}
-		time.Sleep(2 * time.Second)
-	}
 }

@@ -77,8 +77,10 @@ func Run(args []string) int {
 		return cmdStats(rest)
 	case "hook":
 		return cmdHook(rest)
-	case "page":
-		return cmdPage(rest)
+	case "message", "msg":
+		return cmdMessage(rest)
+	case "inbox":
+		return cmdInbox(rest)
 	case "post":
 		return cmdPost(rest)
 	case "watch":
@@ -134,16 +136,19 @@ Edit / mutate:
   flow archive   <ref>
   flow unarchive <ref>
 
-Paging bus (attention + broadcast — see flow skill §4.18):
-  flow page <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]
-                                     (page a human — notification, escalates until answered —
-                                      or message the session bound to a task)
-  flow page                          (pending pages/posts addressed to you)
-  flow page listen [--timeout <s>] [--follow]   (block until paged; agents run this backgrounded)
-  flow page ack [<id>]               (manual ack; replying in the paging session acks automatically)
-  flow page stats                    (wait-time metrics)
+Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
+  flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]
+                                     (message a human — pending + escalation schedule until
+                                      answered — or the session bound to a task; alias: msg)
+  flow inbox                         (what's pending for you)
+  flow inbox pop [--wait] [--timeout <s>]  (consume the oldest, one at a time; --wait blocks
+                                            until mail arrives — park a Monitor on it)
+  flow inbox ack [<id>]              (answer by hand; replying in the sending session acks automatically)
+  flow inbox due                     (escalation feed for YOUR notifier script: prints due
+                                      messages, advances their backoff; flow ships no UI)
+  flow inbox stats                   (wait-time metrics)
   flow post "<one-liner>"            (broadcast to whoever watches this task/project/assignee)
-  flow watch <task|project|assignee> | --list | --rm <target> | --follow
+  flow watch <task|project|assignee> [--me] | --list | --rm <target>
 
 Workdirs:
   flow workdir list

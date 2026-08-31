@@ -251,9 +251,9 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	if _, err := db.Exec(pagesDDL); err != nil {
+	if _, err := db.Exec(busDDL); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply pages schema: %w", err)
+		return nil, fmt.Errorf("apply bus schema: %w", err)
 	}
 	return db, nil
 }

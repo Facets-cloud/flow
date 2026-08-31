@@ -66,7 +66,7 @@ func cmdHookSessionStart(args []string) int {
 	if slug == "" {
 		return emitAmbientSkillHint()
 	}
-	pageCtx := pageSessionStartContext()
+	pageCtx := busSessionStartContext()
 
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
@@ -244,7 +244,7 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	pageCtx := pagePromptSubmitContext()
+	pageCtx := busPromptSubmitContext()
 	t := lookupBoundTask()
 	if t == nil {
 		// Unbound — page-bus context (an unbound session can still have
