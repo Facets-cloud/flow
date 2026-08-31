@@ -21,17 +21,16 @@ import (
 // `flow watch --follow`. No watchers = nothing delivered (the durable
 // record of milestones is still a task update file).
 func cmdPost(args []string) int {
-	fs := flagSet("post")
-	from := fs.String("from", "", "post as this task slug (default: the bound task)")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) != 1 {
+	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
 		fmt.Fprintln(os.Stderr, `usage: flow post "<one-liner>" [--from <task-slug>]`)
 		return 2
 	}
-	body := strings.TrimSpace(rest[0])
+	body := strings.TrimSpace(args[0])
+	fs := flagSet("post")
+	from := fs.String("from", "", "post as this task slug (default: the bound task)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
 	if body == "" {
 		fmt.Fprintln(os.Stderr, "error: empty post")
 		return 2

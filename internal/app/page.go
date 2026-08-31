@@ -115,18 +115,17 @@ func parsePageAddress(db *sql.DB, addr string) (string, string, error) {
 }
 
 func pageSend(args []string) int {
-	fs := flagSet("page")
-	urgent := fs.Bool("urgent", false, "escalate: Dock bounces until the recipient focuses iTerm")
-	re := fs.String("re", "", "task slug this page is about (context link)")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) != 2 {
+	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, `usage: flow page <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]`)
 		return 2
 	}
-	addr, body := rest[0], strings.TrimSpace(rest[1])
+	addr, body := args[0], strings.TrimSpace(args[1])
+	fs := flagSet("page")
+	urgent := fs.Bool("urgent", false, "escalate: Dock bounces until the recipient focuses iTerm")
+	re := fs.String("re", "", "task slug this page is about (context link)")
+	if err := fs.Parse(args[2:]); err != nil {
+		return 2
+	}
 	if body == "" {
 		fmt.Fprintln(os.Stderr, "error: empty page body")
 		return 2
