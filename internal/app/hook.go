@@ -5,6 +5,7 @@ import (
 	"flow/internal/flowdb"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
@@ -30,6 +31,10 @@ func cmdHook(args []string) int {
 		return cmdHookSessionStart(rest)
 	case "user-prompt-submit":
 		return cmdHookUserPromptSubmit(rest)
+	case "post-tool-use":
+		return cmdHookPostToolUse(rest)
+	case "stop":
+		return cmdHookStop(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown hook subcommand %q\n", sub)
 		return 2
@@ -61,6 +66,7 @@ func cmdHookSessionStart(args []string) int {
 	if slug == "" {
 		return emitAmbientSkillHint()
 	}
+	pageCtx := pageSessionStartContext()
 
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
@@ -91,7 +97,7 @@ func cmdHookSessionStart(args []string) int {
 		slug,
 	)
 
-	return emitSessionStartContext(instructions + appendStaleVersionHint())
+	return emitSessionStartContext(instructions + appendStaleVersionHint() + pageCtx)
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
@@ -238,10 +244,15 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	pageCtx := pagePromptSubmitContext()
 	t := lookupBoundTask()
 	if t == nil {
-		// Unbound — no-op, emit nothing.
-		return 0
+		// Unbound — page-bus context (an unbound session can still have
+		// paged the user) is the only possible payload.
+		if pageCtx == "" {
+			return 0
+		}
+		return emitHookContext("UserPromptSubmit", strings.TrimSpace(pageCtx))
 	}
 	anchor := fmt.Sprintf(
 		"flow session → task %q (%s). Per §4.11/§4.7: if this prompt is "+
@@ -249,5 +260,5 @@ func cmdHookUserPromptSubmit(args []string) int {
 			"offer to close it out. Else proceed silently.",
 		t.Name, t.Slug,
 	)
-	return emitHookContext("UserPromptSubmit", anchor)
+	return emitHookContext("UserPromptSubmit", anchor+pageCtx)
 }

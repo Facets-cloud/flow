@@ -362,6 +362,25 @@ func (c *claude) UninstallUserPromptSubmitHook(command string) (bool, error) {
 	return uninstallHook("UserPromptSubmit", command)
 }
 
+func (c *claude) InstallPostToolUseHook(command string) (bool, error) {
+	// Aggressive by design: fires on every tool call. The handler's
+	// fast path (no bound task / empty inbox) exits without output.
+	return installHook("PostToolUse", "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch", command)
+}
+
+func (c *claude) UninstallPostToolUseHook(command string) (bool, error) {
+	return uninstallHook("PostToolUse", command)
+}
+
+func (c *claude) InstallStopHook(command string) (bool, error) {
+	// Stop takes no matcher — fires when each assistant turn ends.
+	return installHook("Stop", "", command)
+}
+
+func (c *claude) UninstallStopHook(command string) (bool, error) {
+	return uninstallHook("Stop", command)
+}
+
 // installHook idempotently adds a hook entry for `event` to
 // ~/.claude/settings.json. matcher may be empty — some events don't
 // use one and the field is omitted. command is both the literal

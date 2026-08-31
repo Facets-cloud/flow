@@ -77,6 +77,12 @@ func Run(args []string) int {
 		return cmdStats(rest)
 	case "hook":
 		return cmdHook(rest)
+	case "page":
+		return cmdPage(rest)
+	case "post":
+		return cmdPost(rest)
+	case "watch":
+		return cmdWatch(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -127,6 +133,17 @@ Edit / mutate:
   flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>
+
+Paging bus (attention + broadcast — see flow skill §4.18):
+  flow page <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]
+                                     (page a human — notification, escalates until answered —
+                                      or message the session bound to a task)
+  flow page                          (pending pages/posts addressed to you)
+  flow page listen [--timeout <s>] [--follow]   (block until paged; agents run this backgrounded)
+  flow page ack [<id>]               (manual ack; replying in the paging session acks automatically)
+  flow page stats                    (wait-time metrics)
+  flow post "<one-liner>"            (broadcast to whoever watches this task/project/assignee)
+  flow watch <task|project|assignee> | --list | --rm <target> | --follow
 
 Workdirs:
   flow workdir list

@@ -765,6 +765,32 @@ true", "automate maintenance of <repo>", "own <repo>'s bug-fixing", "run this
 on a loop". The full workflow — the operational interview, the `owner:<slug>`
 tag contract, the orchestrate-never-execute rule, the tick procedure, and the
 `flow add owner` / `flow owner start` commands → read **references/owners.md**.
+### 4.18 Paging bus (attention + broadcast)
+
+Sessions call for the user's attention or message each other over flow's
+paging bus. Two verbs, opposite semantics — never blend them:
+
+- `flow page <assignee>[/<task-slug>] "<body>"` — DIRECTED. Bare assignee
+  (e.g. `self`) pages the human: native notification that escalates with
+  backoff until they answer; use ONLY when blocked on their decision, a
+  needed permission, or a finished long task they're waiting on — never
+  routine progress, never when they're clearly active in this session.
+  `--urgent` for truly blocking matters. `<assignee>/<task-slug>` messages
+  that task's session (context delivery, no interruption). Keep bodies
+  short (≤200 chars, lead with the ask); link context via `--re <slug>`.
+  ONE page per wait — it re-escalates itself; NEVER re-send. The user's
+  next reply in this session acks your page and a hook injects how long
+  you waited (re-verify stale state after long waits).
+- `flow post "<one-liner>"` — BROADCAST. FYI to whoever watches this
+  task/project/assignee; never interrupts anyone; you never pick
+  recipients. If someone specific must act, page them too.
+- `flow watch <task|project|assignee>` subscribes you; posts then arrive
+  as messages. `flow page listen` run as a BACKGROUND Bash command blocks
+  until mail arrives, then exits — which wakes you; start one when
+  expecting a handoff and re-start it after each wake.
+
+Full workflow, address grammar, and etiquette → read **references/paging.md**.
+
 ## 6. The `work_dir` question — rules
 
 Before asking "where does this task live?", run the informed-question
