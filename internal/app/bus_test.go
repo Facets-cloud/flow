@@ -46,7 +46,7 @@ func TestMessageHumanLifecycle(t *testing.T) {
 	mkBusTask(t, db, "task-a", "sid-msg-1")
 
 	out := captureStdout(t, func() {
-		if rc := cmdMessage([]string{"self", "need release approval", "--re", "task-a"}); rc != 0 {
+		if rc := cmdMessage([]string{"self", "need release approval"}); rc != 0 {
 			t.Fatalf("message rc != 0")
 		}
 	})

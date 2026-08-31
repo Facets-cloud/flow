@@ -14,7 +14,7 @@ import (
 
 // cmdMessage implements the directed half of the message bus:
 //
-//	flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]
+//	flow message <assignee>[/<task-slug>] "<body>" [--urgent]
 //
 // A bare assignee (e.g. `self`) addresses the human: the message stays
 // pending, on an escalating notify schedule (`flow inbox due`), until
@@ -27,13 +27,12 @@ import (
 // on top of `flow inbox due` (see skill references/messaging.md).
 func cmdMessage(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]`)
+		fmt.Fprintln(os.Stderr, `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent]`)
 		return 2
 	}
 	addr, body := args[0], strings.TrimSpace(args[1])
 	fs := flagSet("message")
 	urgent := fs.Bool("urgent", false, "mark as urgent (notifier scripts may escalate harder)")
-	re := fs.String("re", "", "task slug this message is about (context link)")
 	if err := fs.Parse(args[2:]); err != nil {
 		return 2
 	}
@@ -42,7 +41,7 @@ func cmdMessage(args []string) int {
 		return 2
 	}
 	if len(body) > busBodyMax {
-		fmt.Fprintf(os.Stderr, "error: message body is %d chars (max %d) — messages are short; put context in --re <task-slug> or a task update\n",
+		fmt.Fprintf(os.Stderr, "error: message body is %d chars (max %d) — messages are short; mention a task slug or update-file path in the body for context\n",
 			len(body), busBodyMax)
 		return 2
 	}
@@ -64,7 +63,7 @@ func cmdMessage(args []string) int {
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: s.Assignee, FromTaskSlug: s.TaskSlug, SenderSessionID: s.SessionID,
-		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, ReSlug: *re, Urgent: *urgent,
+		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: *urgent,
 	}
 	if toSlug == "" {
 		// Human-directed: due for notification immediately, then backoff.

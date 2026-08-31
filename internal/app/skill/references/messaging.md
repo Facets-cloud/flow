@@ -22,7 +22,7 @@ top of `flow inbox due`.
 ## Messaging the human
 
 ```
-flow message self "prod release plan ready, needs approval" --re coinswitch-gcp-migration
+flow message self "coinswitch-gcp-migration: prod release plan ready, needs approval"
 flow message self "state bucket perms broken, blocked on your GCP login" --urgent
 ```
 
@@ -36,7 +36,8 @@ scripted) until answered. Discipline:
   replying in this session.
 - ONE pending message per wait. The schedule escalates it — re-sending
   is noise.
-- Body ≤200 chars; lead with the ask; context goes in `--re <task-slug>`.
+- Body ≤200 chars; lead with the ask; mention the task slug or an
+  update-file path in the body when the recipient needs context.
 - Ack is automatic: the user's next prompt in this session acks it and a
   hook injects "answered after <duration>" — factor that elapsed time in
   (long waits mean stale state: re-verify before acting). They can also

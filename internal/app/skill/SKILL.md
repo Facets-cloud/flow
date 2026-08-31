@@ -778,7 +778,8 @@ bus. Two send verbs with opposite semantics — never blend them:
   in this session. `--urgent` for truly blocking matters.
   `<assignee>/<task-slug>` messages that task's session (context
   delivery, no interruption). Bodies short (≤200 chars, lead with the
-  ask); link context via `--re <slug>`. ONE message per wait — it
+  ask; mention a task slug or update-file path for context). ONE
+  message per wait — it
   escalates itself; NEVER re-send. The user's next reply in this session
   acks it and a hook injects how long you waited (re-verify stale state
   after long waits).

@@ -137,7 +137,7 @@ Edit / mutate:
   flow unarchive <ref>
 
 Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
-  flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--re <slug>]
+  flow message <assignee>[/<task-slug>] "<body>" [--urgent]
                                      (message a human — pending + escalation schedule until
                                       answered — or the session bound to a task; alias: msg)
   flow inbox [--me]                  (what's pending for you; --me = as the human even in a bound session)

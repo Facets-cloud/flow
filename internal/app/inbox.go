@@ -126,9 +126,6 @@ func popOne(db *sql.DB, s busSender) (*flowdb.BusMessage, error) {
 func printBusMessage(m *flowdb.BusMessage) {
 	now := time.Now()
 	fmt.Printf("[%s %s] from %s (%s ago): %s\n", m.Kind, m.ID, busFrom(m), busAge(m.CreatedAt, now), m.Body)
-	if m.ReSlug != "" {
-		fmt.Printf("        re: task %s (flow show task %s)\n", m.ReSlug, m.ReSlug)
-	}
 	if m.Urgent {
 		fmt.Println("        marked URGENT by the sender")
 	}

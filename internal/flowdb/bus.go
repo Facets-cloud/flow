@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     to_assignee        TEXT NOT NULL,
     to_task_slug       TEXT,
     body               TEXT NOT NULL,
-    re_slug            TEXT,
     urgent             INTEGER NOT NULL DEFAULT 0,
     status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','delivered','acked')),
     attempts           INTEGER NOT NULL DEFAULT 0,
@@ -76,7 +75,6 @@ type BusMessage struct {
 	ToAssignee      string
 	ToTaskSlug      string
 	Body            string
-	ReSlug          string
 	Urgent          bool
 	Status          string
 	Attempts        int
@@ -86,7 +84,7 @@ type BusMessage struct {
 
 const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug,''),
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
-    COALESCE(re_slug,''), urgent, status, attempts, COALESCE(next_notify_at,''),
+    urgent, status, attempts, COALESCE(next_notify_at,''),
     COALESCE(waited_s,0)`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
@@ -101,7 +99,7 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		m := &BusMessage{}
 		var urgent int
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
-			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body, &m.ReSlug,
+			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
 			&urgent, &m.Status, &m.Attempts, &m.NextNotifyAt, &m.WaitedS); err != nil {
 			return nil, err
 		}
@@ -120,11 +118,11 @@ func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 	}
 	_, err := db.Exec(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, re_slug, urgent, status, attempts, next_notify_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',0,?)`,
+         to_assignee, to_task_slug, body, urgent, status, attempts, next_notify_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',0,?)`,
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
-		m.Body, NullIfEmpty(m.ReSlug), urgent, NullIfEmpty(m.NextNotifyAt))
+		m.Body, urgent, NullIfEmpty(m.NextNotifyAt))
 	return err
 }
 

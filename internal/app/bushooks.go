@@ -101,9 +101,6 @@ func drainTaskInbox(db *sql.DB, slug string) string {
 			verb = "post (FYI broadcast)"
 		}
 		b.WriteString(fmt.Sprintf(" flow-bus %s from %s (%s ago): %s.", verb, busFrom(m), busAge(m.CreatedAt, now), m.Body))
-		if m.ReSlug != "" {
-			b.WriteString(fmt.Sprintf(" (re: task %s)", m.ReSlug))
-		}
 	}
 	return b.String()
 }
