@@ -197,6 +197,57 @@ func TestPostFanoutToWatchers(t *testing.T) {
 	}
 }
 
+func TestInboxAsAssigneeAndJSON(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-a", "")
+
+	// Queue a message for another assignee (local queue, no transport).
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"shashwat", "your infra PR needs a rebase"}); rc != 0 {
+			t.Fatalf("message rc != 0")
+		}
+	})
+	// self's inbox must NOT see it; --as shashwat must.
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop"}); rc != 1 {
+			t.Errorf("self pop should find nothing")
+		}
+	})
+	out := captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop", "--as", "shashwat", "--json"}); rc != 0 {
+			t.Fatalf("pop --as rc != 0")
+		}
+	})
+	var m busMsgJSON
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("pop --json parse: %v\nraw: %s", err, out)
+	}
+	if m.To.Assignee != "shashwat" || m.Kind != "message" || m.Body == "" {
+		t.Errorf("json roundtrip: %+v", m)
+	}
+	if m.Status != "pending" { // rendered row is pre-claim snapshot
+		t.Logf("status field: %s", m.Status)
+	}
+
+	// due --as --json for a fresh message to shashwat.
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"shashwat", "second thing"}); rc != 0 {
+			t.Fatalf("message rc != 0")
+		}
+	})
+	out = captureStdout(t, func() {
+		if rc := cmdInbox([]string{"due", "--as", "shashwat", "--json"}); rc != 0 {
+			t.Fatalf("due --as --json rc != 0")
+		}
+	})
+	var arr []busMsgJSON
+	if err := json.Unmarshal([]byte(out), &arr); err != nil || len(arr) != 1 {
+		t.Fatalf("due json = %v, %v\nraw: %s", arr, err, out)
+	}
+}
+
 func TestWatchMeFlagSubscribesHuman(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-w")

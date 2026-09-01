@@ -157,6 +157,22 @@ func MarkDelivered(db *sql.DB, ids []string) error {
 	return nil
 }
 
+// ClaimDelivered atomically transitions one message pending→delivered.
+// Returns false when another consumer claimed it first — the caller
+// should move on to the next row. This is what makes concurrent `pop`
+// consumers of one inbox (e.g. the user's terminal and a monitor task)
+// safe: exactly one pops each message.
+func ClaimDelivered(db *sql.DB, id string) (bool, error) {
+	res, err := db.Exec(
+		`UPDATE bus_messages SET status='delivered', delivered_at=? WHERE id=? AND status='pending'`,
+		NowISO(), id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // AckHumanMessagesFromSession acks every pending human-directed message
 // sent by `sessionID`, recording the wait. Returns the acked rows.
 func AckHumanMessagesFromSession(db *sql.DB, sessionID, by string) ([]*BusMessage, error) {
@@ -165,32 +181,47 @@ func AckHumanMessagesFromSession(db *sql.DB, sessionID, by string) ([]*BusMessag
 	if err != nil || len(rows) == 0 {
 		return rows, err
 	}
+	acked := rows[:0]
 	for _, m := range rows {
-		if err := ackBusRow(db, m, by); err != nil {
+		claimed, err := ClaimAcked(db, m, by)
+		if err != nil {
 			return nil, err
 		}
+		if claimed {
+			acked = append(acked, m)
+		}
 	}
-	return rows, nil
+	return acked, nil
 }
 
-// AckMessageByID acks one message by id. Returns the row or nil.
+// AckMessageByID acks one message by id. Returns the row, or nil when
+// it doesn't exist, isn't pending, or was claimed concurrently.
 func AckMessageByID(db *sql.DB, id, by string) (*BusMessage, error) {
 	rows, err := queryBusMsgs(db, `id=? AND status='pending'`, id)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	if err := ackBusRow(db, rows[0], by); err != nil {
+	claimed, err := ClaimAcked(db, rows[0], by)
+	if err != nil || !claimed {
 		return nil, err
 	}
 	return rows[0], nil
 }
 
-func ackBusRow(db *sql.DB, m *BusMessage, by string) error {
+// ClaimAcked atomically transitions one message pending→acked,
+// recording the wait. Returns false when another consumer claimed it
+// first. Together with ClaimDelivered this makes concurrent consumers
+// of one inbox safe: exactly one pops each message.
+func ClaimAcked(db *sql.DB, m *BusMessage, by string) (bool, error) {
 	m.WaitedS = waitedSeconds(m.CreatedAt, time.Now())
-	_, err := db.Exec(
-		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=? WHERE id=?`,
+	res, err := db.Exec(
+		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=? WHERE id=? AND status='pending'`,
 		NowISO(), m.WaitedS, by, m.ID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func waitedSeconds(createdAt string, now time.Time) float64 {

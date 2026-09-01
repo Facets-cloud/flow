@@ -28,7 +28,7 @@ func cmdWatch(args []string) int {
 	fs := flagSet("watch")
 	list := fs.Bool("list", false, "list this identity's watches")
 	rm := fs.String("rm", "", "unsubscribe from a target")
-	me := fs.Bool("me", false, "act as the human (self), ignoring any session binding")
+	me, self, as := consumerFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -39,11 +39,7 @@ func cmdWatch(args []string) int {
 	}
 	defer db.Close()
 
-	s := currentBusSender()
-	watcher := s.identity()
-	if *me {
-		watcher = busSelf
-	}
+	watcher := resolveConsumer(*me, *self, *as).identity()
 
 	switch {
 	case *list:

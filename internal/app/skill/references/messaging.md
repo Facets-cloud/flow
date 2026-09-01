@@ -79,14 +79,23 @@ cheap.
 ## Consuming: inbox and pop
 
 ```
-flow inbox                     # list pending (identity-aware)
-flow inbox pop                 # consume the oldest, exit 1 if empty
+flow inbox [--json]            # list pending (identity-aware)
+flow inbox pop [--json]        # consume the oldest, exit 1 if empty
 flow inbox pop --wait --timeout 3600
+flow inbox pop --wait --me     # a session monitoring the USER's inbox
+flow inbox pop --as shashwat   # drain another assignee's queue (transport/monitor workers)
 ```
 
 Identity is implicit: a bound session consumes its own task's mail; an
-unbound/human invocation consumes the user's. Popping a human-directed
-message ACKS it (popping is answering); posts are marked delivered.
+unbound/human invocation consumes the user's. `--me` (alias `--self`)
+forces the human `self` queue from inside a bound session — e.g. a
+dedicated flow task whose job is monitoring the user's inbox; `--as
+<assignee>` targets any human queue. Pops are atomic claims, so
+concurrent consumers of one inbox (your terminal + a monitor task)
+never double-pop. `--json` on inbox/pop/due emits machine-readable
+rows for scripting. Popping a human-directed message ACKS it (popping
+is answering); posts are marked delivered. Rows are never deleted by
+popping — they transition status and age out via the 90d sweep.
 
 To be WOKEN by mail instead of discovering it on your next tool call,
 park your **Monitor tool** — or a background Bash command

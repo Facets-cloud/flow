@@ -2,6 +2,8 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -11,19 +13,25 @@ import (
 
 // cmdInbox is the consumption surface of the message bus:
 //
-//	flow inbox                       list what's pending for you
-//	flow inbox pop [--wait] [--timeout <s>]   consume the oldest, one at a time
-//	flow inbox ack [<id>]            answer human-directed message(s) by hand
-//	flow inbox due                   escalation primitive for notifier scripts
-//	flow inbox stats                 wait-time metrics
+//	flow inbox [--as <assignee>|--me] [--json]
+//	flow inbox pop [--wait] [--timeout <s>] [--as <assignee>|--me] [--json]
+//	flow inbox ack [<id>] [--as <assignee>]
+//	flow inbox due [--as <assignee>] [--json]
+//	flow inbox stats [--as <assignee>]
 //
 // Identity is implicit: a bound session consumes as self/<task-slug>
 // (its own mail); an unbound/human invocation consumes as self.
+// Overrides: --me (alias --self) = the human `self` even inside a bound
+// session; --as <assignee> = any human queue — e.g. a monitor task that
+// drains the user's inbox, or a transport worker forwarding another
+// assignee's messages to their machine.
 //
 // `pop --wait` blocks until a message exists, pops exactly one, and
 // exits 0 — built to be parked on by a Claude session's Monitor tool or
 // a background Bash command, so mail arrival wakes the agent. Exit 1
-// means nothing was popped (empty inbox, or --wait timed out).
+// means nothing was popped (empty inbox, or --wait timed out). Pops are
+// atomic claims: concurrent consumers of one inbox never double-pop.
+// --json emits machine-readable rows for scripting.
 func cmdInbox(args []string) int {
 	if len(args) == 0 {
 		return inboxList(nil)
@@ -41,20 +49,30 @@ func cmdInbox(args []string) int {
 	case "ls", "list":
 		return inboxList(rest)
 	}
-	return inboxList(args) // allow `flow inbox --me`
+	return inboxList(args) // allow `flow inbox --me` / `--as x` / `--json`
 }
 
-// inboxIdentity resolves the consuming identity, honoring --me (act as
-// the human even inside a bound session).
-func inboxIdentity(me bool) busSender {
+// consumerFlags registers the shared identity-override flags.
+func consumerFlags(fs *flag.FlagSet) (me, self *bool, as *string) {
+	me = fs.Bool("me", false, "act as the human `self`, ignoring any session binding")
+	self = fs.Bool("self", false, "alias of --me")
+	as = fs.String("as", "", "consume another assignee's queue (e.g. a monitor or transport worker)")
+	return
+}
+
+// resolveConsumer applies the identity overrides to the ambient identity.
+func resolveConsumer(me, self bool, as string) busSender {
 	s := currentBusSender()
-	if me {
-		s.TaskSlug = ""
+	if as != "" {
+		return busSender{Assignee: as}
+	}
+	if me || self {
+		return busSender{Assignee: busSelf}
 	}
 	return s
 }
 
-// pendingForIdentity returns the pending rows for the current identity.
+// pendingForIdentity returns the pending rows for an identity.
 func pendingForIdentity(db *sql.DB, s busSender) ([]*flowdb.BusMessage, error) {
 	if s.TaskSlug != "" {
 		return flowdb.PendingForTask(db, s.TaskSlug)
@@ -62,9 +80,47 @@ func pendingForIdentity(db *sql.DB, s busSender) ([]*flowdb.BusMessage, error) {
 	return flowdb.PendingForHuman(db, s.Assignee)
 }
 
+// busMsgJSON is the stable machine-readable rendering of a message.
+type busMsgJSON struct {
+	ID        string   `json:"id"`
+	CreatedAt string   `json:"created_at"`
+	Kind      string   `json:"kind"`
+	From      addrJSON `json:"from"`
+	To        addrJSON `json:"to"`
+	Body      string   `json:"body"`
+	Urgent    bool     `json:"urgent"`
+	Status    string   `json:"status"`
+	Attempts  int      `json:"attempts"`
+	WaitedS   float64  `json:"waited_s,omitempty"`
+}
+
+type addrJSON struct {
+	Assignee string `json:"assignee"`
+	TaskSlug string `json:"task_slug,omitempty"`
+}
+
+func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
+	return busMsgJSON{
+		ID: m.ID, CreatedAt: m.CreatedAt, Kind: m.Kind,
+		From: addrJSON{Assignee: m.FromAssignee, TaskSlug: m.FromTaskSlug},
+		To:   addrJSON{Assignee: m.ToAssignee, TaskSlug: m.ToTaskSlug},
+		Body: m.Body, Urgent: m.Urgent, Status: m.Status,
+		Attempts: m.Attempts, WaitedS: m.WaitedS,
+	}
+}
+
+func emitJSON(v any) int {
+	if err := json.NewEncoder(os.Stdout).Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func inboxList(args []string) int {
 	fs := flagSet("inbox")
-	me := fs.Bool("me", false, "act as the human (self), ignoring any session binding")
+	me, self, as := consumerFlags(fs)
+	asJSON := fs.Bool("json", false, "emit a JSON array instead of the human listing")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -74,11 +130,18 @@ func inboxList(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	s := inboxIdentity(*me)
+	s := resolveConsumer(*me, *self, *as)
 	rows, err := pendingForIdentity(db, s)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if *asJSON {
+		out := make([]busMsgJSON, len(rows))
+		for i, m := range rows {
+			out[i] = toMsgJSON(m)
+		}
+		return emitJSON(out)
 	}
 	if len(rows) == 0 {
 		fmt.Printf("inbox empty (%s)\n", s.identity())
@@ -102,25 +165,30 @@ func inboxList(args []string) int {
 	return 0
 }
 
-// popOne consumes the single oldest pending message for the identity:
-// posts and session-directed rows are marked delivered; human-directed
-// messages are acked (popping IS answering). Returns nil when empty.
+// popOne atomically claims the oldest pending message for the identity:
+// posts and session-directed rows become delivered; human-directed
+// messages become acked (popping IS answering). Rows lost to a
+// concurrent consumer are skipped. Returns nil when nothing claimable.
 func popOne(db *sql.DB, s busSender) (*flowdb.BusMessage, error) {
 	rows, err := pendingForIdentity(db, s)
-	if err != nil || len(rows) == 0 {
+	if err != nil {
 		return nil, err
 	}
-	m := rows[0]
-	if m.Kind == "message" && m.ToTaskSlug == "" {
-		if _, err := flowdb.AckMessageByID(db, m.ID, "pop"); err != nil {
+	for _, m := range rows {
+		var claimed bool
+		if m.Kind == "message" && m.ToTaskSlug == "" {
+			claimed, err = flowdb.ClaimAcked(db, m, "pop")
+		} else {
+			claimed, err = flowdb.ClaimDelivered(db, m.ID)
+		}
+		if err != nil {
 			return nil, err
 		}
-	} else {
-		if err := flowdb.MarkDelivered(db, []string{m.ID}); err != nil {
-			return nil, err
+		if claimed {
+			return m, nil
 		}
 	}
-	return m, nil
+	return nil, nil
 }
 
 func printBusMessage(m *flowdb.BusMessage) {
@@ -135,7 +203,8 @@ func inboxPop(args []string) int {
 	fs := flagSet("inbox pop")
 	wait := fs.Bool("wait", false, "block until a message arrives, then pop it")
 	timeout := fs.Int("timeout", 3600, "seconds --wait blocks before giving up")
-	me := fs.Bool("me", false, "act as the human (self), ignoring any session binding")
+	me, self, as := consumerFlags(fs)
+	asJSON := fs.Bool("json", false, "emit the popped message as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -145,7 +214,18 @@ func inboxPop(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	s := inboxIdentity(*me)
+	s := resolveConsumer(*me, *self, *as)
+
+	emit := func(m *flowdb.BusMessage) int {
+		if *asJSON {
+			return emitJSON(toMsgJSON(m))
+		}
+		printBusMessage(m)
+		if *wait {
+			fmt.Println("re-arm: run `flow inbox pop --wait` again (backgrounded) to catch the next message")
+		}
+		return 0
+	}
 
 	if !*wait {
 		m, err := popOne(db, s)
@@ -154,11 +234,12 @@ func inboxPop(args []string) int {
 			return 1
 		}
 		if m == nil {
-			fmt.Printf("inbox empty (%s)\n", s.identity())
+			if !*asJSON {
+				fmt.Printf("inbox empty (%s)\n", s.identity())
+			}
 			return 1
 		}
-		printBusMessage(m)
-		return 0
+		return emit(m)
 	}
 
 	identity := s.identity()
@@ -168,7 +249,9 @@ func inboxPop(args []string) int {
 		return 1
 	}
 	defer func() { _ = flowdb.RemoveBusListener(db, identity, pid) }()
-	fmt.Printf("waiting for mail as %s (pid %d, timeout %ds)\n", identity, pid, *timeout)
+	if !*asJSON {
+		fmt.Printf("waiting for mail as %s (pid %d, timeout %ds)\n", identity, pid, *timeout)
+	}
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 	for {
 		_ = flowdb.TouchBusListener(db, identity, pid)
@@ -178,12 +261,12 @@ func inboxPop(args []string) int {
 			return 1
 		}
 		if m != nil {
-			printBusMessage(m)
-			fmt.Println("re-arm: run `flow inbox pop --wait` again (backgrounded) to catch the next message")
-			return 0
+			return emit(m)
 		}
 		if time.Now().After(deadline) {
-			fmt.Println("pop --wait timeout: no messages arrived")
+			if !*asJSON {
+				fmt.Println("pop --wait timeout: no messages arrived")
+			}
 			return 1
 		}
 		time.Sleep(2 * time.Second)
@@ -192,6 +275,7 @@ func inboxPop(args []string) int {
 
 func inboxAck(args []string) int {
 	fs := flagSet("inbox ack")
+	me, self, as := consumerFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -210,7 +294,9 @@ func inboxAck(args []string) int {
 		fmt.Printf("acked [%s] after %s: %s\n", m.ID, fmtBusWait(m.WaitedS), m.Body)
 		return 0
 	}
-	rows, _ := flowdb.PendingForHuman(db, busSelf)
+	s := resolveConsumer(*me, *self, *as)
+	assignee := s.Assignee
+	rows, _ := flowdb.PendingForHuman(db, assignee)
 	acked := 0
 	for _, r := range rows {
 		if r.Kind != "message" {
@@ -228,13 +314,15 @@ func inboxAck(args []string) int {
 }
 
 // inboxDue is the escalation primitive for user notifier scripts: it
-// prints human-directed messages whose notify deadline has passed (one
-// per line, tab-separated: id, attempts, age, urgent, from, body) and
-// advances each row's backoff schedule. Poll it from cron/a loop and
-// pipe into whatever notification UX you want. Prints nothing (exit 1)
-// when nothing is due.
+// prints human-directed messages whose notify deadline has passed and
+// advances each row's backoff. Poll it from cron/a loop and pipe into
+// whatever notification UX you want. Prints nothing (exit 1) when
+// nothing is due. Default output is tab-separated (id, attempts, age,
+// urgent, from, body); --json emits an array.
 func inboxDue(args []string) int {
 	fs := flagSet("inbox due")
+	me, self, as := consumerFlags(fs)
+	asJSON := fs.Bool("json", false, "emit due messages as a JSON array")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -244,8 +332,9 @@ func inboxDue(args []string) int {
 		return 1
 	}
 	defer db.Close()
+	assignee := resolveConsumer(*me, *self, *as).Assignee
 	now := time.Now()
-	due, err := flowdb.DueBusMessages(db, busSelf, now)
+	due, err := flowdb.DueBusMessages(db, assignee, now)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -254,19 +343,29 @@ func inboxDue(args []string) int {
 		return 1
 	}
 	for _, m := range due {
+		_ = flowdb.BumpNotifyAttempt(db, m.ID, m.Attempts, now)
+	}
+	if *asJSON {
+		out := make([]busMsgJSON, len(due))
+		for i, m := range due {
+			out[i] = toMsgJSON(m)
+		}
+		return emitJSON(out)
+	}
+	for _, m := range due {
 		urgent := "0"
 		if m.Urgent {
 			urgent = "1"
 		}
 		fmt.Printf("%s\t%d\t%s\t%s\t%s\t%s\n",
 			m.ID, m.Attempts, busAge(m.CreatedAt, now), urgent, busFrom(m), m.Body)
-		_ = flowdb.BumpNotifyAttempt(db, m.ID, m.Attempts, now)
 	}
 	return 0
 }
 
 func inboxStats(args []string) int {
 	fs := flagSet("inbox stats")
+	me, self, as := consumerFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -276,7 +375,8 @@ func inboxStats(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	s, err := flowdb.GetBusStats(db, busSelf)
+	assignee := resolveConsumer(*me, *self, *as).Assignee
+	s, err := flowdb.GetBusStats(db, assignee)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
