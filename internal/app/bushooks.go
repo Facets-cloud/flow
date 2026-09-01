@@ -177,6 +177,16 @@ func cmdHookStop(args []string) int {
 			return 0 // posted recently — stay quiet
 		}
 	}
+	// Nudge cooldown: without it, every turn end re-nudges while the
+	// last post stays old — including turns where the agent declined
+	// the previous nudge, which wake-loops the session. Ask at most
+	// once per 30m per task; the agent's judgment stands in between.
+	if nudged, _ := flowdb.LastNudgeAt(db, slug); nudged != "" {
+		if ts, err := time.Parse(time.RFC3339, nudged); err == nil && time.Since(ts) < 30*time.Minute {
+			return 0
+		}
+	}
+	_ = flowdb.RecordNudge(db, slug)
 	msg := fmt.Sprintf(
 		"flow-bus: %d watcher(s) follow this task and your last post is %s. If this turn "+
 			"completed meaningful work, broadcast a one-liner now: flow post \"<what changed>\". "+

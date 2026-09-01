@@ -281,6 +281,17 @@ func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 		t.Errorf("stop nudge: %s", ctx)
 	}
 
+	// A declined nudge must not re-fire on the very next turn end —
+	// the nudge itself has a 30m cooldown (wake-loop guard).
+	out = captureStdout(t, func() {
+		if rc := cmdHookStop(nil); rc != 0 {
+			t.Fatalf("rc != 0")
+		}
+	})
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("nudge re-fired within cooldown: %s", out)
+	}
+
 	captureStdout(t, func() {
 		if rc := cmdPost([]string{"posted the thing"}); rc != 0 {
 			t.Fatalf("post rc != 0")

@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS bus_watches (
     created_at  TEXT NOT NULL,
     PRIMARY KEY (watcher, watched)
 );
+
+CREATE TABLE IF NOT EXISTS bus_nudges (
+    task_slug  TEXT PRIMARY KEY,
+    nudged_at  TEXT NOT NULL
+);
 `
 
 // BusMessage mirrors one bus_messages row.
@@ -328,6 +333,27 @@ func repeatPlaceholder(n int) string {
 		s += ",?"
 	}
 	return s
+}
+
+// LastNudgeAt returns when the Stop hook last nudged a task to post
+// ("" if never). Without this cooldown the nudge would re-fire on every
+// turn end while the last post stays >30m old — including turns where
+// the agent just declined the previous nudge (a wake-loop).
+func LastNudgeAt(db *sql.DB, taskSlug string) (string, error) {
+	row := db.QueryRow(`SELECT COALESCE(MAX(nudged_at),'') FROM bus_nudges WHERE task_slug=?`, taskSlug)
+	var ts string
+	if err := row.Scan(&ts); err != nil {
+		return "", err
+	}
+	return ts, nil
+}
+
+// RecordNudge stamps the nudge cooldown for a task.
+func RecordNudge(db *sql.DB, taskSlug string) error {
+	_, err := db.Exec(`INSERT INTO bus_nudges (task_slug, nudged_at) VALUES (?,?)
+        ON CONFLICT(task_slug) DO UPDATE SET nudged_at=excluded.nudged_at`,
+		taskSlug, NowISO())
+	return err
 }
 
 // LastPostAt returns the created_at of the most recent post authored by
