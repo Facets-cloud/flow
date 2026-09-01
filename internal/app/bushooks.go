@@ -54,14 +54,15 @@ func busSessionStartContext() string {
 	}
 	if s.TaskSlug != "" {
 		b.WriteString(drainTaskInbox(db, s.TaskSlug))
-		b.WriteString(" flow-bus listener discipline: arm your Monitor tool on " +
-			"`flow inbox pop --wait` NOW (Monitor is PREFERRED — it waits on the command " +
-			"without holding a shell and wakes you the moment it exits with a message); if " +
-			"Monitor is unavailable, run it as a background Bash command instead. RE-ARM " +
-			"immediately after every wake so the next message also reaches you. Also " +
-			"subscribe to what this task depends on: `flow watch <task-or-project-slug>` " +
-			"for anything you are waiting on, coordinating with, or any task you create " +
-			"from this session.")
+		b.WriteString(" flow-bus listener discipline: arm ONE persistent Monitor NOW — the " +
+			"loop is required (Monitor streams stdout lines as events): " +
+			"Monitor(command: 'while true; do flow inbox pop --wait --timeout 300 --json " +
+			"|| true; done', persistent: true). Every message then wakes you as an event, " +
+			"no re-arming ever (--json is silent on timeouts). Only if Monitor is " +
+			"unavailable, fall back to a background Bash `flow inbox pop --wait` and " +
+			"re-arm it after every wake. Also subscribe to what this task depends on: " +
+			"`flow watch <task-or-project-slug>` for anything you are waiting on, " +
+			"coordinating with, or any task you create from this session.")
 	}
 	return b.String()
 }
@@ -166,10 +167,10 @@ func cmdHookStop(args []string) int {
 	var inboxCtx string
 	if !listenerAlive(db, s.identity()) {
 		if drained := drainTaskInbox(db, slug); drained != "" {
-			inboxCtx = drained + " Act on these now if they change anything, then arm your " +
-				"Monitor tool (preferred; else a background Bash command) on " +
-				"`flow inbox pop --wait` so future mail wakes you instead of " +
-				"waiting for a turn end."
+			inboxCtx = drained + " Act on these now if they change anything, then arm a " +
+				"persistent Monitor loop (preferred; else a background Bash " +
+				"`flow inbox pop --wait`, re-armed per wake) — see skill §4.18 — " +
+				"so future mail wakes you instead of waiting for a turn end."
 		}
 	}
 

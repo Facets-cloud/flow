@@ -101,19 +101,25 @@ is answering); posts are marked delivered. Rows are never deleted by
 popping — they transition status and age out via the 90d sweep.
 
 To be WOKEN by mail instead of discovering it on your next tool call,
-arm your **Monitor tool** on `flow inbox pop --wait` — Monitor is the
-PREFERRED listener: it waits on the command without occupying a shell
-and wakes you the moment it exits, and it survives long waits more
-gracefully than a background task. Fall back to a background Bash
-command (`run_in_background: true`) only when Monitor is unavailable
-(e.g. non-Claude harnesses). Either way it blocks
-until a message exists, pops exactly one, prints it, and exits 0 — the
-exit wakes you, and its output reminds you to RE-ARM immediately (run it
-again, backgrounded) so the next message also reaches you. Keep one
-armed for the whole session. One listener per identity. Exit 1 =
-timeout/empty, nothing popped. Also subscribe to the tasks you depend
-on or spawn: `flow watch <slug>` for anything you're waiting on,
-coordinating with, or any task you create from this session.
+arm a listener. PREFERRED — one persistent **Monitor** wrapping pop in
+an explicit loop (required: Monitor streams stdout lines as events and
+a bare pop would end the watch after one message):
+
+    Monitor(
+      command: "while true; do flow inbox pop --wait --timeout 300 --json || true; done",
+      description: "flow bus mail for this session",
+      persistent: true)
+
+Each popped message is one JSON event that wakes you; `--json` is
+silent on timeouts so the loop emits zero noise; it listens for the
+whole session with NO re-arming. FALLBACK when Monitor is unavailable
+(e.g. non-Claude harnesses): a background Bash command
+(`run_in_background: true`) running `flow inbox pop --wait` — that is
+single-shot (blocks, pops one, exits 0 and wakes you; exit 1 =
+timeout), so RE-ARM it after every wake. One listener per identity
+either way. Also subscribe to the tasks you depend on or spawn:
+`flow watch <slug>` for anything you're waiting on, coordinating with,
+or any task you create from this session.
 
 ## For the user: scripting notification UX
 
