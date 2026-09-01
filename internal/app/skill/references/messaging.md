@@ -70,8 +70,10 @@ fans out as a message to every CURRENT watcher of the task's slug, its
 project, or its assignee (new watchers don't receive older posts). Posts
 never escalate; if someone specific must act, message them as well.
 
-A Stop hook nudges you to post when the task has watchers and your last
-post is >30 min old — post only if the turn produced something a watcher
+At turn end a Stop hook (a) hands you any mail that arrived mid-turn
+when no listener was parked — act on it if it changes anything, then
+park a listener — and (b) nudges you to post when the task has watchers
+and your last post is >30 min old — post only if the turn produced something a watcher
 would care about; skip freely. Declined nudges back off exponentially
 (30m, 1h, 2h.. capped 4h) and a post resets the cycle, so skipping is
 cheap.

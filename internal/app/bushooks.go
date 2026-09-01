@@ -149,22 +149,65 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 	defer db.Close()
-	slug := lookupBoundTaskSlug()
+	s := currentBusSender()
+	slug := s.TaskSlug
 	if slug == "" {
 		return 0
 	}
+
+	// Stranded-mail delivery: the turn is ending and mail is pending
+	// with no live listener to catch it — hand it over NOW rather than
+	// letting it wait for the user's next prompt. Real mail, so it
+	// bypasses the post-nudge backoff; it self-limits because the drain
+	// consumes the rows. A live `pop --wait` listener takes precedence
+	// (it delivers within its poll tick; don't steal its message).
+	var inboxCtx string
+	if !listenerAlive(db, s.identity()) {
+		if drained := drainTaskInbox(db, slug); drained != "" {
+			inboxCtx = drained + " Act on these now if they change anything, then park " +
+				"`flow inbox pop --wait` (backgrounded) so future mail wakes you " +
+				"instead of waiting for a turn end."
+		}
+	}
+
+	nudge := stopPostNudge(db, slug)
+	ctx := strings.TrimSpace(inboxCtx + nudge)
+	if ctx == "" {
+		return 0
+	}
+	return emitHookContext("Stop", ctx)
+}
+
+// listenerAlive reports whether a live `flow inbox pop --wait` is
+// consuming for this identity (recent heartbeat + pid still running).
+func listenerAlive(db *sql.DB, identity string) bool {
+	pid, hb, err := flowdb.GetBusListener(db, identity)
+	if err != nil || pid == 0 || hb == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, hb)
+	if err != nil || time.Since(t) > 30*time.Second {
+		return false
+	}
+	return processAlive(pid) // shared liveness probe from auto.go
+}
+
+// stopPostNudge returns the watcher post-nudge context ("" when any
+// gate says stay quiet): watchers exist, no post in 30m, and the
+// declined-nudge backoff has elapsed.
+func stopPostNudge(db *sql.DB, slug string) string {
 	t, err := flowdb.GetTask(db, slug)
 	if err != nil || t == nil {
-		return 0
+		return ""
 	}
 	watchers, err := flowdb.WatchersOf(db, taskTopics(t))
 	if err != nil || len(watchers) == 0 {
-		return 0 // no audience — a nudge would be noise
+		return "" // no audience — a nudge would be noise
 	}
 	last, _ := flowdb.LastPostAt(db, slug)
 	if last != "" {
 		if ts, err := time.Parse(time.RFC3339, last); err == nil && time.Since(ts) < 30*time.Minute {
-			return 0 // posted recently — stay quiet
+			return "" // posted recently — stay quiet
 		}
 	}
 	// Declined-nudge backoff: ask again only after 30m·2^(declines-1),
@@ -173,16 +216,15 @@ func cmdHookStop(args []string) int {
 	if nudgedAt, attempts, _ := flowdb.GetNudgeState(db, slug); nudgedAt != "" {
 		if ts, err := time.Parse(time.RFC3339, nudgedAt); err == nil &&
 			time.Since(ts) < nudgeBackoffFor(attempts) {
-			return 0
+			return ""
 		}
 	}
 	_ = flowdb.RecordNudge(db, slug)
-	msg := fmt.Sprintf(
-		"flow-bus: %d watcher(s) follow this task and your last post is %s. If this turn "+
+	return fmt.Sprintf(
+		" flow-bus: %d watcher(s) follow this task and your last post is %s. If this turn "+
 			"completed meaningful work, broadcast a one-liner now: flow post \"<what changed>\". "+
 			"Skip if nothing notable happened.",
 		len(watchers), lastPostDesc(last))
-	return emitHookContext("Stop", msg)
 }
 
 // stopHookActive reads the Stop-hook stdin payload and reports whether
