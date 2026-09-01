@@ -108,8 +108,8 @@ func drainTaskInbox(db *sql.DB, slug string) string {
 	var b strings.Builder
 	for _, m := range rows {
 		verb := "message"
-		if m.Kind == "post" {
-			verb = "post (FYI broadcast)"
+		if m.Kind == "broadcast" {
+			verb = "broadcast (FYI)"
 		}
 		b.WriteString(fmt.Sprintf(" flow-bus %s from %s (%s ago): %s.", verb, busFrom(m), busAge(m.CreatedAt, now), m.Body))
 	}
@@ -208,7 +208,7 @@ func stopPostNudge(db *sql.DB, slug string) string {
 	if err != nil || len(watchers) == 0 {
 		return "" // no audience — a nudge would be noise
 	}
-	last, _ := flowdb.LastPostAt(db, slug)
+	last, _ := flowdb.LastBroadcastAt(db, slug)
 	if last != "" {
 		if ts, err := time.Parse(time.RFC3339, last); err == nil && time.Since(ts) < 30*time.Minute {
 			return "" // posted recently — stay quiet
@@ -225,8 +225,8 @@ func stopPostNudge(db *sql.DB, slug string) string {
 	}
 	_ = flowdb.RecordNudge(db, slug)
 	return fmt.Sprintf(
-		" flow-bus: %d watcher(s) follow this task and your last post is %s. If this turn "+
-			"completed meaningful work, broadcast a one-liner now: flow post \"<what changed>\". "+
+		" flow-bus: %d watcher(s) follow this task and your last broadcast is %s. If this turn "+
+			"completed meaningful work, broadcast a one-liner now: flow broadcast \"<what changed>\". "+
 			"Skip if nothing notable happened.",
 		len(watchers), lastPostDesc(last))
 }

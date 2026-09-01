@@ -54,10 +54,10 @@ Delivered instantly if the session has a listener parked (below), else
 into its context at its next prompt / session start. Include what the
 peer should DO with the information.
 
-## Broadcasting (posts) and watching
+## Broadcasting and watching
 
 ```
-flow post "imports done, 3 drifts left"          # from a bound session
+flow broadcast "imports done, 3 drifts left"     # from a bound session
 flow watch coinswitch-gcp-migration               # subscribe to one task
 flow watch alpha-cp                               # a whole project
 flow watch shashwat                               # everything an assignee's tasks post
@@ -65,10 +65,11 @@ flow watch --list / --rm <target>                 # inspect / unsubscribe
 flow watch <target> --as self                     # subscribe the USER, not this session
 ```
 
-Semantics: the poster NEVER picks recipients. At post time the one-liner
-fans out as a message to every CURRENT watcher of the task's slug, its
-project, or its assignee (new watchers don't receive older posts). Posts
-never escalate; if someone specific must act, message them as well.
+Semantics: the broadcaster NEVER picks recipients. At broadcast time
+the one-liner fans out as a message to every CURRENT watcher of the
+task's slug, its project, or its assignee (new watchers don't receive
+older broadcasts). Broadcasts never escalate; if someone specific must
+act, message them as well.
 
 At turn end a Stop hook (a) hands you any mail that arrived mid-turn
 when no listener was parked — act on it if it changes anything, then

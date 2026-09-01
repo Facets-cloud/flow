@@ -783,8 +783,8 @@ bus. Two send verbs with opposite semantics — never blend them:
   escalates itself; NEVER re-send. The user's next reply in this session
   acks it and a hook injects how long you waited (re-verify stale state
   after long waits).
-- `flow post "<one-liner>"` — BROADCAST. FYI to whoever watches this
-  task/project/assignee; never interrupts anyone; you never pick
+- `flow broadcast "<one-liner>"` — BROADCAST. FYI to whoever watches
+  this task/project/assignee; never interrupts anyone; you never pick
   recipients. If someone specific must act, message them too.
 - Consuming: `flow inbox` lists, `flow inbox pop` consumes one at a
   time. At session start arm ONE persistent **Monitor** (preferred) —

@@ -150,7 +150,7 @@ func TestMessageBodyCapAndAddressErrors(t *testing.T) {
 	}
 }
 
-func TestPostFanoutToWatchers(t *testing.T) {
+func TestBroadcastFanoutToWatchers(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-sender")
 	db := openFlowDB(t)
@@ -179,22 +179,22 @@ func TestPostFanoutToWatchers(t *testing.T) {
 		}
 	}
 	out := captureStdout(t, func() {
-		if rc := cmdPost([]string{"imports done, 3 drifts left"}); rc != 0 {
-			t.Fatalf("post rc != 0")
+		if rc := cmdBroadcast([]string{"imports done, 3 drifts left"}); rc != 0 {
+			t.Fatalf("broadcast rc != 0")
 		}
 	})
 	if !strings.Contains(out, "2 watcher(s)") {
-		t.Errorf("post output: %s", out)
+		t.Errorf("broadcast output: %s", out)
 	}
 	rows, _ = flowdb.PendingForTask(db, "task-c")
-	if len(rows) != 1 || rows[0].Kind != "post" || rows[0].FromTaskSlug != "task-a" {
+	if len(rows) != 1 || rows[0].Kind != "broadcast" || rows[0].FromTaskSlug != "task-a" {
 		t.Errorf("task-c inbox = %+v", rows)
 	}
 	if human, _ := flowdb.PendingForHuman(db, "self"); len(human) != 1 {
 		t.Errorf("human feed = %+v", human)
 	}
 	if self, _ := flowdb.PendingForTask(db, "task-a"); len(self) != 0 {
-		t.Errorf("poster received its own post")
+		t.Errorf("broadcaster received its own broadcast")
 	}
 }
 
@@ -316,7 +316,7 @@ func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := busHookContext(t, stopHookOnce(t, false))
-	if !strings.Contains(ctx, "flow post") || !strings.Contains(ctx, "1 watcher(s)") {
+	if !strings.Contains(ctx, "flow broadcast") || !strings.Contains(ctx, "1 watcher(s)") {
 		t.Errorf("stop nudge: %s", ctx)
 	}
 
@@ -327,8 +327,8 @@ func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 	}
 
 	captureStdout(t, func() {
-		if rc := cmdPost([]string{"posted the thing"}); rc != 0 {
-			t.Fatalf("post rc != 0")
+		if rc := cmdBroadcast([]string{"posted the thing"}); rc != 0 {
+			t.Fatalf("broadcast rc != 0")
 		}
 	})
 	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {

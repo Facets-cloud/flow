@@ -65,7 +65,7 @@ func TestBusMessageLifecycle(t *testing.T) {
 func TestBusTaskInboxDeliver(t *testing.T) {
 	db := openBusTestDB(t)
 	if err := InsertBusMessage(db, &BusMessage{
-		ID: "bbbb0001", CreatedAt: NowISO(), Kind: "post",
+		ID: "bbbb0001", CreatedAt: NowISO(), Kind: "broadcast",
 		FromAssignee: "self", FromTaskSlug: "task-a",
 		ToAssignee: "self", ToTaskSlug: "task-b", Body: "fyi done",
 	}); err != nil {

@@ -146,7 +146,7 @@ func inboxList(args []string) int {
 	now := time.Now()
 	for _, m := range rows {
 		mark := "✉"
-		if m.Kind == "post" {
+		if m.Kind == "broadcast" {
 			mark = "↺"
 		} else if m.Urgent {
 			mark = "⚠"
@@ -379,7 +379,7 @@ func inboxStats(args []string) int {
 	}
 	fmt.Printf("answered messages : %d\n", s.Acked)
 	fmt.Printf("pending messages  : %d\n", s.Pending)
-	fmt.Printf("posts on bus      : %d\n", s.Posts)
+	fmt.Printf("broadcasts on bus : %d\n", s.Broadcasts)
 	if s.Acked > 0 {
 		fmt.Printf("average wait      : %s\n", fmtBusWait(s.AvgWait))
 		fmt.Printf("median wait       : %s\n", fmtBusWait(s.MedWait))

@@ -3,6 +3,7 @@ package flowdb
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -17,8 +18,8 @@ import (
 //     pending until acked, with a backoff schedule exposed via DueBus-
 //     Messages for user notifier scripts. To a task it is delivered
 //     into that session's context (hooks or `flow inbox pop`).
-//   - kind=post: broadcast one-liner, materialized at post time as one
-//     row per current watcher. Never escalates.
+//   - kind=broadcast: one-liner fan-out, materialized at broadcast time
+//     as one row per current watcher. Never escalates.
 //
 // Addresses: "<assignee>" is a human, "<assignee>/<task-slug>" is the
 // session bound to that task. self = the local user.
@@ -28,7 +29,7 @@ const busDDL = `
 CREATE TABLE IF NOT EXISTS bus_messages (
     id                 TEXT PRIMARY KEY,
     created_at         TEXT NOT NULL,
-    kind               TEXT NOT NULL CHECK (kind IN ('message','post')),
+    kind               TEXT NOT NULL CHECK (kind IN ('message','broadcast')),
     from_assignee      TEXT NOT NULL,
     from_task_slug     TEXT,
     sender_session_id  TEXT,
@@ -133,7 +134,7 @@ func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 }
 
 // PendingForHuman returns pending rows addressed to the human
-// `assignee` — directed messages and fanned-out posts.
+// `assignee` — directed messages and fanned-out broadcasts.
 func PendingForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {
 	return queryBusMsgs(db,
 		`status='pending' AND to_assignee=? AND to_task_slug IS NULL`, assignee)
@@ -400,11 +401,11 @@ func ResetNudges(db *sql.DB, taskSlug string) error {
 	return err
 }
 
-// LastPostAt returns the created_at of the most recent post authored by
-// a task ("" if none). Used by the Stop-hook nudge heuristic.
-func LastPostAt(db *sql.DB, fromTaskSlug string) (string, error) {
+// LastBroadcastAt returns the created_at of the most recent broadcast
+// authored by a task ("" if none). Used by the Stop-hook nudge heuristic.
+func LastBroadcastAt(db *sql.DB, fromTaskSlug string) (string, error) {
 	row := db.QueryRow(`SELECT COALESCE(MAX(created_at),'') FROM bus_messages
-        WHERE kind='post' AND from_task_slug=?`, fromTaskSlug)
+        WHERE kind='broadcast' AND from_task_slug=?`, fromTaskSlug)
 	var ts string
 	if err := row.Scan(&ts); err != nil {
 		return "", err
@@ -414,8 +415,8 @@ func LastPostAt(db *sql.DB, fromTaskSlug string) (string, error) {
 
 // BusStats aggregates wait metrics over acked human-directed messages.
 type BusStats struct {
-	Acked, Pending, Posts     int
-	AvgWait, MedWait, MaxWait float64
+	Acked, Pending, Broadcasts int
+	AvgWait, MedWait, MaxWait  float64
 }
 
 // GetBusStats computes wait-time stats for messages to `assignee`.
@@ -436,8 +437,8 @@ func GetBusStats(db *sql.DB, assignee string) (*BusStats, error) {
 	if err := row.Scan(&s.Pending); err != nil {
 		return nil, err
 	}
-	row = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE kind='post'`)
-	if err := row.Scan(&s.Posts); err != nil {
+	row = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE kind='broadcast'`)
+	if err := row.Scan(&s.Broadcasts); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -485,4 +486,43 @@ func SweepBus(db *sql.DB, now time.Time) error {
 		return fmt.Errorf("sweep listeners: %w", err)
 	}
 	return nil
+}
+
+// migrateBusKindBroadcast rebuilds bus_messages on databases created
+// when the broadcast kind was still spelled 'post' (the CHECK
+// constraint pins the old value, and SQLite cannot ALTER a CHECK).
+func migrateBusKindBroadcast(db *sql.DB) error {
+	var ddl string
+	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='bus_messages'`).Scan(&ddl)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(ddl, "'post'") {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`ALTER TABLE bus_messages RENAME TO bus_messages_old`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(busDDL); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO bus_messages SELECT id, created_at,
+        CASE WHEN kind='post' THEN 'broadcast' ELSE kind END,
+        from_assignee, from_task_slug, sender_session_id, to_assignee, to_task_slug,
+        body, urgent, status, attempts, next_notify_at, delivered_at,
+        acked_at, waited_s, acked_by FROM bus_messages_old`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE bus_messages_old`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

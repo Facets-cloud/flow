@@ -81,8 +81,8 @@ func Run(args []string) int {
 		return cmdMessage(rest)
 	case "inbox":
 		return cmdInbox(rest)
-	case "post":
-		return cmdPost(rest)
+	case "broadcast", "post":
+		return cmdBroadcast(rest)
 	case "watch":
 		return cmdWatch(rest)
 	case "-h", "--help", "help":
@@ -150,7 +150,7 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
   flow inbox due [--as <assignee>] [--json]   (escalation feed for YOUR notifier script: prints
                                       due messages, advances their backoff; flow ships no UI)
   flow inbox stats                   (wait-time metrics)
-  flow post "<one-liner>"            (broadcast to whoever watches this task/project/assignee)
+  flow broadcast "<one-liner>"       (fan out to whoever watches this task/project/assignee; alias: post)
   flow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
 
 Workdirs:
