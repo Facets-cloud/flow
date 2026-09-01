@@ -508,7 +508,11 @@ func migrateBusKindBroadcast(db *sql.DB) error {
 	if _, err := tx.Exec(busDDL); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO bus_messages SELECT id, created_at,
+	if _, err := tx.Exec(`INSERT INTO bus_messages
+        (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
+         to_assignee, to_task_slug, body, urgent, status, attempts,
+         next_notify_at, delivered_at, acked_at, waited_s, acked_by)
+        SELECT id, created_at,
         CASE WHEN kind='post' THEN 'broadcast' ELSE kind END,
         from_assignee, from_task_slug, sender_session_id, to_assignee, to_task_slug,
         body, urgent, status, attempts, next_notify_at, delivered_at,
