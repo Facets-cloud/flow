@@ -64,7 +64,7 @@ func TestBusMessageLifecycle(t *testing.T) {
 		t.Errorf("capped delay must be due after 30m (overflow would push it to never/always)")
 	}
 
-	acked, err := AckHumanMessagesFromSession(db, "sid-1", "prompt")
+	acked, err := AckHumanMessagesFromSession(db, "sid-1", "self", "prompt")
 	if err != nil || len(acked) != 1 {
 		t.Fatalf("AckHumanMessagesFromSession = %v, %v; want 1", acked, err)
 	}
@@ -90,8 +90,13 @@ func TestBusTaskInboxDeliver(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("PendingForTask = %v, %v; want 1", rows, err)
 	}
-	if err := MarkDelivered(db, []string{"bbbb0001"}); err != nil {
-		t.Fatalf("deliver: %v", err)
+	claimed, err := ClaimDelivered(db, "bbbb0001")
+	if err != nil || !claimed {
+		t.Fatalf("claim deliver = %v, %v", claimed, err)
+	}
+	// A second claim must lose: exactly-once consumption.
+	if claimed, _ := ClaimDelivered(db, "bbbb0001"); claimed {
+		t.Errorf("double claim succeeded")
 	}
 	if rows, _ = PendingForTask(db, "task-b"); len(rows) != 0 {
 		t.Errorf("delivered row still pending")
@@ -206,5 +211,20 @@ func TestBusSweepRollsConsumedByCount(t *testing.T) {
 	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status='pending' AND kind='message'`).Scan(&immortal)
 	if rollable != 2 || immortal != 1 {
 		t.Errorf("after roll: rollable=%d immortal=%d — pending messages must never expire", rollable, immortal)
+	}
+}
+
+func TestAckScopedToRepliersOwnQueue(t *testing.T) {
+	db := openBusTestDB(t)
+	_ = InsertBusMessage(db, &BusMessage{
+		ID: "cccc0001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "self", SenderSessionID: "sid-x",
+		ToAssignee: "shashwat", Body: "queued for someone else"})
+	acked, err := AckHumanMessagesFromSession(db, "sid-x", "self", "prompt")
+	if err != nil || len(acked) != 0 {
+		t.Fatalf("self reply acked another assignee's message: %v, %v", acked, err)
+	}
+	if rows, _ := PendingForHuman(db, "shashwat"); len(rows) != 1 {
+		t.Errorf("shashwat's message was consumed by self's reply")
 	}
 }

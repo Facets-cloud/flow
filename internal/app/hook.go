@@ -67,6 +67,8 @@ func cmdHookSessionStart(args []string) int {
 
 	slug := lookupBoundTaskSlug()
 	if slug == "" {
+		// Unbound sessions are where the human usually sits — surface
+		// their pending-mail count here too (inform-only).
 		return emitAmbientSkillHint()
 	}
 	pageCtx := busSessionStartContext()
@@ -200,7 +202,7 @@ func emitAmbientSkillHint() int {
 		"done and archived tasks/projects (which need explicit `--status done` / " +
 		"`--include-archived` flags on the list commands). The skill's §4.10 governs " +
 		"how to lazy-load these without reading them eagerly every turn."
-	return emitSessionStartContext(hint + appendStaleVersionHint())
+	return emitSessionStartContext(hint + appendStaleVersionHint() + busHumanPendingNotice())
 }
 
 // emitSessionStartContext is a thin wrapper around emitHookContext for

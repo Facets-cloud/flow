@@ -73,13 +73,13 @@ task's slug, its project, or its assignee (new watchers don't receive
 older broadcasts). Broadcasts never escalate; if someone specific must
 act, message them as well.
 
-At turn end a Stop hook (a) hands you any mail that arrived mid-turn
-when no listener was parked — act on it if it changes anything, then
-park a listener — and (b) nudges you to post when the task has watchers
-and your last post is >30 min old — post only if the turn produced something a watcher
-would care about; skip freely. Declined nudges back off exponentially
-(30m, 1h, 2h.. capped 4h) and a post resets the cycle, so skipping is
-cheap.
+At turn end a Stop hook nudges you to broadcast when the task has
+watchers and your last broadcast is >30 min old — broadcast only if the
+turn produced something a watcher would care about; skip freely.
+Declined nudges back off exponentially (30m, 1h, 2h.. capped 4h) and a
+broadcast resets the cycle, so skipping is cheap. Stop never touches
+your inbox: mail arriving mid-turn reaches you via your armed Monitor
+within seconds, or as a pending-count notice at your next prompt.
 
 ## Consuming: inbox and pop
 

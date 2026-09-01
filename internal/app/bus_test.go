@@ -398,3 +398,38 @@ func TestHookStopSilentDuringHookContinuation(t *testing.T) {
 		t.Errorf("nudge fired on malformed payload: %s", out)
 	}
 }
+
+func TestMessageRejectsFlagAddressAndClosedTasks(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-z")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-z", "sid-z")
+
+	// Flag in the address slot must be a usage error, not a queue named '--urgent'.
+	out := captureStdout(t, func() {
+		if rc := cmdMessage([]string{"--urgent", "self", "release blocked"}); rc != 2 {
+			t.Errorf("flag-first should rc=2")
+		}
+	})
+	if !strings.Contains(out, "usage:") {
+		t.Errorf("expected usage error: %s", out)
+	}
+	var n int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&n)
+	if n != 0 {
+		t.Errorf("bogus queue row was inserted")
+	}
+
+	// Done/archived tasks are undeliverable addresses.
+	if _, err := db.Exec(`UPDATE tasks SET status='done', session_id='sid-done' WHERE slug='task-z'`); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() {
+		if rc := cmdMessage([]string{"self/task-z", "too late"}); rc != 2 {
+			t.Errorf("done task should rc=2")
+		}
+	})
+	if !strings.Contains(out, "done") {
+		t.Errorf("expected done-task error: %s", out)
+	}
+}

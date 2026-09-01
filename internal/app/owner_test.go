@@ -532,12 +532,12 @@ func TestCmdOwnerShowListsOwnedTasksAndQuestions(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"af-maint",                // slug
+		"af-maint",                  // slug
 		"agent-factory maintenance", // name
-		"30m",                     // every
-		"2026-06-08T13:00:00Z",    // next tick
-		"fix-485",                 // owned work unit
-		"q-flaky",                 // owned question
+		"30m",                       // every
+		"2026-06-08T13:00:00Z",      // next tick
+		"fix-485",                   // owned work unit
+		"q-flaky",                   // owned question
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output missing %q; got:\n%s", want, out)

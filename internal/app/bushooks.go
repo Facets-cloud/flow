@@ -45,11 +45,7 @@ func busSessionStartContext() string {
 	s := currentBusSender()
 
 	var b strings.Builder
-	if n, _ := flowdb.PendingCountForHuman(db, busSelf); n > 0 {
-		b.WriteString(fmt.Sprintf(
-			" flow-bus: %d pending message(s)/broadcast(s) await the USER — tell them at the "+
-				"start of your reply; they consume via `flow inbox pop` (never consume these yourself).", n))
-	}
+	b.WriteString(humanPendingNotice(db))
 	if s.TaskSlug != "" {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
 		b.WriteString(" flow-bus listener discipline: arm ONE persistent Monitor NOW — the " +
@@ -76,7 +72,7 @@ func busPromptSubmitContext() string {
 
 	var b strings.Builder
 	if s.SessionID != "" {
-		acked, _ := flowdb.AckHumanMessagesFromSession(db, s.SessionID, "prompt")
+		acked, _ := flowdb.AckHumanMessagesFromSession(db, s.SessionID, busSelf, "prompt")
 		for _, m := range acked {
 			b.WriteString(fmt.Sprintf(
 				" flow-bus: the user has just returned — your message [%s] (%q) was answered after %s. "+
@@ -88,6 +84,29 @@ func busPromptSubmitContext() string {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
 	}
 	return b.String()
+}
+
+// humanPendingNotice renders the inform-only "the USER has mail" line
+// ("" when their queue is empty).
+func humanPendingNotice(db *sql.DB) string {
+	n, err := flowdb.PendingCountForHuman(db, busSelf)
+	if err != nil || n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		" flow-bus: %d pending message(s)/broadcast(s) await the USER — tell them at the "+
+			"start of your reply; they consume via `flow inbox pop` (never consume these yourself).", n)
+}
+
+// busHumanPendingNotice is the standalone variant for the unbound
+// SessionStart path (opens its own DB handle; silent on any error).
+func busHumanPendingNotice() string {
+	db, err := openBusDB()
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	return humanPendingNotice(db)
 }
 
 // pendingTaskNotice renders an inform-only pending-count line for a

@@ -90,8 +90,10 @@ const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug
     COALESCE(waited_s,0)`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
+	// rowid tiebreak: created_at is second-granularity RFC3339, so
+	// same-second rows need insertion order to keep pop oldest-first.
 	rows, err := db.Query(
-		`SELECT `+busMsgCols+` FROM bus_messages WHERE `+where+` ORDER BY created_at`, args...)
+		`SELECT `+busMsgCols+` FROM bus_messages WHERE `+where+` ORDER BY created_at, rowid`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -140,19 +142,6 @@ func PendingForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
 	return queryBusMsgs(db, `status='pending' AND to_task_slug=?`, slug)
 }
 
-// MarkDelivered marks the given message ids delivered.
-func MarkDelivered(db *sql.DB, ids []string) error {
-	now := NowISO()
-	for _, id := range ids {
-		if _, err := db.Exec(
-			`UPDATE bus_messages SET status='delivered', delivered_at=? WHERE id=? AND status='pending'`,
-			now, id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ClaimDelivered atomically transitions one message pending→delivered.
 // Returns false when another consumer claimed it first — the caller
 // should move on to the next row. This is what makes concurrent `pop`
@@ -169,11 +158,14 @@ func ClaimDelivered(db *sql.DB, id string) (bool, error) {
 	return n > 0, nil
 }
 
-// AckHumanMessagesFromSession acks every pending human-directed message
-// sent by `sessionID`, recording the wait. Returns the acked rows.
-func AckHumanMessagesFromSession(db *sql.DB, sessionID, by string) ([]*BusMessage, error) {
+// AckHumanMessagesFromSession acks every pending message the session
+// sent to the human `toAssignee`, recording the wait. Scoped to that
+// one queue: a reply from the local user must never ack mail addressed
+// to a DIFFERENT assignee (they haven't seen it). Returns acked rows.
+func AckHumanMessagesFromSession(db *sql.DB, sessionID, toAssignee, by string) ([]*BusMessage, error) {
 	rows, err := queryBusMsgs(db,
-		`kind='message' AND status='pending' AND to_task_slug IS NULL AND sender_session_id=?`, sessionID)
+		`kind='message' AND status='pending' AND to_task_slug IS NULL
+         AND sender_session_id=? AND to_assignee=?`, sessionID, toAssignee)
 	if err != nil || len(rows) == 0 {
 		return rows, err
 	}
@@ -428,16 +420,39 @@ func GetBusStats(db *sql.DB, assignee string) (*BusStats, error) {
 // un-ask a question the user hasn't seen; those clear on pop/ack — and
 // already-consumed rows, which age out via the normal 90d sweep.
 func CleanupTaskBus(db *sql.DB, taskSlug string) error {
-	stmts := []struct {
+	for _, stmt := range []struct {
 		q    string
 		args []any
 	}{
 		{`DELETE FROM bus_messages WHERE to_task_slug=? AND status='pending'`, []any{taskSlug}},
-		{`DELETE FROM bus_watches WHERE watched=? OR watcher LIKE '%/' || ?`, []any{taskSlug, taskSlug}},
+		{`DELETE FROM bus_watches WHERE watched=?`, []any{taskSlug}},
 		{`DELETE FROM bus_nudges WHERE task_slug=?`, []any{taskSlug}},
+	} {
+		if _, err := db.Exec(stmt.q, stmt.args...); err != nil {
+			return fmt.Errorf("cleanup task bus: %w", err)
+		}
 	}
-	for _, s := range stmts {
-		if _, err := db.Exec(s.q, s.args...); err != nil {
+	// Watches BY the closed task: match the address suffix exactly in Go
+	// — a LIKE pattern would treat '_' or '%' in a slug as wildcards and
+	// could delete a sibling task's subscriptions (db_sync vs db-sync).
+	rows, err := db.Query(`SELECT DISTINCT watcher FROM bus_watches`)
+	if err != nil {
+		return fmt.Errorf("cleanup task bus: %w", err)
+	}
+	var doomed []string
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			rows.Close()
+			return fmt.Errorf("cleanup task bus: %w", err)
+		}
+		if strings.HasSuffix(w, "/"+taskSlug) {
+			doomed = append(doomed, w)
+		}
+	}
+	rows.Close()
+	for _, w := range doomed {
+		if _, err := db.Exec(`DELETE FROM bus_watches WHERE watcher=?`, w); err != nil {
 			return fmt.Errorf("cleanup task bus: %w", err)
 		}
 	}
@@ -461,7 +476,7 @@ func SweepBus(db *sql.DB, now time.Time) error {
         WHERE (status != 'pending' OR kind = 'broadcast')
         AND id NOT IN (SELECT id FROM bus_messages
                        WHERE (status != 'pending' OR kind = 'broadcast')
-                       ORDER BY created_at DESC LIMIT ?)`, busKeepRolled); err != nil {
+                       ORDER BY created_at DESC, rowid DESC LIMIT ?)`, busKeepRolled); err != nil {
 		return fmt.Errorf("sweep messages: %w", err)
 	}
 	return nil
@@ -501,6 +516,13 @@ func migrateBusKindBroadcast(db *sql.DB) error {
 		return err
 	}
 	if _, err := tx.Exec(`DROP TABLE bus_messages_old`); err != nil {
+		return err
+	}
+	// RENAME kept the old table's indexes under their original names, so
+	// the busDDL above skipped creating them on the new table; now that
+	// the DROP freed the names, run it again so the new table is indexed
+	// within this same transaction.
+	if _, err := tx.Exec(busDDL); err != nil {
 		return err
 	}
 	return tx.Commit()

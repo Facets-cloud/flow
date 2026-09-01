@@ -31,6 +31,12 @@ func cmdMessage(args []string) int {
 		return 2
 	}
 	addr, body := args[0], strings.TrimSpace(args[1])
+	if strings.HasPrefix(addr, "-") {
+		// A flag in the address slot would otherwise become a bogus
+		// assignee queue nobody ever reads. Positionals come first.
+		fmt.Fprintln(os.Stderr, `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] (address and body before flags)`)
+		return 2
+	}
 	fs := flagSet("message")
 	urgent := fs.Bool("urgent", false, "mark as urgent (notifier scripts may escalate harder)")
 	if err := fs.Parse(args[2:]); err != nil {
@@ -141,16 +147,37 @@ func parseBusAddress(db *sql.DB, addr string) (string, string, error) {
 		if assignee == "" || slug == "" {
 			return "", "", fmt.Errorf("bad address %q (want <assignee>[/<task-slug>])", addr)
 		}
-		if t, err := flowdb.GetTask(db, slug); err != nil || t == nil {
+		t, err := flowdb.GetTask(db, slug)
+		if err != nil || t == nil {
 			return "", "", fmt.Errorf("no task %q for address %q", slug, addr)
+		}
+		if err := deliverableTask(t); err != nil {
+			return "", "", err
 		}
 		return assignee, slug, nil
 	}
 	// Bare token: a task slug is sugar for self/<slug>; else an assignee.
 	if t, _ := flowdb.GetTask(db, addr); t != nil {
+		if err := deliverableTask(t); err != nil {
+			return "", "", err
+		}
 		return busSelf, addr, nil
 	}
 	return addr, "", nil
+}
+
+// deliverableTask rejects addressing a session that can never read the
+// message: done/archived tasks had their bus footprint cleaned at
+// close-out and will not bind a session again — a row addressed there
+// would be pending forever while the sender believes it was delivered.
+func deliverableTask(t *flowdb.Task) error {
+	if t.Status == "done" {
+		return fmt.Errorf("task %q is done — its session will never pop this; message the human instead (flow message self ...)", t.Slug)
+	}
+	if t.ArchivedAt.Valid {
+		return fmt.Errorf("task %q is archived — its session will never pop this; message the human instead (flow message self ...)", t.Slug)
+	}
+	return nil
 }
 
 func busFrom(m *flowdb.BusMessage) string {

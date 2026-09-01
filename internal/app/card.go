@@ -10,20 +10,20 @@ import (
 
 // cardData is the view model handed to the HTML template.
 type cardData struct {
-	Window                string
-	LookupsCompact        string
-	ContextTokensCompact  string
+	Window                 string
+	LookupsCompact         string
+	ContextTokensCompact   string
 	TokensProcessedCompact string
-	TasksDone             int
-	ResumeCount           int
-	ShowAutomation        bool
-	AutomationRuns        int
-	AutoRuns              int
-	OwnerTicks            int
-	PlaybookRuns          int
-	AutomationDollars     string
-	TotalDollars          float64
-	DollarPerHour         float64
+	TasksDone              int
+	ResumeCount            int
+	ShowAutomation         bool
+	AutomationRuns         int
+	AutoRuns               int
+	OwnerTicks             int
+	PlaybookRuns           int
+	AutomationDollars      string
+	TotalDollars           float64
+	DollarPerHour          float64
 }
 
 var cardTmpl = template.Must(template.New("card").Parse(`<!doctype html>
