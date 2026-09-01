@@ -78,6 +78,11 @@ func setArchivedAt(args []string, archive bool) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	if archive && kind == "task" {
+		if err := flowdb.CleanupTaskBus(db, slug); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
+		}
+	}
 	fmt.Printf("%s %s %s\n", pastVerb, kind, slug)
 	return 0
 }

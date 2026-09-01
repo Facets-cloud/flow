@@ -399,6 +399,33 @@ func GetBusStats(db *sql.DB, assignee string) (*BusStats, error) {
 	return s, nil
 }
 
+// CleanupTaskBus removes a closed task's bus footprint — called from
+// `flow done` and `flow archive`. Deleted: PENDING rows addressed TO
+// the task (undeliverable — no session will ever pop them; without this
+// they'd live forever, since pending rows are exempt from SweepBus),
+// its watch subscriptions (as watcher and as watched topic), its nudge
+// stamp, and its listener row. Deliberately KEPT: messages the task
+// sent to a human that are still pending — closing a task doesn't
+// un-ask a question the user hasn't seen; those clear on pop/ack — and
+// already-consumed rows, which age out via the normal 90d sweep.
+func CleanupTaskBus(db *sql.DB, taskSlug string) error {
+	stmts := []struct {
+		q    string
+		args []any
+	}{
+		{`DELETE FROM bus_messages WHERE to_task_slug=? AND status='pending'`, []any{taskSlug}},
+		{`DELETE FROM bus_watches WHERE watched=? OR watcher LIKE '%/' || ?`, []any{taskSlug, taskSlug}},
+		{`DELETE FROM bus_nudges WHERE task_slug=?`, []any{taskSlug}},
+		{`DELETE FROM bus_listeners WHERE identity LIKE '%/' || ?`, []any{taskSlug}},
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s.q, s.args...); err != nil {
+			return fmt.Errorf("cleanup task bus: %w", err)
+		}
+	}
+	return nil
+}
+
 // SweepBus applies retention: delivered/acked rows older than 90 days
 // are deleted (pending rows never expire); listeners with heartbeats
 // older than an hour are pruned. Cheap enough to run opportunistically

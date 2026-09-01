@@ -111,6 +111,47 @@ func TestBusWatches(t *testing.T) {
 	}
 }
 
+func TestCleanupTaskBus(t *testing.T) {
+	db := openBusTestDB(t)
+	// Rows the cleanup must remove:
+	_ = InsertBusMessage(db, &BusMessage{ID: "to000001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "self", ToAssignee: "self", ToTaskSlug: "task-x", Body: "undeliverable"})
+	_ = AddWatch(db, "self/task-x", "other-task")
+	_ = AddWatch(db, "self", "task-x")
+	_ = RecordNudge(db, "task-x")
+	_ = UpsertBusListener(db, "self/task-x", 42)
+	// Rows the cleanup must keep:
+	_ = InsertBusMessage(db, &BusMessage{ID: "fr000001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "self", FromTaskSlug: "task-x", ToAssignee: "self", Body: "still asks the human"})
+	_ = AddWatch(db, "self/task-y", "unrelated")
+
+	if err := CleanupTaskBus(db, "task-x"); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if rows, _ := PendingForTask(db, "task-x"); len(rows) != 0 {
+		t.Errorf("undeliverable inbox rows survived")
+	}
+	if ws, _ := ListWatches(db, "self/task-x"); len(ws) != 0 {
+		t.Errorf("watches BY closed task survived: %v", ws)
+	}
+	if got, _ := WatchersOf(db, []string{"task-x"}); len(got) != 0 {
+		t.Errorf("watches ON closed task survived: %v", got)
+	}
+	if nudged, _ := LastNudgeAt(db, "task-x"); nudged != "" {
+		t.Errorf("nudge stamp survived")
+	}
+	if pid, _, _ := GetBusListener(db, "self/task-x"); pid != 0 {
+		t.Errorf("listener survived")
+	}
+	// Pending question to the human must survive close-out.
+	if rows, _ := PendingForHuman(db, "self"); len(rows) != 1 || rows[0].ID != "fr000001" {
+		t.Errorf("human-directed pending message did not survive: %v", rows)
+	}
+	if ws, _ := ListWatches(db, "self/task-y"); len(ws) != 1 {
+		t.Errorf("unrelated watch was deleted")
+	}
+}
+
 func TestBusListenersAndSweep(t *testing.T) {
 	db := openBusTestDB(t)
 	if err := UpsertBusListener(db, "self/task-a", 42); err != nil {
