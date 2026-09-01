@@ -140,9 +140,9 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
   flow message <assignee>[/<task-slug>] "<body>" [--urgent]
                                      (message a human — pending + escalation schedule until
                                       answered — or the session bound to a task; alias: msg)
-  flow inbox [--me|--as <assignee>] [--json]   (what's pending; --me/--self = the human even in a
+  flow inbox [--as <assignee>] [--json]        (what's pending; --as self = the human even in a
                                                 bound session; --as = any assignee's queue)
-  flow inbox pop [--wait] [--timeout <s>] [--me|--as <assignee>] [--json]
+  flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
                                      (atomically consume the oldest, one at a time; --wait blocks
                                       until mail arrives — park a Monitor on it; safe with
                                       concurrent consumers)
@@ -151,7 +151,7 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
                                       due messages, advances their backoff; flow ships no UI)
   flow inbox stats                   (wait-time metrics)
   flow post "<one-liner>"            (broadcast to whoever watches this task/project/assignee)
-  flow watch <task|project|assignee> [--me] | --list | --rm <target>
+  flow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
 
 Workdirs:
   flow workdir list

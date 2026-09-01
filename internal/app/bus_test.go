@@ -248,20 +248,20 @@ func TestInboxAsAssigneeAndJSON(t *testing.T) {
 	}
 }
 
-func TestWatchMeFlagSubscribesHuman(t *testing.T) {
+func TestWatchAsSelfSubscribesHuman(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-w")
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-a", "sid-w")
 
 	captureStdout(t, func() {
-		if rc := cmdWatch([]string{"task-a", "--me"}); rc != 0 {
-			t.Fatalf("watch --me rc != 0")
+		if rc := cmdWatch([]string{"task-a", "--as", "self"}); rc != 0 {
+			t.Fatalf("watch --as self rc != 0")
 		}
 	})
 	ws, _ := flowdb.ListWatches(db, "self")
 	if len(ws) != 1 || ws[0] != "task-a" {
-		t.Errorf("--me should subscribe as self: %v", ws)
+		t.Errorf("--as self should subscribe as self: %v", ws)
 	}
 }
 

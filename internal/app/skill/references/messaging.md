@@ -62,7 +62,7 @@ flow watch coinswitch-gcp-migration               # subscribe to one task
 flow watch alpha-cp                               # a whole project
 flow watch shashwat                               # everything an assignee's tasks post
 flow watch --list / --rm <target>                 # inspect / unsubscribe
-flow watch <target> --me                          # subscribe the USER, not this session
+flow watch <target> --as self                     # subscribe the USER, not this session
 ```
 
 Semantics: the poster NEVER picks recipients. At post time the one-liner
@@ -82,15 +82,16 @@ cheap.
 flow inbox [--json]            # list pending (identity-aware)
 flow inbox pop [--json]        # consume the oldest, exit 1 if empty
 flow inbox pop --wait --timeout 3600
-flow inbox pop --wait --me     # a session monitoring the USER's inbox
+flow inbox pop --wait --as self  # a session monitoring the USER's inbox
 flow inbox pop --as shashwat   # drain another assignee's queue (transport/monitor workers)
 ```
 
 Identity is implicit: a bound session consumes its own task's mail; an
-unbound/human invocation consumes the user's. `--me` (alias `--self`)
-forces the human `self` queue from inside a bound session — e.g. a
-dedicated flow task whose job is monitoring the user's inbox; `--as
-<assignee>` targets any human queue. Pops are atomic claims, so
+unbound/human invocation consumes the user's. `--as <assignee>`
+targets a human queue directly: `--as self` forces the user's own
+inbox from inside a bound session — e.g. a dedicated flow task whose
+job is monitoring the user's inbox — and any other assignee serves
+monitor/transport workers draining that queue. Pops are atomic claims, so
 concurrent consumers of one inbox (your terminal + a monitor task)
 never double-pop. `--json` on inbox/pop/due emits machine-readable
 rows for scripting. Popping a human-directed message ACKS it (popping

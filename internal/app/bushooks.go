@@ -2,7 +2,10 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -126,10 +129,20 @@ func nudgeBackoffFor(attempts int) time.Duration {
 
 // cmdHookStop fires when a turn ends: nudge the agent to broadcast a
 // one-liner if this task has watchers and hasn't posted recently.
+//
+// Loop guard: Claude Code treats any Stop-hook output as blocking the
+// turn from ending, re-invokes the hook on the follow-up stop with
+// stop_hook_active=true in its stdin payload, and force-ends the turn
+// after too many consecutive blocks. A nudge must therefore never fire
+// on a stop that is already part of a hook-driven continuation — check
+// the flag FIRST and stay silent while it's set.
 func cmdHookStop(args []string) int {
 	fs := flagSet("hook stop")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if stopHookActive(os.Stdin) {
+		return 0
 	}
 	db, err := openBusDB()
 	if err != nil {
@@ -170,6 +183,19 @@ func cmdHookStop(args []string) int {
 			"Skip if nothing notable happened.",
 		len(watchers), lastPostDesc(last))
 	return emitHookContext("Stop", msg)
+}
+
+// stopHookActive reads the Stop-hook stdin payload and reports whether
+// this stop is a hook-driven continuation (stop_hook_active). Any read
+// or parse failure counts as active — when in doubt, don't block.
+func stopHookActive(r io.Reader) bool {
+	var payload struct {
+		StopHookActive bool `json:"stop_hook_active"`
+	}
+	if err := json.NewDecoder(r).Decode(&payload); err != nil {
+		return true
+	}
+	return payload.StopHookActive
 }
 
 func lastPostDesc(last string) string {

@@ -790,6 +790,9 @@ bus. Two send verbs with opposite semantics — never blend them:
   time. Park your Monitor tool — or a background Bash command — on
   `flow inbox pop --wait` at session start and RE-ARM it after every
   wake; that listener is the delivery path (no per-tool-call hook).
+  `--as <assignee>` consumes a human queue instead (`--as self` = the
+  user's inbox, e.g. for a dedicated inbox-monitor task); `--json` for
+  programmatic output.
   `flow watch <task|project|assignee>` subscribes you — watch whatever
   you depend on and any task you create from this session.
 - flow ships NO notification UI: the user scripts their own on top of

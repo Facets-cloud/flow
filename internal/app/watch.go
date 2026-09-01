@@ -13,11 +13,11 @@ import (
 //	flow watch <task-slug|project-slug|assignee>   subscribe
 //	flow watch --list                              your subscriptions
 //	flow watch --rm <target>                       unsubscribe
-//	flow watch --me <target>                       subscribe as the human even
+//	flow watch <target> --as self                  subscribe as the human even
 //	                                               from inside a bound session
 //
 // The subscriber is the current identity: a bound session watches as
-// "self/<its-task-slug>"; an unbound/human invocation (or --me) watches
+// "self/<its-task-slug>"; an unbound/human invocation (or --as self) watches
 // as "self". Posts fan out only to watchers subscribed at post time.
 // Consume the resulting messages with `flow inbox` / `flow inbox pop`.
 func cmdWatch(args []string) int {
@@ -28,7 +28,7 @@ func cmdWatch(args []string) int {
 	fs := flagSet("watch")
 	list := fs.Bool("list", false, "list this identity's watches")
 	rm := fs.String("rm", "", "unsubscribe from a target")
-	me, self, as := consumerFlags(fs)
+	as := consumerFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -39,7 +39,7 @@ func cmdWatch(args []string) int {
 	}
 	defer db.Close()
 
-	watcher := resolveConsumer(*me, *self, *as).identity()
+	watcher := resolveConsumer(*as).identity()
 
 	switch {
 	case *list:
@@ -71,7 +71,7 @@ func cmdWatch(args []string) int {
 	}
 
 	if target == "" || len(fs.Args()) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: flow watch <task-slug|project-slug|assignee> [--me] | --list | --rm <target>")
+		fmt.Fprintln(os.Stderr, "usage: flow watch <task-slug|project-slug|assignee> [--as <assignee>] | --list | --rm <target>")
 		return 2
 	}
 	if err := flowdb.AddWatch(db, watcher, target); err != nil {
