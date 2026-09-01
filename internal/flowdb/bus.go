@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS bus_watches (
 
 CREATE TABLE IF NOT EXISTS bus_nudges (
     task_slug  TEXT PRIMARY KEY,
-    nudged_at  TEXT NOT NULL
+    nudged_at  TEXT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0
 );
 `
 
@@ -335,24 +336,36 @@ func repeatPlaceholder(n int) string {
 	return s
 }
 
-// LastNudgeAt returns when the Stop hook last nudged a task to post
-// ("" if never). Without this cooldown the nudge would re-fire on every
-// turn end while the last post stays >30m old — including turns where
-// the agent just declined the previous nudge (a wake-loop).
-func LastNudgeAt(db *sql.DB, taskSlug string) (string, error) {
-	row := db.QueryRow(`SELECT COALESCE(MAX(nudged_at),'') FROM bus_nudges WHERE task_slug=?`, taskSlug)
-	var ts string
-	if err := row.Scan(&ts); err != nil {
-		return "", err
+// GetNudgeState returns when the Stop hook last nudged a task to post
+// ("" if never) and how many consecutive nudges have gone unanswered.
+// Without a cooldown the nudge would re-fire on every turn end while
+// the last post stays old — including turns where the agent just
+// declined the previous nudge (a wake-loop). Declined nudges back off
+// exponentially; ResetNudges (called on a successful post) starts the
+// cycle over.
+func GetNudgeState(db *sql.DB, taskSlug string) (nudgedAt string, attempts int, err error) {
+	row := db.QueryRow(`SELECT nudged_at, attempts FROM bus_nudges WHERE task_slug=?`, taskSlug)
+	err = row.Scan(&nudgedAt, &attempts)
+	if err == sql.ErrNoRows {
+		return "", 0, nil
 	}
-	return ts, nil
+	return nudgedAt, attempts, err
 }
 
-// RecordNudge stamps the nudge cooldown for a task.
+// RecordNudge stamps the nudge cooldown for a task and increments its
+// consecutive-decline counter.
 func RecordNudge(db *sql.DB, taskSlug string) error {
-	_, err := db.Exec(`INSERT INTO bus_nudges (task_slug, nudged_at) VALUES (?,?)
-        ON CONFLICT(task_slug) DO UPDATE SET nudged_at=excluded.nudged_at`,
+	_, err := db.Exec(`INSERT INTO bus_nudges (task_slug, nudged_at, attempts) VALUES (?,?,1)
+        ON CONFLICT(task_slug) DO UPDATE SET
+          nudged_at=excluded.nudged_at, attempts=bus_nudges.attempts+1`,
 		taskSlug, NowISO())
+	return err
+}
+
+// ResetNudges clears a task's nudge backoff — called when it posts, so
+// the next quiet stretch starts again from the base cooldown.
+func ResetNudges(db *sql.DB, taskSlug string) error {
+	_, err := db.Exec(`DELETE FROM bus_nudges WHERE task_slug=?`, taskSlug)
 	return err
 }
 

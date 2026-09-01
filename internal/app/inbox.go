@@ -179,6 +179,7 @@ func inboxPop(args []string) int {
 		}
 		if m != nil {
 			printBusMessage(m)
+			fmt.Println("re-arm: run `flow inbox pop --wait` again (backgrounded) to catch the next message")
 			return 0
 		}
 		if time.Now().After(deadline) {

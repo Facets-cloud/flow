@@ -137,7 +137,7 @@ func TestCleanupTaskBus(t *testing.T) {
 	if got, _ := WatchersOf(db, []string{"task-x"}); len(got) != 0 {
 		t.Errorf("watches ON closed task survived: %v", got)
 	}
-	if nudged, _ := LastNudgeAt(db, "task-x"); nudged != "" {
+	if nudged, _, _ := GetNudgeState(db, "task-x"); nudged != "" {
 		t.Errorf("nudge stamp survived")
 	}
 	if pid, _, _ := GetBusListener(db, "self/task-x"); pid != 0 {

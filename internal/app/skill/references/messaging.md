@@ -2,8 +2,9 @@
 
 flow's bus lets a bound session (a) call for the user's attention,
 (b) message another task's session, and (c) broadcast one-liner updates
-to subscribers. One SQLite-backed inbox in flow.db, one delivery path;
-hooks drain it on every LLM turn. The bus is CLI-only by design: flow
+to subscribers. One SQLite-backed inbox in flow.db, one delivery path:
+a parked `flow inbox pop --wait` listener (instant), else hooks at
+prompt-submit / session-start. The bus is CLI-only by design: flow
 stores, addresses, schedules escalation, and measures waits — it never
 draws attention itself. Notification UX is the user's own scripting on
 top of `flow inbox due`.
@@ -49,10 +50,9 @@ scripted) until answered. Discipline:
 flow message self/tekion-hub-network "state file moved, re-read before release"
 ```
 
-Delivered into that session's context via hooks: mid-turn on its next
-tool call, or at its next prompt / session start — or instantly if it
-has a listener parked (below). Include what the peer should DO with the
-information.
+Delivered instantly if the session has a listener parked (below), else
+into its context at its next prompt / session start. Include what the
+peer should DO with the information.
 
 ## Broadcasting (posts) and watching
 
@@ -72,7 +72,9 @@ never escalate; if someone specific must act, message them as well.
 
 A Stop hook nudges you to post when the task has watchers and your last
 post is >30 min old — post only if the turn produced something a watcher
-would care about; skip freely.
+would care about; skip freely. Declined nudges back off exponentially
+(30m, 1h, 2h.. capped 4h) and a post resets the cycle, so skipping is
+cheap.
 
 ## Consuming: inbox and pop
 
@@ -90,9 +92,12 @@ To be WOKEN by mail instead of discovering it on your next tool call,
 park your **Monitor tool** — or a background Bash command
 (`run_in_background: true`) — on `flow inbox pop --wait`. It blocks
 until a message exists, pops exactly one, prints it, and exits 0 — the
-exit wakes you. Re-arm it after each wake while you still expect mail.
-One listener per identity; a hook nudges you if mail arrived with no
-listener parked. Exit 1 = timeout/empty, nothing popped.
+exit wakes you, and its output reminds you to RE-ARM immediately (run it
+again, backgrounded) so the next message also reaches you. Keep one
+armed for the whole session. One listener per identity. Exit 1 =
+timeout/empty, nothing popped. Also subscribe to the tasks you depend
+on or spawn: `flow watch <slug>` for anything you're waiting on,
+coordinating with, or any task you create from this session.
 
 ## For the user: scripting notification UX
 

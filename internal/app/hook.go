@@ -32,7 +32,10 @@ func cmdHook(args []string) int {
 	case "user-prompt-submit":
 		return cmdHookUserPromptSubmit(rest)
 	case "post-tool-use":
-		return cmdHookPostToolUse(rest)
+		// Retired: per-tool-call delivery was removed in favor of the
+		// `flow inbox pop --wait` listener discipline. Kept as a silent
+		// no-op so stale settings.json entries never error.
+		return 0
 	case "stop":
 		return cmdHookStop(rest)
 	default:

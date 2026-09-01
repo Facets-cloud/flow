@@ -255,6 +255,14 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply bus schema: %w", err)
 	}
+	// bus_nudges.attempts arrived after the table shipped; backfill it
+	// on databases created in between.
+	if has, err := columnExists(db, "bus_nudges", "attempts"); err == nil && !has {
+		if _, err := db.Exec(`ALTER TABLE bus_nudges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate bus_nudges.attempts: %w", err)
+		}
+	}
 	return db, nil
 }
 

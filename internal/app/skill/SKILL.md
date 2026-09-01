@@ -787,9 +787,11 @@ bus. Two send verbs with opposite semantics — never blend them:
   task/project/assignee; never interrupts anyone; you never pick
   recipients. If someone specific must act, message them too.
 - Consuming: `flow inbox` lists, `flow inbox pop` consumes one at a
-  time. To be WOKEN by mail instead of polling, park your Monitor tool
-  — or a background Bash command — on `flow inbox pop --wait` and re-arm
-  after each wake. `flow watch <task|project|assignee>` subscribes you.
+  time. Park your Monitor tool — or a background Bash command — on
+  `flow inbox pop --wait` at session start and RE-ARM it after every
+  wake; that listener is the delivery path (no per-tool-call hook).
+  `flow watch <task|project|assignee>` subscribes you — watch whatever
+  you depend on and any task you create from this session.
 - flow ships NO notification UI: the user scripts their own on top of
   `flow inbox due`. Never assume a message visually alerted anyone.
 

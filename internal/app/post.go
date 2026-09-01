@@ -80,6 +80,7 @@ func cmdPost(args []string) int {
 		}
 		delivered++
 	}
+	_ = flowdb.ResetNudges(db, slug) // a post restarts the Stop-nudge backoff cycle
 	_ = flowdb.SweepBus(db, time.Now())
 	if delivered == 0 {
 		fmt.Printf("posted from %s — no watchers yet (subscribe with: flow watch %s)\n", slug, slug)

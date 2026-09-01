@@ -43,12 +43,15 @@ const hookCommand = "flow hook session-start"
 // — changing it would orphan existing installations.
 const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 
-// postToolUseHookCommand / stopHookCommand are the exact strings
-// settings.json records for the paging-bus hooks (inbox drain + notify
-// escalation on every tool call; post-nudge at turn end). Stable —
-// changing either would orphan existing installations.
-const postToolUseHookCommand = "flow hook post-tool-use"
+// stopHookCommand is the exact string settings.json records for the
+// bus post-nudge at turn end. Stable — changing it would orphan
+// existing installations.
 const stopHookCommand = "flow hook stop"
+
+// postToolUseHookCommand is RETIRED (per-tool-call delivery replaced by
+// the `flow inbox pop --wait` listener discipline). The string is kept
+// only so installs that registered it can be cleaned up on upgrade.
+const postToolUseHookCommand = "flow hook post-tool-use"
 
 // readSkillVersion returns the version string recorded in the
 // harness's skill-version sidecar, or "" if missing/unreadable.
@@ -117,8 +120,8 @@ func maybeAutoUpgradeSkill() {
 	_ = writeSkillVersion(Version)
 	_, _ = h.InstallSessionStartHook(hookCommand)
 	_, _ = h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand)
-	_, _ = h.InstallPostToolUseHook(postToolUseHookCommand)
 	_, _ = h.InstallStopHook(stopHookCommand)
+	_, _ = h.UninstallPostToolUseHook(postToolUseHookCommand) // retired
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
@@ -195,11 +198,8 @@ func skillInstall(args []string, forceDefault bool) int {
 	} else {
 		fmt.Println("UserPromptSubmit hook already installed — leaving as is")
 	}
-	if added, err := h.InstallPostToolUseHook(postToolUseHookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install PostToolUse hook: %v\n", err)
-		return 0
-	} else if added {
-		fmt.Println("installed PostToolUse hook (page-bus inbox drain on every tool call)")
+	if removed, err := h.UninstallPostToolUseHook(postToolUseHookCommand); err == nil && removed {
+		fmt.Println("removed retired PostToolUse hook (bus delivery now rides `flow inbox pop --wait`)")
 	}
 	if added, err := h.InstallStopHook(stopHookCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not install Stop hook: %v\n", err)

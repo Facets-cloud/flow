@@ -9,22 +9,25 @@ import (
 	"flow/internal/flowdb"
 )
 
-// Message-bus hook handlers — aggressive: every LLM turn touches the
-// bus, but strictly through CLI/context primitives (no UI):
+// Message-bus hook handlers — strictly CLI/context primitives, no UI:
 //
-//	SessionStart      busSessionStartContext(): pending-message notice +
-//	                  encouragement to park a Monitor / background Bash
-//	                  on `flow inbox pop --wait`.
+//	SessionStart      busSessionStartContext(): pending-message notice,
+//	                  inbox drain, and the listener discipline — park
+//	                  `flow inbox pop --wait` now, re-arm after each
+//	                  wake, and watch the tasks you care about.
 //	UserPromptSubmit  busPromptSubmitContext(): the human replying in a
 //	                  session ACKS that session's pending human-directed
 //	                  messages (wait recorded + injected) and drains the
-//	                  bound task's inbox.
-//	PostToolUse       cmdHookPostToolUse(): drains the inbox mid-turn on
-//	                  every tool call; nudges pop --wait when mail
-//	                  arrived with no live listener.
+//	                  bound task's inbox (fallback delivery for sessions
+//	                  with no listener parked).
 //	Stop              cmdHookStop(): nudges the agent to `flow post` a
-//	                  one-liner when the task has watchers and no recent
-//	                  post.
+//	                  one-liner — only when the task has watchers, and
+//	                  with exponential backoff on declined nudges
+//	                  (30m, 1h, 2h.. capped 4h; a post resets it).
+//
+// There is deliberately NO PostToolUse hook: per-tool-call delivery cost
+// is not worth it when a parked `pop --wait` listener delivers instantly
+// and the prompt-submit drain covers listener-less sessions.
 //
 // Hook code must never fail loud — errors degrade to silence.
 
@@ -48,10 +51,12 @@ func busSessionStartContext() string {
 	}
 	if s.TaskSlug != "" {
 		b.WriteString(drainTaskInbox(db, s.TaskSlug))
-		b.WriteString(" flow-bus: to be woken the moment a message or watched post arrives " +
-			"(instead of waiting for your next tool call), park your Monitor tool — or a " +
-			"background Bash command — on `flow inbox pop --wait` now, and re-arm it after " +
-			"each wake. One listener per session.")
+		b.WriteString(" flow-bus listener discipline: park `flow inbox pop --wait` as a BACKGROUND " +
+			"Bash command (or via your Monitor tool) NOW — it blocks until a message or watched " +
+			"post arrives, prints it, and exits, which wakes you; RE-ARM it immediately after " +
+			"every wake so the next message also reaches you. Also subscribe to what this task " +
+			"depends on: `flow watch <task-or-project-slug>` for anything you are waiting on, " +
+			"coordinating with, or any task you create from this session.")
 	}
 	return b.String()
 }
@@ -105,46 +110,18 @@ func drainTaskInbox(db *sql.DB, slug string) string {
 	return b.String()
 }
 
-// listenerAlive reports whether a live `flow inbox pop --wait` is
-// consuming for this identity (recent heartbeat + pid still running).
-func listenerAlive(db *sql.DB, identity string) bool {
-	pid, hb, err := flowdb.GetBusListener(db, identity)
-	if err != nil || pid == 0 || hb == "" {
-		return false
+// nudgeBackoffFor returns the cooldown before the next post-nudge is
+// allowed, given how many consecutive nudges went unanswered: 30m, 1h,
+// 2h, capped at 4h. A post resets the counter (flowdb.ResetNudges).
+func nudgeBackoffFor(attempts int) time.Duration {
+	d := 30 * time.Minute
+	for i := 1; i < attempts && d < 4*time.Hour; i++ {
+		d *= 2
 	}
-	t, err := time.Parse(time.RFC3339, hb)
-	if err != nil || time.Since(t) > 30*time.Second {
-		return false
+	if d > 4*time.Hour {
+		d = 4 * time.Hour
 	}
-	return processAlive(pid) // shared liveness probe from auto.go
-}
-
-// cmdHookPostToolUse fires on every tool call: drain the inbox, nudge a
-// listener into place.
-func cmdHookPostToolUse(args []string) int {
-	fs := flagSet("hook post-tool-use")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	db, err := openBusDB()
-	if err != nil {
-		return 0
-	}
-	defer db.Close()
-	s := currentBusSender()
-	if s.TaskSlug == "" {
-		return 0
-	}
-	ctx := drainTaskInbox(db, s.TaskSlug)
-	if ctx == "" {
-		return 0
-	}
-	if !listenerAlive(db, s.identity()) {
-		ctx += " flow-bus nudge: no listener is running — future messages wait for your next " +
-			"tool call. Park your Monitor tool or a background Bash command on " +
-			"`flow inbox pop --wait` to be woken instantly."
-	}
-	return emitHookContext("PostToolUse", strings.TrimSpace(ctx))
+	return d
 }
 
 // cmdHookStop fires when a turn ends: nudge the agent to broadcast a
@@ -177,12 +154,12 @@ func cmdHookStop(args []string) int {
 			return 0 // posted recently — stay quiet
 		}
 	}
-	// Nudge cooldown: without it, every turn end re-nudges while the
-	// last post stays old — including turns where the agent declined
-	// the previous nudge, which wake-loops the session. Ask at most
-	// once per 30m per task; the agent's judgment stands in between.
-	if nudged, _ := flowdb.LastNudgeAt(db, slug); nudged != "" {
-		if ts, err := time.Parse(time.RFC3339, nudged); err == nil && time.Since(ts) < 30*time.Minute {
+	// Declined-nudge backoff: ask again only after 30m·2^(declines-1),
+	// capped at 4h. The agent's judgment stands in between; a post
+	// resets the cycle.
+	if nudgedAt, attempts, _ := flowdb.GetNudgeState(db, slug); nudgedAt != "" {
+		if ts, err := time.Parse(time.RFC3339, nudgedAt); err == nil &&
+			time.Since(ts) < nudgeBackoffFor(attempts) {
 			return 0
 		}
 	}

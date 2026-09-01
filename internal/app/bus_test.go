@@ -214,45 +214,6 @@ func TestWatchMeFlagSubscribesHuman(t *testing.T) {
 	}
 }
 
-func TestHookPostToolUseDrainsInboxWithPopNudge(t *testing.T) {
-	setupFlowRoot(t)
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-b")
-	db := openFlowDB(t)
-	mkBusTask(t, db, "task-b", "sid-b")
-
-	out := captureStdout(t, func() {
-		if rc := cmdHookPostToolUse(nil); rc != 0 {
-			t.Fatalf("rc != 0")
-		}
-	})
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("empty inbox should emit nothing, got: %s", out)
-	}
-
-	if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
-		ID: "msg00001", CreatedAt: flowdb.NowISO(), Kind: "message",
-		FromAssignee: "self", FromTaskSlug: "task-a",
-		ToAssignee: "self", ToTaskSlug: "task-b", Body: "your PR is unblocked",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	out = captureStdout(t, func() {
-		if rc := cmdHookPostToolUse(nil); rc != 0 {
-			t.Fatalf("rc != 0")
-		}
-	})
-	ctx := busHookContext(t, out)
-	if !strings.Contains(ctx, "your PR is unblocked") {
-		t.Errorf("drain missing message: %s", ctx)
-	}
-	if !strings.Contains(ctx, "flow inbox pop --wait") {
-		t.Errorf("expected pop nudge when no listener alive: %s", ctx)
-	}
-	if rows, _ := flowdb.PendingForTask(db, "task-b"); len(rows) != 0 {
-		t.Errorf("hook did not mark delivered")
-	}
-}
-
 func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
