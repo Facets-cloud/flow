@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -265,42 +266,63 @@ func TestWatchAsSelfSubscribesHuman(t *testing.T) {
 	}
 }
 
+// withStopHookStdin points os.Stdin at a real Stop-hook payload for the
+// duration of fn — cmdHookStop reads stop_hook_active from it and
+// fail-safes to silence when the payload is missing or malformed.
+func withStopHookStdin(t *testing.T, payload string, fn func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	if _, err := w.WriteString(payload); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	w.Close()
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old; r.Close() }()
+	fn()
+}
+
+func stopHookOnce(t *testing.T, active bool) string {
+	t.Helper()
+	payload := `{"stop_hook_active": false}`
+	if active {
+		payload = `{"stop_hook_active": true}`
+	}
+	var out string
+	withStopHookStdin(t, payload, func() {
+		out = captureStdout(t, func() {
+			if rc := cmdHookStop(nil); rc != 0 {
+				t.Fatalf("rc != 0")
+			}
+		})
+	})
+	return out
+}
+
 func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-a", "sid-a")
 
-	out := captureStdout(t, func() {
-		if rc := cmdHookStop(nil); rc != 0 {
-			t.Fatalf("rc != 0")
-		}
-	})
-	if strings.TrimSpace(out) != "" {
+	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {
 		t.Errorf("no-watcher stop hook should emit nothing, got: %s", out)
 	}
 
 	if err := flowdb.AddWatch(db, "self", "task-a"); err != nil {
 		t.Fatal(err)
 	}
-	out = captureStdout(t, func() {
-		if rc := cmdHookStop(nil); rc != 0 {
-			t.Fatalf("rc != 0")
-		}
-	})
-	ctx := busHookContext(t, out)
+	ctx := busHookContext(t, stopHookOnce(t, false))
 	if !strings.Contains(ctx, "flow post") || !strings.Contains(ctx, "1 watcher(s)") {
 		t.Errorf("stop nudge: %s", ctx)
 	}
 
 	// A declined nudge must not re-fire on the very next turn end —
-	// the nudge itself has a 30m cooldown (wake-loop guard).
-	out = captureStdout(t, func() {
-		if rc := cmdHookStop(nil); rc != 0 {
-			t.Fatalf("rc != 0")
-		}
-	})
-	if strings.TrimSpace(out) != "" {
+	// the nudge itself backs off (wake-loop guard).
+	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {
 		t.Errorf("nudge re-fired within cooldown: %s", out)
 	}
 
@@ -309,12 +331,29 @@ func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 			t.Fatalf("post rc != 0")
 		}
 	})
-	out = captureStdout(t, func() {
-		if rc := cmdHookStop(nil); rc != 0 {
-			t.Fatalf("rc != 0")
-		}
+	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {
+		t.Errorf("recent post should silence the nudge, got: %s", out)
+	}
+}
+
+func TestHookStopSilentDuringHookContinuation(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-a", "sid-a")
+	if err := flowdb.AddWatch(db, "self", "task-a"); err != nil {
+		t.Fatal(err)
+	}
+	// Even with every nudge condition met, stop_hook_active must win.
+	if out := stopHookOnce(t, true); strings.TrimSpace(out) != "" {
+		t.Errorf("nudge fired during hook continuation: %s", out)
+	}
+	// Missing/garbage payload fail-safes to silence too.
+	var out string
+	withStopHookStdin(t, "not json", func() {
+		out = captureStdout(t, func() { _ = cmdHookStop(nil) })
 	})
 	if strings.TrimSpace(out) != "" {
-		t.Errorf("recent post should silence the nudge, got: %s", out)
+		t.Errorf("nudge fired on malformed payload: %s", out)
 	}
 }
