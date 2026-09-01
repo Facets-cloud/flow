@@ -361,23 +361,6 @@ func TestHookStopDeliversStrandedMail(t *testing.T) {
 		t.Errorf("stop re-fired with empty inbox: %s", out)
 	}
 
-	// A live listener takes precedence: mail is left for it to pop.
-	if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
-		ID: "msg00002", CreatedAt: flowdb.NowISO(), Kind: "message",
-		FromAssignee: "self", FromTaskSlug: "task-a",
-		ToAssignee: "self", ToTaskSlug: "task-b", Body: "second"},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := flowdb.UpsertBusListener(db, "self/task-b", os.Getpid()); err != nil {
-		t.Fatal(err)
-	}
-	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {
-		t.Errorf("stop drained despite live listener: %s", out)
-	}
-	if rows, _ := flowdb.PendingForTask(db, "task-b"); len(rows) != 1 {
-		t.Errorf("listener's message was stolen")
-	}
 }
 
 func TestHookStopSilentDuringHookContinuation(t *testing.T) {

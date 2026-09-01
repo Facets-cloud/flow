@@ -98,8 +98,8 @@ monitor/transport workers draining that queue. Pops are atomic claims, so
 concurrent consumers of one inbox (your terminal + a monitor task)
 never double-pop. `--json` on inbox/pop/due emits machine-readable
 rows for scripting. Popping a human-directed message ACKS it (popping
-is answering); posts are marked delivered. Rows are never deleted by
-popping — they transition status and age out via the 90d sweep.
+is answering); broadcasts are marked delivered. Rows are never deleted
+by popping — they transition status and roll off later by count.
 
 To be WOKEN by mail instead of discovering it on your next tool call,
 arm a listener. PREFERRED — one persistent **Monitor** wrapping pop in
@@ -117,8 +117,8 @@ whole session with NO re-arming. FALLBACK when Monitor is unavailable
 (e.g. non-Claude harnesses): a background Bash command
 (`run_in_background: true`) running `flow inbox pop --wait` — that is
 single-shot (blocks, pops one, exits 0 and wakes you; exit 1 =
-timeout), so RE-ARM it after every wake. One listener per identity
-either way. Also subscribe to the tasks you depend on or spawn:
+timeout), so RE-ARM it after every wake. Keep one listener per
+identity. Also subscribe to the tasks you depend on or spawn:
 `flow watch <slug>` for anything you're waiting on, coordinating with,
 or any task you create from this session.
 
@@ -137,5 +137,6 @@ flow inbox ack [<id>]   # answer by hand (no-arg acks all pending human messages
 flow inbox stats        # answered/pending counts, avg/median/worst wait
 ```
 
-Retention is automatic: answered/delivered rows sweep after 90 days
-(pending messages never expire); stale listeners prune after an hour.
+Retention is automatic and row-count based: the newest 1000 consumed
+(answered/delivered) rows are kept, older ones roll off; pending
+messages never expire.

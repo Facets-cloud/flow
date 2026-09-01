@@ -238,19 +238,11 @@ func inboxPop(args []string) int {
 		return emit(m)
 	}
 
-	identity := s.identity()
-	pid := os.Getpid()
-	if err := flowdb.UpsertBusListener(db, identity, pid); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	defer func() { _ = flowdb.RemoveBusListener(db, identity, pid) }()
 	if !*asJSON {
-		fmt.Printf("waiting for mail as %s (pid %d, timeout %ds)\n", identity, pid, *timeout)
+		fmt.Printf("waiting for mail as %s (timeout %ds)\n", s.identity(), *timeout)
 	}
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 	for {
-		_ = flowdb.TouchBusListener(db, identity, pid)
 		m, err := popOne(db, s)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)

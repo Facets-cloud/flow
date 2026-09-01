@@ -50,12 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
 CREATE INDEX IF NOT EXISTS idx_bus_messages_sender
     ON bus_messages(sender_session_id, status);
 
-CREATE TABLE IF NOT EXISTS bus_listeners (
-    identity   TEXT PRIMARY KEY,
-    pid        INTEGER NOT NULL,
-    heartbeat  TEXT NOT NULL,
-    started_at TEXT NOT NULL
-);
+DROP TABLE IF EXISTS bus_listeners;
 
 CREATE TABLE IF NOT EXISTS bus_watches (
     watcher     TEXT NOT NULL,
@@ -255,46 +250,6 @@ func BumpNotifyAttempt(db *sql.DB, id string, attempts int, now time.Time) error
 	return err
 }
 
-// UpsertBusListener records a live blocking consumer (`flow inbox pop
-// --wait`) for an identity.
-func UpsertBusListener(db *sql.DB, identity string, pid int) error {
-	now := NowISO()
-	_, err := db.Exec(`INSERT INTO bus_listeners (identity, pid, heartbeat, started_at)
-        VALUES (?,?,?,?)
-        ON CONFLICT(identity) DO UPDATE SET
-          pid=excluded.pid, heartbeat=excluded.heartbeat`,
-		identity, pid, now, now)
-	return err
-}
-
-// TouchBusListener refreshes a listener heartbeat.
-func TouchBusListener(db *sql.DB, identity string, pid int) error {
-	_, err := db.Exec(`UPDATE bus_listeners SET heartbeat=? WHERE identity=? AND pid=?`,
-		NowISO(), identity, pid)
-	return err
-}
-
-// RemoveBusListener drops a listener registration (on pop exit).
-func RemoveBusListener(db *sql.DB, identity string, pid int) error {
-	_, err := db.Exec(`DELETE FROM bus_listeners WHERE identity=? AND pid=?`, identity, pid)
-	return err
-}
-
-// GetBusListener returns (pid, heartbeat) for an identity, or (0, "").
-func GetBusListener(db *sql.DB, identity string) (int, string, error) {
-	row := db.QueryRow(`SELECT pid, heartbeat FROM bus_listeners WHERE identity=?`, identity)
-	var pid int
-	var hb string
-	err := row.Scan(&pid, &hb)
-	if err == sql.ErrNoRows {
-		return 0, "", nil
-	}
-	if err != nil {
-		return 0, "", err
-	}
-	return pid, hb, nil
-}
-
 // AddWatch subscribes `watcher` (address form: "self" for the human,
 // "self/<task-slug>" for a session) to `watched` (task slug, project
 // slug, or assignee).
@@ -448,8 +403,8 @@ func GetBusStats(db *sql.DB, assignee string) (*BusStats, error) {
 // `flow done` and `flow archive`. Deleted: PENDING rows addressed TO
 // the task (undeliverable — no session will ever pop them; without this
 // they'd live forever, since pending rows are exempt from SweepBus),
-// its watch subscriptions (as watcher and as watched topic), its nudge
-// stamp, and its listener row. Deliberately KEPT: messages the task
+// its watch subscriptions (as watcher and as watched topic), and its
+// nudge stamp. Deliberately KEPT: messages the task
 // sent to a human that are still pending — closing a task doesn't
 // un-ask a question the user hasn't seen; those clear on pop/ack — and
 // already-consumed rows, which age out via the normal 90d sweep.
@@ -461,7 +416,6 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 		{`DELETE FROM bus_messages WHERE to_task_slug=? AND status='pending'`, []any{taskSlug}},
 		{`DELETE FROM bus_watches WHERE watched=? OR watcher LIKE '%/' || ?`, []any{taskSlug, taskSlug}},
 		{`DELETE FROM bus_nudges WHERE task_slug=?`, []any{taskSlug}},
-		{`DELETE FROM bus_listeners WHERE identity LIKE '%/' || ?`, []any{taskSlug}},
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s.q, s.args...); err != nil {
@@ -471,19 +425,20 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 	return nil
 }
 
-// SweepBus applies retention: delivered/acked rows older than 90 days
-// are deleted (pending rows never expire); listeners with heartbeats
-// older than an hour are pruned. Cheap enough to run opportunistically
-// on any bus write.
+// busKeepConsumed is how many consumed (acked/delivered) rows are
+// retained — a rolling window by row count, newest first. Pending rows
+// never expire: an unanswered message must not silently vanish.
+const busKeepConsumed = 1000
+
+// SweepBus applies retention: consumed rows roll by count (the newest
+// busKeepConsumed are kept, older ones deleted). Cheap enough to run
+// opportunistically on any bus write.
 func SweepBus(db *sql.DB, now time.Time) error {
-	cut := now.AddDate(0, 0, -90).UTC().Format(time.RFC3339)
-	if _, err := db.Exec(
-		`DELETE FROM bus_messages WHERE status != 'pending' AND created_at < ?`, cut); err != nil {
+	_ = now
+	if _, err := db.Exec(`DELETE FROM bus_messages WHERE status != 'pending'
+        AND id NOT IN (SELECT id FROM bus_messages WHERE status != 'pending'
+                       ORDER BY created_at DESC LIMIT ?)`, busKeepConsumed); err != nil {
 		return fmt.Errorf("sweep messages: %w", err)
-	}
-	hbCut := now.Add(-time.Hour).UTC().Format(time.RFC3339)
-	if _, err := db.Exec(`DELETE FROM bus_listeners WHERE heartbeat < ?`, hbCut); err != nil {
-		return fmt.Errorf("sweep listeners: %w", err)
 	}
 	return nil
 }

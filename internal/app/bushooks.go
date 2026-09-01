@@ -158,20 +158,18 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 
-	// Stranded-mail delivery: the turn is ending and mail is pending
-	// with no live listener to catch it — hand it over NOW rather than
-	// letting it wait for the user's next prompt. Real mail, so it
-	// bypasses the post-nudge backoff; it self-limits because the drain
-	// consumes the rows. A live `pop --wait` listener takes precedence
-	// (it delivers within its poll tick; don't steal its message).
+	// Stranded-mail delivery: the turn is ending with mail pending —
+	// hand it over NOW rather than letting it wait for the user's next
+	// prompt. Real mail, so it bypasses the post-nudge backoff; it
+	// self-limits because the drain consumes the rows. If a Monitor
+	// listener is also armed, atomic claims guarantee exactly-once:
+	// whichever consumer grabs a row first wins, same session either way.
 	var inboxCtx string
-	if !listenerAlive(db, s.identity()) {
-		if drained := drainTaskInbox(db, slug); drained != "" {
-			inboxCtx = drained + " Act on these now if they change anything, then arm a " +
-				"persistent Monitor loop (preferred; else a background Bash " +
-				"`flow inbox pop --wait`, re-armed per wake) — see skill §4.18 — " +
-				"so future mail wakes you instead of waiting for a turn end."
-		}
+	if drained := drainTaskInbox(db, slug); drained != "" {
+		inboxCtx = drained + " Act on these now if they change anything, then arm a " +
+			"persistent Monitor loop (preferred; else a background Bash " +
+			"`flow inbox pop --wait`, re-armed per wake) — see skill §4.18 — " +
+			"so future mail wakes you instead of waiting for a turn end."
 	}
 
 	nudge := stopPostNudge(db, slug)
@@ -180,20 +178,6 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 	return emitHookContext("Stop", ctx)
-}
-
-// listenerAlive reports whether a live `flow inbox pop --wait` is
-// consuming for this identity (recent heartbeat + pid still running).
-func listenerAlive(db *sql.DB, identity string) bool {
-	pid, hb, err := flowdb.GetBusListener(db, identity)
-	if err != nil || pid == 0 || hb == "" {
-		return false
-	}
-	t, err := time.Parse(time.RFC3339, hb)
-	if err != nil || time.Since(t) > 30*time.Second {
-		return false
-	}
-	return processAlive(pid) // shared liveness probe from auto.go
 }
 
 // stopPostNudge returns the watcher post-nudge context ("" when any

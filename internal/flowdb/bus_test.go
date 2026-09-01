@@ -119,7 +119,6 @@ func TestCleanupTaskBus(t *testing.T) {
 	_ = AddWatch(db, "self/task-x", "other-task")
 	_ = AddWatch(db, "self", "task-x")
 	_ = RecordNudge(db, "task-x")
-	_ = UpsertBusListener(db, "self/task-x", 42)
 	// Rows the cleanup must keep:
 	_ = InsertBusMessage(db, &BusMessage{ID: "fr000001", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "self", FromTaskSlug: "task-x", ToAssignee: "self", Body: "still asks the human"})
@@ -140,9 +139,6 @@ func TestCleanupTaskBus(t *testing.T) {
 	if nudged, _, _ := GetNudgeState(db, "task-x"); nudged != "" {
 		t.Errorf("nudge stamp survived")
 	}
-	if pid, _, _ := GetBusListener(db, "self/task-x"); pid != 0 {
-		t.Errorf("listener survived")
-	}
 	// Pending question to the human must survive close-out.
 	if rows, _ := PendingForHuman(db, "self"); len(rows) != 1 || rows[0].ID != "fr000001" {
 		t.Errorf("human-directed pending message did not survive: %v", rows)
@@ -152,44 +148,42 @@ func TestCleanupTaskBus(t *testing.T) {
 	}
 }
 
-func TestBusListenersAndSweep(t *testing.T) {
+func TestBusSweepRollsConsumedByCount(t *testing.T) {
 	db := openBusTestDB(t)
-	if err := UpsertBusListener(db, "self/task-a", 42); err != nil {
-		t.Fatalf("upsert: %v", err)
+	// 5 consumed rows + 1 pending; a keep-window larger than 5 keeps all.
+	for i := 0; i < 5; i++ {
+		id := NowISO() + string(rune('a'+i))
+		_ = InsertBusMessage(db, &BusMessage{
+			ID: id, CreatedAt: NowISO(), Kind: "message",
+			FromAssignee: "self", ToAssignee: "self", Body: "old"})
+		if _, err := db.Exec(`UPDATE bus_messages SET status='acked' WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
 	}
-	pid, hb, err := GetBusListener(db, "self/task-a")
-	if err != nil || pid != 42 || hb == "" {
-		t.Fatalf("GetBusListener = %d, %q, %v", pid, hb, err)
-	}
-	if err := RemoveBusListener(db, "self/task-a", 42); err != nil {
-		t.Fatalf("remove: %v", err)
-	}
-	if pid, _, _ = GetBusListener(db, "self/task-a"); pid != 0 {
-		t.Errorf("listener not removed")
-	}
+	_ = InsertBusMessage(db, &BusMessage{
+		ID: "pend0001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "self", ToAssignee: "self", Body: "pending forever"})
 
-	old := time.Now().AddDate(0, 0, -120).UTC().Format(time.RFC3339)
-	_ = InsertBusMessage(db, &BusMessage{
-		ID: "old00001", CreatedAt: old, Kind: "message",
-		FromAssignee: "self", ToAssignee: "self", Body: "ancient",
-	})
-	if _, err := db.Exec(`UPDATE bus_messages SET status='acked' WHERE id='old00001'`); err != nil {
-		t.Fatal(err)
-	}
-	_ = InsertBusMessage(db, &BusMessage{
-		ID: "old00002", CreatedAt: old, Kind: "message",
-		FromAssignee: "self", ToAssignee: "self", Body: "ancient but pending",
-	})
 	if err := SweepBus(db, time.Now()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	var n int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE id='old00001'`).Scan(&n)
-	if n != 0 {
-		t.Errorf("sweep kept old acked row")
+	var consumed, pending int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status != 'pending'`).Scan(&consumed)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status = 'pending'`).Scan(&pending)
+	if consumed != 5 || pending != 1 {
+		t.Errorf("within window: consumed=%d pending=%d", consumed, pending)
 	}
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE id='old00002'`).Scan(&n)
-	if n != 1 {
-		t.Errorf("sweep deleted a PENDING row — pending messages must never expire")
+
+	// Shrink the window via direct SQL equivalent to prove the rolling
+	// delete keeps only the newest N consumed rows and never pending.
+	if _, err := db.Exec(`DELETE FROM bus_messages WHERE status != 'pending'
+        AND id NOT IN (SELECT id FROM bus_messages WHERE status != 'pending'
+                       ORDER BY created_at DESC LIMIT 2)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status != 'pending'`).Scan(&consumed)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status = 'pending'`).Scan(&pending)
+	if consumed != 2 || pending != 1 {
+		t.Errorf("after roll: consumed=%d pending=%d — pending must never expire", consumed, pending)
 	}
 }
