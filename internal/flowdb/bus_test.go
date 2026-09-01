@@ -42,11 +42,26 @@ func TestBusMessageLifecycle(t *testing.T) {
 	if err != nil || len(due) != 1 {
 		t.Fatalf("DueBusMessages = %v, %v; want 1", due, err)
 	}
-	if err := BumpNotifyAttempt(db, m.ID, 0, time.Now()); err != nil {
+	now := time.Now()
+	if err := BumpNotifyAttempt(db, m.ID, 0, now); err != nil {
 		t.Fatalf("bump: %v", err)
 	}
-	if due, _ = DueBusMessages(db, "self", time.Now()); len(due) != 0 {
+	if due, _ = DueBusMessages(db, "self", now); len(due) != 0 {
 		t.Errorf("after bump, message should not be due yet")
+	}
+	// Off-by-one guard: the first re-notify lands at base 1m, not 2m.
+	if due, _ = DueBusMessages(db, "self", now.Add(61*time.Second)); len(due) != 1 {
+		t.Errorf("first backoff step should be 1m")
+	}
+	// Overflow guard: absurd attempts still cap at 30m, never negative.
+	if err := BumpNotifyAttempt(db, m.ID, 1000000, now); err != nil {
+		t.Fatalf("bump big: %v", err)
+	}
+	if due, _ = DueBusMessages(db, "self", now.Add(29*time.Minute)); len(due) != 0 {
+		t.Errorf("capped delay should not be due before 30m")
+	}
+	if due, _ = DueBusMessages(db, "self", now.Add(31*time.Minute)); len(due) != 1 {
+		t.Errorf("capped delay must be due after 30m (overflow would push it to never/always)")
 	}
 
 	acked, err := AckHumanMessagesFromSession(db, "sid-1", "prompt")
@@ -163,27 +178,33 @@ func TestBusSweepRollsConsumedByCount(t *testing.T) {
 	_ = InsertBusMessage(db, &BusMessage{
 		ID: "pend0001", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "self", ToAssignee: "self", Body: "pending forever"})
+	// A pending BROADCAST is rollable (FYI, not a debt) — unlike the
+	// pending directed message above.
+	_ = InsertBusMessage(db, &BusMessage{
+		ID: "bcst0001", CreatedAt: NowISO(), Kind: "broadcast",
+		FromAssignee: "self", ToAssignee: "self", Body: "unread fyi"})
 
 	if err := SweepBus(db, time.Now()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	var consumed, pending int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status != 'pending'`).Scan(&consumed)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status = 'pending'`).Scan(&pending)
-	if consumed != 5 || pending != 1 {
-		t.Errorf("within window: consumed=%d pending=%d", consumed, pending)
+	var rollable, immortal int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status != 'pending' OR kind='broadcast'`).Scan(&rollable)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status='pending' AND kind='message'`).Scan(&immortal)
+	if rollable != 6 || immortal != 1 {
+		t.Errorf("within window: rollable=%d immortal=%d", rollable, immortal)
 	}
 
-	// Shrink the window via direct SQL equivalent to prove the rolling
-	// delete keeps only the newest N consumed rows and never pending.
-	if _, err := db.Exec(`DELETE FROM bus_messages WHERE status != 'pending'
-        AND id NOT IN (SELECT id FROM bus_messages WHERE status != 'pending'
+	// Shrink the window via the same rolling delete to prove only the
+	// newest N rollable rows survive and the pending directed message
+	// never expires.
+	if _, err := db.Exec(`DELETE FROM bus_messages WHERE (status != 'pending' OR kind='broadcast')
+        AND id NOT IN (SELECT id FROM bus_messages WHERE (status != 'pending' OR kind='broadcast')
                        ORDER BY created_at DESC LIMIT 2)`); err != nil {
 		t.Fatal(err)
 	}
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status != 'pending'`).Scan(&consumed)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status = 'pending'`).Scan(&pending)
-	if consumed != 2 || pending != 1 {
-		t.Errorf("after roll: consumed=%d pending=%d — pending must never expire", consumed, pending)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status != 'pending' OR kind='broadcast'`).Scan(&rollable)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status='pending' AND kind='message'`).Scan(&immortal)
+	if rollable != 2 || immortal != 1 {
+		t.Errorf("after roll: rollable=%d immortal=%d — pending messages must never expire", rollable, immortal)
 	}
 }

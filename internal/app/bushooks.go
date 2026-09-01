@@ -12,25 +12,26 @@ import (
 	"flow/internal/flowdb"
 )
 
-// Message-bus hook handlers — strictly CLI/context primitives, no UI:
+// Message-bus hook handlers — strictly CLI/context primitives, no UI,
+// and NEVER consuming: hooks only INFORM that mail is pending; the sole
+// consumption paths are `flow inbox pop` and the agent's armed Monitor
+// loop. (Consuming in a hook would mark rows delivered while the
+// harness is free to drop the hook's output — silent mail loss.)
 //
-//	SessionStart      busSessionStartContext(): pending-message notice,
-//	                  inbox drain, and the listener discipline — park
-//	                  `flow inbox pop --wait` now, re-arm after each
-//	                  wake, and watch the tasks you care about.
+//	SessionStart      busSessionStartContext(): pending-count notices +
+//	                  the listener discipline (arm a persistent Monitor
+//	                  loop; watch what you depend on).
 //	UserPromptSubmit  busPromptSubmitContext(): the human replying in a
-//	                  session ACKS that session's pending human-directed
-//	                  messages (wait recorded + injected) and drains the
-//	                  bound task's inbox (fallback delivery for sessions
-//	                  with no listener parked).
-//	Stop              cmdHookStop(): nudges the agent to `flow post` a
-//	                  one-liner — only when the task has watchers, and
-//	                  with exponential backoff on declined nudges
-//	                  (30m, 1h, 2h.. capped 4h; a post resets it).
-//
-// There is deliberately NO PostToolUse hook: per-tool-call delivery cost
-// is not worth it when a parked `pop --wait` listener delivers instantly
-// and the prompt-submit drain covers listener-less sessions.
+//	                  session ACKS that session's own outbound
+//	                  human-directed messages (that is the answering
+//	                  mechanism, not inbox consumption) + a pending
+//	                  count notice for the task's inbox.
+//	Stop              cmdHookStop(): broadcast nudge only — watchers
+//	                  exist, no broadcast in 30m, declined-nudge
+//	                  backoff elapsed. Inbox mail is deliberately NOT
+//	                  handled at Stop: an armed Monitor picks it up
+//	                  within seconds, and a listener-less session is
+//	                  informed at its next prompt.
 //
 // Hook code must never fail loud — errors degrade to silence.
 
@@ -44,16 +45,13 @@ func busSessionStartContext() string {
 	s := currentBusSender()
 
 	var b strings.Builder
-	if rows, _ := flowdb.PendingForHuman(db, busSelf); len(rows) > 0 {
-		now := time.Now()
-		b.WriteString(fmt.Sprintf(" flow-bus: %d pending message(s) for the user:", len(rows)))
-		for _, m := range rows {
-			b.WriteString(fmt.Sprintf(" [%s %s ago, %s: %s]", m.ID, busAge(m.CreatedAt, now), busFrom(m), m.Body))
-		}
-		b.WriteString(" Surface these to the user at the start of your reply (they consume via `flow inbox pop`).")
+	if n, _ := flowdb.PendingCountForHuman(db, busSelf); n > 0 {
+		b.WriteString(fmt.Sprintf(
+			" flow-bus: %d pending message(s)/broadcast(s) await the USER — tell them at the "+
+				"start of your reply; they consume via `flow inbox pop` (never consume these yourself).", n))
 	}
 	if s.TaskSlug != "" {
-		b.WriteString(drainTaskInbox(db, s.TaskSlug))
+		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
 		b.WriteString(" flow-bus listener discipline: arm ONE persistent Monitor NOW — the " +
 			"loop is required (Monitor streams stdout lines as events): " +
 			"Monitor(command: 'while true; do flow inbox pop --wait --timeout 300 --json " +
@@ -87,38 +85,25 @@ func busPromptSubmitContext() string {
 		}
 	}
 	if s.TaskSlug != "" {
-		b.WriteString(drainTaskInbox(db, s.TaskSlug))
+		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
 	}
 	return b.String()
 }
 
-// drainTaskInbox delivers pending messages for a task and renders them
-// as hook context ("" if none).
-func drainTaskInbox(db *sql.DB, slug string) string {
-	rows, err := flowdb.PendingForTask(db, slug)
-	if err != nil || len(rows) == 0 {
+// pendingTaskNotice renders an inform-only pending-count line for a
+// task's inbox ("" when empty). It reads counts only — never delivers.
+func pendingTaskNotice(db *sql.DB, slug string) string {
+	n, err := flowdb.PendingCountForTask(db, slug)
+	if err != nil || n == 0 {
 		return ""
 	}
-	ids := make([]string, len(rows))
-	for i, m := range rows {
-		ids[i] = m.ID
-	}
-	_ = flowdb.MarkDelivered(db, ids)
-	now := time.Now()
-	var b strings.Builder
-	for _, m := range rows {
-		verb := "message"
-		if m.Kind == "broadcast" {
-			verb = "broadcast (FYI)"
-		}
-		b.WriteString(fmt.Sprintf(" flow-bus %s from %s (%s ago): %s.", verb, busFrom(m), busAge(m.CreatedAt, now), m.Body))
-	}
-	return b.String()
+	return fmt.Sprintf(" flow-bus: %d pending message(s) in this session's inbox — consume with "+
+		"`flow inbox pop` now (or your armed Monitor loop will deliver them).", n)
 }
 
-// nudgeBackoffFor returns the cooldown before the next post-nudge is
-// allowed, given how many consecutive nudges went unanswered: 30m, 1h,
-// 2h, capped at 4h. A post resets the counter (flowdb.ResetNudges).
+// nudgeBackoffFor returns the cooldown before the next broadcast-nudge
+// is allowed, given how many consecutive nudges went unanswered: 30m,
+// 1h, 2h, capped at 4h. A broadcast resets the counter.
 func nudgeBackoffFor(attempts int) time.Duration {
 	d := 30 * time.Minute
 	for i := 1; i < attempts && d < 4*time.Hour; i++ {
@@ -131,7 +116,7 @@ func nudgeBackoffFor(attempts int) time.Duration {
 }
 
 // cmdHookStop fires when a turn ends: nudge the agent to broadcast a
-// one-liner if this task has watchers and hasn't posted recently.
+// one-liner if this task has watchers and hasn't broadcast recently.
 //
 // Loop guard: Claude Code treats any Stop-hook output as blocking the
 // turn from ending, re-invokes the hook on the follow-up stop with
@@ -152,38 +137,21 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 	defer db.Close()
-	s := currentBusSender()
-	slug := s.TaskSlug
+	slug := lookupBoundTaskSlug()
 	if slug == "" {
 		return 0
 	}
-
-	// Stranded-mail delivery: the turn is ending with mail pending —
-	// hand it over NOW rather than letting it wait for the user's next
-	// prompt. Real mail, so it bypasses the post-nudge backoff; it
-	// self-limits because the drain consumes the rows. If a Monitor
-	// listener is also armed, atomic claims guarantee exactly-once:
-	// whichever consumer grabs a row first wins, same session either way.
-	var inboxCtx string
-	if drained := drainTaskInbox(db, slug); drained != "" {
-		inboxCtx = drained + " Act on these now if they change anything, then arm a " +
-			"persistent Monitor loop (preferred; else a background Bash " +
-			"`flow inbox pop --wait`, re-armed per wake) — see skill §4.18 — " +
-			"so future mail wakes you instead of waiting for a turn end."
-	}
-
-	nudge := stopPostNudge(db, slug)
-	ctx := strings.TrimSpace(inboxCtx + nudge)
-	if ctx == "" {
+	nudge := stopBroadcastNudge(db, slug)
+	if nudge == "" {
 		return 0
 	}
-	return emitHookContext("Stop", ctx)
+	return emitHookContext("Stop", strings.TrimSpace(nudge))
 }
 
-// stopPostNudge returns the watcher post-nudge context ("" when any
-// gate says stay quiet): watchers exist, no post in 30m, and the
-// declined-nudge backoff has elapsed.
-func stopPostNudge(db *sql.DB, slug string) string {
+// stopBroadcastNudge returns the watcher broadcast-nudge context (""
+// when any gate says stay quiet): watchers exist, no broadcast in 30m,
+// and the declined-nudge backoff has elapsed.
+func stopBroadcastNudge(db *sql.DB, slug string) string {
 	t, err := flowdb.GetTask(db, slug)
 	if err != nil || t == nil {
 		return ""
@@ -195,11 +163,11 @@ func stopPostNudge(db *sql.DB, slug string) string {
 	last, _ := flowdb.LastBroadcastAt(db, slug)
 	if last != "" {
 		if ts, err := time.Parse(time.RFC3339, last); err == nil && time.Since(ts) < 30*time.Minute {
-			return "" // posted recently — stay quiet
+			return "" // broadcast recently — stay quiet
 		}
 	}
 	// Declined-nudge backoff: ask again only after 30m·2^(declines-1),
-	// capped at 4h. The agent's judgment stands in between; a post
+	// capped at 4h. The agent's judgment stands in between; a broadcast
 	// resets the cycle.
 	if nudgedAt, attempts, _ := flowdb.GetNudgeState(db, slug); nudgedAt != "" {
 		if ts, err := time.Parse(time.RFC3339, nudgedAt); err == nil &&
@@ -209,7 +177,7 @@ func stopPostNudge(db *sql.DB, slug string) string {
 	}
 	_ = flowdb.RecordNudge(db, slug)
 	return fmt.Sprintf(
-		" flow-bus: %d watcher(s) follow this task and your last broadcast is %s. If this turn "+
+		"flow-bus: %d watcher(s) follow this task and your last broadcast is %s. If this turn "+
 			"completed meaningful work, broadcast a one-liner now: flow broadcast \"<what changed>\". "+
 			"Skip if nothing notable happened.",
 		len(watchers), lastPostDesc(last))

@@ -239,15 +239,34 @@ func DueBusMessages(db *sql.DB, assignee string, now time.Time) ([]*BusMessage, 
 }
 
 // BumpNotifyAttempt records one escalation firing: attempts+1 and the
-// next backoff deadline (base 1m doubling, capped at 30m).
+// next backoff deadline. attempts counts firings so far, so the delay
+// after the first firing is the base: 1m, 2m, 4m, 8m, 16m, then capped
+// at 30m. The exponent is clamped BEFORE shifting so unbounded attempts
+// can never overflow past the cap.
 func BumpNotifyAttempt(db *sql.DB, id string, attempts int, now time.Time) error {
-	delay := time.Duration(60*(1<<uint(attempts+1))) * time.Second
-	if delay > 30*time.Minute {
-		delay = 30 * time.Minute
+	delay := 30 * time.Minute
+	if attempts >= 0 && attempts < 5 {
+		delay = time.Duration(60<<uint(attempts)) * time.Second
 	}
 	_, err := db.Exec(`UPDATE bus_messages SET attempts=?, next_notify_at=? WHERE id=?`,
 		attempts+1, now.Add(delay).UTC().Format(time.RFC3339), id)
 	return err
+}
+
+// PendingCountForTask returns how many undelivered rows await a task's
+// session — the inform-only primitive hooks use (hooks never consume).
+func PendingCountForTask(db *sql.DB, slug string) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status='pending' AND to_task_slug=?`, slug).Scan(&n)
+	return n, err
+}
+
+// PendingCountForHuman is the human-queue equivalent.
+func PendingCountForHuman(db *sql.DB, assignee string) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages
+        WHERE status='pending' AND to_assignee=? AND to_task_slug IS NULL`, assignee).Scan(&n)
+	return n, err
 }
 
 // AddWatch subscribes `watcher` (address form: "self" for the human,
@@ -425,19 +444,24 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 	return nil
 }
 
-// busKeepConsumed is how many consumed (acked/delivered) rows are
-// retained — a rolling window by row count, newest first. Pending rows
-// never expire: an unanswered message must not silently vanish.
-const busKeepConsumed = 1000
+// busKeepRolled is how many rollable rows are retained — a rolling
+// window by row count, newest first. Rollable = consumed rows of any
+// kind PLUS broadcasts of any status (an unread broadcast is an FYI,
+// not a debt — it must not accumulate forever). The only immortal rows
+// are pending directed messages: an unanswered question must not
+// silently vanish.
+const busKeepRolled = 1000
 
-// SweepBus applies retention: consumed rows roll by count (the newest
-// busKeepConsumed are kept, older ones deleted). Cheap enough to run
+// SweepBus applies retention: rollable rows roll by count (the newest
+// busKeepRolled are kept, older ones deleted). Cheap enough to run
 // opportunistically on any bus write.
 func SweepBus(db *sql.DB, now time.Time) error {
 	_ = now
-	if _, err := db.Exec(`DELETE FROM bus_messages WHERE status != 'pending'
-        AND id NOT IN (SELECT id FROM bus_messages WHERE status != 'pending'
-                       ORDER BY created_at DESC LIMIT ?)`, busKeepConsumed); err != nil {
+	if _, err := db.Exec(`DELETE FROM bus_messages
+        WHERE (status != 'pending' OR kind = 'broadcast')
+        AND id NOT IN (SELECT id FROM bus_messages
+                       WHERE (status != 'pending' OR kind = 'broadcast')
+                       ORDER BY created_at DESC LIMIT ?)`, busKeepRolled); err != nil {
 		return fmt.Errorf("sweep messages: %w", err)
 	}
 	return nil

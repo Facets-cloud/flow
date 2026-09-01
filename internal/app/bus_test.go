@@ -336,7 +336,7 @@ func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 	}
 }
 
-func TestHookStopDeliversStrandedMail(t *testing.T) {
+func TestHooksInformButNeverConsume(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-b")
 	db := openFlowDB(t)
@@ -349,18 +349,32 @@ func TestHookStopDeliversStrandedMail(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	ctx := busHookContext(t, stopHookOnce(t, false))
-	if !strings.Contains(ctx, "your PR is unblocked") || !strings.Contains(ctx, "flow inbox pop --wait") {
-		t.Errorf("stranded mail not delivered at stop: %s", ctx)
+
+	// UserPromptSubmit: informs with a COUNT, never the body, and the
+	// row must remain pending (hooks never consume).
+	out := captureStdout(t, func() {
+		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
+			t.Fatalf("ups rc != 0")
+		}
+	})
+	ctx := busHookContext(t, out)
+	if !strings.Contains(ctx, "1 pending message(s)") || !strings.Contains(ctx, "flow inbox pop") {
+		t.Errorf("prompt-submit notice: %s", ctx)
 	}
-	if rows, _ := flowdb.PendingForTask(db, "task-b"); len(rows) != 0 {
-		t.Errorf("stop drain did not mark delivered")
+	if strings.Contains(ctx, "your PR is unblocked") {
+		t.Errorf("hook leaked message body (should inform only): %s", ctx)
 	}
-	// Drained inbox: next stop is silent (self-limiting, no backoff involved).
-	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {
-		t.Errorf("stop re-fired with empty inbox: %s", out)
+	if rows, _ := flowdb.PendingForTask(db, "task-b"); len(rows) != 1 || rows[0].Status != "pending" {
+		t.Errorf("hook consumed mail — must stay pending: %+v", rows)
 	}
 
+	// Stop: inbox mail alone must NOT wake the turn (no watchers here).
+	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {
+		t.Errorf("stop emitted for inbox mail: %s", out)
+	}
+	if rows, _ := flowdb.PendingForTask(db, "task-b"); len(rows) != 1 {
+		t.Errorf("stop consumed mail")
+	}
 }
 
 func TestHookStopSilentDuringHookContinuation(t *testing.T) {

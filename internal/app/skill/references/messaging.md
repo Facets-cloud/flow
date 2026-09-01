@@ -3,8 +3,9 @@
 flow's bus lets a bound session (a) call for the user's attention,
 (b) message another task's session, and (c) broadcast one-liner updates
 to subscribers. One SQLite-backed inbox in flow.db, one delivery path:
-a parked `flow inbox pop --wait` listener (instant), else hooks at
-prompt-submit / session-start. The bus is CLI-only by design: flow
+a parked `flow inbox pop --wait` listener (instant), with hooks at
+prompt-submit / session-start informing you of pending counts (hooks
+NEVER consume — only pop consumes). The bus is CLI-only by design: flow
 stores, addresses, schedules escalation, and measures waits — it never
 draws attention itself. Notification UX is the user's own scripting on
 top of `flow inbox due`.
@@ -27,9 +28,9 @@ flow message self "coinswitch-gcp-migration: prod release plan ready, needs appr
 flow message self "state bucket perms broken, blocked on your GCP login" --urgent
 ```
 
-The message stays pending on an escalating schedule (1m, 2m, 4m … capped
-at 30m — surfaced via `flow inbox due` to whatever notifier the user
-scripted) until answered. Discipline:
+The message stays pending on an escalating schedule (due immediately,
+then 1m, 2m, 4m, 8m, 16m, capped at 30m — surfaced via `flow inbox due`
+to whatever notifier the user scripted) until answered. Discipline:
 
 - Message when blocked on the user's decision, a permission only they
   can grant, a long task finishing that they wait on, or something they
@@ -50,9 +51,10 @@ scripted) until answered. Discipline:
 flow message self/tekion-hub-network "state file moved, re-read before release"
 ```
 
-Delivered instantly if the session has a listener parked (below), else
-into its context at its next prompt / session start. Include what the
-peer should DO with the information.
+Delivered instantly if the session has a listener parked (below); a
+listener-less session is told the pending COUNT at its next prompt /
+session start and pops explicitly. Hooks never consume mail. Include
+what the peer should DO with the information.
 
 ## Broadcasting and watching
 
@@ -137,6 +139,7 @@ flow inbox ack [<id>]   # answer by hand (no-arg acks all pending human messages
 flow inbox stats        # answered/pending counts, avg/median/worst wait
 ```
 
-Retention is automatic and row-count based: the newest 1000 consumed
-(answered/delivered) rows are kept, older ones roll off; pending
-messages never expire.
+Retention is automatic and row-count based: the newest 1000 rollable
+rows are kept (consumed rows of any kind, plus broadcasts of any
+status — an unread broadcast is an FYI, not a debt). Only pending
+directed messages never expire.
