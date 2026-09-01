@@ -218,7 +218,7 @@ func inboxPop(args []string) int {
 		}
 		printBusMessage(m)
 		if *wait {
-			fmt.Println("re-arm: run `flow inbox pop --wait` again (backgrounded) to catch the next message")
+			fmt.Println("re-arm: point your Monitor tool (or a background shell) at `flow inbox pop --wait` again to catch the next message")
 		}
 		return 0
 	}

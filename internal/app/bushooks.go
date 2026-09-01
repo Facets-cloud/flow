@@ -54,12 +54,14 @@ func busSessionStartContext() string {
 	}
 	if s.TaskSlug != "" {
 		b.WriteString(drainTaskInbox(db, s.TaskSlug))
-		b.WriteString(" flow-bus listener discipline: park `flow inbox pop --wait` as a BACKGROUND " +
-			"Bash command (or via your Monitor tool) NOW — it blocks until a message or watched " +
-			"post arrives, prints it, and exits, which wakes you; RE-ARM it immediately after " +
-			"every wake so the next message also reaches you. Also subscribe to what this task " +
-			"depends on: `flow watch <task-or-project-slug>` for anything you are waiting on, " +
-			"coordinating with, or any task you create from this session.")
+		b.WriteString(" flow-bus listener discipline: arm your Monitor tool on " +
+			"`flow inbox pop --wait` NOW (Monitor is PREFERRED — it waits on the command " +
+			"without holding a shell and wakes you the moment it exits with a message); if " +
+			"Monitor is unavailable, run it as a background Bash command instead. RE-ARM " +
+			"immediately after every wake so the next message also reaches you. Also " +
+			"subscribe to what this task depends on: `flow watch <task-or-project-slug>` " +
+			"for anything you are waiting on, coordinating with, or any task you create " +
+			"from this session.")
 	}
 	return b.String()
 }
@@ -164,9 +166,10 @@ func cmdHookStop(args []string) int {
 	var inboxCtx string
 	if !listenerAlive(db, s.identity()) {
 		if drained := drainTaskInbox(db, slug); drained != "" {
-			inboxCtx = drained + " Act on these now if they change anything, then park " +
-				"`flow inbox pop --wait` (backgrounded) so future mail wakes you " +
-				"instead of waiting for a turn end."
+			inboxCtx = drained + " Act on these now if they change anything, then arm your " +
+				"Monitor tool (preferred; else a background Bash command) on " +
+				"`flow inbox pop --wait` so future mail wakes you instead of " +
+				"waiting for a turn end."
 		}
 	}
 

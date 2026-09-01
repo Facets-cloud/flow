@@ -101,8 +101,12 @@ is answering); posts are marked delivered. Rows are never deleted by
 popping — they transition status and age out via the 90d sweep.
 
 To be WOKEN by mail instead of discovering it on your next tool call,
-park your **Monitor tool** — or a background Bash command
-(`run_in_background: true`) — on `flow inbox pop --wait`. It blocks
+arm your **Monitor tool** on `flow inbox pop --wait` — Monitor is the
+PREFERRED listener: it waits on the command without occupying a shell
+and wakes you the moment it exits, and it survives long waits more
+gracefully than a background task. Fall back to a background Bash
+command (`run_in_background: true`) only when Monitor is unavailable
+(e.g. non-Claude harnesses). Either way it blocks
 until a message exists, pops exactly one, prints it, and exits 0 — the
 exit wakes you, and its output reminds you to RE-ARM immediately (run it
 again, backgrounded) so the next message also reaches you. Keep one

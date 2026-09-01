@@ -787,9 +787,11 @@ bus. Two send verbs with opposite semantics — never blend them:
   task/project/assignee; never interrupts anyone; you never pick
   recipients. If someone specific must act, message them too.
 - Consuming: `flow inbox` lists, `flow inbox pop` consumes one at a
-  time. Park your Monitor tool — or a background Bash command — on
-  `flow inbox pop --wait` at session start and RE-ARM it after every
-  wake; that listener is the delivery path (no per-tool-call hook).
+  time. At session start arm your **Monitor tool** on
+  `flow inbox pop --wait` — Monitor is the preferred listener (it waits
+  without holding a shell and wakes you the moment mail pops); use a
+  background Bash command only if Monitor is unavailable. RE-ARM after
+  every wake; that listener is the delivery path (no per-tool-call hook).
   `--as <assignee>` consumes a human queue instead (`--as self` = the
   user's inbox, e.g. for a dedicated inbox-monitor task); `--json` for
   programmatic output.
