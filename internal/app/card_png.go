@@ -29,17 +29,17 @@ var flowWordmarkPNG []byte
 
 // flow brand palette (from site/styles.css :root, dark theme).
 var (
-	cPageBg    = hexColor("#0B0D10") // --bg-deep
-	cCardTop   = hexColor("#1C2128") // --bg-paper-2 (card gradient top)
-	cCardBot   = hexColor("#14171D") // --bg-elev   (card gradient bottom)
-	cBorder    = hexColor("#30363D") // --rule
-	cFg        = hexColor("#E6EDF3") // --fg
-	cFgSoft    = hexColor("#C9D1D9") // --fg-soft
-	cFgMuted   = hexColor("#8B949E") // --fg-muted
-	cFgDim     = hexColor("#6E7681") // --fg-dim
-	cGrad1     = hexColor("#0AEAA8") // wave gradient stops
-	cGrad2     = hexColor("#0ADCCE")
-	cGrad3     = hexColor("#198FFF")
+	cPageBg  = hexColor("#0B0D10") // --bg-deep
+	cCardTop = hexColor("#1C2128") // --bg-paper-2 (card gradient top)
+	cCardBot = hexColor("#14171D") // --bg-elev   (card gradient bottom)
+	cBorder  = hexColor("#30363D") // --rule
+	cFg      = hexColor("#E6EDF3") // --fg
+	cFgSoft  = hexColor("#C9D1D9") // --fg-soft
+	cFgMuted = hexColor("#8B949E") // --fg-muted
+	cFgDim   = hexColor("#6E7681") // --fg-dim
+	cGrad1   = hexColor("#0AEAA8") // wave gradient stops
+	cGrad2   = hexColor("#0ADCCE")
+	cGrad3   = hexColor("#198FFF")
 )
 
 // cardFonts holds the parsed TrueType fonts, loaded once.

@@ -218,3 +218,10 @@ func (c *codex) UninstallSessionStartHook(command string) (bool, error) {
 // Claude's UserPromptSubmit event. Keep the interface operation a no-op.
 func (c *codex) InstallUserPromptSubmitHook(command string) (bool, error)   { return false, nil }
 func (c *codex) UninstallUserPromptSubmitHook(command string) (bool, error) { return false, nil }
+
+// Codex has no PostToolUse / Stop hook equivalents either; the paging
+// bus degrades gracefully (delivery only via listen + session-start).
+func (c *codex) InstallPostToolUseHook(command string) (bool, error)   { return false, nil }
+func (c *codex) UninstallPostToolUseHook(command string) (bool, error) { return false, nil }
+func (c *codex) InstallStopHook(command string) (bool, error)          { return false, nil }
+func (c *codex) UninstallStopHook(command string) (bool, error)        { return false, nil }

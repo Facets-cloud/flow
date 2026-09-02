@@ -223,4 +223,3 @@ func sparkline(values []int) string {
 	}
 	return string(out)
 }
-

@@ -82,6 +82,9 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: task %q not updated\n", task.Slug)
 		return 1
 	}
+	if err := flowdb.CleanupTaskBus(db, task.Slug); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
+	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
 
 	if task.SessionID.Valid && task.SessionID.String != "" {

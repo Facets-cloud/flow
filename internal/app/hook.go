@@ -5,6 +5,7 @@ import (
 	"flow/internal/flowdb"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
@@ -30,6 +31,13 @@ func cmdHook(args []string) int {
 		return cmdHookSessionStart(rest)
 	case "user-prompt-submit":
 		return cmdHookUserPromptSubmit(rest)
+	case "post-tool-use":
+		// Retired: per-tool-call delivery was removed in favor of the
+		// `flow inbox pop --wait` listener discipline. Kept as a silent
+		// no-op so stale settings.json entries never error.
+		return 0
+	case "stop":
+		return cmdHookStop(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown hook subcommand %q\n", sub)
 		return 2
@@ -59,8 +67,11 @@ func cmdHookSessionStart(args []string) int {
 
 	slug := lookupBoundTaskSlug()
 	if slug == "" {
+		// Unbound sessions are where the human usually sits — surface
+		// their pending-mail count here too (inform-only).
 		return emitAmbientSkillHint()
 	}
+	pageCtx := busSessionStartContext()
 
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
@@ -91,7 +102,7 @@ func cmdHookSessionStart(args []string) int {
 		slug,
 	)
 
-	return emitSessionStartContext(instructions + appendStaleVersionHint())
+	return emitSessionStartContext(instructions + appendStaleVersionHint() + pageCtx)
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
@@ -191,7 +202,7 @@ func emitAmbientSkillHint() int {
 		"done and archived tasks/projects (which need explicit `--status done` / " +
 		"`--include-archived` flags on the list commands). The skill's §4.10 governs " +
 		"how to lazy-load these without reading them eagerly every turn."
-	return emitSessionStartContext(hint + appendStaleVersionHint())
+	return emitSessionStartContext(hint + appendStaleVersionHint() + busHumanPendingNotice())
 }
 
 // emitSessionStartContext is a thin wrapper around emitHookContext for
@@ -238,10 +249,15 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	pageCtx := busPromptSubmitContext()
 	t := lookupBoundTask()
 	if t == nil {
-		// Unbound — no-op, emit nothing.
-		return 0
+		// Unbound — page-bus context (an unbound session can still have
+		// paged the user) is the only possible payload.
+		if pageCtx == "" {
+			return 0
+		}
+		return emitHookContext("UserPromptSubmit", strings.TrimSpace(pageCtx))
 	}
 	anchor := fmt.Sprintf(
 		"flow session → task %q (%s). Per §4.11/§4.7: if this prompt is "+
@@ -249,5 +265,5 @@ func cmdHookUserPromptSubmit(args []string) int {
 			"offer to close it out. Else proceed silently.",
 		t.Name, t.Slug,
 	)
-	return emitHookContext("UserPromptSubmit", anchor)
+	return emitHookContext("UserPromptSubmit", anchor+pageCtx)
 }

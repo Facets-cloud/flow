@@ -279,4 +279,23 @@ type Harness interface {
 	// UninstallUserPromptSubmitHook removes any UserPromptSubmit entry
 	// matching `command`. Used by `flow skill uninstall`.
 	UninstallUserPromptSubmitHook(command string) (removed bool, err error)
+
+	// InstallPostToolUseHook idempotently registers `command` as a
+	// PostToolUse hook (matcher: every tool). Drains the paging-bus
+	// inbox mid-turn and keeps page escalation alive. Harnesses without
+	// per-tool hooks no-op with (false, nil).
+	InstallPostToolUseHook(command string) (added bool, err error)
+
+	// UninstallPostToolUseHook removes any PostToolUse entry matching
+	// `command`.
+	UninstallPostToolUseHook(command string) (removed bool, err error)
+
+	// InstallStopHook idempotently registers `command` as a Stop
+	// (turn-end) hook. Nudges the agent to broadcast a one-liner post
+	// when its task has watchers. Harnesses without turn-end hooks
+	// no-op with (false, nil).
+	InstallStopHook(command string) (added bool, err error)
+
+	// UninstallStopHook removes any Stop entry matching `command`.
+	UninstallStopHook(command string) (removed bool, err error)
 }

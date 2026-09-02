@@ -77,6 +77,14 @@ func Run(args []string) int {
 		return cmdStats(rest)
 	case "hook":
 		return cmdHook(rest)
+	case "message", "msg":
+		return cmdMessage(rest)
+	case "inbox":
+		return cmdInbox(rest)
+	case "broadcast", "post":
+		return cmdBroadcast(rest)
+	case "watch":
+		return cmdWatch(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -127,6 +135,23 @@ Edit / mutate:
   flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>
+
+Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
+  flow message <assignee>[/<task-slug>] "<body>" [--urgent]
+                                     (message a human — pending + escalation schedule until
+                                      answered — or the session bound to a task; alias: msg)
+  flow inbox [--as <assignee>] [--json]        (what's pending; --as self = the human even in a
+                                                bound session; --as = any assignee's queue)
+  flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
+                                     (atomically consume the oldest, one at a time; --wait blocks
+                                      until mail arrives — park a Monitor on it; safe with
+                                      concurrent consumers)
+  flow inbox ack [<id>]              (answer by hand; replying in the sending session acks automatically)
+  flow inbox due [--as <assignee>] [--json]   (escalation feed for YOUR notifier script: prints
+                                      due messages, advances their backoff; flow ships no UI)
+  flow inbox stats                   (wait-time metrics)
+  flow broadcast "<one-liner>"       (fan out to whoever watches this task/project/assignee; alias: post)
+  flow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
 
 Workdirs:
   flow workdir list

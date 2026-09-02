@@ -7,6 +7,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.27] — 2026-09-02
+
+### Added
+
+- **Message bus: `flow message` / `flow broadcast` / `flow watch` / `flow inbox`.**
+  Sessions call for the user's attention, message each other's tasks, and
+  broadcast one-liners to watchers — queued in flow.db, CLI-only (no
+  notification UI; script your own on `flow inbox due`). Directed messages to
+  a human stay pending on an escalating notify schedule (1m→30m cap) until
+  answered; the user's reply in the sending session acks automatically and the
+  agent is told how long it waited (`flow inbox stats` aggregates). Broadcasts
+  fan out on write to current watchers of the task, its project, or its
+  assignee and never interrupt. `flow inbox pop` atomically claims the oldest
+  message (exactly-once under concurrent consumers); `pop --wait` blocks until
+  mail arrives — the canonical agent listener is one persistent Monitor loop
+  (`while true; do flow inbox pop --wait --timeout 300 --json || true; done`).
+  `--as <assignee>` consumes any human queue (`--as self` from inside a bound
+  session; other assignees for monitor/transport workers). Hooks are strictly
+  inform-only (pending counts; they never consume mail): SessionStart also
+  teaches the listener discipline, UserPromptSubmit carries the ack contract,
+  and a new Stop hook nudges watched tasks to broadcast (30m→4h decline
+  backoff, `stop_hook_active` loop guard; needs Claude Code ≥ v2.1.163).
+  Retention is row-count based (newest 1000 rollable rows; pending directed
+  messages never expire) and task close-out cleans the task's bus footprint.
+  Skill: new §4.18 plus `references/messaging.md`.
+
 ## [0.1.0-alpha.26] — 2026-08-17
 
 ### Added
