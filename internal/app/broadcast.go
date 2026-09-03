@@ -106,7 +106,7 @@ func taskTopics(t *flowdb.Task) []string {
 	if t.ProjectSlug.Valid && t.ProjectSlug.String != "" {
 		topics = append(topics, t.ProjectSlug.String)
 	}
-	assignee := busSelf
+	assignee := busUser
 	if t.Assignee.Valid && t.Assignee.String != "" {
 		assignee = t.Assignee.String
 	}

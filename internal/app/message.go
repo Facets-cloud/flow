@@ -16,15 +16,14 @@ import (
 //
 //	flow message <assignee>[/<task-slug>] "<body>" [--urgent]
 //
-// A bare assignee (e.g. `self`) addresses the human: the message stays
-// pending, on an escalating notify schedule (`flow inbox due`), until
-// the user answers (their next reply in the sending session acks it,
-// or `flow inbox ack`/`pop`). `<assignee>/<task-slug>` addresses the
-// session bound to that task: delivered into its context via hooks or
-// `flow inbox pop`, no escalation.
+// A bare assignee (`user` = the local human) addresses a person: the
+// message stays pending until answered (their next reply in the sending
+// session acks it, or they `flow inbox pop`). `<assignee>/<task-slug>`
+// addresses the session bound to that task. A sender can never message
+// its own address.
 //
-// flow draws no attention itself — notification UX is user scripting
-// on top of `flow inbox due` (see skill references/messaging.md).
+// flow draws no attention itself — notification UX is the user's own
+// polling of `flow inbox` (see skill references/messaging.md).
 func cmdMessage(args []string) int {
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent]`)
@@ -65,25 +64,29 @@ func cmdMessage(args []string) int {
 		return 2
 	}
 	s := currentBusSender()
+	if toSlug != "" && toSlug == s.TaskSlug {
+		fmt.Fprintf(os.Stderr, "error: %s/%s is THIS session's own inbox — you are the one who would pop it. Message `user` for the human, or another task's address.\n", toAssignee, toSlug)
+		return 2
+	}
+	if toSlug == "" && s.TaskSlug == "" && toAssignee == s.Assignee {
+		fmt.Fprintln(os.Stderr, "error: that is your own queue — you would be messaging yourself. Use a task update or note instead.")
+		return 2
+	}
 
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: s.Assignee, FromTaskSlug: s.TaskSlug, SenderSessionID: s.SessionID,
 		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: *urgent,
 	}
-	if toSlug == "" {
-		// Human-directed: due for notification immediately, then backoff.
-		m.NextNotifyAt = time.Now().UTC().Format(time.RFC3339)
-	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	if toSlug == "" {
-		if toAssignee != busSelf {
+		if toAssignee != busUser {
 			fmt.Printf("note: no cross-user transport yet — %q will see this only on this machine\n", toAssignee)
 		}
-		fmt.Printf("messaged %s [%s] — pending until answered (their reply in this session, `flow inbox pop`, or `flow inbox ack`)\n",
+		fmt.Printf("messaged %s [%s] — pending until answered (their reply in this session, or `flow inbox pop`)\n",
 			toAssignee, m.ID)
 	} else {
 		fmt.Printf("messaged session %s/%s [%s] — delivered on its next activity or pop\n",
@@ -93,9 +96,12 @@ func cmdMessage(args []string) int {
 	return 0
 }
 
-// busSelf is the assignee name for the local user. Tasks with a NULL
-// assignee belong to self; multi-user addressing rides on tasks.assignee.
-const busSelf = "self"
+// busUser is the reserved assignee for the local human ("user" — the
+// person driving flow). Tasks with a NULL assignee belong to them;
+// multi-user addressing rides on tasks.assignee. Deliberately not
+// "self": that spelling confused agents into reading `message self` as
+// talking to themselves.
+const busUser = "user"
 
 const busBodyMax = 200
 
@@ -124,7 +130,7 @@ type busSender struct {
 
 func currentBusSender() busSender {
 	return busSender{
-		Assignee:  busSelf,
+		Assignee:  busUser,
 		TaskSlug:  lookupBoundTaskSlug(),
 		SessionID: currentSessionID(),
 	}
@@ -161,7 +167,7 @@ func parseBusAddress(db *sql.DB, addr string) (string, string, error) {
 		if err := deliverableTask(t); err != nil {
 			return "", "", err
 		}
-		return busSelf, addr, nil
+		return busUser, addr, nil
 	}
 	return addr, "", nil
 }

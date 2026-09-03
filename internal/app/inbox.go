@@ -15,16 +15,15 @@ import (
 //
 //	flow inbox [--as <assignee>] [--json]
 //	flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
-//	flow inbox ack [<id>] [--as <assignee>]
-//	flow inbox due [--as <assignee>] [--json]
 //	flow inbox stats [--as <assignee>]
 //
-// Identity is implicit: a bound session consumes as self/<task-slug>
-// (its own mail); an unbound/human invocation consumes as self.
+// Identity is implicit: a bound session consumes as user/<task-slug>
+// (its own mail); an unbound/human invocation consumes as user.
 // Override: --as <assignee> targets a human queue directly — `--as
-// self` is the user's own inbox even inside a bound session (e.g. a
+// user` is the human's own inbox even inside a bound session (e.g. a
 // dedicated inbox-monitor task); any other assignee serves monitor/
-// transport workers draining that queue.
+// transport workers draining that queue. pop is the ONLY consumption
+// API: it answers, delivers, and clears — one verb, loop it freely.
 //
 // `pop --wait` blocks until a message exists, pops exactly one, and
 // exits 0 — built to be parked on by a Claude session's Monitor tool or
@@ -40,10 +39,6 @@ func cmdInbox(args []string) int {
 	switch sub {
 	case "pop":
 		return inboxPop(rest)
-	case "ack":
-		return inboxAck(rest)
-	case "due":
-		return inboxDue(rest)
 	case "stats":
 		return inboxStats(rest)
 	case "ls", "list":
@@ -86,7 +81,6 @@ type busMsgJSON struct {
 	Body      string   `json:"body"`
 	Urgent    bool     `json:"urgent"`
 	Status    string   `json:"status"`
-	Attempts  int      `json:"attempts"`
 	WaitedS   float64  `json:"waited_s,omitempty"`
 }
 
@@ -101,7 +95,7 @@ func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
 		From: addrJSON{Assignee: m.FromAssignee, TaskSlug: m.FromTaskSlug},
 		To:   addrJSON{Assignee: m.ToAssignee, TaskSlug: m.ToTaskSlug},
 		Body: m.Body, Urgent: m.Urgent, Status: m.Status,
-		Attempts: m.Attempts, WaitedS: m.WaitedS,
+		WaitedS: m.WaitedS,
 	}
 }
 
@@ -151,11 +145,7 @@ func inboxList(args []string) int {
 		} else if m.Urgent {
 			mark = "⚠"
 		}
-		extra := ""
-		if m.Kind == "message" && m.ToTaskSlug == "" {
-			extra = fmt.Sprintf("  (notified %dx)", m.Attempts)
-		}
-		fmt.Printf("%s [%s] %s%s  %s: %s\n", mark, m.ID, busAge(m.CreatedAt, now), extra, busFrom(m), m.Body)
+		fmt.Printf("%s [%s] %s  %s: %s\n", mark, m.ID, busAge(m.CreatedAt, now), busFrom(m), m.Body)
 	}
 	fmt.Printf("\nconsume one at a time: flow inbox pop\n")
 	return 0
@@ -259,96 +249,6 @@ func inboxPop(args []string) int {
 		}
 		time.Sleep(2 * time.Second)
 	}
-}
-
-func inboxAck(args []string) int {
-	fs := flagSet("inbox ack")
-	as := consumerFlags(fs)
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	db, err := openBusDB()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	defer db.Close()
-	if rest := fs.Args(); len(rest) == 1 {
-		m, err := flowdb.AckMessageByID(db, rest[0], "manual")
-		if err != nil || m == nil {
-			fmt.Println("nothing to ack")
-			return 0
-		}
-		fmt.Printf("acked [%s] after %s: %s\n", m.ID, fmtBusWait(m.WaitedS), m.Body)
-		return 0
-	}
-	s := resolveConsumer(*as)
-	assignee := s.Assignee
-	rows, _ := flowdb.PendingForHuman(db, assignee)
-	acked := 0
-	for _, r := range rows {
-		if r.Kind != "message" {
-			continue
-		}
-		if m, _ := flowdb.AckMessageByID(db, r.ID, "manual"); m != nil {
-			fmt.Printf("acked [%s] after %s: %s\n", m.ID, fmtBusWait(m.WaitedS), m.Body)
-			acked++
-		}
-	}
-	if acked == 0 {
-		fmt.Println("nothing to ack")
-	}
-	return 0
-}
-
-// inboxDue is the escalation primitive for user notifier scripts: it
-// prints human-directed messages whose notify deadline has passed and
-// advances each row's backoff. Poll it from cron/a loop and pipe into
-// whatever notification UX you want. Prints nothing (exit 1) when
-// nothing is due. Default output is tab-separated (id, attempts, age,
-// urgent, from, body); --json emits an array.
-func inboxDue(args []string) int {
-	fs := flagSet("inbox due")
-	as := consumerFlags(fs)
-	asJSON := fs.Bool("json", false, "emit due messages as a JSON array")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	db, err := openBusDB()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	defer db.Close()
-	assignee := resolveConsumer(*as).Assignee
-	now := time.Now()
-	due, err := flowdb.DueBusMessages(db, assignee, now)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	if len(due) == 0 {
-		return 1
-	}
-	for _, m := range due {
-		_ = flowdb.BumpNotifyAttempt(db, m.ID, m.Attempts, now)
-	}
-	if *asJSON {
-		out := make([]busMsgJSON, len(due))
-		for i, m := range due {
-			out[i] = toMsgJSON(m)
-		}
-		return emitJSON(out)
-	}
-	for _, m := range due {
-		urgent := "0"
-		if m.Urgent {
-			urgent = "1"
-		}
-		fmt.Printf("%s\t%d\t%s\t%s\t%s\t%s\n",
-			m.ID, m.Attempts, busAge(m.CreatedAt, now), urgent, busFrom(m), m.Body)
-	}
-	return 0
 }
 
 func inboxStats(args []string) int {

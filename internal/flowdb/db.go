@@ -255,9 +255,9 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply bus schema: %w", err)
 	}
-	if err := migrateBusKindBroadcast(db); err != nil {
+	if err := migrateBusSelfToUser(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate bus kind: %w", err)
+		return nil, fmt.Errorf("migrate bus assignee: %w", err)
 	}
 	// bus_nudges.attempts arrived after the table shipped; backfill it
 	// on databases created in between.
