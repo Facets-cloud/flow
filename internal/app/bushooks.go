@@ -72,7 +72,7 @@ func busPromptSubmitContext() string {
 
 	var b strings.Builder
 	if s.SessionID != "" {
-		acked, _ := flowdb.AckHumanMessagesFromSession(db, s.SessionID, busSelf, "prompt")
+		acked, _ := flowdb.AckHumanMessagesFromSession(db, s.SessionID, busUser, "prompt")
 		for _, m := range acked {
 			b.WriteString(fmt.Sprintf(
 				" flow-bus: the user has just returned — your message [%s] (%q) was answered after %s. "+
@@ -89,7 +89,7 @@ func busPromptSubmitContext() string {
 // humanPendingNotice renders the inform-only "the USER has mail" line
 // ("" when their queue is empty).
 func humanPendingNotice(db *sql.DB) string {
-	n, err := flowdb.PendingCountForHuman(db, busSelf)
+	n, err := flowdb.PendingCountForHuman(db, busUser)
 	if err != nil || n == 0 {
 		return ""
 	}

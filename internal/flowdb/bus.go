@@ -38,8 +38,6 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     body               TEXT NOT NULL,
     urgent             INTEGER NOT NULL DEFAULT 0,
     status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','delivered','acked')),
-    attempts           INTEGER NOT NULL DEFAULT 0,
-    next_notify_at     TEXT,
     delivered_at       TEXT,
     acked_at           TEXT,
     waited_s           REAL,
@@ -79,15 +77,12 @@ type BusMessage struct {
 	Body            string
 	Urgent          bool
 	Status          string
-	Attempts        int
-	NextNotifyAt    string
 	WaitedS         float64
 }
 
 const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug,''),
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
-    urgent, status, attempts, COALESCE(next_notify_at,''),
-    COALESCE(waited_s,0)`
+    urgent, status, COALESCE(waited_s,0)`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -104,7 +99,7 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		var urgent int
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
-			&urgent, &m.Status, &m.Attempts, &m.NextNotifyAt, &m.WaitedS); err != nil {
+			&urgent, &m.Status, &m.WaitedS); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
@@ -113,8 +108,7 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 	return out, rows.Err()
 }
 
-// InsertBusMessage inserts one message row. next_notify_at should be
-// set only for kind=message to a human (its escalation schedule).
+// InsertBusMessage inserts one message row (always status=pending).
 func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 	urgent := 0
 	if m.Urgent {
@@ -122,11 +116,11 @@ func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 	}
 	_, err := db.Exec(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status, attempts, next_notify_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',0,?)`,
+         to_assignee, to_task_slug, body, urgent, status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending')`,
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
-		m.Body, urgent, NullIfEmpty(m.NextNotifyAt))
+		m.Body, urgent)
 	return err
 }
 
@@ -182,20 +176,6 @@ func AckHumanMessagesFromSession(db *sql.DB, sessionID, toAssignee, by string) (
 	return acked, nil
 }
 
-// AckMessageByID acks one message by id. Returns the row, or nil when
-// it doesn't exist, isn't pending, or was claimed concurrently.
-func AckMessageByID(db *sql.DB, id, by string) (*BusMessage, error) {
-	rows, err := queryBusMsgs(db, `id=? AND status='pending'`, id)
-	if err != nil || len(rows) == 0 {
-		return nil, err
-	}
-	claimed, err := ClaimAcked(db, rows[0], by)
-	if err != nil || !claimed {
-		return nil, err
-	}
-	return rows[0], nil
-}
-
 // ClaimAcked atomically transitions one message pending→acked,
 // recording the wait. Returns false when another consumer claimed it
 // first. Together with ClaimDelivered this makes concurrent consumers
@@ -218,120 +198,6 @@ func waitedSeconds(createdAt string, now time.Time) float64 {
 		return 0
 	}
 	return now.Sub(t).Seconds()
-}
-
-// DueBusMessages returns pending human-directed messages whose
-// next_notify_at has passed — the primitive user notifier scripts poll
-// (`flow inbox due`). Callers bump each returned row.
-func DueBusMessages(db *sql.DB, assignee string, now time.Time) ([]*BusMessage, error) {
-	return queryBusMsgs(db,
-		`kind='message' AND status='pending' AND to_task_slug IS NULL AND to_assignee=?
-         AND next_notify_at IS NOT NULL AND next_notify_at <= ?`,
-		assignee, now.UTC().Format(time.RFC3339))
-}
-
-// BumpNotifyAttempt records one escalation firing: attempts+1 and the
-// next backoff deadline. attempts counts firings so far, so the delay
-// after the first firing is the base: 1m, 2m, 4m, 8m, 16m, then capped
-// at 30m. The exponent is clamped BEFORE shifting so unbounded attempts
-// can never overflow past the cap.
-func BumpNotifyAttempt(db *sql.DB, id string, attempts int, now time.Time) error {
-	delay := 30 * time.Minute
-	if attempts >= 0 && attempts < 5 {
-		delay = time.Duration(60<<uint(attempts)) * time.Second
-	}
-	_, err := db.Exec(`UPDATE bus_messages SET attempts=?, next_notify_at=? WHERE id=?`,
-		attempts+1, now.Add(delay).UTC().Format(time.RFC3339), id)
-	return err
-}
-
-// PendingCountForTask returns how many undelivered rows await a task's
-// session — the inform-only primitive hooks use (hooks never consume).
-func PendingCountForTask(db *sql.DB, slug string) (int, error) {
-	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status='pending' AND to_task_slug=?`, slug).Scan(&n)
-	return n, err
-}
-
-// PendingCountForHuman is the human-queue equivalent.
-func PendingCountForHuman(db *sql.DB, assignee string) (int, error) {
-	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages
-        WHERE status='pending' AND to_assignee=? AND to_task_slug IS NULL`, assignee).Scan(&n)
-	return n, err
-}
-
-// AddWatch subscribes `watcher` (address form: "self" for the human,
-// "self/<task-slug>" for a session) to `watched` (task slug, project
-// slug, or assignee).
-func AddWatch(db *sql.DB, watcher, watched string) error {
-	_, err := db.Exec(`INSERT OR IGNORE INTO bus_watches (watcher, watched, created_at)
-        VALUES (?,?,?)`, watcher, watched, NowISO())
-	return err
-}
-
-// RemoveWatch unsubscribes. Returns whether a row was removed.
-func RemoveWatch(db *sql.DB, watcher, watched string) (bool, error) {
-	res, err := db.Exec(`DELETE FROM bus_watches WHERE watcher=? AND watched=?`, watcher, watched)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
-}
-
-// ListWatches returns the watch targets for one watcher.
-func ListWatches(db *sql.DB, watcher string) ([]string, error) {
-	rows, err := db.Query(`SELECT watched FROM bus_watches WHERE watcher=? ORDER BY watched`, watcher)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var w string
-		if err := rows.Scan(&w); err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
-}
-
-// WatchersOf returns the distinct watcher addresses subscribed to any
-// of the given topics (a post's task slug, project slug, assignee).
-func WatchersOf(db *sql.DB, topics []string) ([]string, error) {
-	if len(topics) == 0 {
-		return nil, nil
-	}
-	q := `SELECT DISTINCT watcher FROM bus_watches WHERE watched IN (?` +
-		repeatPlaceholder(len(topics)-1) + `)`
-	args := make([]any, len(topics))
-	for i, t := range topics {
-		args[i] = t
-	}
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var w string
-		if err := rows.Scan(&w); err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
-}
-
-func repeatPlaceholder(n int) string {
-	s := ""
-	for i := 0; i < n; i++ {
-		s += ",?"
-	}
-	return s
 }
 
 // GetNudgeState returns when the Stop hook last nudged a task to post
@@ -410,6 +276,95 @@ func GetBusStats(db *sql.DB, assignee string) (*BusStats, error) {
 	return s, nil
 }
 
+// PendingCountForTask returns how many undelivered rows await a task's
+// session — the inform-only primitive hooks use (hooks never consume).
+func PendingCountForTask(db *sql.DB, slug string) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE status='pending' AND to_task_slug=?`, slug).Scan(&n)
+	return n, err
+}
+
+// PendingCountForHuman is the human-queue equivalent.
+func PendingCountForHuman(db *sql.DB, assignee string) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages
+        WHERE status='pending' AND to_assignee=? AND to_task_slug IS NULL`, assignee).Scan(&n)
+	return n, err
+}
+
+// AddWatch subscribes `watcher` (address form: "user" for the human,
+// "user/<task-slug>" for a session) to `watched` (task slug, project
+// slug, or assignee).
+func AddWatch(db *sql.DB, watcher, watched string) error {
+	_, err := db.Exec(`INSERT OR IGNORE INTO bus_watches (watcher, watched, created_at)
+        VALUES (?,?,?)`, watcher, watched, NowISO())
+	return err
+}
+
+// RemoveWatch unsubscribes. Returns whether a row was removed.
+func RemoveWatch(db *sql.DB, watcher, watched string) (bool, error) {
+	res, err := db.Exec(`DELETE FROM bus_watches WHERE watcher=? AND watched=?`, watcher, watched)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ListWatches returns the watch targets for one watcher.
+func ListWatches(db *sql.DB, watcher string) ([]string, error) {
+	rows, err := db.Query(`SELECT watched FROM bus_watches WHERE watcher=? ORDER BY watched`, watcher)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// WatchersOf returns the distinct watcher addresses subscribed to any
+// of the given topics (a broadcast's task slug, project slug, assignee).
+func WatchersOf(db *sql.DB, topics []string) ([]string, error) {
+	if len(topics) == 0 {
+		return nil, nil
+	}
+	q := `SELECT DISTINCT watcher FROM bus_watches WHERE watched IN (?` +
+		repeatPlaceholder(len(topics)-1) + `)`
+	args := make([]any, len(topics))
+	for i, t := range topics {
+		args[i] = t
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func repeatPlaceholder(n int) string {
+	s := ""
+	for i := 0; i < n; i++ {
+		s += ",?"
+	}
+	return s
+}
+
 // CleanupTaskBus removes a closed task's bus footprint — called from
 // `flow done` and `flow archive`. Deleted: PENDING rows addressed TO
 // the task (undeliverable — no session will ever pop them; without this
@@ -482,52 +437,20 @@ func SweepBus(db *sql.DB, now time.Time) error {
 	return nil
 }
 
-// migrateBusKindBroadcast rebuilds bus_messages on databases created
-// when the broadcast kind was still spelled 'post' (the CHECK
-// constraint pins the old value, and SQLite cannot ALTER a CHECK).
-func migrateBusKindBroadcast(db *sql.DB) error {
-	var ddl string
-	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='bus_messages'`).Scan(&ddl)
-	if err == sql.ErrNoRows {
-		return nil
+// migrateBusSelfToUser renames the reserved assignee 'self' to 'user'
+// in existing rows (the old spelling confused agents into reading
+// "message self" as talking to themselves). Idempotent and cheap; runs
+// on every open.
+func migrateBusSelfToUser(db *sql.DB) error {
+	for _, q := range []string{
+		`UPDATE bus_messages SET to_assignee='user' WHERE to_assignee='self'`,
+		`UPDATE bus_messages SET from_assignee='user' WHERE from_assignee='self'`,
+		`UPDATE bus_watches SET watcher='user' WHERE watcher='self'`,
+		`UPDATE bus_watches SET watcher='user' || substr(watcher, 5) WHERE watcher LIKE 'self/%'`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(ddl, "'post'") {
-		return nil
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`ALTER TABLE bus_messages RENAME TO bus_messages_old`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(busDDL); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO bus_messages
-        (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status, attempts,
-         next_notify_at, delivered_at, acked_at, waited_s, acked_by)
-        SELECT id, created_at,
-        CASE WHEN kind='post' THEN 'broadcast' ELSE kind END,
-        from_assignee, from_task_slug, sender_session_id, to_assignee, to_task_slug,
-        body, urgent, status, attempts, next_notify_at, delivered_at,
-        acked_at, waited_s, acked_by FROM bus_messages_old`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DROP TABLE bus_messages_old`); err != nil {
-		return err
-	}
-	// RENAME kept the old table's indexes under their original names, so
-	// the busDDL above skipped creating them on the new table; now that
-	// the DROP freed the names, run it again so the new table is indexed
-	// within this same transaction.
-	if _, err := tx.Exec(busDDL); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return nil
 }
