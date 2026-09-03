@@ -47,29 +47,13 @@ func TestMessageHumanLifecycle(t *testing.T) {
 	mkBusTask(t, db, "task-a", "sid-msg-1")
 
 	out := captureStdout(t, func() {
-		if rc := cmdMessage([]string{"self", "need release approval"}); rc != 0 {
+		if rc := cmdMessage([]string{"user", "need release approval"}); rc != 0 {
 			t.Fatalf("message rc != 0")
 		}
 	})
-	if !strings.Contains(out, "messaged self") {
+	if !strings.Contains(out, "messaged user") {
 		t.Errorf("send output: %s", out)
 	}
-
-	// Human-directed messages are due for notification immediately.
-	out = captureStdout(t, func() {
-		if rc := cmdInbox([]string{"due"}); rc != 0 {
-			t.Fatalf("due rc != 0 on due message")
-		}
-	})
-	if !strings.Contains(out, "need release approval") {
-		t.Errorf("due output: %s", out)
-	}
-	// due advanced the schedule: nothing due now, exit 1.
-	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"due"}); rc != 1 {
-			t.Errorf("second due should exit 1")
-		}
-	})
 
 	// The user replying in the sender session acks + reports the wait.
 	out = captureStdout(t, func() {
@@ -90,21 +74,21 @@ func TestMessageHumanLifecycle(t *testing.T) {
 
 func TestInboxPopConsumesOneAtATime(t *testing.T) {
 	setupFlowRoot(t)
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "") // consume as the human
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-p") // messages come from a bound session
 	db := openFlowDB(t)
-	mkBusTask(t, db, "task-a", "")
+	mkBusTask(t, db, "task-p", "sid-p")
 
 	captureStdout(t, func() {
-		if rc := cmdMessage([]string{"self", "first"}); rc != 0 {
+		if rc := cmdMessage([]string{"user", "first"}); rc != 0 {
 			t.Fatal("msg1")
 		}
-		if rc := cmdMessage([]string{"self", "second"}); rc != 0 {
+		if rc := cmdMessage([]string{"user", "second"}); rc != 0 {
 			t.Fatal("msg2")
 		}
 	})
 
 	out := captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
 			t.Fatalf("pop rc != 0")
 		}
 	})
@@ -112,18 +96,18 @@ func TestInboxPopConsumesOneAtATime(t *testing.T) {
 		t.Errorf("pop should consume exactly the oldest: %s", out)
 	}
 	// Popping a human-directed message ACKS it.
-	s, _ := flowdb.GetBusStats(db, "self")
+	s, _ := flowdb.GetBusStats(db, "user")
 	if s.Acked != 1 || s.Pending != 1 {
 		t.Errorf("after one pop: %+v", s)
 	}
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
 			t.Fatalf("pop2 rc != 0")
 		}
 	})
 	// Empty inbox: exit 1 (script/Monitor friendly).
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop"}); rc != 1 {
+		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 1 {
 			t.Errorf("empty pop should exit 1")
 		}
 	})
@@ -133,7 +117,7 @@ func TestMessageBodyCapAndAddressErrors(t *testing.T) {
 	setupFlowRoot(t)
 	long := strings.Repeat("x", busBodyMax+1)
 	out := captureStdout(t, func() {
-		if rc := cmdMessage([]string{"self", long}); rc != 2 {
+		if rc := cmdMessage([]string{"user", long}); rc != 2 {
 			t.Errorf("overlong body rc != 2")
 		}
 	})
@@ -141,7 +125,7 @@ func TestMessageBodyCapAndAddressErrors(t *testing.T) {
 		t.Errorf("cap message: %s", out)
 	}
 	out = captureStdout(t, func() {
-		if rc := cmdMessage([]string{"self/nope-not-a-task", "hi"}); rc != 2 {
+		if rc := cmdMessage([]string{"user/nope-not-a-task", "hi"}); rc != 2 {
 			t.Errorf("bad task address rc != 2")
 		}
 	})
@@ -170,9 +154,9 @@ func TestBroadcastFanoutToWatchers(t *testing.T) {
 	}
 
 	for _, w := range [][2]string{
-		{"self/task-c", "task-a"},
-		{"self", "task-a"},
-		{"self/task-a", "task-a"}, // self-watch: must be skipped on fan-out
+		{"user/task-c", "task-a"},
+		{"user", "task-a"},
+		{"user/task-a", "task-a"}, // self-watch: must be skipped on fan-out
 	} {
 		if err := flowdb.AddWatch(db, w[0], w[1]); err != nil {
 			t.Fatal(err)
@@ -190,7 +174,7 @@ func TestBroadcastFanoutToWatchers(t *testing.T) {
 	if len(rows) != 1 || rows[0].Kind != "broadcast" || rows[0].FromTaskSlug != "task-a" {
 		t.Errorf("task-c inbox = %+v", rows)
 	}
-	if human, _ := flowdb.PendingForHuman(db, "self"); len(human) != 1 {
+	if human, _ := flowdb.PendingForHuman(db, "user"); len(human) != 1 {
 		t.Errorf("human feed = %+v", human)
 	}
 	if self, _ := flowdb.PendingForTask(db, "task-a"); len(self) != 0 {
@@ -232,20 +216,52 @@ func TestInboxAsAssigneeAndJSON(t *testing.T) {
 		t.Logf("status field: %s", m.Status)
 	}
 
-	// due --as --json for a fresh message to shashwat.
+	// list --as --json for a fresh message to shashwat.
 	captureStdout(t, func() {
 		if rc := cmdMessage([]string{"shashwat", "second thing"}); rc != 0 {
 			t.Fatalf("message rc != 0")
 		}
 	})
 	out = captureStdout(t, func() {
-		if rc := cmdInbox([]string{"due", "--as", "shashwat", "--json"}); rc != 0 {
-			t.Fatalf("due --as --json rc != 0")
+		if rc := cmdInbox([]string{"--as", "shashwat", "--json"}); rc != 0 {
+			t.Fatalf("inbox --as --json rc != 0")
 		}
 	})
 	var arr []busMsgJSON
 	if err := json.Unmarshal([]byte(out), &arr); err != nil || len(arr) != 1 {
-		t.Fatalf("due json = %v, %v\nraw: %s", arr, err, out)
+		t.Fatalf("inbox json = %v, %v\nraw: %s", arr, err, out)
+	}
+}
+
+func TestSelfSendGates(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-g")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-g", "sid-g")
+
+	// A bound session must not message its own inbox.
+	out := captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user/task-g", "note to myself"}); rc != 2 {
+			t.Errorf("own-inbox send should rc=2")
+		}
+	})
+	if !strings.Contains(out, "own inbox") {
+		t.Errorf("gate message: %s", out)
+	}
+	// An unbound human must not message their own queue.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	out = captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user", "hi me"}); rc != 2 {
+			t.Errorf("own-queue send should rc=2")
+		}
+	})
+	if !strings.Contains(out, "yourself") {
+		t.Errorf("gate message: %s", out)
+	}
+	var n int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&n)
+	if n != 0 {
+		t.Errorf("gated sends inserted rows")
 	}
 }
 
@@ -256,11 +272,11 @@ func TestWatchAsSelfSubscribesHuman(t *testing.T) {
 	mkBusTask(t, db, "task-a", "sid-w")
 
 	captureStdout(t, func() {
-		if rc := cmdWatch([]string{"task-a", "--as", "self"}); rc != 0 {
+		if rc := cmdWatch([]string{"task-a", "--as", "user"}); rc != 0 {
 			t.Fatalf("watch --as self rc != 0")
 		}
 	})
-	ws, _ := flowdb.ListWatches(db, "self")
+	ws, _ := flowdb.ListWatches(db, "user")
 	if len(ws) != 1 || ws[0] != "task-a" {
 		t.Errorf("--as self should subscribe as self: %v", ws)
 	}
@@ -312,7 +328,7 @@ func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 		t.Errorf("no-watcher stop hook should emit nothing, got: %s", out)
 	}
 
-	if err := flowdb.AddWatch(db, "self", "task-a"); err != nil {
+	if err := flowdb.AddWatch(db, "user", "task-a"); err != nil {
 		t.Fatal(err)
 	}
 	ctx := busHookContext(t, stopHookOnce(t, false))
@@ -344,8 +360,8 @@ func TestHooksInformButNeverConsume(t *testing.T) {
 
 	if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
 		ID: "msg00001", CreatedAt: flowdb.NowISO(), Kind: "message",
-		FromAssignee: "self", FromTaskSlug: "task-a",
-		ToAssignee: "self", ToTaskSlug: "task-b", Body: "your PR is unblocked",
+		FromAssignee: "user", FromTaskSlug: "task-a",
+		ToAssignee: "user", ToTaskSlug: "task-b", Body: "your PR is unblocked",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +398,7 @@ func TestHookStopSilentDuringHookContinuation(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-a", "sid-a")
-	if err := flowdb.AddWatch(db, "self", "task-a"); err != nil {
+	if err := flowdb.AddWatch(db, "user", "task-a"); err != nil {
 		t.Fatal(err)
 	}
 	// Even with every nudge condition met, stop_hook_active must win.
@@ -407,7 +423,7 @@ func TestMessageRejectsFlagAddressAndClosedTasks(t *testing.T) {
 
 	// Flag in the address slot must be a usage error, not a queue named '--urgent'.
 	out := captureStdout(t, func() {
-		if rc := cmdMessage([]string{"--urgent", "self", "release blocked"}); rc != 2 {
+		if rc := cmdMessage([]string{"--urgent", "user", "release blocked"}); rc != 2 {
 			t.Errorf("flag-first should rc=2")
 		}
 	})
@@ -425,7 +441,7 @@ func TestMessageRejectsFlagAddressAndClosedTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = captureStdout(t, func() {
-		if rc := cmdMessage([]string{"self/task-z", "too late"}); rc != 2 {
+		if rc := cmdMessage([]string{"user/task-z", "too late"}); rc != 2 {
 			t.Errorf("done task should rc=2")
 		}
 	})

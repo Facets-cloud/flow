@@ -767,41 +767,33 @@ tag contract, the orchestrate-never-execute rule, the tick procedure, and the
 `flow add owner` / `flow owner start` commands → read **references/owners.md**.
 ### 4.18 Message bus (directed + broadcast)
 
-Sessions call for the user's attention or message each other over flow's
-bus. Two send verbs with opposite semantics — never blend them:
+Sessions message the human or each other over flow's bus. Two send verbs,
+one consumption verb:
 
-- `flow message <assignee>[/<task-slug>] "<body>"` — DIRECTED. Bare
-  assignee (e.g. `self`) messages the human: it stays pending on an
-  escalating notify schedule until they answer; use ONLY when blocked on
-  their decision, a needed permission, or a finished long task they're
-  waiting on — never routine progress, never when they're clearly active
-  in this session. `--urgent` for truly blocking matters.
-  `<assignee>/<task-slug>` messages that task's session (context
-  delivery, no interruption). Bodies short (≤200 chars, lead with the
-  ask; mention a task slug or update-file path for context). ONE
-  message per wait — it
-  escalates itself; NEVER re-send. The user's next reply in this session
-  acks it and a hook injects how long you waited (re-verify stale state
-  after long waits).
+- `flow message <assignee>[/<task-slug>] "<body>"` — DIRECTED. `user`
+  (bare) messages the local human: it stays pending until they answer;
+  use ONLY when blocked on their decision, a needed permission, or a
+  finished long task they're waiting on — never routine progress, never
+  when they're clearly active in this session. `--urgent` for truly
+  blocking matters. `<assignee>/<task-slug>` messages that task's
+  session. You can NEVER message your own address (flow rejects it).
+  Bodies short (≤200 chars, lead with the ask; mention a task slug for
+  context). ONE message per wait — NEVER re-send. The user's next reply
+  in this session acks it and a hook injects how long you waited
+  (re-verify stale state after long waits).
 - `flow broadcast "<one-liner>"` — BROADCAST. FYI to whoever watches
   this task/project/assignee; never interrupts anyone; you never pick
   recipients. If someone specific must act, message them too.
-- Consuming: `flow inbox` lists, `flow inbox pop` consumes one at a
-  time. At session start arm ONE persistent **Monitor** (preferred) —
-  the loop is required, Monitor streams stdout lines as events:
-  `Monitor(command: 'while true; do flow inbox pop --wait --timeout 300
-  --json || true; done', persistent: true)` — every message arrives as
-  a wake event, no re-arming ever (--json stays silent on timeouts).
-  Fallback without Monitor: background Bash `flow inbox pop --wait`,
-  single-shot — re-arm after every wake. That listener is the delivery
-  path (no per-tool-call hook).
-  `--as <assignee>` consumes a human queue instead (`--as self` = the
-  user's inbox, e.g. for a dedicated inbox-monitor task); `--json` for
-  programmatic output.
-  `flow watch <task|project|assignee>` subscribes you — watch whatever
-  you depend on and any task you create from this session.
-- flow ships NO notification UI: the user scripts their own on top of
-  `flow inbox due`. Never assume a message visually alerted anyone.
+- `flow inbox pop` is THE consumption API — it answers, delivers, and
+  clears in one atomic verb; loop it freely. At session start arm ONE
+  persistent **Monitor**: `Monitor(command: 'while true; do flow inbox
+  pop --wait --timeout 300 --json || true; done', persistent: true)` —
+  every message wakes you as an event, no re-arming (--json is silent
+  on timeouts). Background Bash single-shot `pop --wait` is the
+  fallback (re-arm per wake). `flow watch <task|project|assignee>`
+  subscribes you — watch what you depend on and tasks you create.
+- flow ships NO notification UI and hooks NEVER consume — they only
+  report pending counts. Never assume a message visually alerted anyone.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 
