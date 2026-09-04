@@ -139,7 +139,9 @@ Edit / mutate:
 Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
   flow message <assignee>[/<task-slug>] "<body>" [--urgent]
                                      (message a human — pending + escalation schedule until
-                                      answered — or the session bound to a task; alias: msg)
+                                      answered — or the session bound to a task; alias: msg.
+                                      Flags may come in any order; the body is positional or
+                                      --body "<text>". Only --urgent/--body are flags.)
   flow inbox [--as <assignee>] [--json]        (what's pending; --as self = the human even in a
                                                 bound session; --as = any assignee's queue)
   flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
