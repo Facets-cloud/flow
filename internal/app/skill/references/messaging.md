@@ -27,13 +27,19 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
 - Use ONLY for the three cases above. NOT for routine progress, and not
   when the user is clearly active in this session (they'll see it live).
 - ONE message per wait — NEVER re-send.
-- Body ≤200 chars, lead with the ask, name the task slug for context.
+- Body ≤500 chars, lead with the ask, name the task slug for context.
 - Ack is automatic when the user replies in THIS session (a hook injects
   "answered after <duration>" — factor the elapsed time in; re-verify
   stale state after a long wait). They can also answer via `flow inbox
   pop --as user` or `flow inbox read <id>`.
 - `--urgent` is a data flag for the user's own tooling; flow attaches no
   behavior to it.
+
+**Headless auto-mode exception.** A `flow do --auto` agent runs with no
+human watching, so a silent run looks stuck. Post regular progress updates
+as milestones land — `flow message user` for a checkpoint, or
+`flow broadcast` to watchers — not only when you need a decision. This is
+the one case where routine progress on the bus is expected.
 
 ### 2. Collaborate with peers
 

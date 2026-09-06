@@ -786,7 +786,11 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    if someone must act, message them too. You can NEVER message your own
    address (flow rejects it).
 
-Bodies ≤200 chars, lead with the ask, name a task slug for context.
+**Auto-mode exception:** a `flow do --auto` agent runs unwatched — a
+silent run looks stuck, so post progress via `flow message user`/`flow
+broadcast` as you go, not only for a decision.
+
+Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
 **Consuming.** `flow inbox` lists unread; `flow inbox --all` lists
 everything retained (read + unread); `flow inbox read <id>` shows/acks one

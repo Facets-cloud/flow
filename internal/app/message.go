@@ -170,7 +170,7 @@ func cmdMessage(args []string) int {
 // talking to themselves.
 const busUser = "user"
 
-const busBodyMax = 200
+const busBodyMax = 500
 
 func openBusDB() (*sql.DB, error) {
 	path, err := flowDBPath()
