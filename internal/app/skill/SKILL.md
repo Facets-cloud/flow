@@ -765,35 +765,48 @@ true", "automate maintenance of <repo>", "own <repo>'s bug-fixing", "run this
 on a loop". The full workflow — the operational interview, the `owner:<slug>`
 tag contract, the orchestrate-never-execute rule, the tick procedure, and the
 `flow add owner` / `flow owner start` commands → read **references/owners.md**.
-### 4.18 Message bus (directed + broadcast)
+### 4.18 Message bus (mail — unread/read)
 
-Sessions message the human or each other over flow's bus. Two send verbs,
-one consumption verb:
+Mail between sessions and the human. A message is **unread** until
+consumed, then **read**. Two purposes — pick the verb by intent:
 
-- `flow message <assignee>[/<task-slug>] "<body>"` — DIRECTED. `user`
-  (bare) messages the local human: it stays pending until they answer;
-  use ONLY when blocked on their decision, a needed permission, or a
-  finished long task they're waiting on — never routine progress, never
-  when they're clearly active in this session. `--urgent` for truly
-  blocking matters. `<assignee>/<task-slug>` messages that task's
-  session. You can NEVER message your own address (flow rejects it).
-  Bodies short (≤200 chars, lead with the ask; mention a task slug for
-  context). ONE message per wait — NEVER re-send. The user's next reply
-  in this session acks it and a hook injects how long you waited
-  (re-verify stale state after long waits).
-- `flow broadcast "<one-liner>"` — BROADCAST. FYI to whoever watches
-  this task/project/assignee; never interrupts anyone; you never pick
-  recipients. If someone specific must act, message them too.
-- `flow inbox pop` is THE consumption API — it answers, delivers, and
-  clears in one atomic verb; loop it freely. At session start arm ONE
-  persistent **Monitor**: `Monitor(command: 'while true; do flow inbox
-  pop --wait --timeout 300 --json || true; done', persistent: true)` —
-  every message wakes you as an event, no re-arming (--json is silent
-  on timeouts). Background Bash single-shot `pop --wait` is the
-  fallback (re-arm per wake). `flow watch <task|project|assignee>`
-  subscribes you — watch what you depend on and tasks you create.
-- flow ships NO notification UI and hooks NEVER consume — they only
-  report pending counts. Never assume a message visually alerted anyone.
+1. **Reach out to the user / get instructions.** `flow message user
+   "<ask>"` when the user is AFK and you need a decision, a permission
+   only they can grant, or a long task they're waiting on is done. Stays
+   unread until answered (never expires); `--urgent` for truly blocking.
+   NOT for routine progress, and not when they're clearly active here.
+   ONE per wait — NEVER re-send. Their reply in this session acks it (a
+   hook injects how long you waited — re-verify stale state after a long
+   wait).
+2. **Collaborate with peers.** `flow message <assignee>/<task-slug> "<what
+   to DO>"` hands context to that task's session (no interruption). Add
+   `--reply-to <id>` so a routed reply carries lineage (the bus doesn't
+   thread). `flow broadcast "<one-liner>"` FYIs whoever watches this
+   task/project/assignee — never interrupts, you never pick recipients;
+   if someone must act, message them too. You can NEVER message your own
+   address (flow rejects it).
+
+Bodies ≤200 chars, lead with the ask, name a task slug for context.
+
+**Consuming.** `flow inbox` lists unread; `flow inbox --all` lists
+everything retained (read + unread); `flow inbox read <id>` shows/acks one
+specific message out of order; `flow inbox pop` consumes the oldest.
+`--as user` drains the human queue from a monitor session; `--json` for
+scripts. At session start arm ONE persistent **Monitor** — pick by role:
+
+- **Consumer** (you handle each message): `Monitor(command: 'while true;
+  do flow inbox pop --wait --timeout 300 --json || true; done',
+  persistent: true)` — `pop` acks as it goes.
+- **Reader / relay** (you forward or just watch — must NOT ack): same loop
+  with `pop --wait --keep-unread` — wakes you without consuming the answer
+  (plain `pop` would silently ack mail you're only forwarding — the trap).
+
+Every message wakes you as an event, no re-arming (--json is silent on
+timeouts). Fallback without Monitor: background Bash `flow inbox pop
+--wait`, single-shot — re-arm per wake. `flow watch <task|project|assignee>`
+subscribes you — watch what you depend on and tasks you create. flow ships
+NO notification UI and hooks NEVER consume — never assume a message
+visually alerted anyone.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 

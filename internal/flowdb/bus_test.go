@@ -187,6 +187,114 @@ func TestBusSweepRollsConsumedByCount(t *testing.T) {
 	}
 }
 
+func TestReplyToRoundtripAndValidation(t *testing.T) {
+	db := openBusTestDB(t)
+	parent := &BusMessage{ID: "par00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", FromTaskSlug: "task-a", ToAssignee: "user", Body: "which region?"}
+	if err := InsertBusMessage(db, parent); err != nil {
+		t.Fatal(err)
+	}
+	child := &BusMessage{ID: "chi00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", ToTaskSlug: "task-a",
+		Body: "us-east-1", ReplyTo: "par00001"}
+	if err := InsertBusMessage(db, child); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetBusMessageByID(db, "chi00001")
+	if err != nil || got == nil || got.ReplyTo != "par00001" {
+		t.Fatalf("reply_to did not roundtrip: %+v, %v", got, err)
+	}
+	if miss, _ := GetBusMessageByID(db, "nope"); miss != nil {
+		t.Errorf("GetBusMessageByID returned a row for a missing id")
+	}
+}
+
+func TestReadMessageByID(t *testing.T) {
+	db := openBusTestDB(t)
+	// Human-directed unread → read/acked, wait recorded.
+	_ = InsertBusMessage(db, &BusMessage{ID: "hum00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", FromTaskSlug: "task-a", ToAssignee: "user", Body: "approve?"})
+	m, newly, err := ReadMessageByID(db, "hum00001", "read")
+	if err != nil || m == nil || !newly || m.Status != "acked" {
+		t.Fatalf("read unread human msg: %+v newly=%v err=%v", m, newly, err)
+	}
+	// Reading again is a display-only no-op.
+	if _, newly2, _ := ReadMessageByID(db, "hum00001", "read"); newly2 {
+		t.Errorf("second read of an acked message reported newly-read")
+	}
+	if s, _ := GetBusStats(db, "user"); s.Acked != 1 {
+		t.Errorf("read did not ack the human message: %+v", s)
+	}
+
+	// A delivered-but-unanswered human message (as a --keep-unread reader
+	// leaves it) is still readable → acked.
+	_ = InsertBusMessage(db, &BusMessage{ID: "hum00002", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", Body: "forwarded then answered"})
+	if ok, _ := ClaimDelivered(db, "hum00002"); !ok {
+		t.Fatal("claim delivered")
+	}
+	m, newly, err = ReadMessageByID(db, "hum00002", "read")
+	if err != nil || !newly || m.Status != "acked" {
+		t.Fatalf("read delivered human msg: %+v newly=%v err=%v", m, newly, err)
+	}
+
+	// Task-directed unread → delivered (not acked).
+	_ = InsertBusMessage(db, &BusMessage{ID: "tsk00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", FromTaskSlug: "task-a", ToAssignee: "user", ToTaskSlug: "task-b",
+		Body: "re-read state"})
+	m, newly, err = ReadMessageByID(db, "tsk00001", "read")
+	if err != nil || !newly || m.Status != "delivered" {
+		t.Fatalf("read task msg: %+v newly=%v err=%v", m, newly, err)
+	}
+	if miss, _, _ := ReadMessageByID(db, "ghost", "read"); miss != nil {
+		t.Errorf("ReadMessageByID returned a row for a missing id")
+	}
+}
+
+func TestAllForHumanIncludesReadAndUnread(t *testing.T) {
+	db := openBusTestDB(t)
+	_ = InsertBusMessage(db, &BusMessage{ID: "all00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", Body: "unread one"})
+	_ = InsertBusMessage(db, &BusMessage{ID: "all00002", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", Body: "will be read"})
+	if _, err := ClaimAcked(db, &BusMessage{ID: "all00002", CreatedAt: NowISO()}, "read"); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := PendingForHuman(db, "user")
+	if len(pending) != 1 {
+		t.Fatalf("PendingForHuman should show only unread: %v", pending)
+	}
+	all, err := AllForHuman(db, "user")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("AllForHuman should show read+unread: %v, %v", all, err)
+	}
+}
+
+func TestDeliveredHumanMessageIsImmortal(t *testing.T) {
+	db := openBusTestDB(t)
+	// A human-directed message a reader left delivered-but-unacked is an
+	// unanswered question — it must survive the rolling sweep like pending.
+	_ = InsertBusMessage(db, &BusMessage{ID: "imm00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", Body: "forwarded, awaiting answer"})
+	if ok, _ := ClaimDelivered(db, "imm00001"); !ok {
+		t.Fatal("claim delivered")
+	}
+	// Pile on rollable rows and shrink the window hard.
+	for i := 0; i < 5; i++ {
+		id := NowISO() + string(rune('a'+i))
+		_ = InsertBusMessage(db, &BusMessage{ID: id, CreatedAt: NowISO(), Kind: "broadcast",
+			FromAssignee: "user", ToAssignee: "user", Body: "fyi"})
+	}
+	if _, err := db.Exec(`DELETE FROM bus_messages WHERE ` + busRollable + `
+        AND id NOT IN (SELECT id FROM bus_messages WHERE ` + busRollable + `
+                       ORDER BY created_at DESC, rowid DESC LIMIT 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := GetBusMessageByID(db, "imm00001"); m == nil {
+		t.Errorf("delivered-but-unacked human message was rolled away — must be immortal")
+	}
+}
+
 func TestAckScopedToRepliersOwnQueue(t *testing.T) {
 	db := openBusTestDB(t)
 	_ = InsertBusMessage(db, &BusMessage{

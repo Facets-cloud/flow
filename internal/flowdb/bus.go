@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     delivered_at       TEXT,
     acked_at           TEXT,
     waited_s           REAL,
-    acked_by           TEXT
+    acked_by           TEXT,
+    reply_to           TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
     ON bus_messages(to_assignee, to_task_slug, status);
@@ -78,11 +79,12 @@ type BusMessage struct {
 	Urgent          bool
 	Status          string
 	WaitedS         float64
+	ReplyTo         string // parent message id (`--reply-to`), "" if none
 }
 
 const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug,''),
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
-    urgent, status, COALESCE(waited_s,0)`
+    urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,'')`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -99,7 +101,7 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		var urgent int
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
-			&urgent, &m.Status, &m.WaitedS); err != nil {
+			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
@@ -116,11 +118,11 @@ func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 	}
 	_, err := db.Exec(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'pending')`,
+         to_assignee, to_task_slug, body, urgent, status, reply_to)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?)`,
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
-		m.Body, urgent)
+		m.Body, urgent, NullIfEmpty(m.ReplyTo))
 	return err
 }
 
@@ -134,6 +136,78 @@ func PendingForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {
 // PendingForTask returns undelivered rows addressed to a task's session.
 func PendingForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
 	return queryBusMsgs(db, `status='pending' AND to_task_slug=?`, slug)
+}
+
+// AllForHuman returns EVERY row still in the table (any status — unread,
+// read, delivered) addressed to the human `assignee`. Backs `flow inbox
+// --all`: the mail-model view over the whole retained queue, not just
+// the unread head that PendingForHuman returns.
+func AllForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {
+	return queryBusMsgs(db, `to_assignee=? AND to_task_slug IS NULL`, assignee)
+}
+
+// AllForTask is the task-inbox equivalent of AllForHuman.
+func AllForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
+	return queryBusMsgs(db, `to_task_slug=?`, slug)
+}
+
+// GetBusMessageByID returns one row by id regardless of status (works
+// for already-consumed messages too), or nil when it doesn't exist.
+func GetBusMessageByID(db *sql.DB, id string) (*BusMessage, error) {
+	rows, err := queryBusMsgs(db, `id=?`, id)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return rows[0], nil
+}
+
+// ReadMessageByID marks one message read by id and returns (row, newly).
+// It fixes pop's oldest-first limitation: any specific message can be
+// acked/read directly, out of arrival order. A human-directed message
+// that is still unread (pending) OR was handed to a reader (delivered,
+// e.g. by `pop --keep-unread`) transitions to acked; a task/broadcast row
+// transitions pending→delivered. `newly` is false when the row was
+// already read (the caller still gets the row to display) or was claimed
+// concurrently.
+func ReadMessageByID(db *sql.DB, id, by string) (m *BusMessage, newly bool, err error) {
+	m, err = GetBusMessageByID(db, id)
+	if err != nil || m == nil {
+		return nil, false, err
+	}
+	toHuman := m.ToTaskSlug == "" && m.Kind == "message"
+	switch {
+	case toHuman && (m.Status == "pending" || m.Status == "delivered"):
+		claimed, err := claimAckedAnyState(db, m, by)
+		return m, claimed, err
+	case !toHuman && m.Status == "pending":
+		claimed, err := ClaimDelivered(db, m.ID)
+		if claimed {
+			m.Status = "delivered"
+		}
+		return m, claimed, err
+	default:
+		return m, false, nil // already read/consumed — display only
+	}
+}
+
+// claimAckedAnyState acks a human-directed message from pending OR
+// delivered (a `--keep-unread` reader left it delivered-but-unanswered).
+// ClaimAcked itself only fires on pending, so delivered rows need this
+// widened guard. Atomic: exactly one caller wins.
+func claimAckedAnyState(db *sql.DB, m *BusMessage, by string) (bool, error) {
+	m.WaitedS = waitedSeconds(m.CreatedAt, time.Now())
+	res, err := db.Exec(
+		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=?
+         WHERE id=? AND status IN ('pending','delivered')`,
+		NowISO(), m.WaitedS, by, m.ID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		m.Status = "acked"
+	}
+	return n > 0, nil
 }
 
 // ClaimDelivered atomically transitions one message pending→delivered.
@@ -415,12 +489,23 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 }
 
 // busKeepRolled is how many rollable rows are retained — a rolling
-// window by row count, newest first. Rollable = consumed rows of any
-// kind PLUS broadcasts of any status (an unread broadcast is an FYI,
-// not a debt — it must not accumulate forever). The only immortal rows
-// are pending directed messages: an unanswered question must not
-// silently vanish.
+// window by row count, newest first. Rollable = broadcasts of any status
+// (an unread broadcast is an FYI, not a debt) PLUS acked rows of any kind
+// PLUS delivered TASK-directed messages (a peer session consumed them).
+// Immortal (never rolled) rows are the unanswered questions to a human:
+// a human-directed message stays immortal while pending (unread) AND
+// while delivered-but-unacked — a reader/relay that forwarded it with
+// `pop --keep-unread` leaves it delivered, and that question is still
+// outstanding until the human actually answers it. An unanswered
+// question must never silently vanish, whoever forwarded it.
 const busKeepRolled = 1000
+
+// busRollable is the retention predicate: which rows roll off by count.
+// Its inverse is the immortal set (unanswered human questions). Shared
+// between the DELETE and its keep-newest subquery so they never drift.
+const busRollable = `(kind='broadcast'
+    OR status='acked'
+    OR (status='delivered' AND to_task_slug IS NOT NULL))`
 
 // SweepBus applies retention: rollable rows roll by count (the newest
 // busKeepRolled are kept, older ones deleted). Cheap enough to run
@@ -428,9 +513,9 @@ const busKeepRolled = 1000
 func SweepBus(db *sql.DB, now time.Time) error {
 	_ = now
 	if _, err := db.Exec(`DELETE FROM bus_messages
-        WHERE (status != 'pending' OR kind = 'broadcast')
+        WHERE `+busRollable+`
         AND id NOT IN (SELECT id FROM bus_messages
-                       WHERE (status != 'pending' OR kind = 'broadcast')
+                       WHERE `+busRollable+`
                        ORDER BY created_at DESC, rowid DESC LIMIT ?)`, busKeepRolled); err != nil {
 		return fmt.Errorf("sweep messages: %w", err)
 	}

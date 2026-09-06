@@ -36,9 +36,9 @@ func cmdMessage(args []string) int {
 	// --body constantly). Previously the body was a blind positional, so a
 	// flag written before it became the literal body ("--urgent") and the
 	// real text was silently dropped. Unknown flags now error instead.
-	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent]   (body also accepts --body "<text>")`
+	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>]   (body also accepts --body "<text>")`
 	var urgent, haveBody, rest bool
-	var bodyFlag string
+	var bodyFlag, replyTo string
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -59,8 +59,16 @@ func cmdMessage(args []string) int {
 			bodyFlag, haveBody = a[len("--body="):], true
 		case strings.HasPrefix(a, "--message="):
 			bodyFlag, haveBody = a[len("--message="):], true
+		case a == "--reply-to" || a == "-reply-to":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --reply-to needs a value")
+				return 2
+			}
+			replyTo, i = args[i+1], i+1
+		case strings.HasPrefix(a, "--reply-to="):
+			replyTo = a[len("--reply-to="):]
 		case a != "-" && strings.HasPrefix(a, "-"):
-			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent is a flag\n%s\n", a, usage)
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent/--body/--reply-to are flags\n%s\n", a, usage)
 			return 2
 		default:
 			pos = append(pos, a)
@@ -117,11 +125,25 @@ func cmdMessage(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: that is your own queue — you would be messaging yourself. Use a task update or note instead.")
 		return 2
 	}
+	if replyTo != "" {
+		// Validate the parent exists so a typo'd lineage id is caught at
+		// send time rather than silently dangling on the receiver.
+		parent, err := flowdb.GetBusMessageByID(db, replyTo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if parent == nil {
+			fmt.Fprintf(os.Stderr, "error: no message %q to reply to\n", replyTo)
+			return 2
+		}
+	}
 
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: s.Assignee, FromTaskSlug: s.TaskSlug, SenderSessionID: s.SessionID,
 		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: urgent,
+		ReplyTo: replyTo,
 	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

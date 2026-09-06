@@ -113,6 +113,207 @@ func TestInboxPopConsumesOneAtATime(t *testing.T) {
 	})
 }
 
+func TestInboxAllListsReadAndUnread(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-all")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-all", "sid-all")
+
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user", "first msg"}); rc != 0 {
+			t.Fatal("msg1")
+		}
+		if rc := cmdMessage([]string{"user", "second msg"}); rc != 0 {
+			t.Fatal("msg2")
+		}
+	})
+	// Consume the oldest (acks it).
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
+			t.Fatal("pop")
+		}
+	})
+	// Default inbox shows only the remaining unread one.
+	out := captureStdout(t, func() {
+		if rc := cmdInbox([]string{"--as", "user", "--json"}); rc != 0 {
+			t.Fatal("inbox --json")
+		}
+	})
+	var unread []busMsgJSON
+	if err := json.Unmarshal([]byte(out), &unread); err != nil || len(unread) != 1 {
+		t.Fatalf("default inbox = %v, %v\nraw: %s", unread, err, out)
+	}
+	// --all shows both, labelled read/unread.
+	out = captureStdout(t, func() {
+		if rc := cmdInbox([]string{"--all", "--as", "user", "--json"}); rc != 0 {
+			t.Fatal("inbox --all --json")
+		}
+	})
+	var all []busMsgJSON
+	if err := json.Unmarshal([]byte(out), &all); err != nil || len(all) != 2 {
+		t.Fatalf("inbox --all = %v, %v\nraw: %s", all, err, out)
+	}
+	var reads, unreads int
+	for _, m := range all {
+		switch m.Mail {
+		case "read":
+			reads++
+		case "unread":
+			unreads++
+		default:
+			t.Errorf("unexpected mail label %q", m.Mail)
+		}
+	}
+	if reads != 1 || unreads != 1 {
+		t.Errorf("--all mail labels: read=%d unread=%d", reads, unreads)
+	}
+}
+
+func TestInboxReadByID(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-rd")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-rd", "sid-rd")
+
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user", "older"}); rc != 0 {
+			t.Fatal("msg1")
+		}
+	})
+	out := captureStdout(t, func() { _ = cmdInbox([]string{"--as", "user", "--json"}) })
+	var rows []busMsgJSON
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 1 {
+		t.Fatalf("inbox json: %v %v", rows, err)
+	}
+	id := rows[0].ID
+
+	// read <id> marks it read out of pop order.
+	out = captureStdout(t, func() {
+		if rc := cmdInbox([]string{"read", id}); rc != 0 {
+			t.Fatal("read rc != 0")
+		}
+	})
+	if !strings.Contains(out, "marked read") || !strings.Contains(out, "older") {
+		t.Errorf("read output: %s", out)
+	}
+	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 1 || s.Pending != 0 {
+		t.Errorf("read did not ack: %+v", s)
+	}
+	// Reading again is display-only.
+	out = captureStdout(t, func() {
+		if rc := cmdInbox([]string{"read", id}); rc != 0 {
+			t.Fatal("read2")
+		}
+	})
+	if !strings.Contains(out, "already read") {
+		t.Errorf("second read output: %s", out)
+	}
+	// Unknown id exits 1.
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"read", "deadbeef"}); rc != 1 {
+			t.Errorf("read of missing id should exit 1")
+		}
+	})
+}
+
+func TestInboxPopKeepUnread(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-ku")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-ku", "sid-ku")
+
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user", "forward me"}); rc != 0 {
+			t.Fatal("msg")
+		}
+	})
+	// pop --keep-unread returns the message WITHOUT acking it.
+	out := captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 0 {
+			t.Fatal("keep-unread pop rc != 0")
+		}
+	})
+	if !strings.Contains(out, "forward me") || !strings.Contains(out, "kept unread") {
+		t.Errorf("keep-unread output: %s", out)
+	}
+	// It must NOT be acked (not answered): a reader only forwarded it.
+	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 0 {
+		t.Errorf("keep-unread acked the message: %+v", s)
+	}
+	// It's now delivered → a second keep-unread pop won't re-return it (no
+	// hot loop for the relay), and plain inbox no longer lists it as unread.
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 1 {
+			t.Errorf("delivered message was re-returned by keep-unread")
+		}
+	})
+	// But it survives in --all and can still be answered by id.
+	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--as", "user", "--json"}) })
+	var all []busMsgJSON
+	if err := json.Unmarshal([]byte(out), &all); err != nil || len(all) != 1 {
+		t.Fatalf("--all after keep-unread: %v %v", all, err)
+	}
+	if _, _, err := flowdb.ReadMessageByID(db, all[0].ID, "read"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 1 {
+		t.Errorf("forwarded message could not be answered by id: %+v", s)
+	}
+}
+
+func TestMessageReplyToLineage(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-r")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-a", "sid-r")
+	mkBusTask(t, db, "task-b", "")
+
+	// Parent question to the human.
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user", "which region for the DB?"}); rc != 0 {
+			t.Fatal("parent")
+		}
+	})
+	parents, _ := flowdb.PendingForHuman(db, "user")
+	if len(parents) != 1 {
+		t.Fatalf("expected parent in human queue: %v", parents)
+	}
+	parentID := parents[0].ID
+
+	// Reply routed to a task session, stamped with the parent id.
+	out := captureStdout(t, func() {
+		if rc := cmdMessage([]string{"task-b", "us-east-1", "--reply-to", parentID}); rc != 0 {
+			t.Fatal("reply rc != 0")
+		}
+	})
+	_ = out
+	// The reply carries the parent id on the receiver's row...
+	rowsB, _ := flowdb.PendingForTask(db, "task-b")
+	if len(rowsB) != 1 || rowsB[0].ReplyTo != parentID {
+		t.Fatalf("reply-to not stamped on receiver: %+v", rowsB)
+	}
+	// ...and the lineage is shown when the message is displayed.
+	out = captureStdout(t, func() {
+		if rc := cmdInbox([]string{"read", rowsB[0].ID}); rc != 0 {
+			t.Fatal("read reply rc != 0")
+		}
+	})
+	if !strings.Contains(out, "in reply to") || !strings.Contains(out, parentID) ||
+		!strings.Contains(out, "which region") {
+		t.Errorf("lineage not shown to receiver: %s", out)
+	}
+
+	// Unknown parent id is rejected at send time.
+	out = captureStdout(t, func() {
+		if rc := cmdMessage([]string{"task-b", "orphan", "--reply-to", "deadbeef"}); rc != 2 {
+			t.Errorf("reply to missing parent should rc=2")
+		}
+	})
+	if !strings.Contains(out, "no message") {
+		t.Errorf("expected missing-parent error: %s", out)
+	}
+}
+
 func TestMessageBodyCapAndAddressErrors(t *testing.T) {
 	setupFlowRoot(t)
 	long := strings.Repeat("x", busBodyMax+1)
