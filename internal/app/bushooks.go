@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +27,14 @@ import (
 //	                  human-directed messages (that is the answering
 //	                  mechanism, not inbox consumption) + a pending
 //	                  count notice for the task's inbox.
+//	PreToolUse        busPreToolUseContext(): delta-gated surface of a
+//	                  just-arrived DIRECTED message right before a tool
+//	                  runs, so a mid-turn "stop, don't do X" reaches the
+//	                  agent before the action it would cancel. Announced
+//	                  once per message (bus_surfaced high-water mark), so
+//	                  the same pending set never re-nudges across a turn's
+//	                  many tool calls. Broadcasts excluded (FYIs, not
+//	                  action-changing).
 //	Stop              cmdHookStop(): broadcast nudge only — watchers
 //	                  exist, no broadcast in 30m, declined-nudge
 //	                  backoff elapsed. Inbox mail is deliberately NOT
@@ -84,6 +93,68 @@ func busPromptSubmitContext() string {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
 	}
 	return b.String()
+}
+
+// busPreToolUseContext returns extra PreToolUse context (may be "").
+// It surfaces DIRECTED inbox mail that arrived since it last announced,
+// so a mid-turn message ("stop, don't do X") reaches the agent BEFORE it
+// runs the tool that message would change or cancel.
+//
+// Delta-gated and inform-only. PreToolUse fires on every tool call, and
+// hooks never consume (marking rows delivered here would silently lose
+// mail the harness is free to drop), so a raw pending count would re-nudge
+// the same set on every call. Instead it announces only messages absent
+// from the bus_surfaced high-water mark, then records them — the same
+// message is surfaced at most once, and quiet tool calls stay silent.
+// Broadcasts are excluded: an FYI shouldn't interrupt a tool call.
+func busPreToolUseContext() string {
+	db, err := openBusDB()
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	s := currentBusSender()
+	if s.TaskSlug == "" {
+		return ""
+	}
+	msgs, err := flowdb.PendingDirectedUnsurfacedForTask(db, s.TaskSlug)
+	if err != nil || len(msgs) == 0 {
+		return ""
+	}
+	// Prefer urgent: stable-partition urgent to the front (queryBusMsgs
+	// already ordered oldest-first within each group) so the lead excerpt
+	// and count lead with the blocking message.
+	sort.SliceStable(msgs, func(i, j int) bool {
+		return msgs[i].Urgent && !msgs[j].Urgent
+	})
+	ids := make([]string, len(msgs))
+	urgent := 0
+	for i, m := range msgs {
+		ids[i] = m.ID
+		if m.Urgent {
+			urgent++
+		}
+	}
+	// Advance the high-water mark before returning: whether or not the
+	// agent acts on this surface, the next tool call must not re-announce
+	// the same messages.
+	_ = flowdb.MarkSurfaced(db, s.TaskSlug, ids)
+
+	lead := msgs[0]
+	subject := "A new directed message"
+	if len(msgs) > 1 {
+		subject = fmt.Sprintf("%d new directed messages", len(msgs))
+	}
+	urgentNote := ""
+	if urgent > 0 {
+		urgentNote = fmt.Sprintf(" (%d URGENT)", urgent)
+	}
+	return fmt.Sprintf(
+		" flow-bus: %s%s just landed in this session's inbox — it may change or cancel the "+
+			"action you're about to take. Top: [%s] %q. Read it BEFORE proceeding: "+
+			"`flow inbox pop` (or your armed Monitor loop delivers it). Inform-only — you have "+
+			"NOT consumed it; this notice will not repeat for these message(s).",
+		subject, urgentNote, lead.ID, busSnippet(lead.Body))
 }
 
 // humanPendingNotice renders the inform-only "the USER has mail" line

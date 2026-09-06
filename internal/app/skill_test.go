@@ -84,6 +84,10 @@ func expectedCommand(event string) string {
 		return "flow hook session-start"
 	case "UserPromptSubmit":
 		return "flow hook user-prompt-submit"
+	case "PreToolUse":
+		return "flow hook pre-tool-use"
+	case "Stop":
+		return "flow hook stop"
 	}
 	return ""
 }
@@ -207,6 +211,12 @@ func TestSkillInstallWritesBothHooks(t *testing.T) {
 	if !hookEventReferencesCommand(hooks, "UserPromptSubmit", "flow hook user-prompt-submit") {
 		t.Errorf("UserPromptSubmit hook missing or wrong command: %#v", hooks["UserPromptSubmit"])
 	}
+	if !hookEventReferencesCommand(hooks, "PreToolUse", "flow hook pre-tool-use") {
+		t.Errorf("PreToolUse hook missing or wrong command: %#v", hooks["PreToolUse"])
+	}
+	if !hookEventReferencesCommand(hooks, "Stop", "flow hook stop") {
+		t.Errorf("Stop hook missing or wrong command: %#v", hooks["Stop"])
+	}
 }
 
 // TestSkillInstallIsIdempotent verifies a second install --force does
@@ -222,7 +232,7 @@ func TestSkillInstallIsIdempotent(t *testing.T) {
 	}
 	settings := readSettings(t, filepath.Join(home, ".claude", "settings.json"))
 	hooks, _ := settings["hooks"].(map[string]any)
-	for _, event := range []string{"SessionStart", "UserPromptSubmit"} {
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"} {
 		entries, _ := hooks[event].([]any)
 		if got := countMatchingHookEntries(entries, expectedCommand(event)); got != 1 {
 			t.Errorf("%s: got %d matching entries, want 1", event, got)

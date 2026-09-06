@@ -48,6 +48,13 @@ const userPromptSubmitHookCommand = "flow hook user-prompt-submit"
 // existing installations.
 const stopHookCommand = "flow hook stop"
 
+// preToolUseHookCommand is the exact string settings.json records for
+// the delta-gated pre-tool-call inbox nudge. In bound sessions it
+// surfaces a just-arrived directed message before the tool runs; unbound
+// sessions and quiet inboxes no-op. Stable — changing it would orphan
+// existing installations.
+const preToolUseHookCommand = "flow hook pre-tool-use"
+
 // postToolUseHookCommand is RETIRED (per-tool-call delivery replaced by
 // the `flow inbox pop --wait` listener discipline). The string is kept
 // only so installs that registered it can be cleaned up on upgrade.
@@ -121,6 +128,7 @@ func maybeAutoUpgradeSkill() {
 	_, _ = h.InstallSessionStartHook(hookCommand)
 	_, _ = h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand)
 	_, _ = h.InstallStopHook(stopHookCommand)
+	_, _ = h.InstallPreToolUseHook(preToolUseHookCommand)
 	_, _ = h.UninstallPostToolUseHook(postToolUseHookCommand) // retired
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
@@ -207,6 +215,12 @@ func skillInstall(args []string, forceDefault bool) int {
 	} else if added {
 		fmt.Println("installed Stop hook (page-bus post nudge at turn end)")
 	}
+	if added, err := h.InstallPreToolUseHook(preToolUseHookCommand); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install PreToolUse hook: %v\n", err)
+		return 0
+	} else if added {
+		fmt.Println("installed PreToolUse hook (delta-gated inbox nudge before each tool call)")
+	}
 	return 0
 }
 
@@ -260,6 +274,12 @@ func skillUninstall(args []string) int {
 		return 0
 	} else if removed {
 		fmt.Println("removed Stop hook")
+	}
+	if removed, err := h.UninstallPreToolUseHook(preToolUseHookCommand); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not remove PreToolUse hook: %v\n", err)
+		return 0
+	} else if removed {
+		fmt.Println("removed PreToolUse hook")
 	}
 	return 0
 }

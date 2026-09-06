@@ -594,6 +594,128 @@ func TestHooksInformButNeverConsume(t *testing.T) {
 	}
 }
 
+// preToolUseOnce runs the PreToolUse hook and returns its
+// additionalContext ("" when the hook stays silent).
+func preToolUseOnce(t *testing.T) string {
+	t.Helper()
+	return busHookContext(t, captureStdout(t, func() {
+		if rc := cmdHookPreToolUse(nil); rc != 0 {
+			t.Fatalf("pre-tool-use rc=%d", rc)
+		}
+	}))
+}
+
+// insertTaskMessage drops a directed message into a task's inbox.
+func insertTaskMessage(t *testing.T, db *sql.DB, id, toSlug, body string, urgent bool) {
+	t.Helper()
+	if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+		ID: id, CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: "user", FromTaskSlug: "task-src",
+		ToAssignee: "user", ToTaskSlug: toSlug, Body: body, Urgent: urgent,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHookPreToolUseDeltaGates is the core contract: a just-arrived
+// directed message is surfaced once before a tool call, then never again
+// for the same message (so per-call spam is impossible), while a NEWLY
+// arrived message still breaks through. Inform-only throughout.
+func TestHookPreToolUseDeltaGates(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-pt")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-pt", "sid-pt")
+
+	// Empty inbox → silent.
+	if out := preToolUseOnce(t); out != "" {
+		t.Errorf("empty inbox should be silent, got: %s", out)
+	}
+
+	insertTaskMessage(t, db, "ptmsg001", "task-pt", "stop, do not deploy", false)
+
+	// First tool call surfaces the message (with an excerpt) but does not
+	// consume it.
+	ctx := preToolUseOnce(t)
+	if !strings.Contains(ctx, "directed message") || !strings.Contains(ctx, "stop, do not deploy") {
+		t.Errorf("first pre-tool-use should surface the message: %s", ctx)
+	}
+	if !strings.Contains(ctx, "ptmsg001") || !strings.Contains(ctx, "flow inbox pop") {
+		t.Errorf("surface should name the id and the consume path: %s", ctx)
+	}
+	if rows, _ := flowdb.PendingForTask(db, "task-pt"); len(rows) != 1 || rows[0].Status != "pending" {
+		t.Errorf("pre-tool-use consumed mail — must stay pending: %+v", rows)
+	}
+
+	// Every subsequent tool call with nothing new stays silent — the
+	// delta-gate, not consumption, is what prevents re-nudging.
+	for i := 0; i < 3; i++ {
+		if out := preToolUseOnce(t); out != "" {
+			t.Errorf("re-nudged the same pending message on call %d: %s", i, out)
+		}
+	}
+
+	// A NEW message breaks the silence exactly once.
+	insertTaskMessage(t, db, "ptmsg002", "task-pt", "actually, proceed", false)
+	ctx = preToolUseOnce(t)
+	if !strings.Contains(ctx, "actually, proceed") || strings.Contains(ctx, "stop, do not deploy") {
+		t.Errorf("only the new message should surface: %s", ctx)
+	}
+	if out := preToolUseOnce(t); out != "" {
+		t.Errorf("new message re-nudged after first surface: %s", out)
+	}
+}
+
+// TestHookPreToolUseIgnoresBroadcasts pins that broadcasts (FYIs) never
+// interrupt a tool call — only directed messages, which can change or
+// cancel the pending action, do.
+func TestHookPreToolUseIgnoresBroadcasts(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-pb")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-pb", "sid-pb")
+	if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+		ID: "bc000001", CreatedAt: flowdb.NowISO(), Kind: "broadcast",
+		FromAssignee: "user", FromTaskSlug: "task-src",
+		ToAssignee: "user", ToTaskSlug: "task-pb", Body: "fyi: imports done",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if out := preToolUseOnce(t); out != "" {
+		t.Errorf("broadcast must not fire the pre-tool-use nudge: %s", out)
+	}
+}
+
+// TestHookPreToolUsePrefersUrgent verifies the surfaced excerpt leads
+// with an urgent message and the count flags how many are urgent.
+func TestHookPreToolUsePrefersUrgent(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-pu")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "task-pu", "sid-pu")
+	insertTaskMessage(t, db, "pumsg001", "task-pu", "routine note", false)
+	insertTaskMessage(t, db, "pumsg002", "task-pu", "ABORT the release now", true)
+
+	ctx := preToolUseOnce(t)
+	if !strings.Contains(ctx, "URGENT") {
+		t.Errorf("urgent count should be flagged: %s", ctx)
+	}
+	if !strings.Contains(ctx, "pumsg002") || !strings.Contains(ctx, "ABORT the release now") {
+		t.Errorf("lead excerpt should be the urgent message: %s", ctx)
+	}
+}
+
+// TestHookPreToolUseUnboundSilent confirms an unbound session never emits.
+func TestHookPreToolUseUnboundSilent(t *testing.T) {
+	setupFlowRoot(t)
+	// No CLAUDE_CODE_SESSION_ID bound to any task.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-unbound")
+	openFlowDB(t)
+	if out := preToolUseOnce(t); out != "" {
+		t.Errorf("unbound session should be silent, got: %s", out)
+	}
+}
+
 func TestHookStopSilentDuringHookContinuation(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")

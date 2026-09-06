@@ -63,6 +63,12 @@ CREATE TABLE IF NOT EXISTS bus_nudges (
     nudged_at  TEXT NOT NULL,
     attempts   INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS bus_surfaced (
+    task_slug   TEXT NOT NULL,
+    message_id  TEXT NOT NULL,
+    PRIMARY KEY (task_slug, message_id)
+);
 `
 
 // BusMessage mirrors one bus_messages row.
@@ -366,6 +372,44 @@ func PendingCountForHuman(db *sql.DB, assignee string) (int, error) {
 	return n, err
 }
 
+// PendingDirectedUnsurfacedForTask returns pending DIRECTED (kind=message)
+// rows addressed to a task's session that the PreToolUse delta-gate has
+// not already announced (see MarkSurfaced). It backs the pre-tool-call
+// nudge: raw pending counts re-announce the same set on every tool call
+// (hooks never consume), so the delta-gate suppresses everything but
+// genuinely new mail. Broadcasts are excluded on purpose — an FYI must
+// not interrupt a tool call; only a directed message can change or cancel
+// the action the agent is about to take. Rows come oldest-first (via
+// queryBusMsgs); the caller re-orders urgent-first.
+func PendingDirectedUnsurfacedForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
+	return queryBusMsgs(db,
+		`status='pending' AND kind='message' AND to_task_slug=?
+         AND id NOT IN (SELECT message_id FROM bus_surfaced WHERE task_slug=?)`,
+		slug, slug)
+}
+
+// MarkSurfaced records that the PreToolUse delta-gate has announced these
+// message ids for the task, so the same pending message is never surfaced
+// twice at that hook point. Idempotent; a no-op on an empty id list.
+func MarkSurfaced(db *sql.DB, slug string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO bus_surfaced (task_slug, message_id) VALUES (?,?)`,
+			slug, id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // AddWatch subscribes `watcher` (address form: "user" for the human,
 // "user/<task-slug>" for a session) to `watched` (task slug, project
 // slug, or assignee).
@@ -456,6 +500,7 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 		{`DELETE FROM bus_messages WHERE to_task_slug=? AND status='pending'`, []any{taskSlug}},
 		{`DELETE FROM bus_watches WHERE watched=?`, []any{taskSlug}},
 		{`DELETE FROM bus_nudges WHERE task_slug=?`, []any{taskSlug}},
+		{`DELETE FROM bus_surfaced WHERE task_slug=?`, []any{taskSlug}},
 	} {
 		if _, err := db.Exec(stmt.q, stmt.args...); err != nil {
 			return fmt.Errorf("cleanup task bus: %w", err)
@@ -518,6 +563,12 @@ func SweepBus(db *sql.DB, now time.Time) error {
                        WHERE `+busRollable+`
                        ORDER BY created_at DESC, rowid DESC LIMIT ?)`, busKeepRolled); err != nil {
 		return fmt.Errorf("sweep messages: %w", err)
+	}
+	// Prune delta-gate marks for messages that have rolled off, so the
+	// bus_surfaced table stays bounded by the live message set.
+	if _, err := db.Exec(
+		`DELETE FROM bus_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
+		return fmt.Errorf("sweep surfaced: %w", err)
 	}
 	return nil
 }
