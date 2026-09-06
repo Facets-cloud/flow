@@ -27,14 +27,13 @@ import (
 //	                  human-directed messages (that is the answering
 //	                  mechanism, not inbox consumption) + a pending
 //	                  count notice for the task's inbox.
-//	PreToolUse        busPreToolUseContext(): delta-gated surface of a
-//	                  just-arrived DIRECTED message right before a tool
-//	                  runs, so a mid-turn "stop, don't do X" reaches the
-//	                  agent before the action it would cancel. Announced
-//	                  once per message (bus_surfaced high-water mark), so
-//	                  the same pending set never re-nudges across a turn's
-//	                  many tool calls. Broadcasts excluded (FYIs, not
-//	                  action-changing).
+//	PreToolUse        busPreToolUseContext(): delta-gated surface of any
+//	                  just-arrived unread item (directed message OR
+//	                  broadcast) right before a tool runs, so a mid-turn
+//	                  "stop, don't do X" reaches the agent before the
+//	                  action it would cancel. Announced once per item
+//	                  (bus_surfaced high-water mark), so the same pending
+//	                  set never re-nudges across a turn's many tool calls.
 //	Stop              cmdHookStop(): broadcast nudge only — watchers
 //	                  exist, no broadcast in 30m, declined-nudge
 //	                  backoff elapsed. Inbox mail is deliberately NOT
@@ -96,17 +95,19 @@ func busPromptSubmitContext() string {
 }
 
 // busPreToolUseContext returns extra PreToolUse context (may be "").
-// It surfaces DIRECTED inbox mail that arrived since it last announced,
-// so a mid-turn message ("stop, don't do X") reaches the agent BEFORE it
-// runs the tool that message would change or cancel.
+// It surfaces UNREAD inbox mail of any kind — directed messages AND
+// broadcasts — that arrived since it last announced, so a mid-turn item
+// ("stop, don't do X") reaches the agent BEFORE it runs the tool that
+// item might change or cancel.
 //
 // Delta-gated and inform-only. PreToolUse fires on every tool call, and
 // hooks never consume (marking rows delivered here would silently lose
 // mail the harness is free to drop), so a raw pending count would re-nudge
-// the same set on every call. Instead it announces only messages absent
-// from the bus_surfaced high-water mark, then records them — the same
-// message is surfaced at most once, and quiet tool calls stay silent.
-// Broadcasts are excluded: an FYI shouldn't interrupt a tool call.
+// the same set on every call. Instead it announces only rows absent
+// from the bus_surfaced high-water mark, then records them — each item is
+// surfaced at most once, and quiet tool calls stay silent. Broadcasts are
+// included: any unread item can bear on the pending action, and the
+// delta-gate keeps each to a single surface (no per-call spam).
 func busPreToolUseContext() string {
 	db, err := openBusDB()
 	if err != nil {
@@ -117,7 +118,7 @@ func busPreToolUseContext() string {
 	if s.TaskSlug == "" {
 		return ""
 	}
-	msgs, err := flowdb.PendingDirectedUnsurfacedForTask(db, s.TaskSlug)
+	msgs, err := flowdb.PendingUnsurfacedForTask(db, s.TaskSlug)
 	if err != nil || len(msgs) == 0 {
 		return ""
 	}
@@ -141,9 +142,9 @@ func busPreToolUseContext() string {
 	_ = flowdb.MarkSurfaced(db, s.TaskSlug, ids)
 
 	lead := msgs[0]
-	subject := "A new directed message"
+	subject := "A new message"
 	if len(msgs) > 1 {
-		subject = fmt.Sprintf("%d new directed messages", len(msgs))
+		subject = fmt.Sprintf("%d new messages", len(msgs))
 	}
 	urgentNote := ""
 	if urgent > 0 {

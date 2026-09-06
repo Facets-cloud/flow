@@ -372,18 +372,18 @@ func PendingCountForHuman(db *sql.DB, assignee string) (int, error) {
 	return n, err
 }
 
-// PendingDirectedUnsurfacedForTask returns pending DIRECTED (kind=message)
-// rows addressed to a task's session that the PreToolUse delta-gate has
-// not already announced (see MarkSurfaced). It backs the pre-tool-call
-// nudge: raw pending counts re-announce the same set on every tool call
-// (hooks never consume), so the delta-gate suppresses everything but
-// genuinely new mail. Broadcasts are excluded on purpose — an FYI must
-// not interrupt a tool call; only a directed message can change or cancel
-// the action the agent is about to take. Rows come oldest-first (via
-// queryBusMsgs); the caller re-orders urgent-first.
-func PendingDirectedUnsurfacedForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
+// PendingUnsurfacedForTask returns pending rows of ANY kind (directed
+// messages AND broadcasts) addressed to a task's session that the
+// PreToolUse delta-gate has not already announced (see MarkSurfaced). It
+// backs the pre-tool-call nudge: raw pending counts re-announce the same
+// set on every tool call (hooks never consume), so the delta-gate
+// suppresses everything but genuinely new mail. Both kinds surface — any
+// unread item, directed or broadcast, may bear on the action the agent is
+// about to take, and the delta-gate keeps it to a single surface. Rows
+// come oldest-first (via queryBusMsgs); the caller re-orders urgent-first.
+func PendingUnsurfacedForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
 	return queryBusMsgs(db,
-		`status='pending' AND kind='message' AND to_task_slug=?
+		`status='pending' AND to_task_slug=?
          AND id NOT IN (SELECT message_id FROM bus_surfaced WHERE task_slug=?)`,
 		slug, slug)
 }

@@ -637,7 +637,7 @@ func TestHookPreToolUseDeltaGates(t *testing.T) {
 	// First tool call surfaces the message (with an excerpt) but does not
 	// consume it.
 	ctx := preToolUseOnce(t)
-	if !strings.Contains(ctx, "directed message") || !strings.Contains(ctx, "stop, do not deploy") {
+	if !strings.Contains(ctx, "new message") || !strings.Contains(ctx, "stop, do not deploy") {
 		t.Errorf("first pre-tool-use should surface the message: %s", ctx)
 	}
 	if !strings.Contains(ctx, "ptmsg001") || !strings.Contains(ctx, "flow inbox pop") {
@@ -666,10 +666,11 @@ func TestHookPreToolUseDeltaGates(t *testing.T) {
 	}
 }
 
-// TestHookPreToolUseIgnoresBroadcasts pins that broadcasts (FYIs) never
-// interrupt a tool call — only directed messages, which can change or
-// cancel the pending action, do.
-func TestHookPreToolUseIgnoresBroadcasts(t *testing.T) {
+// TestHookPreToolUseSurfacesBroadcasts pins that a broadcast (an unread
+// item of any kind) fires the pre-tool-use nudge exactly once, then is
+// delta-gated on subsequent tool calls just like a directed message —
+// any unread item can bear on the pending action.
+func TestHookPreToolUseSurfacesBroadcasts(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-pb")
 	db := openFlowDB(t)
@@ -681,8 +682,20 @@ func TestHookPreToolUseIgnoresBroadcasts(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// First tool call surfaces the broadcast (with excerpt + id) inform-only.
+	ctx := preToolUseOnce(t)
+	if !strings.Contains(ctx, "new message") || !strings.Contains(ctx, "fyi: imports done") {
+		t.Errorf("broadcast should surface at the pre-tool-use nudge: %s", ctx)
+	}
+	if !strings.Contains(ctx, "bc000001") {
+		t.Errorf("surface should name the broadcast id: %s", ctx)
+	}
+	if rows, _ := flowdb.PendingForTask(db, "task-pb"); len(rows) != 1 || rows[0].Status != "pending" {
+		t.Errorf("pre-tool-use consumed the broadcast — must stay pending: %+v", rows)
+	}
+	// Delta-gated: it does not re-nudge on quiet subsequent calls.
 	if out := preToolUseOnce(t); out != "" {
-		t.Errorf("broadcast must not fire the pre-tool-use nudge: %s", out)
+		t.Errorf("broadcast re-nudged after first surface: %s", out)
 	}
 }
 

@@ -278,14 +278,14 @@ func cmdHookUserPromptSubmit(args []string) int {
 
 // cmdHookPreToolUse implements `flow hook pre-tool-use`, wired as a
 // Claude Code PreToolUse hook that fires before every tool call. It
-// surfaces a just-arrived directed inbox message so the agent reads it
-// BEFORE running a tool the message might change or cancel — the mid-turn
-// "stop, don't do X" case the session-start / prompt-submit / stop nudges
-// surface too late.
+// surfaces any just-arrived unread inbox item (directed message OR
+// broadcast) so the agent reads it BEFORE running a tool the item might
+// change or cancel — the mid-turn "stop, don't do X" case the session-
+// start / prompt-submit / stop nudges surface too late.
 //
 // All the gating lives in busPreToolUseContext: unbound sessions and
 // tool calls with nothing new in the inbox produce "" (a silent no-op),
-// and the bus_surfaced delta-gate guarantees a given message is announced
+// and the bus_surfaced delta-gate guarantees a given item is announced
 // at most once, so this never spams the same pending set across a turn's
 // many tool calls. Inform-only — it never consumes.
 func cmdHookPreToolUse(args []string) int {

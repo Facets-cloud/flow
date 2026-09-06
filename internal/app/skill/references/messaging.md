@@ -148,14 +148,14 @@ Bash `flow inbox pop --wait` (single-shot — re-arm after every wake). Keep
 one listener per identity. After a relay forwards a message and the human
 answers, ack the specific one with `flow inbox read <id>`.
 
-**Safety net (Claude harness):** a PreToolUse hook also surfaces a
-just-arrived DIRECTED message right before a tool runs, so a mid-turn
-"stop, don't do X" reaches you before the action it would cancel — even if
-your Monitor loop hasn't woken yet. It's delta-gated (each message is
-announced at most once, so it never spams across a turn's tool calls) and
-inform-only: it does NOT consume the message, so still `flow inbox pop` it
-to actually read and ack. This backstops the listener; it doesn't replace
-it.
+**Safety net (Claude harness):** a PreToolUse hook also surfaces any
+just-arrived unread item — directed message OR broadcast — right before a
+tool runs, so a mid-turn "stop, don't do X" reaches you before the action
+it would cancel — even if your Monitor loop hasn't woken yet. It's
+delta-gated (each item is announced at most once, so it never spams across
+a turn's tool calls) and inform-only: it does NOT consume the item, so
+still `flow inbox pop` it to actually read and ack. This backstops the
+listener; it doesn't replace it.
 
 ## For the user: notification UX is yours
 
