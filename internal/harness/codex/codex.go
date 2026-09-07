@@ -223,5 +223,7 @@ func (c *codex) UninstallUserPromptSubmitHook(command string) (bool, error) { re
 // bus degrades gracefully (delivery only via listen + session-start).
 func (c *codex) InstallPostToolUseHook(command string) (bool, error)   { return false, nil }
 func (c *codex) UninstallPostToolUseHook(command string) (bool, error) { return false, nil }
+func (c *codex) InstallPreToolUseHook(command string) (bool, error)    { return false, nil }
+func (c *codex) UninstallPreToolUseHook(command string) (bool, error)  { return false, nil }
 func (c *codex) InstallStopHook(command string) (bool, error)          { return false, nil }
 func (c *codex) UninstallStopHook(command string) (bool, error)        { return false, nil }

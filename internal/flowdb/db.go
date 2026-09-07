@@ -255,9 +255,9 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply bus schema: %w", err)
 	}
-	if err := migrateBusKindBroadcast(db); err != nil {
+	if err := migrateBusSelfToUser(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate bus kind: %w", err)
+		return nil, fmt.Errorf("migrate bus assignee: %w", err)
 	}
 	// bus_nudges.attempts arrived after the table shipped; backfill it
 	// on databases created in between.
@@ -265,6 +265,14 @@ func OpenDB(path string) (*sql.DB, error) {
 		if _, err := db.Exec(`ALTER TABLE bus_nudges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("migrate bus_nudges.attempts: %w", err)
+		}
+	}
+	// bus_messages.reply_to arrived with `flow message --reply-to`; backfill
+	// it on databases created before the column shipped (nullable, no data).
+	if has, err := columnExists(db, "bus_messages", "reply_to"); err == nil && !has {
+		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN reply_to TEXT`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate bus_messages.reply_to: %w", err)
 		}
 	}
 	return db, nil

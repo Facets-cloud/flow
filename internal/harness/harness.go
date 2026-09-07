@@ -290,6 +290,18 @@ type Harness interface {
 	// `command`.
 	UninstallPostToolUseHook(command string) (removed bool, err error)
 
+	// InstallPreToolUseHook idempotently registers `command` as a
+	// PreToolUse hook (matcher: every tool). Fires before each tool call
+	// so a just-arrived directed message can reach the agent before the
+	// action it might cancel; the command delta-gates and no-ops when
+	// there's nothing new. Harnesses without per-tool hooks no-op with
+	// (false, nil).
+	InstallPreToolUseHook(command string) (added bool, err error)
+
+	// UninstallPreToolUseHook removes any PreToolUse entry matching
+	// `command`.
+	UninstallPreToolUseHook(command string) (removed bool, err error)
+
 	// InstallStopHook idempotently registers `command` as a Stop
 	// (turn-end) hook. Nudges the agent to broadcast a one-liner post
 	// when its task has watchers. Harnesses without turn-end hooks

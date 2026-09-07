@@ -13,18 +13,23 @@ import (
 
 // cmdInbox is the consumption surface of the message bus:
 //
-//	flow inbox [--as <assignee>] [--json]
-//	flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
-//	flow inbox ack [<id>] [--as <assignee>]
-//	flow inbox due [--as <assignee>] [--json]
+//	flow inbox [--all] [--as <assignee>] [--json]
+//	flow inbox pop [--wait] [--timeout <s>] [--keep-unread] [--as <assignee>] [--json]
+//	flow inbox read <id> [--json]
 //	flow inbox stats [--as <assignee>]
 //
-// Identity is implicit: a bound session consumes as self/<task-slug>
-// (its own mail); an unbound/human invocation consumes as self.
+// Mail model: `flow inbox` lists unread (pending); `--all` lists the whole
+// retained queue (unread + read). `pop` consumes the oldest;
+// `pop --keep-unread` wakes a reader/relay without acking; `read <id>`
+// targets and acks a specific message out of arrival order.
+//
+// Identity is implicit: a bound session consumes as user/<task-slug>
+// (its own mail); an unbound/human invocation consumes as user.
 // Override: --as <assignee> targets a human queue directly — `--as
-// self` is the user's own inbox even inside a bound session (e.g. a
+// user` is the human's own inbox even inside a bound session (e.g. a
 // dedicated inbox-monitor task); any other assignee serves monitor/
-// transport workers draining that queue.
+// transport workers draining that queue. pop is the ONLY consumption
+// API: it answers, delivers, and clears — one verb, loop it freely.
 //
 // `pop --wait` blocks until a message exists, pops exactly one, and
 // exits 0 — built to be parked on by a Claude session's Monitor tool or
@@ -40,16 +45,14 @@ func cmdInbox(args []string) int {
 	switch sub {
 	case "pop":
 		return inboxPop(rest)
-	case "ack":
-		return inboxAck(rest)
-	case "due":
-		return inboxDue(rest)
+	case "read":
+		return inboxRead(rest)
 	case "stats":
 		return inboxStats(rest)
 	case "ls", "list":
 		return inboxList(rest)
 	}
-	return inboxList(args) // allow `flow inbox --as x` / `--json`
+	return inboxList(args) // allow `flow inbox --as x` / `--json` / `--all`
 }
 
 // consumerFlags registers the shared identity-override flag: --as
@@ -86,8 +89,9 @@ type busMsgJSON struct {
 	Body      string   `json:"body"`
 	Urgent    bool     `json:"urgent"`
 	Status    string   `json:"status"`
-	Attempts  int      `json:"attempts"`
+	Mail      string   `json:"mail"` // mail-model label: "unread" | "read"
 	WaitedS   float64  `json:"waited_s,omitempty"`
+	ReplyTo   string   `json:"reply_to,omitempty"`
 }
 
 type addrJSON struct {
@@ -100,9 +104,19 @@ func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
 		ID: m.ID, CreatedAt: m.CreatedAt, Kind: m.Kind,
 		From: addrJSON{Assignee: m.FromAssignee, TaskSlug: m.FromTaskSlug},
 		To:   addrJSON{Assignee: m.ToAssignee, TaskSlug: m.ToTaskSlug},
-		Body: m.Body, Urgent: m.Urgent, Status: m.Status,
-		Attempts: m.Attempts, WaitedS: m.WaitedS,
+		Body: m.Body, Urgent: m.Urgent, Status: m.Status, Mail: mailLabel(m),
+		WaitedS: m.WaitedS, ReplyTo: m.ReplyTo,
 	}
+}
+
+// mailLabel maps the internal status to the mail-model nomenclature the
+// bus presents to humans: pending = "unread", everything consumed
+// (delivered/acked) = "read".
+func mailLabel(m *flowdb.BusMessage) string {
+	if m.Status == "pending" {
+		return "unread"
+	}
+	return "read"
 }
 
 func emitJSON(v any) int {
@@ -117,6 +131,7 @@ func inboxList(args []string) int {
 	fs := flagSet("inbox")
 	as := consumerFlags(fs)
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the human listing")
+	all := fs.Bool("all", false, "list everything still retained (read + unread), not just unread")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -127,7 +142,7 @@ func inboxList(args []string) int {
 	}
 	defer db.Close()
 	s := resolveConsumer(*as)
-	rows, err := pendingForIdentity(db, s)
+	rows, err := listForIdentity(db, s, *all)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -140,7 +155,11 @@ func inboxList(args []string) int {
 		return emitJSON(out)
 	}
 	if len(rows) == 0 {
-		fmt.Printf("inbox empty (%s)\n", s.identity())
+		if *all {
+			fmt.Printf("inbox empty (%s) — nothing retained\n", s.identity())
+		} else {
+			fmt.Printf("no unread mail (%s)\n", s.identity())
+		}
 		return 0
 	}
 	now := time.Now()
@@ -152,29 +171,57 @@ func inboxList(args []string) int {
 			mark = "⚠"
 		}
 		extra := ""
-		if m.Kind == "message" && m.ToTaskSlug == "" {
-			extra = fmt.Sprintf("  (notified %dx)", m.Attempts)
+		if *all {
+			extra = "  " + mailLabel(m)
 		}
 		fmt.Printf("%s [%s] %s%s  %s: %s\n", mark, m.ID, busAge(m.CreatedAt, now), extra, busFrom(m), m.Body)
 	}
-	fmt.Printf("\nconsume one at a time: flow inbox pop\n")
+	if *all {
+		fmt.Printf("\nread one by id: flow inbox read <id>\n")
+	} else {
+		fmt.Printf("\nconsume one at a time: flow inbox pop\n")
+	}
 	return 0
+}
+
+// listForIdentity returns the rows an `inbox` listing should show: only
+// unread (pending) by default, or the whole retained queue when all=true.
+func listForIdentity(db *sql.DB, s busSender, all bool) ([]*flowdb.BusMessage, error) {
+	if !all {
+		return pendingForIdentity(db, s)
+	}
+	if s.TaskSlug != "" {
+		return flowdb.AllForTask(db, s.TaskSlug)
+	}
+	return flowdb.AllForHuman(db, s.Assignee)
 }
 
 // popOne atomically claims the oldest pending message for the identity:
 // posts and session-directed rows become delivered; human-directed
 // messages become acked (popping IS answering). Rows lost to a
 // concurrent consumer are skipped. Returns nil when nothing claimable.
-func popOne(db *sql.DB, s busSender) (*flowdb.BusMessage, error) {
+//
+// keepUnread is the reader/relay mode: it claims the row to delivered
+// for EVERY kind (so a loop won't re-return it) but never acks — a
+// human-directed message stays unanswered/unread in the mail model, so
+// a forwarder can wake on it and pass it along without consuming the
+// user's answer. The whole point of `pop --wait --keep-unread`.
+func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error) {
 	rows, err := pendingForIdentity(db, s)
 	if err != nil {
 		return nil, err
 	}
 	for _, m := range rows {
 		var claimed bool
-		if m.Kind == "message" && m.ToTaskSlug == "" {
+		switch {
+		case keepUnread:
+			claimed, err = flowdb.ClaimDelivered(db, m.ID)
+			if claimed {
+				m.Status = "delivered"
+			}
+		case m.Kind == "message" && m.ToTaskSlug == "":
 			claimed, err = flowdb.ClaimAcked(db, m, "pop")
-		} else {
+		default:
 			claimed, err = flowdb.ClaimDelivered(db, m.ID)
 		}
 		if err != nil {
@@ -187,12 +234,38 @@ func popOne(db *sql.DB, s busSender) (*flowdb.BusMessage, error) {
 	return nil, nil
 }
 
-func printBusMessage(m *flowdb.BusMessage) {
+func printBusMessage(db *sql.DB, m *flowdb.BusMessage) {
 	now := time.Now()
 	fmt.Printf("[%s %s] from %s (%s ago): %s\n", m.Kind, m.ID, busFrom(m), busAge(m.CreatedAt, now), m.Body)
+	if line := replyToLine(db, m); line != "" {
+		fmt.Println(line)
+	}
 	if m.Urgent {
 		fmt.Println("        marked URGENT by the sender")
 	}
+}
+
+// replyToLine renders the lineage of a reply ("" when the message has no
+// parent). It shows the parent id and a body snippet so a routed reply —
+// which the bus does not thread — arrives with the context it answers.
+func replyToLine(db *sql.DB, m *flowdb.BusMessage) string {
+	if m.ReplyTo == "" {
+		return ""
+	}
+	parent, _ := flowdb.GetBusMessageByID(db, m.ReplyTo)
+	if parent == nil {
+		return fmt.Sprintf("        ↳ in reply to [%s]", m.ReplyTo)
+	}
+	return fmt.Sprintf("        ↳ in reply to [%s]: %s", m.ReplyTo, busSnippet(parent.Body))
+}
+
+// busSnippet trims a body to a short one-line context preview.
+func busSnippet(body string) string {
+	const max = 60
+	if len(body) > max {
+		return body[:max] + "…"
+	}
+	return body
 }
 
 func inboxPop(args []string) int {
@@ -201,6 +274,7 @@ func inboxPop(args []string) int {
 	timeout := fs.Int("timeout", 3600, "seconds --wait blocks before giving up")
 	as := consumerFlags(fs)
 	asJSON := fs.Bool("json", false, "emit the popped message as JSON")
+	keepUnread := fs.Bool("keep-unread", false, "reader/relay mode: return the message without acking it (leave it unread)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -216,7 +290,10 @@ func inboxPop(args []string) int {
 		if *asJSON {
 			return emitJSON(toMsgJSON(m))
 		}
-		printBusMessage(m)
+		printBusMessage(db, m)
+		if *keepUnread {
+			fmt.Println("kept unread — not acked; ack later with `flow inbox read <id>` once the recipient has answered")
+		}
 		if *wait {
 			fmt.Println("re-arm: point your Monitor tool (or a background shell) at `flow inbox pop --wait` again to catch the next message")
 		}
@@ -224,7 +301,7 @@ func inboxPop(args []string) int {
 	}
 
 	if !*wait {
-		m, err := popOne(db, s)
+		m, err := popOne(db, s, *keepUnread)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -243,7 +320,7 @@ func inboxPop(args []string) int {
 	}
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 	for {
-		m, err := popOne(db, s)
+		m, err := popOne(db, s, *keepUnread)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -261,10 +338,25 @@ func inboxPop(args []string) int {
 	}
 }
 
-func inboxAck(args []string) int {
-	fs := flagSet("inbox ack")
-	as := consumerFlags(fs)
+// inboxRead retrieves ONE message by id and marks it read:
+//
+//	flow inbox read <id> [--json]
+//
+// Unlike `pop` (oldest-first only), `read` targets any specific message,
+// including ones already consumed — it displays those without changing
+// them. A still-unread human message (or one a `--keep-unread` reader
+// left delivered-but-unanswered) transitions to read/acked; a task or
+// broadcast row transitions pending→delivered. This is how a relay acks
+// the exact message the human just answered, out of arrival order.
+func inboxRead(args []string) int {
+	fs := flagSet("inbox read")
+	asJSON := fs.Bool("json", false, "emit the message as JSON")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: flow inbox read <id>")
 		return 2
 	}
 	db, err := openBusDB()
@@ -273,80 +365,25 @@ func inboxAck(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	if rest := fs.Args(); len(rest) == 1 {
-		m, err := flowdb.AckMessageByID(db, rest[0], "manual")
-		if err != nil || m == nil {
-			fmt.Println("nothing to ack")
-			return 0
-		}
-		fmt.Printf("acked [%s] after %s: %s\n", m.ID, fmtBusWait(m.WaitedS), m.Body)
-		return 0
-	}
-	s := resolveConsumer(*as)
-	assignee := s.Assignee
-	rows, _ := flowdb.PendingForHuman(db, assignee)
-	acked := 0
-	for _, r := range rows {
-		if r.Kind != "message" {
-			continue
-		}
-		if m, _ := flowdb.AckMessageByID(db, r.ID, "manual"); m != nil {
-			fmt.Printf("acked [%s] after %s: %s\n", m.ID, fmtBusWait(m.WaitedS), m.Body)
-			acked++
-		}
-	}
-	if acked == 0 {
-		fmt.Println("nothing to ack")
-	}
-	return 0
-}
-
-// inboxDue is the escalation primitive for user notifier scripts: it
-// prints human-directed messages whose notify deadline has passed and
-// advances each row's backoff. Poll it from cron/a loop and pipe into
-// whatever notification UX you want. Prints nothing (exit 1) when
-// nothing is due. Default output is tab-separated (id, attempts, age,
-// urgent, from, body); --json emits an array.
-func inboxDue(args []string) int {
-	fs := flagSet("inbox due")
-	as := consumerFlags(fs)
-	asJSON := fs.Bool("json", false, "emit due messages as a JSON array")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	db, err := openBusDB()
+	m, newly, err := flowdb.ReadMessageByID(db, rest[0], "read")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	defer db.Close()
-	assignee := resolveConsumer(*as).Assignee
-	now := time.Now()
-	due, err := flowdb.DueBusMessages(db, assignee, now)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if m == nil {
+		if !*asJSON {
+			fmt.Printf("no message [%s]\n", rest[0])
+		}
 		return 1
-	}
-	if len(due) == 0 {
-		return 1
-	}
-	for _, m := range due {
-		_ = flowdb.BumpNotifyAttempt(db, m.ID, m.Attempts, now)
 	}
 	if *asJSON {
-		out := make([]busMsgJSON, len(due))
-		for i, m := range due {
-			out[i] = toMsgJSON(m)
-		}
-		return emitJSON(out)
+		return emitJSON(toMsgJSON(m))
 	}
-	for _, m := range due {
-		urgent := "0"
-		if m.Urgent {
-			urgent = "1"
-		}
-		fmt.Printf("%s\t%d\t%s\t%s\t%s\t%s\n",
-			m.ID, m.Attempts, busAge(m.CreatedAt, now), urgent, busFrom(m), m.Body)
+	printBusMessage(db, m)
+	if newly {
+		fmt.Println("marked read")
+	} else {
+		fmt.Println("(already read)")
 	}
 	return 0
 }

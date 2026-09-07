@@ -20,9 +20,15 @@ import (
 //     In bound sessions it injects a tiny per-prompt anchor that re-runs
 //     the skill's drift (§4.11) and close-out (§4.7) checks; unbound
 //     sessions are a no-op.
+//
+//   - pre-tool-use: wired as a Claude Code PreToolUse hook. In bound
+//     sessions it delta-gates the inbox and surfaces a just-arrived
+//     directed message before the tool runs (so a mid-turn "stop" lands
+//     in time); inform-only, announced once per message. Everything else
+//     (unbound, nothing new) is a no-op.
 func cmdHook(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit)")
+		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit|pre-tool-use|stop)")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
@@ -31,6 +37,8 @@ func cmdHook(args []string) int {
 		return cmdHookSessionStart(rest)
 	case "user-prompt-submit":
 		return cmdHookUserPromptSubmit(rest)
+	case "pre-tool-use":
+		return cmdHookPreToolUse(rest)
 	case "post-tool-use":
 		// Retired: per-tool-call delivery was removed in favor of the
 		// `flow inbox pop --wait` listener discipline. Kept as a silent
@@ -266,4 +274,28 @@ func cmdHookUserPromptSubmit(args []string) int {
 		t.Name, t.Slug,
 	)
 	return emitHookContext("UserPromptSubmit", anchor+pageCtx)
+}
+
+// cmdHookPreToolUse implements `flow hook pre-tool-use`, wired as a
+// Claude Code PreToolUse hook that fires before every tool call. It
+// surfaces any just-arrived unread inbox item (directed message OR
+// broadcast) so the agent reads it BEFORE running a tool the item might
+// change or cancel — the mid-turn "stop, don't do X" case the session-
+// start / prompt-submit / stop nudges surface too late.
+//
+// All the gating lives in busPreToolUseContext: unbound sessions and
+// tool calls with nothing new in the inbox produce "" (a silent no-op),
+// and the bus_surfaced delta-gate guarantees a given item is announced
+// at most once, so this never spams the same pending set across a turn's
+// many tool calls. Inform-only — it never consumes.
+func cmdHookPreToolUse(args []string) int {
+	fs := flagSet("hook pre-tool-use")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx := busPreToolUseContext()
+	if ctx == "" {
+		return 0
+	}
+	return emitHookContext("PreToolUse", strings.TrimSpace(ctx))
 }

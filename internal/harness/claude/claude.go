@@ -372,6 +372,17 @@ func (c *claude) UninstallPostToolUseHook(command string) (bool, error) {
 	return uninstallHook("PostToolUse", command)
 }
 
+func (c *claude) InstallPreToolUseHook(command string) (bool, error) {
+	// Fires before every tool call. The handler delta-gates the inbox and
+	// exits without output on the fast path (no bound task / nothing new),
+	// so a given message is surfaced at most once despite the frequency.
+	return installHook("PreToolUse", "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch", command)
+}
+
+func (c *claude) UninstallPreToolUseHook(command string) (bool, error) {
+	return uninstallHook("PreToolUse", command)
+}
+
 func (c *claude) InstallStopHook(command string) (bool, error) {
 	// Stop takes no matcher — fires when each assistant turn ends.
 	return installHook("Stop", "", command)
