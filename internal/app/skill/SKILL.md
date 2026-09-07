@@ -775,7 +775,9 @@ bus. Two send verbs with opposite semantics — never blend them:
   escalating notify schedule until they answer; use ONLY when blocked on
   their decision, a needed permission, or a finished long task they're
   waiting on — never routine progress, never when they're clearly active
-  in this session. `--urgent` for truly blocking matters.
+  in this session. `--urgent` for truly blocking matters. The body is
+  positional or `--body "<text>"`; flags may come in any order (only
+  `--urgent`/`--body` are flags — an unknown flag is rejected, not sent).
   `<assignee>/<task-slug>` messages that task's session (context
   delivery, no interruption). Bodies short (≤200 chars, lead with the
   ask; mention a task slug or update-file path for context). ONE

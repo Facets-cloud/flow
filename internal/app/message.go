@@ -15,6 +15,11 @@ import (
 // cmdMessage implements the directed half of the message bus:
 //
 //	flow message <assignee>[/<task-slug>] "<body>" [--urgent]
+//	flow message <assignee> --body "<body>" [--urgent]   (equivalent)
+//
+// Flags are order-independent and the body may be given positionally or
+// via --body/-m/--message; unknown flags are rejected rather than being
+// silently swallowed into the body.
 //
 // A bare assignee (e.g. `self`) addresses the human: the message stays
 // pending, on an escalating notify schedule (`flow inbox due`), until
@@ -26,24 +31,64 @@ import (
 // flow draws no attention itself — notification UX is user scripting
 // on top of `flow inbox due` (see skill references/messaging.md).
 func cmdMessage(args []string) int {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent]`)
+	// Tolerant, order-independent parsing so the natural ways agents write
+	// this all work: `... <addr> "body" --urgent`, `... <addr> --urgent
+	// "body"`, and the named `... <addr> --body "body"` (agents invent
+	// --body constantly). Previously the body was a blind positional, so a
+	// flag written before it became the literal body ("--urgent") and the
+	// real text was silently dropped. Unknown flags now error instead.
+	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent]   (body also accepts --body "<text>")`
+	var urgent, haveBody, rest bool
+	var bodyFlag string
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case rest:
+			pos = append(pos, a)
+		case a == "--":
+			rest = true
+		case a == "--urgent" || a == "-urgent":
+			urgent = true
+		case a == "--body" || a == "-body" || a == "--message" || a == "-m" || a == "-b":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --body needs a value")
+				return 2
+			}
+			bodyFlag, haveBody, i = args[i+1], true, i+1
+		case strings.HasPrefix(a, "--body="):
+			bodyFlag, haveBody = a[len("--body="):], true
+		case strings.HasPrefix(a, "--message="):
+			bodyFlag, haveBody = a[len("--message="):], true
+		case a != "-" && strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent is a flag\n%s\n", a, usage)
+			return 2
+		default:
+			pos = append(pos, a)
+		}
+	}
+	if len(pos) == 0 {
+		fmt.Fprintln(os.Stderr, usage)
 		return 2
 	}
-	addr, body := args[0], strings.TrimSpace(args[1])
-	if strings.HasPrefix(addr, "-") {
-		// A flag in the address slot would otherwise become a bogus
-		// assignee queue nobody ever reads. Positionals come first.
-		fmt.Fprintln(os.Stderr, `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] (address and body before flags)`)
-		return 2
-	}
-	fs := flagSet("message")
-	urgent := fs.Bool("urgent", false, "mark as urgent (notifier scripts may escalate harder)")
-	if err := fs.Parse(args[2:]); err != nil {
-		return 2
+	addr := pos[0]
+	var body string
+	switch {
+	case haveBody:
+		body = strings.TrimSpace(bodyFlag)
+		if len(pos) > 1 {
+			fmt.Fprintln(os.Stderr, "error: body given twice (a positional and --body) — use one")
+			return 2
+		}
+	case len(pos) >= 2:
+		body = strings.TrimSpace(pos[1])
+		if len(pos) > 2 {
+			fmt.Fprintln(os.Stderr, `error: too many arguments — quote the whole body: flow message <addr> "your message" [--urgent]`)
+			return 2
+		}
 	}
 	if body == "" {
-		fmt.Fprintln(os.Stderr, "error: empty message body")
+		fmt.Fprintln(os.Stderr, "error: empty message body\n"+usage)
 		return 2
 	}
 	if len(body) > busBodyMax {
@@ -69,7 +114,7 @@ func cmdMessage(args []string) int {
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: s.Assignee, FromTaskSlug: s.TaskSlug, SenderSessionID: s.SessionID,
-		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: *urgent,
+		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: urgent,
 	}
 	if toSlug == "" {
 		// Human-directed: due for notification immediately, then backoff.

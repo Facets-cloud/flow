@@ -405,19 +405,35 @@ func TestMessageRejectsFlagAddressAndClosedTasks(t *testing.T) {
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-z", "sid-z")
 
-	// Flag in the address slot must be a usage error, not a queue named '--urgent'.
-	out := captureStdout(t, func() {
-		if rc := cmdMessage([]string{"--urgent", "self", "release blocked"}); rc != 2 {
-			t.Errorf("flag-first should rc=2")
+	// A KNOWN flag before the address is now fine (order-independent): the
+	// first positional is the address, --urgent is recognized as a flag.
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"--urgent", "self", "release blocked"}); rc != 0 {
+			t.Errorf("known flag before address should send, rc=%d", rc)
 		}
 	})
-	if !strings.Contains(out, "usage:") {
-		t.Errorf("expected usage error: %s", out)
+	var urgent int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE urgent=1 AND body='release blocked'`).Scan(&urgent)
+	if urgent != 1 {
+		t.Errorf("flag-first urgent message not stored correctly")
 	}
-	var n int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&n)
-	if n != 0 {
-		t.Errorf("bogus queue row was inserted")
+
+	// An UNKNOWN flag is a usage error (never a bogus '--bogus' queue) and
+	// inserts nothing — this is what stops garbage from reaching the bus.
+	var before int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&before)
+	out := captureStdout(t, func() {
+		if rc := cmdMessage([]string{"--bogus", "self", "x"}); rc != 2 {
+			t.Errorf("unknown flag should rc=2")
+		}
+	})
+	if !strings.Contains(out, "unknown flag") {
+		t.Errorf("expected unknown-flag error: %s", out)
+	}
+	var after int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&after)
+	if after != before {
+		t.Errorf("unknown-flag send inserted a row")
 	}
 
 	// Done/archived tasks are undeliverable addresses.
@@ -431,5 +447,60 @@ func TestMessageRejectsFlagAddressAndClosedTasks(t *testing.T) {
 	})
 	if !strings.Contains(out, "done") {
 		t.Errorf("expected done-task error: %s", out)
+	}
+}
+
+// A flag written before the body (the natural order, and the --body agents
+// invent) must never become the literal body. Regression for the silent
+// "body stored as --urgent / --body" corruption.
+func TestMessageParsingToleratesFlagOrderAndBodyFlag(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-src")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "src", "sid-src")
+	mkBusTask(t, db, "tgt", "sid-tgt")
+
+	send := func(args ...string) int {
+		var rc int
+		_ = captureStdout(t, func() { rc = cmdMessage(args) })
+		return rc
+	}
+
+	if rc := send("tgt", "--urgent", "flag first body"); rc != 0 {
+		t.Fatalf("flag-first rc=%d", rc)
+	}
+	if rc := send("tgt", "--body", "named flag body"); rc != 0 {
+		t.Fatalf("--body rc=%d", rc)
+	}
+	if rc := send("tgt", "positional body", "--urgent"); rc != 0 {
+		t.Fatalf("positional rc=%d", rc)
+	}
+
+	got := map[string]bool{}
+	rows, _ := flowdb.PendingForTask(db, "tgt")
+	for _, m := range rows {
+		got[m.Body] = m.Urgent
+		if strings.HasPrefix(m.Body, "-") {
+			t.Fatalf("a flag leaked into the body: %q", m.Body)
+		}
+	}
+	if u, ok := got["flag first body"]; !ok || !u {
+		t.Fatalf("flag-first body/urgent wrong: %+v", got)
+	}
+	if _, ok := got["named flag body"]; !ok {
+		t.Fatalf("--body not stored: %+v", got)
+	}
+	if u, ok := got["positional body"]; !ok || !u {
+		t.Fatalf("positional body/urgent wrong: %+v", got)
+	}
+
+	// unknown flag errors and stores nothing new
+	before, _ := flowdb.PendingForTask(db, "tgt")
+	if rc := send("tgt", "--nope", "x"); rc == 0 {
+		t.Fatalf("unknown flag should error, not send")
+	}
+	after, _ := flowdb.PendingForTask(db, "tgt")
+	if len(after) != len(before) {
+		t.Fatalf("unknown-flag send stored a message")
 	}
 }
