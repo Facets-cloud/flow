@@ -34,6 +34,11 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
   pop --as user` or `flow inbox read <id>`.
 - `--urgent` is a data flag for the user's own tooling; flow attaches no
   behavior to it.
+- Command form: the body is positional (`flow message user "..."`) or
+  `--body "<text>"`, and flags (`--urgent`, `--body`, `--reply-to`) may
+  come in any order — `flow message --urgent user "..."` works too. Any
+  OTHER `--flag` is rejected with an error, never silently stored as the
+  body.
 
 **Headless auto-mode exception.** A `flow do --auto` agent runs with no
 human watching, so a silent run looks stuck. Post regular progress updates

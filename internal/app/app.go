@@ -141,7 +141,7 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
                                      (message a human — "user" is the local human — or the
                                       session bound to a task; never your own address; alias: msg.
                                       Flags may come in any order; the body is positional or
-                                      --body "<text>". Only --urgent/--body are flags.)
+                                      --body "<text>". Only --urgent/--body/--reply-to are flags.)
   flow broadcast "<one-liner>"       (fan out to whoever watches this task/project/assignee; alias: post)
   flow inbox [--as <assignee>] [--json]           (what's pending; --as user = the human's queue)
   flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
