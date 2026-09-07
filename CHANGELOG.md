@@ -7,6 +7,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.28] — 2026-09-07
+
+### Added
+
+- **Mail-model inbox.** The message bus adopts unread/read ("mail")
+  nomenclature and gains read-side reach: `flow inbox --all` lists everything
+  still retained (read + unread) with per-message status; `flow inbox read
+  <id>` shows and acks one specific message out of `pop`'s oldest-first order;
+  and `flow inbox pop --wait --keep-unread` is the reader/relay wake primitive
+  — it returns newly arrived mail without acking it (claims it `delivered` so
+  it neither re-loops nor can be swept), so a forwarder is woken without
+  consuming a message it only relays. `flow message … --reply-to <id>` stamps
+  a parent message id so a routed reply carries lineage (validated at send
+  time), and the receiver is shown which message it answers. Skill §4.18 and
+  `references/messaging.md` are rewritten around the two real purposes
+  (reach-out-to-user vs peer-collab) with two Monitor recipes (consumer
+  `pop --wait` vs reader `pop --wait --keep-unread`).
+
+### Changed
+
+- **`flow message` body cap raised 200 → 500 chars** (non-breaking; short
+  messages unaffected).
+- **`flow message` argument parsing is now order-independent and typo-safe**
+  ([#95](https://github.com/Facets-cloud/flow/pull/95) by
+  [@anshulsao](https://github.com/anshulsao)). The body may be positional or
+  `--body "<text>"`, and `--urgent` / `--body` / `--reply-to` may appear in any
+  order; an unknown `--flag` is now rejected with an error instead of being
+  silently stored as the message body.
+- **Headless `flow do --auto` guidance:** agents should post regular progress
+  via `flow message user` / `flow broadcast` as milestones land — a silent
+  unwatched run looks stuck.
+
 ## [0.1.0-alpha.27] — 2026-09-02
 
 ### Added
