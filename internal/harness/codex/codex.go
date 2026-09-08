@@ -84,6 +84,28 @@ func (c *codex) SkipPermissionsRun(prompt string) error {
 	return cmd.Run()
 }
 
+// SkipPermissionsRunSession runs a headless, skip-permissions Codex tick
+// pinned to sessionID. Codex mints its own thread in NewSessionID, so a
+// "fresh pinned" run and a resume are the same shape: `codex exec resume
+// <id>`. Output discarded; only the exit code matters.
+func (c *codex) SkipPermissionsRunSession(sessionID, prompt string) error {
+	return c.skipPermsResume(sessionID, prompt)
+}
+
+// SkipPermissionsResume resumes a Codex thread headlessly (same command as
+// SkipPermissionsRunSession — codex resume is idempotent on the thread id).
+func (c *codex) SkipPermissionsResume(sessionID, prompt string) error {
+	return c.skipPermsResume(sessionID, prompt)
+}
+
+func (c *codex) skipPermsResume(sessionID, prompt string) error {
+	cmd := exec.Command("codex", "exec", "resume",
+		"--dangerously-bypass-approvals-and-sandbox", sessionID, prompt)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
+}
+
 func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []string {
 	if opts.Inject != "" {
 		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject

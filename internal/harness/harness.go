@@ -187,6 +187,19 @@ type Harness interface {
 	// only the exit code matters.
 	SkipPermissionsRun(prompt string) error
 
+	// SkipPermissionsRunSession is SkipPermissionsRun PINNED to a known
+	// session id, so the run can be resumed later (claude:
+	// `--session-id <id>`). Used by the owner tick to mint a fresh,
+	// resumable session on the first tick of a calendar day. Headless,
+	// skip-permissions, output discarded — only the exit code matters.
+	SkipPermissionsRunSession(sessionID, prompt string) error
+
+	// SkipPermissionsResume is the headless resume of a session previously
+	// pinned via SkipPermissionsRunSession (claude: `--resume <id>`). Used
+	// by intra-day owner ticks to reuse the same warm session. Headless,
+	// skip-permissions, output discarded.
+	SkipPermissionsResume(sessionID, prompt string) error
+
 	// AutoRunArgv builds the argv for a headless, self-completing
 	// autonomous run (`flow do --auto`) pinned to sessionID. This is a
 	// third execution shape distinct from the two above:

@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS owners (
     tick_pid          INTEGER,
     tick_started      TEXT,
     harness           TEXT,
+    tick_session_id   TEXT,
+    tick_session_date TEXT,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     archived_at       TEXT
@@ -192,11 +194,11 @@ type TaskFilter struct {
 	Status          string
 	Project         string
 	Priority        string
-	Kind            string // "regular" (default), "playbook_run", or "" for all
-	PlaybookSlug    string // optional; filter to runs of one playbook
+	Kind            string   // "regular" (default), "playbook_run", or "" for all
+	PlaybookSlug    string   // optional; filter to runs of one playbook
 	Tag             string   // optional; only tasks carrying this tag (already normalized)
 	Tags            []string // optional; tasks must carry ALL of these (intersection; already normalized)
-	Since           string // RFC3339 or "" for no lower bound
+	Since           string   // RFC3339 or "" for no lower bound
 	IncludeArchived bool
 	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
 }
@@ -393,6 +395,8 @@ func runMigrations(db *sql.DB) error {
 	for _, col := range []struct{ name, ddl string }{
 		{"tick_pid", "ALTER TABLE owners ADD COLUMN tick_pid INTEGER"},
 		{"tick_started", "ALTER TABLE owners ADD COLUMN tick_started TEXT"},
+		{"tick_session_id", "ALTER TABLE owners ADD COLUMN tick_session_id TEXT"},
+		{"tick_session_date", "ALTER TABLE owners ADD COLUMN tick_session_date TEXT"},
 	} {
 		has, err := columnExists(db, "owners", col.name)
 		if err != nil {

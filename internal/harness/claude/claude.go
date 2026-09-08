@@ -35,6 +35,10 @@ var (
 	NewUUID               = newUUID
 	SkipPermissionsRunner = runSkipPermissions
 	PSRunner              = runPS
+	// SkipPermissionsArgvRunner execs a fully-built argv for the pinned /
+	// resumed headless runs (SkipPermissionsRunSession / SkipPermissionsResume).
+	// Tests swap it to capture argv without spawning claude.
+	SkipPermissionsArgvRunner = runArgvSilently
 )
 
 const (
@@ -157,6 +161,39 @@ func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 
 func (c *claude) SkipPermissionsRun(prompt string) error {
 	return SkipPermissionsRunner(prompt)
+}
+
+// SkipPermissionsRunSession runs `claude --session-id <id> -p <prompt>
+// --dangerously-skip-permissions` headlessly. Pinning --session-id (unlike
+// SkipPermissionsRun) makes claude write its transcript at the deterministic
+// (cwd, sid) path, so a later SkipPermissionsResume can pick the conversation
+// back up.
+func (c *claude) SkipPermissionsRunSession(sessionID, prompt string) error {
+	return SkipPermissionsArgvRunner(skipPermsSessionArgv(sessionID, prompt))
+}
+
+// SkipPermissionsResume runs `claude --resume <id> -p <prompt>
+// --dangerously-skip-permissions` headlessly, continuing a session previously
+// started with SkipPermissionsRunSession.
+func (c *claude) SkipPermissionsResume(sessionID, prompt string) error {
+	return SkipPermissionsArgvRunner(skipPermsResumeArgv(sessionID, prompt))
+}
+
+func skipPermsSessionArgv(sessionID, prompt string) []string {
+	return []string{"claude", "--session-id", sessionID, "-p", prompt, "--dangerously-skip-permissions"}
+}
+
+func skipPermsResumeArgv(sessionID, prompt string) []string {
+	return []string{"claude", "--resume", sessionID, "-p", prompt, "--dangerously-skip-permissions"}
+}
+
+// runArgvSilently execs argv with stdout/stderr discarded (the tick prompt
+// writes files silently; only the exit code matters).
+func runArgvSilently(argv []string) error {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
 }
 
 // AutoRunArgv builds `claude --session-id <uuid> -p <prompt>
