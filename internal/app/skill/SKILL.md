@@ -1,24 +1,14 @@
 ---
 name: flow
 description: |
-  Personal task and agent-session manager. CLI binary is `flow` (assumed
-  on PATH) and stores metadata in ~/.flow/flow.db (SQLite). Use this skill when the
-  user asks about their work, tasks, or projects in any natural phrasing —
-  including but not limited to: "what's left", "what's remaining",
-  "what's pending", "what do I need to do", "what's on my plate",
-  "what should I work on", "status", "give me a status", "anything
-  urgent", "what's overdue", "what's stale", "show me my work",
-  "how's my week looking", "what did I ship", "what's in progress",
-  "what's next", "what am I working on", "where did I leave off",
-  "start my day", "what should I do", "what should I do today".
-  Also use for task/project management actions: "flow", "add a task",
-  "add a project", "resume work", "pick up where I left off", "save a
-  note", "log progress", "write an update", "note that", "I'm waiting
-  on", "blocked on", "stuck until", "mark done", "archive", "weekly
-  review", "clean up my tasks", or when the user invokes any
-  `flow <subcommand>` directly. Also use whenever the user asks you to
-  bootstrap a new Claude Code or Codex session on a task or tell them about their
-  in-flight work.
+  Personal task and agent-session manager (`flow` CLI, metadata in
+  ~/.flow/flow.db). Use this skill when the user asks about their own work
+  in any words: status, pending, next, urgent, overdue or stale work, where
+  they stopped, what they shipped, or a plan for the day or week. Also use
+  it when the user wants to manage that work: add, resume, finish or archive
+  a task or project, save a progress note, record a wait on a person, do a
+  weekly review, start a Claude Code or Codex session on a task, or run a
+  `flow <subcommand>`.
 ---
 
 # flow — task and session manager skill
@@ -226,10 +216,10 @@ Keep `header` under 12 chars. Put enough context in `question` so
 the choice is clear without scrolling back. If the user already
 answered in their message, don't re-ask — just use their answer.
 
-**Prose questions are deprecated.** Don't write "Want me to do X?"
-or "Should I do Y?" or "(yes/no)" in chat — those force the user to
-type a free-text reply. The tool produces clickable options; always
-prefer the tool.
+Do not write "Want me to do X?", "Should I do Y?" or "(yes/no)" in
+chat. These force the user to type a reply. The tool gives options that
+the user can click. An open question, for example "what is this task
+about?", can stay in prose.
 
 **Mid-interview drift.** Within an open-ended interview (intake,
 deferred-section prompt), the parent question may be free-form
@@ -256,7 +246,7 @@ working on", "where did I leave off", "give me a status".
 1. Run `flow list projects` and `flow list tasks --status in-progress`.
 2. Run `flow list tasks --status backlog --priority high`.
 3. Read the `waiting_on` and stale markers in the tasks output.
-4. Summarize in 4 sections:
+4. Summarize in these sections:
    - **In flight** (`in-progress`): 1 bullet per task, include any ⚠
      stale marker and any `[waiting: ...]` note.
    - **High-priority backlog**: 1 bullet per backlog task marked high.
@@ -729,7 +719,6 @@ process skill resumes inside the new session, not this one.
 triggers each turn — especially when transitioning into design /
 implementation / debugging work. The SessionStart hook gets you the
 first check; you are responsible for every subsequent check.
-Re-evaluate on every turn.
 
 ### 4.15 Upgrade flow itself
 
@@ -920,7 +909,7 @@ proposing any plan:
      chronological order — skim for blockers and decisions).
 
    **Do NOT read the `kb:` files at bootstrap.** They're lazy-loaded
-   on demand — see §5.10 for when to actually Read them.
+   on demand — see §4.10 for when to actually Read them.
 
    **If `flow show task` indicates `kind: playbook_run`:** also run
    `flow show playbook <playbook-slug>` first (for context: the playbook's
@@ -935,8 +924,7 @@ proposing any plan:
    trees, design docs, etc. dropped into the entity's directory. Do **not**
    read them eagerly. Read them on demand when something in the brief, in
    user input, or in the work makes them relevant. This matches the
-   lazy-load principle for KB files (§5.10 in the skill, §4.10 in the
-   section numbering).
+   lazy-load principle for KB files (§4.10).
 
 3. **Load the parent project context, if any.** If `flow show task`
    printed a `project:` line that isn't `(floating)`, run:
@@ -954,18 +942,19 @@ proposing any plan:
 
    Again, skip the project's `kb:` section at bootstrap.
 
-4. **Load repo conventions.** Read `CLAUDE.md` in your `work_dir` (if
-   present), plus any nested `CLAUDE.md` files under subdirectories
-   you plan to modify. These are authoritative for build commands,
-   test commands, style, and gotchas — they override any assumption
-   you might make from the brief.
+4. **Obey the repo conventions.** Your agent CLI already loaded the
+   `CLAUDE.md` or `AGENTS.md` of your `work_dir`. Before you change a
+   subdirectory, read its nested `CLAUDE.md` or `AGENTS.md` if it has
+   one. These files are the authority for build commands, test
+   commands, style and known problems. They override assumptions from
+   the brief.
 
 5. **Only then begin work.** If any brief section is blank or
    unclear, ASK the user before inferring. If the user didn't
    specify a "Done when" in the brief, confirm acceptance criteria
    with them before making changes.
 
-**Throughout the session**, watch for new KB-worthy facts per §5.10 and
+**Throughout the session**, watch for new KB-worthy facts per §4.10 and
 append them to the matching `kb/*.md` file on the fly — no permission
 needed, no interview required. Just write and quietly note what you
 recorded. And lazy-read any kb file when you hit a question that
@@ -1012,8 +1001,8 @@ to find the bound task. Two implications:
   reverse-lookup returns. If `flow show task` errors with
   `not bound to a task`, ask the user which task to attribute it to.
 
-There is no `FLOW_TASK` or `FLOW_PROJECT` env var to read. `flow do`
-no longer injects them; the DB binding is sufficient.
+There is no `FLOW_TASK` or `FLOW_PROJECT` env var to read. The DB
+binding is sufficient.
 
 A session is "bound" when some task carries its session_id (set by
 `flow do <slug>` at spawn time, or by `flow do --here <slug>`
