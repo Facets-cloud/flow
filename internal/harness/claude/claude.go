@@ -219,6 +219,9 @@ func (c *claude) LiveSessionIDs() (map[string]int, error) {
 		if !strings.Contains(line, "claude") {
 			continue
 		}
+		if isDesktopWrapperRow(line) {
+			continue
+		}
 		// Each row counts once even if argv mentions a UUID twice
 		// (some shells echo the command). Dedupe per row.
 		seen := map[string]bool{}
@@ -235,6 +238,18 @@ func (c *claude) LiveSessionIDs() (map[string]int, error) {
 		}
 	}
 	return live, nil
+}
+
+// isDesktopWrapperRow reports whether a `ps -axo pid,command` row is
+// Claude Desktop's process-group wrapper rather than a claude process.
+// Desktop launches each Code session as
+// `.../Claude.app/Contents/Helpers/disclaimer --pgroup -- .../claude
+// --resume=<uuid> ...`, so the wrapper's argv repeats the child's
+// session flag; counting both would report one Desktop session as two
+// racing processes.
+func isDesktopWrapperRow(line string) bool {
+	fields := strings.Fields(line)
+	return len(fields) >= 2 && filepath.Base(fields[1]) == "disclaimer"
 }
 
 func runPS() ([]byte, error) {

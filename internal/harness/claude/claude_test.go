@@ -213,6 +213,38 @@ func TestLiveSessions_ParsesPSOutput(t *testing.T) {
 	}
 }
 
+// TestLiveSessions_ClaudeDesktop: Claude Desktop runs each Code session
+// as a `Helpers/disclaimer` wrapper plus the real claude child, both
+// carrying `--resume=<uuid>`. One Desktop session must count once (the
+// wrapper is skipped), and still count alongside a terminal process
+// holding the same session so `flow do` warns about the race.
+func TestLiveSessions_ClaudeDesktop(t *testing.T) {
+	orig := PSRunner
+	t.Cleanup(func() { PSRunner = orig })
+	app := "/Users/x/Library/Application Support/Claude/claude-code/2.1.284/claude.app/Contents/MacOS/claude"
+	sample := `  PID COMMAND
+45011 /Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- ` + app + ` --output-format stream-json --verbose --resume=9e3ddf03-47bc-4d4c-9e63-6ca56fee072f
+45012 ` + app + ` --output-format stream-json --verbose --input-format stream-json --resume=9e3ddf03-47bc-4d4c-9e63-6ca56fee072f
+44190 /Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- ` + app + ` --resume=8f152724-186c-4068-baf2-5aeddcbeb09c
+44191 ` + app + ` --output-format stream-json --resume=8f152724-186c-4068-baf2-5aeddcbeb09c
+64949 claude --resume 9e3ddf03-47bc-4d4c-9e63-6ca56fee072f
+`
+	PSRunner = func() ([]byte, error) { return []byte(sample), nil }
+	live, err := New().LiveSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{
+		"8f152724-186c-4068-baf2-5aeddcbeb09c": 1, // Desktop only
+		"9e3ddf03-47bc-4d4c-9e63-6ca56fee072f": 2, // Desktop + a terminal
+	}
+	for k, v := range want {
+		if live[k] != v {
+			t.Errorf("live[%q] = %d, want %d (all: %v)", k, live[k], v, live)
+		}
+	}
+}
+
 // TestLiveSessions_BareClaude — a bare `claude` invocation (no
 // --session-id, no --resume) contributes no UUID. Detection requires
 // the flag.

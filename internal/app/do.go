@@ -241,7 +241,7 @@ func cmdDo(args []string) int {
 					fmt.Fprintf(os.Stderr, "warning: focus attempt failed: %v\n", ferr)
 				}
 				fmt.Fprintf(os.Stderr,
-					"error: task %q has a live %s session (%s) running elsewhere — switch to that tab, or pass --force to open another\n",
+					"error: task %q has a live %s session (%s) running elsewhere (another terminal tab or Claude Desktop) — switch to it, or pass --force to open another\n",
 					task.Slug, h.Binary(), task.SessionID.String)
 				return 1
 			}

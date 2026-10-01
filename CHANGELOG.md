@@ -7,6 +7,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Claude Desktop sessions count once in live-session detection.** Desktop
+  runs each Code session as a `Helpers/disclaimer` wrapper plus the real
+  `claude` child, and both carry `--resume=<uuid>`. `flow do` counted that as
+  two processes and printed a false "may race" warning. The wrapper row is now
+  skipped, and the "running elsewhere" error names Claude Desktop as a
+  possible holder.
+
 ## [0.1.0-alpha.28] — 2026-09-07
 
 ### Added
