@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS bus_surfaced (
     message_id  TEXT NOT NULL,
     PRIMARY KEY (task_slug, message_id)
 );
+
+CREATE TABLE IF NOT EXISTS bus_seen (
+    reader      TEXT NOT NULL,
+    message_id  TEXT NOT NULL,
+    seen_at     TEXT NOT NULL,
+    PRIMARY KEY (reader, message_id)
+);
 `
 
 // BusMessage mirrors one bus_messages row.
@@ -225,6 +232,24 @@ func ClaimDelivered(db *sql.DB, id string) (bool, error) {
 	res, err := db.Exec(
 		`UPDATE bus_messages SET status='delivered', delivered_at=? WHERE id=? AND status='pending'`,
 		NowISO(), id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ClaimSeen atomically records that `reader` (an identity like "user" or
+// "user/<task-slug>") has been handed message `id` by `pop --keep-unread`.
+// It never touches the message's status: the row stays pending, so it is
+// still unread in every listing, count and hook until someone actually
+// reads it. The mark only stops that same reader's wait loop from
+// re-returning it. Returns false when the reader already saw it (or a
+// concurrent reader under the same identity claimed it first).
+func ClaimSeen(db *sql.DB, reader, id string) (bool, error) {
+	res, err := db.Exec(
+		`INSERT OR IGNORE INTO bus_seen (reader, message_id, seen_at) VALUES (?,?,?)`,
+		reader, id, NowISO())
 	if err != nil {
 		return false, err
 	}
@@ -569,6 +594,13 @@ func SweepBus(db *sql.DB, now time.Time) error {
 	if _, err := db.Exec(
 		`DELETE FROM bus_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
 		return fmt.Errorf("sweep surfaced: %w", err)
+	}
+	// A seen mark only matters while its message is still unread; once
+	// the message is consumed (or rolled off) no pending-row scan will
+	// ever consult it again.
+	if _, err := db.Exec(`DELETE FROM bus_seen WHERE message_id NOT IN
+        (SELECT id FROM bus_messages WHERE status='pending')`); err != nil {
+		return fmt.Errorf("sweep seen: %w", err)
 	}
 	return nil
 }

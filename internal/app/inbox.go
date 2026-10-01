@@ -201,11 +201,12 @@ func listForIdentity(db *sql.DB, s busSender, all bool) ([]*flowdb.BusMessage, e
 // messages become acked (popping IS answering). Rows lost to a
 // concurrent consumer are skipped. Returns nil when nothing claimable.
 //
-// keepUnread is the reader/relay mode: it claims the row to delivered
-// for EVERY kind (so a loop won't re-return it) but never acks — a
-// human-directed message stays unanswered/unread in the mail model, so
-// a forwarder can wake on it and pass it along without consuming the
-// user's answer. The whole point of `pop --wait --keep-unread`.
+// keepUnread is the reader/relay mode: it leaves the row's status alone
+// for EVERY kind (directed messages and broadcasts stay pending, i.e.
+// unread) and records a per-reader seen mark instead, so this reader's
+// loop won't re-return it. A forwarder can wake on mail and pass it
+// along without consuming it or hiding it from the human's unread
+// listing. The whole point of `pop --wait --keep-unread`.
 func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error) {
 	rows, err := pendingForIdentity(db, s)
 	if err != nil {
@@ -215,10 +216,7 @@ func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error
 		var claimed bool
 		switch {
 		case keepUnread:
-			claimed, err = flowdb.ClaimDelivered(db, m.ID)
-			if claimed {
-				m.Status = "delivered"
-			}
+			claimed, err = flowdb.ClaimSeen(db, s.identity(), m.ID)
 		case m.Kind == "message" && m.ToTaskSlug == "":
 			claimed, err = flowdb.ClaimAcked(db, m, "pop")
 		default:

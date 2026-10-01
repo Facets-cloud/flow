@@ -29,6 +29,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   two processes and printed a false "may race" warning. The wrapper row is now
   skipped, and the "running elsewhere" error names Claude Desktop as a
   possible holder.
+- **`flow inbox pop --keep-unread` no longer marks mail read.** It used to
+  set every message it returned to `delivered`, which the mail model shows as
+  read. A relay watching the user's queue therefore turned broadcasts and
+  direct questions into "read" before the user saw them, and they dropped out
+  of `flow inbox`. It now leaves the message `pending` and records a
+  per-reader mark in a new `bus_seen` table, so the same reader's wait loop
+  still never gets a message twice. `SweepBus` prunes marks once their message
+  is no longer unread.
 
 ## [0.1.0-alpha.28] — 2026-09-07
 

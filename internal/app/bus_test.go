@@ -240,24 +240,65 @@ func TestInboxPopKeepUnread(t *testing.T) {
 	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 0 {
 		t.Errorf("keep-unread acked the message: %+v", s)
 	}
-	// It's now delivered → a second keep-unread pop won't re-return it (no
-	// hot loop for the relay), and plain inbox no longer lists it as unread.
+	// A second keep-unread pop by the same reader won't re-return it (no
+	// hot loop for the relay)...
 	captureStdout(t, func() {
 		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 1 {
-			t.Errorf("delivered message was re-returned by keep-unread")
+			t.Errorf("seen message was re-returned by keep-unread")
 		}
 	})
-	// But it survives in --all and can still be answered by id.
-	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--as", "user", "--json"}) })
-	var all []busMsgJSON
-	if err := json.Unmarshal([]byte(out), &all); err != nil || len(all) != 1 {
-		t.Fatalf("--all after keep-unread: %v %v", all, err)
+	// ...but it is still unread for the human: listed by plain inbox.
+	out = captureStdout(t, func() { _ = cmdInbox([]string{"--as", "user", "--json"}) })
+	var unread []busMsgJSON
+	if err := json.Unmarshal([]byte(out), &unread); err != nil || len(unread) != 1 || unread[0].Mail != "unread" {
+		t.Fatalf("unread listing after keep-unread: %+v %v", unread, err)
 	}
-	if _, _, err := flowdb.ReadMessageByID(db, all[0].ID, "read"); err != nil {
+	// It can still be answered by id.
+	if _, _, err := flowdb.ReadMessageByID(db, unread[0].ID, "read"); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 1 {
 		t.Errorf("forwarded message could not be answered by id: %+v", s)
+	}
+}
+
+// TestInboxPopKeepUnreadBroadcast covers the regression where a relay's
+// `pop --keep-unread` loop flipped every broadcast it woke on to
+// delivered, so the human's FYIs silently became "read" without the
+// human ever seeing them.
+func TestInboxPopKeepUnreadBroadcast(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+		ID: "bc-ku-1", CreatedAt: flowdb.NowISO(), Kind: "broadcast",
+		FromAssignee: "user", FromTaskSlug: "peer", ToAssignee: "user", Body: "fyi from peer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 0 {
+			t.Fatal("keep-unread pop rc != 0")
+		}
+	})
+	if !strings.Contains(out, "fyi from peer") {
+		t.Errorf("keep-unread output: %s", out)
+	}
+	m, err := flowdb.GetBusMessageByID(db, "bc-ku-1")
+	if err != nil || m == nil || m.Status != "pending" {
+		t.Fatalf("broadcast status after keep-unread = %+v (err %v), want pending", m, err)
+	}
+	// A different reader identity still gets woken by it.
+	if claimed, err := flowdb.ClaimSeen(db, "user/other-relay", "bc-ku-1"); err != nil || !claimed {
+		t.Errorf("second reader could not see broadcast: claimed=%v err=%v", claimed, err)
+	}
+	// The human's normal pop still consumes it.
+	out = captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
+			t.Fatal("human pop rc != 0")
+		}
+	})
+	if !strings.Contains(out, "fyi from peer") {
+		t.Errorf("human pop output: %s", out)
 	}
 }
 
