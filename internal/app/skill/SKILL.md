@@ -418,8 +418,7 @@ X", or a bare `flow do --auto X`.
 of a tab, returns immediately, does the work end-to-end and calls `flow
 done` on itself when "Done when" is met (still triggers the close-out
 sweep). It implies `--dangerously-skip-permissions` and
-**cannot be combined with `--here`** (`--here` binds the current session; `--auto`
-spawns its own). It CAN take `--with`/`--with-file`. Lifecycle surfaces on
+**cannot be combined with `--here`**. It CAN take `--with`/`--with-file`. Lifecycle surfaces on
 the task: `flow show task` shows `auto_run: running (pid …) | completed |
 dead` + a log under `tasks/<slug>/auto-runs/`; `flow list tasks` has an
 `AUTO` column. `dead` = crashed/exited without closing (check the log);
@@ -442,6 +441,7 @@ Read **references/do-advanced.md** when any of these apply:
 - The user wants to fire a one-off instruction at a task without opening the
   tab: `--with "<instruction>"` or `--with-file <path>` (also works on
   `flow run playbook`).
+- Running in **Claude Desktop** → **references/desktop.md**.
 
 #### Transfer a task to the other harness
 

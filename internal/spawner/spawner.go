@@ -3,6 +3,7 @@
 //
 // Selection priority (highest first):
 //
+//	$CLAUDE_CODE_ENTRYPOINT=claude-desktop          → Claude Desktop (no tab; see below)
 //	$ZELLIJ set                                    → internal/zellij
 //	$KITTY_WINDOW_ID set or $TERM=xterm-kitty      → internal/kitty
 //	$FLOW_TERM=<valid backend>                     → that backend (user override)
@@ -20,11 +21,20 @@
 // without relying on TERM_PROGRAM. Unknown values silently fall
 // through to TERM_PROGRAM detection.
 //
+// Claude Desktop wins over everything else: a `flow do` run by Claude
+// inside a Desktop Code session has no terminal to put a tab in, and
+// Desktop exports CLAUDE_CODE_ENTRYPOINT=claude-desktop to every tool
+// command its sessions run. $FLOW_TERM=desktop opts a terminal into the
+// same behavior. Desktop cannot run an arbitrary command, so SpawnTab
+// refuses under it; `flow do` opens Desktop sessions via internal/desktop
+// instead.
+//
 // The Override var lets tests pin the backend deterministically without
 // having to set env vars via t.Setenv.
 package spawner
 
 import (
+	"errors"
 	"flow/internal/ghostty"
 	"flow/internal/iterm"
 	"flow/internal/kitty"
@@ -44,7 +54,13 @@ const (
 	BackendKitty    Backend = "kitty"
 	BackendWarp     Backend = "warp"
 	BackendGhostty  Backend = "ghostty"
+	BackendDesktop  Backend = "desktop"
 )
+
+// ErrDesktopNoTab is returned by SpawnTab when the active backend is
+// Claude Desktop, which opens sessions by deep link, not by running a
+// shell command in a tab.
+var ErrDesktopNoTab = errors.New("Claude Desktop can't run a command in a new tab; run this from a terminal (or unset FLOW_TERM=desktop)")
 
 // Override, if non-empty, forces a backend regardless of env vars.
 // Used by tests; production code should leave it as "".
@@ -74,6 +90,9 @@ func Detect() Backend {
 	if Override != "" {
 		return Override
 	}
+	if os.Getenv("CLAUDE_CODE_ENTRYPOINT") == "claude-desktop" {
+		return BackendDesktop
+	}
 	if os.Getenv("ZELLIJ") != "" {
 		return BackendZellij
 	}
@@ -82,7 +101,7 @@ func Detect() Backend {
 	}
 	if v := os.Getenv("FLOW_TERM"); v != "" {
 		switch Backend(v) {
-		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty:
+		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty, BackendDesktop:
 			return Backend(v)
 		}
 		// Unknown value falls through to TERM_PROGRAM detection.
@@ -105,6 +124,8 @@ func Detect() Backend {
 // matches every backend's SpawnTab.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 	switch Detect() {
+	case BackendDesktop:
+		return ErrDesktopNoTab
 	case BackendZellij:
 		return zellij.SpawnTab(title, cwd, command, envVars)
 	case BackendKitty:
@@ -139,6 +160,10 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 //   - iTerm2 (default): pid → tty via ps, then osascript walk
 func FocusSession(sessionID, binary string) (bool, error) {
 	switch Detect() {
+	case BackendDesktop:
+		// Desktop sessions are focused by re-opening their resume link
+		// (see `flow do`'s Desktop path), not by walking terminal tabs.
+		return false, nil
 	case BackendZellij:
 		return zellij.FocusSession(sessionID, binary)
 	case BackendKitty:

@@ -580,3 +580,39 @@ func stubAllRunners(t *testing.T) runnerFlags {
 		ghostty:  &ghosttyCalled,
 	}
 }
+
+// TestDetectClaudeDesktop: Desktop's CLAUDE_CODE_ENTRYPOINT marker beats
+// every other signal (a Desktop session has no terminal tab to open in),
+// $FLOW_TERM=desktop opts a terminal in, other entrypoints are ignored,
+// and SpawnTab/FocusSession never reach a terminal backend under it.
+func TestDetectClaudeDesktop(t *testing.T) {
+	Override = ""
+	t.Setenv("ZELLIJ", "0")
+	t.Setenv("KITTY_WINDOW_ID", "1")
+	t.Setenv("FLOW_TERM", "iterm")
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+	if got := Detect(); got != BackendDesktop {
+		t.Errorf("Detect() in Claude Desktop = %q, want %q", got, BackendDesktop)
+	}
+	if err := SpawnTab("t", "/tmp", "echo hi", nil); err != ErrDesktopNoTab {
+		t.Errorf("SpawnTab under Desktop err = %v, want ErrDesktopNoTab", err)
+	}
+	if focused, err := FocusSession("sid", "claude"); focused || err != nil {
+		t.Errorf("FocusSession under Desktop = (%v, %v), want (false, nil)", focused, err)
+	}
+
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	if got := Detect(); got != BackendZellij {
+		t.Errorf("Detect() with entrypoint=cli = %q, want zellij (marker ignored)", got)
+	}
+
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "")
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM", "")
+	t.Setenv("FLOW_TERM", "desktop")
+	if got := Detect(); got != BackendDesktop {
+		t.Errorf("Detect() with FLOW_TERM=desktop = %q, want %q", got, BackendDesktop)
+	}
+}

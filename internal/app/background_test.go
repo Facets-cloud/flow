@@ -32,6 +32,11 @@ func TestMain(m *testing.M) {
 	// stubBGMode (which saves/restores this override).
 	notBG := false
 	spawner.BackgroundOverride = &notBG
+	// Same for Claude Desktop: running the suite from a Desktop Code
+	// session exports CLAUDE_CODE_ENTRYPOINT=claude-desktop, which would
+	// reroute every cmdDo test to the Desktop path. Desktop tests pin
+	// spawner.Override instead.
+	os.Unsetenv("CLAUDE_CODE_ENTRYPOINT")
 	os.Exit(m.Run())
 }
 

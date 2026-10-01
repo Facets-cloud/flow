@@ -258,6 +258,30 @@ from iTerm2, "Claude" if Claude Code is the host, etc.; add it via the
 + button if it's not listed). After the grant the spawn is silent.
 iTerm2 doesn't need this — it has a native `create tab` verb.
 
+### Claude Desktop
+
+Run `flow do <task>` from a Claude Desktop Code session (or ask Claude there
+to "work on <task>") and the task opens in Desktop instead of a terminal.
+flow recognises Desktop from the `CLAUDE_CODE_ENTRYPOINT=claude-desktop`
+variable it gives every session; set `FLOW_TERM=desktop` to get the same from a
+terminal.
+
+- A task with a session re-opens it via `claude://resume`. Desktop keeps
+  writing the same transcript, so the task's session is unchanged. If Desktop
+  already has it open, flow switches to it; if a terminal has it open, flow
+  refuses (two writers on one transcript) unless you pass `--force`.
+- A new task (or `--fresh`) opens a new Desktop Code session in the task's
+  work_dir with its first prompt filled in. Send it and the session binds
+  itself to the task (`flow do --here`) and runs the usual bootstrap.
+- Sessions bound to a project-attached task file themselves into a sidebar
+  group named after the project, using Desktop's built-in sidebar tools.
+
+Limits: `--with` can't ride a resume link (send a `flow message` instead),
+`--dangerously-skip-permissions` is ignored (Desktop sets permissions per
+session), an interactive `flow owner tick` still needs a terminal, and
+Desktop's own sessions started outside flow carry no session id flag, so flow
+can't see them as live until Desktop resumes them.
+
 ### Background agents (`FLOW_TERM=bg`)
 
 If you live in Claude Code's **Agent View** (`claude agents`), set

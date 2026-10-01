@@ -240,6 +240,34 @@ func (c *claude) LiveSessionIDs() (map[string]int, error) {
 	return live, nil
 }
 
+// DesktopSessionIDs returns the session UUIDs (lowercased) that Claude
+// Desktop's own bundled claude processes are running, counted per UUID
+// like LiveSessionIDs. Desktop runs its Code sessions from
+// ~/Library/Application Support/Claude/claude-code/<version>/..., so a
+// row whose executable lives under that tree is Desktop-held. Comparing
+// this with LiveSessionIDs tells a caller whether a live session is held
+// only by Desktop (safe to re-open there) or also by a terminal.
+func DesktopSessionIDs() (map[string]int, error) {
+	out, err := PSRunner()
+	if err != nil {
+		return nil, fmt.Errorf("ps: %w", err)
+	}
+	held := make(map[string]int)
+	for _, line := range strings.Split(string(out), "\n") {
+		if isDesktopWrapperRow(line) || !strings.Contains(line, desktopBundleMarker) {
+			continue
+		}
+		if m := runningArgRe.FindStringSubmatch(line); len(m) == 2 {
+			held[strings.ToLower(m[1])]++
+		}
+	}
+	return held, nil
+}
+
+// desktopBundleMarker is the path segment of Claude Desktop's bundled
+// Claude Code install, present in the argv of every Desktop session.
+const desktopBundleMarker = "/Application Support/Claude/claude-code/"
+
 // isDesktopWrapperRow reports whether a `ps -axo pid,command` row is
 // Claude Desktop's process-group wrapper rather than a claude process.
 // Desktop launches each Code session as

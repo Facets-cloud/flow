@@ -277,3 +277,27 @@ func TestLiveSessions_PSError(t *testing.T) {
 		t.Errorf("expected error, got nil (live=%v)", live)
 	}
 }
+
+// TestDesktopSessionIDs counts only Desktop's bundled claude rows (the
+// disclaimer wrapper and terminal claude processes are excluded), so a
+// caller can tell a Desktop-held session from a terminal-held one.
+func TestDesktopSessionIDs(t *testing.T) {
+	orig := PSRunner
+	t.Cleanup(func() { PSRunner = orig })
+	app := "/Users/x/Library/Application Support/Claude/claude-code/2.1.284/claude.app/Contents/MacOS/claude"
+	PSRunner = func() ([]byte, error) {
+		return []byte(`  PID COMMAND
+45011 /Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- ` + app + ` --resume=9e3ddf03-47bc-4d4c-9e63-6ca56fee072f
+45012 ` + app + ` --output-format stream-json --resume=9e3ddf03-47bc-4d4c-9e63-6ca56fee072f
+64949 claude --resume 9e3ddf03-47bc-4d4c-9e63-6ca56fee072f
+70000 claude --resume 8f152724-186c-4068-baf2-5aeddcbeb09c
+`), nil
+	}
+	held, err := DesktopSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held["9e3ddf03-47bc-4d4c-9e63-6ca56fee072f"] != 1 || len(held) != 1 {
+		t.Errorf("held = %v, want only 9e3ddf03… once", held)
+	}
+}

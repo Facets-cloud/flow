@@ -220,6 +220,15 @@ func cmdDo(args []string) int {
 		return cmdDoBackground(db, task, h, *fresh, *dangerSkip, injectionText)
 	}
 
+	// Claude Desktop (run from a Desktop Code session, or $FLOW_TERM=
+	// desktop): there is no terminal to open a tab in, so the session is
+	// opened by deep link instead. --auto keeps its own headless path.
+	if !*auto && spawner.Detect() == spawner.BackendDesktop {
+		return cmdDoDesktop(db, task, h, desktopDoOpts{
+			fresh: *fresh, force: *force, skipPerms: *dangerSkip, inject: injectionText,
+		})
+	}
+
 	// The focus-an-existing-tab behavior only makes sense for the
 	// interactive path. For --auto there is no tab to focus; the
 	// equivalent "already in flight" guard is the auto_run_status check
@@ -460,23 +469,7 @@ func cmdDo(args []string) int {
 		// command (e.g. `--session-id <uuid>`) for deterministic
 		// transcript paths. For self-allocating harnesses sessionID will
 		// be empty — the SessionStart hook completes the binding later.
-		playbookSlug := ""
-		isFirstRun := false
-		if task.PlaybookSlug.Valid {
-			playbookSlug = task.PlaybookSlug.String
-			// First run = this is the only non-archived run-task for the
-			// playbook. The current run row was just inserted by
-			// cmdRunPlaybook, so a count of 1 means no prior runs exist.
-			var runCount int
-			if err := db.QueryRow(
-				`SELECT COUNT(*) FROM tasks WHERE playbook_slug = ? AND kind = 'playbook_run' AND archived_at IS NULL`,
-				playbookSlug,
-			).Scan(&runCount); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: count playbook runs: %v\n", err)
-			}
-			isFirstRun = runCount <= 1
-		}
-		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+		prompt := bootstrapPromptForTask(db, task)
 		command = h.LaunchCmd(sessionID, prompt, launchOpts)
 	} else {
 		// Resume path: the UUID we already have in the DB is what the
@@ -786,6 +779,28 @@ func bumpWorkdirUsed(db *sql.DB, path string) {
 // first-run variant when relevant.
 func buildBootstrapPromptForKind(slug, kind, playbookSlug string) string {
 	return buildBootstrapPromptForKindV2(slug, kind, playbookSlug, false)
+}
+
+// bootstrapPromptForTask builds the first-session prompt for a task,
+// resolving playbook-run first-run awareness from the DB.
+func bootstrapPromptForTask(db *sql.DB, task *flowdb.Task) string {
+	playbookSlug := ""
+	isFirstRun := false
+	if task.PlaybookSlug.Valid {
+		playbookSlug = task.PlaybookSlug.String
+		// First run = this is the only non-archived run-task for the
+		// playbook. The current run row was just inserted by
+		// cmdRunPlaybook, so a count of 1 means no prior runs exist.
+		var runCount int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE playbook_slug = ? AND kind = 'playbook_run' AND archived_at IS NULL`,
+			playbookSlug,
+		).Scan(&runCount); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: count playbook runs: %v\n", err)
+		}
+		isFirstRun = runCount <= 1
+	}
+	return buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
 }
 
 // buildBootstrapPromptForKindV2 is the kind-aware dispatcher with first-

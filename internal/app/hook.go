@@ -110,7 +110,20 @@ func cmdHookSessionStart(args []string) int {
 		slug,
 	)
 
-	return emitSessionStartContext(instructions + appendStaleVersionHint() + pageCtx)
+	return emitSessionStartContext(instructions + desktopSessionHint() + appendStaleVersionHint() + pageCtx)
+}
+
+// desktopSessionHint returns a SessionStart suffix for sessions running
+// in Claude Desktop's Code tab (Desktop exports CLAUDE_CODE_ENTRYPOINT=
+// claude-desktop), pointing at the skill reference that covers how
+// `flow do` behaves there and the sidebar-grouping steps. "" elsewhere.
+func desktopSessionHint() string {
+	if os.Getenv("CLAUDE_CODE_ENTRYPOINT") != "claude-desktop" {
+		return ""
+	}
+	return " flow-desktop: this session runs in Claude Desktop. After loading the flow skill, " +
+		"Read its references/desktop.md: `flow do` opens Desktop sessions instead of terminal " +
+		"tabs, and once this session is bound to a task, file it in the sidebar under its project."
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
@@ -210,7 +223,7 @@ func emitAmbientSkillHint() int {
 		"done and archived tasks/projects (which need explicit `--status done` / " +
 		"`--include-archived` flags on the list commands). The skill's §4.10 governs " +
 		"how to lazy-load these without reading them eagerly every turn."
-	return emitSessionStartContext(hint + appendStaleVersionHint() + busHumanPendingNotice())
+	return emitSessionStartContext(hint + desktopSessionHint() + appendStaleVersionHint() + busHumanPendingNotice())
 }
 
 // emitSessionStartContext is a thin wrapper around emitHookContext for

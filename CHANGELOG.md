@@ -7,6 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Desktop backend.** `flow do` run inside a Claude Desktop Code
+  session (detected from `CLAUDE_CODE_ENTRYPOINT=claude-desktop`, or forced
+  with `FLOW_TERM=desktop`) opens the task in Desktop instead of a terminal
+  tab. A task with a session re-opens it via `claude://resume` (switching to it
+  if Desktop already has it, refusing if a terminal does unless `--force`). A
+  new task or `--fresh` opens `claude://code/new` in the work_dir with a
+  pre-filled prompt that binds via `flow do --here` and bootstraps. The
+  SessionStart hook points Desktop sessions at a new skill reference,
+  `references/desktop.md`, which also files sessions into a sidebar group per
+  project with Desktop's `ccd_sidebar` tools. Under Desktop, `SpawnTab`
+  (interactive owner ticks) fails with a clear error.
+
 ### Fixed
 
 - **Claude Desktop sessions count once in live-session detection.** Desktop
