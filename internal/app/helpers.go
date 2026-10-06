@@ -16,9 +16,13 @@ func flagSet(name string) *flag.FlagSet {
 }
 
 // currentSessionID returns this process's harness session id, or ""
-// if not running inside any known harness. Probes every implemented
+// if not running inside any known harness. Inside a hook the stdin
+// payload's session_id wins; otherwise probes every implemented
 // harness's session-id env var and returns the one that's set.
 func currentSessionID() string {
+	if hookSessionID != "" {
+		return hookSessionID
+	}
 	if h := ambientHarness(); h != nil {
 		return os.Getenv(h.SessionIDEnvVar())
 	}
