@@ -211,3 +211,34 @@ func TestBuildBootstrapPromptInvokesSkill(t *testing.T) {
 		t.Errorf("bootstrap prompt must mention the task slug")
 	}
 }
+
+// TestHookBindsFromStdinSessionID pins the Codex binding path. Codex
+// exports $CODEX_THREAD_ID only to tool shells, never to hook processes,
+// so a bound Codex session's hooks see no session-id env var at all and
+// must take the id from the stdin payload — otherwise SessionStart tells
+// a bound session it is unbound and it keeps re-checking its binding.
+func TestHookBindsFromStdinSessionID(t *testing.T) {
+	setupFlowRoot(t)
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	t.Cleanup(func() { hookSessionID = "" })
+	sid := "019ff4b1-6162-7263-974f-f5f1866ad0fe"
+	mkBusTask(t, openFlowDB(t), "codex-task", sid)
+	payload := `{"session_id":"` + sid + `","hook_event_name":"SessionStart","source":"resume",` +
+		`"cwd":"/tmp","model":"gpt-5","permission_mode":"default","transcript_path":null}`
+
+	var start, prompt string
+	withHookStdin(t, payload, func() {
+		start = busHookContext(t, captureStdout(t, func() { cmdHookSessionStart(nil) }))
+	})
+	withHookStdin(t, payload, func() {
+		prompt = busHookContext(t, captureStdout(t, func() { cmdHookUserPromptSubmit(nil) }))
+	})
+	if !strings.Contains(start, `flow execution session for task "codex-task"`) {
+		t.Errorf("session-start should treat the payload session as bound; got:\n%s", start)
+	}
+	if !strings.Contains(prompt, `flow session → task`) {
+		t.Errorf("user-prompt-submit should emit the bound anchor; got:\n%s", prompt)
+	}
+}

@@ -2,10 +2,7 @@ package app
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"io"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -220,7 +217,9 @@ func cmdHookStop(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if stopHookActive(os.Stdin) {
+	// A missing or malformed payload counts as active — when in doubt,
+	// don't block.
+	if p, ok := readHookPayload(); !ok || p.StopHookActive {
 		return 0
 	}
 	db, err := openBusDB()
@@ -272,19 +271,6 @@ func stopBroadcastNudge(db *sql.DB, slug string) string {
 			"completed meaningful work, broadcast a one-liner now: flow broadcast \"<what changed>\". "+
 			"Skip if nothing notable happened.",
 		len(watchers), lastPostDesc(last))
-}
-
-// stopHookActive reads the Stop-hook stdin payload and reports whether
-// this stop is a hook-driven continuation (stop_hook_active). Any read
-// or parse failure counts as active — when in doubt, don't block.
-func stopHookActive(r io.Reader) bool {
-	var payload struct {
-		StopHookActive bool `json:"stop_hook_active"`
-	}
-	if err := json.NewDecoder(r).Decode(&payload); err != nil {
-		return true
-	}
-	return payload.StopHookActive
 }
 
 func lastPostDesc(last string) string {
