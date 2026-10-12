@@ -483,10 +483,10 @@ func TestWatchAsSelfSubscribesHuman(t *testing.T) {
 	}
 }
 
-// withStopHookStdin points os.Stdin at a real Stop-hook payload for the
-// duration of fn — cmdHookStop reads stop_hook_active from it and
-// fail-safes to silence when the payload is missing or malformed.
-func withStopHookStdin(t *testing.T, payload string, fn func()) {
+// withHookStdin points os.Stdin at a real hook payload for the
+// duration of fn — hooks read session_id (and Stop, stop_hook_active)
+// from it; Stop fail-safes to silence when it is missing or malformed.
+func withHookStdin(t *testing.T, payload string, fn func()) {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -509,7 +509,7 @@ func stopHookOnce(t *testing.T, active bool) string {
 		payload = `{"stop_hook_active": true}`
 	}
 	var out string
-	withStopHookStdin(t, payload, func() {
+	withHookStdin(t, payload, func() {
 		out = captureStdout(t, func() {
 			if rc := cmdHookStop(nil); rc != 0 {
 				t.Fatalf("rc != 0")
@@ -743,7 +743,7 @@ func TestHookStopSilentDuringHookContinuation(t *testing.T) {
 	}
 	// Missing/garbage payload fail-safes to silence too.
 	var out string
-	withStopHookStdin(t, "not json", func() {
+	withHookStdin(t, "not json", func() {
 		out = captureStdout(t, func() { _ = cmdHookStop(nil) })
 	})
 	if strings.TrimSpace(out) != "" {

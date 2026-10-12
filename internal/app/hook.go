@@ -52,14 +52,42 @@ func cmdHook(args []string) int {
 	}
 }
 
+// hookSessionID is the session id from the running hook's stdin payload
+// ("" outside a hook). currentSessionID prefers it over the env var.
+var hookSessionID string
+
+// hookPayload is the subset of the JSON that Claude Code and Codex write to
+// a hook's stdin that flow reads.
+type hookPayload struct {
+	SessionID      string `json:"session_id"`
+	StopHookActive bool   `json:"stop_hook_active"`
+}
+
+// readHookPayload decodes the hook's stdin payload and records its
+// session_id for currentSessionID. Codex exports $CODEX_THREAD_ID only to
+// tool shells, never to hook processes, so without this every Codex hook
+// saw an unbound session. ok=false when stdin is a terminal or holds no
+// JSON object; hookSessionID is then "" and the env var applies.
+func readHookPayload() (p hookPayload, ok bool) {
+	hookSessionID = ""
+	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice != 0 {
+		return p, false
+	}
+	if err := json.NewDecoder(os.Stdin).Decode(&p); err != nil {
+		return p, false
+	}
+	hookSessionID = p.SessionID
+	return p, true
+}
+
 // cmdHookSessionStart emits a Claude Code SessionStart hook response.
 // Wired via ~/.claude/settings.json with a matcher of "startup|resume"
 // so it fires for both fresh spawns and `claude --resume`.
 //
 // Two modes, branching on whether this session is bound to a flow
-// task. The binding is discovered via reverse-lookup on the
-// $CLAUDE_CODE_SESSION_ID env var (Claude Code injects this into
-// every session) against tasks.session_id:
+// task. The binding is discovered via reverse-lookup of the hook
+// payload's session_id (falling back to the harness's session-id env
+// var) against tasks.session_id:
 //   - Bound (a task carries this session_id): emit the full
 //     task-context reload instructions. On a fresh spawn this is
 //     redundant with the bootstrap prompt but harmless; on a resume
@@ -72,6 +100,7 @@ func cmdHookSessionStart(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	readHookPayload()
 
 	slug := lookupBoundTaskSlug()
 	if slug == "" {
@@ -257,6 +286,7 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	readHookPayload()
 	pageCtx := busPromptSubmitContext()
 	t := lookupBoundTask()
 	if t == nil {
@@ -293,6 +323,7 @@ func cmdHookPreToolUse(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	readHookPayload()
 	ctx := busPreToolUseContext()
 	if ctx == "" {
 		return 0
