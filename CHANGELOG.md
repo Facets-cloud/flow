@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Spawned tasks inherit their parent's project.** `flow add task` run
+  without `--project` from a session bound to a task now places the new
+  task in that task's project (and inherits the project work_dir, same as
+  `--project`). An explicit `--project` still wins. Previously, tasks an
+  agent fanned out landed with no project and vanished from project views.
+- **`flow update task <ref> --project <slug>` / `--clear-project`** to move
+  a task between projects or make it floating. work_dir is not changed, so
+  an attached session keeps working.
+
 ## [0.1.0-alpha.28] — 2026-09-07
 
 ### Added
