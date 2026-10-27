@@ -245,3 +245,15 @@ func TestLiveSessions_PSError(t *testing.T) {
 		t.Errorf("expected error, got nil (live=%v)", live)
 	}
 }
+
+// A session that already has a transcript must be continued with --resume:
+// claude refuses --session-id for an existing session ("already in use").
+func TestAutoRunArgv_ResumesExistingSession(t *testing.T) {
+	h := New()
+	sid := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
+	got := h.AutoRunArgv(sid, "go on", harness.LaunchOpts{SkipPermissions: true, Resume: true})
+	want := []string{"claude", "--resume", sid, "-p", "go on", "--dangerously-skip-permissions"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("got %v\nwant %v", got, want)
+	}
+}
