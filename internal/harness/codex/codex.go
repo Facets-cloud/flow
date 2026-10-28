@@ -227,3 +227,6 @@ func (c *codex) InstallPreToolUseHook(command string) (bool, error)    { return 
 func (c *codex) UninstallPreToolUseHook(command string) (bool, error)  { return false, nil }
 func (c *codex) InstallStopHook(command string) (bool, error)          { return false, nil }
 func (c *codex) UninstallStopHook(command string) (bool, error)        { return false, nil }
+
+func (c *codex) InstallEventHook(event, matcher, command string) (bool, error) { return false, nil }
+func (c *codex) UninstallEventHook(event, command string) (bool, error)        { return false, nil }

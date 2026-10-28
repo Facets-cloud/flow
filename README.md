@@ -425,6 +425,16 @@ To let flow switch the Rex app to a tab in another session, turn on
 **Remote Control** in Rex Settings → Rex Server; without it flow opens
 or finds the tab and tells you which session it is in.
 
+Run inside Rex, `flow skill install` / `flow skill update` also adds
+**Rex status hooks**, so Rex's tab and session markers show what each
+Claude session is doing: a spinner while it works, a "blocked" marker
+when it waits on a permission prompt or a question, and "done" when a
+turn finishes. Claude Code doesn't report this itself, and hooks can't
+emit Rex's status sequence through Claude's `terminalSequence`
+allowlist, so the hook writes it to the tab's terminal device. Outside
+Rex they aren't installed. Limitation: Claude fires no hook on an Esc
+interrupt, so an interrupted tab shows "working" until the next prompt.
+
 The architecture is portable — session spawning is one small
 package — but other harnesses (Cursor, plain shell) and other
 terminals (Linux + tmux/wezterm, Windows Terminal) need contributors

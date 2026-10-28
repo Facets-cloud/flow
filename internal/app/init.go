@@ -133,6 +133,11 @@ func cmdInit(args []string) int {
 		fmt.Println("installed Stop hook")
 	}
 	_, _ = h.UninstallPostToolUseHook(postToolUseHookCommand) // retired
+	if n, err := installRexStatusHooks(h); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install Rex status hooks: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("installed %d Rex status hooks\n", n)
+	}
 
 	fmt.Printf("flow initialized at %s\n", root)
 	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)

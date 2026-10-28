@@ -46,6 +46,8 @@ func cmdHook(args []string) int {
 		return 0
 	case "stop":
 		return cmdHookStop(rest)
+	case "rex-status":
+		return cmdHookRexStatus(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown hook subcommand %q\n", sub)
 		return 2

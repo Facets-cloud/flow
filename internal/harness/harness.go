@@ -316,4 +316,12 @@ type Harness interface {
 
 	// UninstallStopHook removes any Stop entry matching `command`.
 	UninstallStopHook(command string) (removed bool, err error)
+
+	// InstallEventHook idempotently registers `command` for an arbitrary
+	// hook event (matcher may be ""). Used for flow's Rex status hooks.
+	// Harnesses without that event no-op with (false, nil).
+	InstallEventHook(event, matcher, command string) (added bool, err error)
+
+	// UninstallEventHook removes any `event` entry matching `command`.
+	UninstallEventHook(event, command string) (removed bool, err error)
 }

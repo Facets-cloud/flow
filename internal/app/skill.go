@@ -130,6 +130,7 @@ func maybeAutoUpgradeSkill() {
 	_, _ = h.InstallStopHook(stopHookCommand)
 	_, _ = h.InstallPreToolUseHook(preToolUseHookCommand)
 	_, _ = h.UninstallPostToolUseHook(postToolUseHookCommand) // retired
+	_, _ = installRexStatusHooks(h)
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
 }
 
@@ -221,6 +222,11 @@ func skillInstall(args []string, forceDefault bool) int {
 	} else if added {
 		fmt.Println("installed PreToolUse hook (delta-gated inbox nudge before each tool call)")
 	}
+	if n, err := installRexStatusHooks(h); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install Rex status hooks: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("installed %d Rex status hooks (working/blocked/done markers on Rex tabs)\n", n)
+	}
 	return 0
 }
 
@@ -280,6 +286,11 @@ func skillUninstall(args []string) int {
 		return 0
 	} else if removed {
 		fmt.Println("removed PreToolUse hook")
+	}
+	if n, err := uninstallRexStatusHooks(h); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not remove Rex status hooks: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("removed %d Rex status hooks\n", n)
 	}
 	return 0
 }

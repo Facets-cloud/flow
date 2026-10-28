@@ -396,6 +396,14 @@ func (c *claude) UninstallStopHook(command string) (bool, error) {
 	return uninstallHook("Stop", command)
 }
 
+func (c *claude) InstallEventHook(event, matcher, command string) (bool, error) {
+	return installHook(event, matcher, command)
+}
+
+func (c *claude) UninstallEventHook(event, command string) (bool, error) {
+	return uninstallHook(event, command)
+}
+
 // installHook idempotently adds a hook entry for `event` to
 // ~/.claude/settings.json. matcher may be empty — some events don't
 // use one and the field is omitted. command is both the literal
