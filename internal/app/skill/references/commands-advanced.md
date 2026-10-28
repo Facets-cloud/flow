@@ -39,6 +39,7 @@ flow update task <ref>
     [--due-date <date>]   [--clear-due]
     [--waiting "<who or what>"] [--clear-waiting]
     [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
+    [--project <slug>] [--clear-project]   (moves the task; work_dir unchanged)
 
 flow update project <ref>
     [--priority high|medium|low]

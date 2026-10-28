@@ -193,8 +193,17 @@ func addTask(args []string) int {
 	}
 
 	// Resolve project first, since it may supply the default work_dir.
+	// No --project from inside a task-bound session: inherit the bound
+	// task's project, so tasks an agent spawns land next to their parent.
 	var projectSlug any = nil
 	var projectWorkDir string
+	inheritedFrom := ""
+	if *project == "" {
+		if parent, err := currentSessionTask(db); err == nil && parent.ProjectSlug.Valid {
+			*project = parent.ProjectSlug.String
+			inheritedFrom = parent.Slug
+		}
+	}
 	if *project != "" {
 		p, err := flowdb.GetProject(db, *project)
 		if err != nil {
@@ -292,6 +301,9 @@ func addTask(args []string) int {
 		fmt.Printf("Created floating task %q at %s\n", slug, taskDir)
 	} else {
 		fmt.Printf("Created task %q in project %q\n", slug, *project)
+		if inheritedFrom != "" {
+			fmt.Printf("  (project inherited from current task %q; pass --project to override)\n", inheritedFrom)
+		}
 	}
 	fmt.Printf("Next: flow do %s\n", slug)
 	return 0

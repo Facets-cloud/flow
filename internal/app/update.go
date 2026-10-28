@@ -66,15 +66,18 @@ func cmdUpdateTask(args []string) int {
 	var removeTags stringSliceFlag
 	fs.Var(&removeTags, "remove-tag", "remove a tag (repeatable)")
 	clearTags := fs.Bool("clear-tags", false, "remove all tags from the task")
+	project := fs.String("project", "", "move the task into this project (work_dir is unchanged)")
+	clearProject := fs.Bool("clear-project", false, "detach the task from its project (make it floating)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
 	anyField := *workDir != "" || *status != "" || *priority != "" ||
 		*assignee != "" || *clearAssignee || *dueDate != "" || *clearDue ||
 		*waiting != "" || *clearWaiting ||
-		len(addTags) > 0 || len(removeTags) > 0 || *clearTags
+		len(addTags) > 0 || len(removeTags) > 0 || *clearTags ||
+		*project != "" || *clearProject
 	if !anyField {
-		fmt.Fprintln(os.Stderr, "error: give at least one of --work-dir, --status, --priority, --assignee, --clear-assignee, --due-date, --clear-due, --waiting, --clear-waiting, --tag, --remove-tag, --clear-tags")
+		fmt.Fprintln(os.Stderr, "error: give at least one of --work-dir, --status, --priority, --assignee, --clear-assignee, --due-date, --clear-due, --waiting, --clear-waiting, --tag, --remove-tag, --clear-tags, --project, --clear-project")
 		return 2
 	}
 
@@ -100,6 +103,10 @@ func cmdUpdateTask(args []string) int {
 	}
 	if *clearWaiting && *waiting != "" {
 		fmt.Fprintln(os.Stderr, "error: --waiting and --clear-waiting are mutually exclusive")
+		return 2
+	}
+	if *clearProject && *project != "" {
+		fmt.Fprintln(os.Stderr, "error: --project and --clear-project are mutually exclusive")
 		return 2
 	}
 	if *clearTags && len(removeTags) > 0 {
@@ -150,6 +157,31 @@ func cmdUpdateTask(args []string) int {
 	}
 
 	now := flowdb.NowISO()
+	if *project != "" {
+		p, err := flowdb.GetProject(db, *project)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				fmt.Fprintf(os.Stderr, "error: project %q not found\n", *project)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if _, err := db.Exec(`UPDATE tasks SET project_slug=?, updated_at=? WHERE slug=?`,
+			p.Slug, now, task.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update project: %v\n", err)
+			return 1
+		}
+		fmt.Printf("project → %s\n", p.Slug)
+	}
+	if *clearProject {
+		if _, err := db.Exec(`UPDATE tasks SET project_slug=NULL, updated_at=? WHERE slug=?`,
+			now, task.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "error: clear project: %v\n", err)
+			return 1
+		}
+		fmt.Println("project → (none, floating)")
+	}
 	if absWorkDir != "" {
 		// Invariant: any task with a session_id has work_dir ==
 		// the cwd that session was created at. Allow a work_dir
