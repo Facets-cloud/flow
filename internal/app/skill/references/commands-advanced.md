@@ -22,6 +22,16 @@ long to read at once.
 give you enough context, or when you need to understand specific
 implementation decisions made during that task's session.
 
+### Parent links: tasks spun off from a session
+
+`flow add task` run from a session bound to a task records that task
+as the new task's parent (`tasks.parent_slug`) and prints `(parent:
+"<slug>")`. Every task a bound session creates is linked; tasks created
+from an unbound (dispatch) session have no parent. `flow show task`
+prints `parent:` on the child and `spun_off:` (comma-separated child
+slugs) on the parent. Use it to trace where a task came from, or to
+find the follow-ups a task fanned out.
+
 ### Field edits — `flow update task` / `flow update project`
 
 `flow update task` is the canonical lane for in-place field edits on

@@ -14,6 +14,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   task in that task's project (and inherits the project work_dir, same as
   `--project`). An explicit `--project` still wins. Previously, tasks an
   agent fanned out landed with no project and vanished from project views.
+- **Spawned tasks record their parent.** `flow add task` run from a
+  session bound to a task stores that task as `parent_slug` on the new
+  task and prints `(parent: "<slug>")`. `flow show task` shows `parent:`
+  on the child and `spun_off:` with the child slugs on the parent. Tasks
+  created from an unbound session have no parent. DBs that already carry
+  a legacy `parent_slug` column are reused as is.
 - **`flow update task <ref> --project <slug>` / `--clear-project`** to move
   a task between projects or make it floating. work_dir is not changed, so
   an attached session keeps working.

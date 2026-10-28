@@ -192,17 +192,23 @@ func addTask(args []string) int {
 		}
 	}
 
+	// From inside a task-bound session, the bound task is the new task's
+	// parent: record it as parent_slug so spin-offs link back to it.
+	var parentSlug any = nil
+	parent, perr := currentSessionTask(db)
+	if perr == nil {
+		parentSlug = parent.Slug
+	}
+
 	// Resolve project first, since it may supply the default work_dir.
 	// No --project from inside a task-bound session: inherit the bound
 	// task's project, so tasks an agent spawns land next to their parent.
 	var projectSlug any = nil
 	var projectWorkDir string
 	inheritedFrom := ""
-	if *project == "" {
-		if parent, err := currentSessionTask(db); err == nil && parent.ProjectSlug.Valid {
-			*project = parent.ProjectSlug.String
-			inheritedFrom = parent.Slug
-		}
+	if *project == "" && parent != nil && parent.ProjectSlug.Valid {
+		*project = parent.ProjectSlug.String
+		inheritedFrom = parent.Slug
 	}
 	if *project != "" {
 		p, err := flowdb.GetProject(db, *project)
@@ -265,9 +271,9 @@ func addTask(args []string) int {
 
 	now := flowdb.NowISO()
 	if _, err := db.Exec(
-		`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, due_date, assignee, status_changed_at, created_at, updated_at)
-		 VALUES (?, ?, ?, 'backlog', ?, ?, ?, ?, ?, ?, ?)`,
-		slug, name, projectSlug, *priority, absWorkDir, dueDate, assignee, now, now, now,
+		`INSERT INTO tasks (slug, name, project_slug, status, priority, work_dir, due_date, assignee, parent_slug, status_changed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, 'backlog', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		slug, name, projectSlug, *priority, absWorkDir, dueDate, assignee, parentSlug, now, now, now,
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "error: insert task: %v\n", err)
 		return 1
@@ -304,6 +310,9 @@ func addTask(args []string) int {
 		if inheritedFrom != "" {
 			fmt.Printf("  (project inherited from current task %q; pass --project to override)\n", inheritedFrom)
 		}
+	}
+	if parent != nil {
+		fmt.Printf("  (parent: %q)\n", parent.Slug)
 	}
 	fmt.Printf("Next: flow do %s\n", slug)
 	return 0

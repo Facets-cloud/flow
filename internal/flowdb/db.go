@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     auto_run_started      TEXT,
     auto_run_finished     TEXT,
     auto_run_log          TEXT,
+    parent_slug           TEXT REFERENCES tasks(slug),
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
     archived_at           TEXT,
@@ -172,9 +173,12 @@ type Task struct {
 	AutoRunStarted  sql.NullString
 	AutoRunFinished sql.NullString
 	AutoRunLog      sql.NullString
-	CreatedAt       string
-	UpdatedAt       string
-	ArchivedAt      sql.NullString
+	// ParentSlug is the task whose bound session ran `flow add task` to
+	// create this one. NULL for tasks created from an unbound session.
+	ParentSlug sql.NullString
+	CreatedAt  string
+	UpdatedAt  string
+	ArchivedAt sql.NullString
 }
 
 // Workdir mirrors the workdirs convenience registry.
@@ -375,6 +379,11 @@ func runMigrations(db *sql.DB) error {
 		{"auto_run_started", "ALTER TABLE tasks ADD COLUMN auto_run_started TEXT"},
 		{"auto_run_finished", "ALTER TABLE tasks ADD COLUMN auto_run_finished TEXT"},
 		{"auto_run_log", "ALTER TABLE tasks ADD COLUMN auto_run_log TEXT"},
+		// parent_slug: the task whose bound session created this one
+		// (set by `flow add task`). Some live DBs already carry a legacy,
+		// unused parent_slug column with this exact shape, hence the
+		// exists-check rather than a blind ALTER.
+		{"parent_slug", "ALTER TABLE tasks ADD COLUMN parent_slug TEXT REFERENCES tasks(slug)"},
 	} {
 		has, err := columnExists(db, "tasks", col.name)
 		if err != nil {
@@ -750,7 +759,7 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, parent_slug, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
@@ -760,6 +769,7 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.StatusChangedAt, &t.SessionID,
 		&t.SessionStarted, &t.SessionLastResumed, &t.Harness,
 		&t.AutoRunStatus, &t.AutoRunPID, &t.AutoRunStarted, &t.AutoRunFinished, &t.AutoRunLog,
+		&t.ParentSlug,
 		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)
 	if err != nil {
@@ -784,6 +794,25 @@ func TaskBySessionID(db *sql.DB, sid string) (*Task, error) {
 	}
 	row := db.QueryRow("SELECT "+TaskCols+" FROM tasks WHERE session_id = ? LIMIT 1", sid)
 	return ScanTask(row)
+}
+
+// ChildTasks returns the slugs of tasks whose parent_slug is slug,
+// sorted by slug.
+func ChildTasks(db *sql.DB, slug string) ([]string, error) {
+	rows, err := db.Query(`SELECT slug FROM tasks WHERE parent_slug = ? ORDER BY slug`, slug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {

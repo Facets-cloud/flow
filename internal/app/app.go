@@ -106,6 +106,7 @@ Setup:
 Create:
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>]
+                   (from a task-bound session: records that task as parent, inherits its project)
 
 Sessions:
   flow do                <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions]
