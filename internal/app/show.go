@@ -223,6 +223,12 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		projName = t.ProjectSlug.String
 	}
 	fmt.Printf("project:       %s\n", projName)
+	if t.ParentSlug.Valid && t.ParentSlug.String != "" {
+		fmt.Printf("parent:        %s\n", t.ParentSlug.String)
+	}
+	if kids, err := flowdb.ChildTasks(db, t.Slug); err == nil && len(kids) > 0 {
+		fmt.Printf("spun_off:      %s\n", strings.Join(kids, ", "))
+	}
 	fmt.Printf("status:        %s\n", t.Status)
 
 	// Staleness marker for in-progress tasks.
