@@ -25,6 +25,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   session label, created if missing. Ungrouped projects and floating tasks
   open where `flow do` ran; other terminals ignore the group. Existing DBs
   gain the nullable `projects.terminal_group` column on open.
+- **Claude status markers in Rex.** Run inside Rex, `flow skill install` /
+  `flow skill update` / `flow init` add hooks that report each Claude
+  session's state to Rex, so its tab and session-picker markers show
+  working (prompt submitted, tool running), blocked (permission prompt or
+  question) and done (turn finished). The hooks are a no-op outside Rex,
+  are not installed there, and are removed by `flow skill uninstall`.
+  Claude fires no hook on an Esc interrupt, so an interrupted tab shows
+  working until the next prompt.
 
 ## [0.1.0-alpha.29] — 2026-10-28
 
