@@ -81,8 +81,10 @@ func readHookPayload() (p hookPayload, ok bool) {
 }
 
 // cmdHookSessionStart emits a Claude Code SessionStart hook response.
-// Wired via ~/.claude/settings.json with a matcher of "startup|resume"
-// so it fires for both fresh spawns and `claude --resume`.
+// Wired via ~/.claude/settings.json with a matcher of
+// "startup|resume|compact" so it fires for fresh spawns, `claude
+// --resume`, AND after compaction (the compacted context has lost the
+// task reload + listener discipline; this output restores it).
 //
 // Two modes, branching on whether this session is bound to a flow
 // task. The binding is discovered via reverse-lookup of the hook

@@ -7,6 +7,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Parents auto-watch the tasks they spawn.** `flow add task` from a
+  bound session now also subscribes that session (`user/<parent>`) to the
+  new task and prints `(user/<parent> now watches <child>)`.
+- **Spawned auto runs report to their parent.** The `flow do --auto`
+  prompt for a task with a parent authorizes and asks the child to `flow
+  message user/<parent>` at milestones and when done or blocked.
+  Parentless tasks keep the old "message no one unless the brief says so"
+  rule.
+- **`flow do --auto` parent reminder.** Launching a child with a parent
+  prints whether the parent watches it and the inbox Monitor recipe.
+
+### Fixed
+
+- **Monitor listener recipe.** The SessionStart hook, SKILL.md and
+  `references/messaging.md` told agents to arm `Monitor(...,
+  persistent: true)` with "no re-arming ever". Claude Code's Monitor has
+  no `persistent` param and requires `timeout_ms` (max 1800000). The
+  recipe now passes `description` + `timeout_ms: 1800000`, says to re-arm
+  on the expiry notice, and notes Monitor may need loading via ToolSearch.
+- **SessionStart hook re-fires after compaction.** The Claude hook matcher
+  is now `startup|resume|compact`, so a compacted session gets its task
+  context and listener discipline back. Re-running `flow init` (or `flow
+  skill install`) migrates an existing `startup|resume` entry in place
+  without duplicating it. Codex has no compact event and is unchanged.
+
 ## [0.1.0-alpha.29] — 2026-10-28
 
 ### Added

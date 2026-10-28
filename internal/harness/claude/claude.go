@@ -38,9 +38,12 @@ var (
 )
 
 const (
-	// SessionStart matcher for ~/.claude/settings.json. Stable —
-	// changing it would orphan existing installs.
-	hookMatcher = "startup|resume"
+	// SessionStart matcher for ~/.claude/settings.json. "compact" makes
+	// the hook re-fire after compaction, which is what restores the
+	// listener discipline the compacted context lost. installHook keys
+	// on the command, not the matcher, and migrates an older matcher
+	// (e.g. "startup|resume") in place, so changing it is safe.
+	hookMatcher = "startup|resume|compact"
 )
 
 // New returns a fresh claude harness. The struct is stateless; we
@@ -402,6 +405,10 @@ func (c *claude) UninstallStopHook(command string) (bool, error) {
 // command Claude Code will execute AND the marker used to detect
 // whether the hook is already installed.
 //
+// If an entry already runs command but carries a different non-empty
+// matcher, the matcher is updated in place (migration for installs made
+// before the matcher changed) instead of adding a duplicate entry.
+//
 // Returns (added=true) iff the file was actually modified. Preserves
 // all other settings, all other events, and all sibling entries
 // under the same event.
@@ -434,6 +441,7 @@ func installHook(event, matcher, command string) (bool, error) {
 	}
 	entries, _ := hooks[event].([]any)
 
+	found, migrated := false, false
 	for _, entry := range entries {
 		m, ok := entry.(map[string]any)
 		if !ok {
@@ -446,9 +454,23 @@ func installHook(event, matcher, command string) (bool, error) {
 				continue
 			}
 			if cmd, _ := hm["command"].(string); cmd == command {
-				return false, nil
+				found = true
+				if old, _ := m["matcher"].(string); matcher != "" && old != matcher {
+					m["matcher"] = matcher
+					migrated = true
+				}
 			}
 		}
+	}
+	if found {
+		if !migrated {
+			return false, nil
+		}
+		settings["hooks"] = hooks
+		if err := writeSettings(path, settings); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	newEntry := map[string]any{
@@ -465,16 +487,23 @@ func installHook(event, matcher, command string) (bool, error) {
 	entries = append(entries, newEntry)
 	hooks[event] = entries
 	settings["hooks"] = hooks
+	if err := writeSettings(path, settings); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
+// writeSettings marshals settings back to path (indented, trailing newline).
+func writeSettings(path string, settings map[string]any) error {
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return false, fmt.Errorf("marshal settings: %w", err)
+		return fmt.Errorf("marshal settings: %w", err)
 	}
 	out = append(out, '\n')
 	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
+		return fmt.Errorf("write %s: %w", path, err)
 	}
-	return true, nil
+	return nil
 }
 
 // uninstallHook removes any entry under hooks.<event> whose inner

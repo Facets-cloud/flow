@@ -422,6 +422,7 @@ func cmdDo(args []string) int {
 			fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
 		}
 		fmt.Printf("Launched autonomous run for %s (pid %d)\n  log: %s\n", task.Slug, pid, logPath)
+		printParentListenerReminder(db, task)
 		return 0
 	}
 
@@ -1058,4 +1059,29 @@ func cmdDoHere(query string, force bool) int {
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
 	return 0
+}
+
+// printParentListenerReminder tells whoever launched an auto run of a
+// spawned child whether the parent session is subscribed to it, and that
+// the child's reports only wake the parent through an armed inbox Monitor.
+func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
+	if !task.ParentSlug.Valid || task.ParentSlug.String == "" {
+		return
+	}
+	watcher := busSender{Assignee: busUser, TaskSlug: task.ParentSlug.String}.identity()
+	watching := false
+	if watches, err := flowdb.ListWatches(db, watcher); err == nil {
+		for _, w := range watches {
+			if w == task.Slug {
+				watching = true
+				break
+			}
+		}
+	}
+	if watching {
+		fmt.Printf("  %s is watching %s; the child reports via flow message %s.\n", watcher, task.Slug, watcher)
+	} else {
+		fmt.Printf("  %s is NOT watching %s; from the parent session run: flow watch %s\n", watcher, task.Slug, task.Slug)
+	}
+	fmt.Println("  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: 'while true; do flow inbox pop --wait --timeout 300 --json || true; done'); re-arm it when it expires.")
 }

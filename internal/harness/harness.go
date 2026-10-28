@@ -267,7 +267,8 @@ type Harness interface {
 	// Hooks ------------------------------------------------------------
 
 	// InstallSessionStartHook idempotently registers `command` as a
-	// SessionStart hook (matcher: startup|resume equivalent). Returns
+	// SessionStart hook (matcher: startup|resume, plus compact where the
+	// harness has a compaction event). Returns
 	// (added=true) iff the on-disk hook config was actually modified.
 	InstallSessionStartHook(command string) (added bool, err error)
 
