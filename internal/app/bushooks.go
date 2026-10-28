@@ -17,8 +17,8 @@ import (
 // harness is free to drop the hook's output — silent mail loss.)
 //
 //	SessionStart      busSessionStartContext(): pending-count notices +
-//	                  the listener discipline (arm a persistent Monitor
-//	                  loop; watch what you depend on).
+//	                  the listener discipline (arm an inbox Monitor loop,
+//	                  re-arm on expiry; watch what you depend on).
 //	UserPromptSubmit  busPromptSubmitContext(): the human replying in a
 //	                  session ACKS that session's own outbound
 //	                  human-directed messages (that is the answering
@@ -53,15 +53,18 @@ func busSessionStartContext() string {
 	b.WriteString(humanPendingNotice(db))
 	if s.TaskSlug != "" {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
-		b.WriteString(" flow-bus listener discipline: arm ONE persistent Monitor NOW — the " +
-			"loop is required (Monitor streams stdout lines as events): " +
-			"Monitor(command: 'while true; do flow inbox pop --wait --timeout 300 --json " +
-			"|| true; done', persistent: true). Every message then wakes you as an event, " +
-			"no re-arming ever (--json is silent on timeouts). Only if Monitor is " +
-			"unavailable, fall back to a background Bash `flow inbox pop --wait` and " +
-			"re-arm it after every wake. Also subscribe to what this task depends on: " +
-			"`flow watch <task-or-project-slug>` for anything you are waiting on, " +
-			"coordinating with, or any task you create from this session.")
+		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
+			"deferred tool: load it first with ToolSearch \"select:Monitor\"). The loop is " +
+			"required (Monitor streams stdout lines as events): " +
+			"Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: 'while true; " +
+			"do flow inbox pop --wait --timeout 300 --json || true; done'). Every message then " +
+			"wakes you as an event (--json is silent on timeouts). timeout_ms is required and " +
+			"capped at 1800000: when the Monitor expires you get a notice, re-arm it immediately " +
+			"with the same call. Only if Monitor is unavailable, fall back to a background Bash " +
+			"`flow inbox pop --wait` and re-arm it after every wake. Also subscribe to what this " +
+			"task depends on: `flow watch <task-or-project-slug>` for anything you are waiting on, " +
+			"or coordinating with (tasks you create from this session are watched automatically). " +
+			"Children you spawn report via flow message, and only an armed Monitor hears them.")
 	}
 	return b.String()
 }

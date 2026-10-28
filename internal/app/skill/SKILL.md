@@ -786,31 +786,30 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    if someone must act, message them too. You can NEVER message your own
    address (flow rejects it).
 
-**Auto-mode exception:** a `flow do --auto` agent runs unwatched — a
-silent run looks stuck, so post progress via `flow message user`/`flow
-broadcast` as you go, not only for a decision.
+**Auto-mode exception:** a `flow do --auto` agent runs unwatched: it posts
+progress via `flow broadcast`, and if its task has a parent its prompt
+says to `flow message user/<parent>` at milestones and when done/blocked.
 
 Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
-**Consuming.** `flow inbox` lists unread; `flow inbox --all` lists
-everything retained (read + unread); `flow inbox read <id>` shows/acks one
-specific message out of order; `flow inbox pop` consumes the oldest.
-`--as user` drains the human queue from a monitor session; `--json` for
-scripts. At session start arm ONE persistent **Monitor** — pick by role:
+**Consuming.** `flow inbox` lists unread; `--all` lists everything
+retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
+the oldest. `--as user` drains the human queue. At
+session start arm ONE inbox **Monitor** (a deferred tool: load it with
+ToolSearch `select:Monitor` first). It has no `persistent` param;
+`timeout_ms` is REQUIRED (max 1800000):
 
-- **Consumer** (you handle each message): `Monitor(command: 'while true;
-  do flow inbox pop --wait --timeout 300 --json || true; done',
-  persistent: true)` — `pop` acks as it goes.
-- **Reader / relay** (you forward or just watch — must NOT ack): same loop
-  with `pop --wait --keep-unread` — wakes you without consuming the answer
-  (plain `pop` would silently ack mail you're only forwarding — the trap).
+- **Consumer** (default; `pop` acks as it goes): `Monitor(description:
+  "flow inbox", timeout_ms: 1800000, command: 'while true; do flow inbox
+  pop --wait --timeout 300 --json || true; done')`
+- **Reader / relay** (must NOT ack): same call with `pop --wait
+  --keep-unread`; plain `pop` would silently ack mail you only forward.
 
-Every message wakes you as an event, no re-arming (--json is silent on
-timeouts). Fallback without Monitor: background Bash `flow inbox pop
---wait`, single-shot — re-arm per wake. `flow watch <task|project|assignee>`
-subscribes you — watch what you depend on and tasks you create. flow ships
-NO notification UI and hooks NEVER consume — never assume a message
-visually alerted anyone.
+Each message wakes you as an event. On expiry you get a notice: re-arm it
+immediately. No Monitor: background Bash `flow inbox pop --wait`, re-arm
+per wake. `flow watch <task|project|assignee>` subscribes you; tasks you
+create from a bound session are auto-watched. No notification UI; hooks
+NEVER consume.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 
