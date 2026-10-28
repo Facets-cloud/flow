@@ -36,7 +36,7 @@ find the follow-ups a task fanned out.
 
 `flow update task` is the canonical lane for in-place field edits on
 a task. `flow update project` is the same for project rows (priority
-only, for now). All field setters live here — there are no per-field
+and terminal group). All field setters live here — there are no per-field
 mini-commands like `flow priority` / `flow due` / `flow waiting` /
 `flow assignee` (those used to exist; they were folded into update).
 
@@ -53,6 +53,7 @@ flow update task <ref>
 
 flow update project <ref>
     [--priority high|medium|low]
+    [--terminal-group <name>] [--clear-terminal-group]
 ```
 
 When to use which flag:
@@ -70,6 +71,11 @@ When to use which flag:
   status. Setting status to a value it already has is a no-op.
 - **`--priority <p>`** — change a task or project priority. Same enum
   as creation: high|medium|low.
+- **`--terminal-group <name>` / `--clear-terminal-group`** (project) —
+  where `flow do` opens the project's task tabs in terminals that
+  group tabs. Today that's Rex: the name is a Rex session label,
+  created if missing (e.g. all `tekion-*` projects → `tekion`). Unset
+  = the tab opens wherever `flow do` ran. Other terminals ignore it.
 - **`--assignee <name>` / `--clear-assignee`** — set or clear the task
   assignee. Convention: NULL = "self" (default); any other value =
   "assigned to that name". The list/show output surfaces the assignee

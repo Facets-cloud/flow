@@ -411,7 +411,19 @@ any macOS APIs. Kitty needs `allow_remote_control yes` (or
 `socket-only`) in `kitty.conf` so flow can drive `kitty @ launch`
 from inside the running kitty instance. Rex needs no setup: flow
 drives the `rex` CLI that Rex puts on `PATH` in every terminal, and
-opens the new tab in the Rex session you ran `flow do` from.
+opens the new tab in the Rex session you ran `flow do` from — or, if
+the task's project has a terminal group, in that Rex session (created
+if missing):
+
+```
+flow update project tekion-modules --terminal-group tekion
+flow update project sessionm       --terminal-group sessionm
+```
+
+`flow do` on an already-open task finds its tab in any Rex session.
+To let flow switch the Rex app to a tab in another session, turn on
+**Remote Control** in Rex Settings → Rex Server; without it flow opens
+or finds the tab and tells you which session it is in.
 
 The architecture is portable — session spawning is one small
 package — but other harnesses (Cursor, plain shell) and other

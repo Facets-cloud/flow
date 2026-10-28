@@ -4,6 +4,7 @@ import (
 	"flow/internal/ghostty"
 	"flow/internal/iterm"
 	"flow/internal/kitty"
+	"flow/internal/rex"
 	"flow/internal/terminal"
 	"flow/internal/warp"
 	"flow/internal/zellij"
@@ -633,5 +634,43 @@ func TestDetectZellijBeatsRex(t *testing.T) {
 	Override = ""
 	if got := Detect(); got != BackendZellij {
 		t.Errorf("got %q, want %q", got, BackendZellij)
+	}
+}
+
+// TestSpawnTabInRoutesGroupToRex — the group reaches the Rex backend as
+// the target session (rex ls is consulted and the tab opens there).
+func TestSpawnTabInRoutesGroupToRex(t *testing.T) {
+	t.Setenv("REX_SESSION", "session:cur")
+	Override = BackendRex
+	t.Cleanup(func() { Override = "" })
+
+	var calls [][]string
+	oldOut, oldRun := rex.RunnerOutput, rex.Runner
+	t.Cleanup(func() { rex.RunnerOutput, rex.Runner = oldOut, oldRun })
+	rex.RunnerOutput = func(args []string) ([]byte, error) {
+		calls = append(calls, args)
+		switch args[0] {
+		case "ls":
+			return []byte(`{"sessions":[{"session_id":"session:cur","label":"personal"},{"session_id":"session:sm","label":"sessionm"}]}`), nil
+		case "window":
+			return []byte(`{"window_id":"window:w","block_ids":["block:b"]}`), nil
+		case "client":
+			return []byte(`{"clients":[]}`), nil
+		}
+		return nil, nil
+	}
+	rex.Runner = func(args []string) error { calls = append(calls, args); return nil }
+
+	if err := SpawnTabIn("sessionm", "t", "/w", "x", nil); err != nil {
+		t.Fatalf("SpawnTabIn: %v", err)
+	}
+	found := false
+	for _, c := range calls {
+		if c[0] == "window" && strings.Contains(strings.Join(c, " "), "-s session:sm") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("window new not routed to session:sm; calls=%v", calls)
 	}
 }

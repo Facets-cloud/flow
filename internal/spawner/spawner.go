@@ -110,13 +110,20 @@ func Detect() Backend {
 // SpawnTab opens a tab in the auto-detected backend. The contract
 // matches every backend's SpawnTab.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
+	return SpawnTabIn("", title, cwd, command, envVars)
+}
+
+// SpawnTabIn is SpawnTab with a target group: the Rex session label the
+// tab should open in. Only the Rex backend has groups; every other
+// backend ignores it. An empty group means "wherever flow ran from".
+func SpawnTabIn(group, title, cwd, command string, envVars map[string]string) error {
 	switch Detect() {
 	case BackendZellij:
 		return zellij.SpawnTab(title, cwd, command, envVars)
 	case BackendKitty:
 		return kitty.SpawnTab(title, cwd, command, envVars)
 	case BackendRex:
-		return rex.SpawnTab(title, cwd, command, envVars)
+		return rex.SpawnTabIn(group, title, cwd, command, envVars)
 	case BackendTerminal:
 		return terminal.SpawnTab(title, cwd, command, envVars)
 	case BackendWarp:
