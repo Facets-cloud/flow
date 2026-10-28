@@ -200,10 +200,11 @@ handles the rest.
 
 - **One task, one Claude session, one tab.** `flow do <task>`
   spawns a dedicated tab in iTerm2, Warp, stock macOS Terminal, kitty
-  (requires `allow_remote_control yes` in `kitty.conf`), or your
+  (requires `allow_remote_control yes` in `kitty.conf`), your current
+  [Rex](https://www.superlogical.com/rex) session, or your
   current zellij session (requires zellij ≥ 0.40) — flow picks
   whichever you launched it from. Override with
-  `FLOW_TERM=warp|iterm|terminal|zellij|kitty` when you're on a
+  `FLOW_TERM=warp|iterm|terminal|zellij|kitty|rex` when you're on a
   non-standard host — or set `FLOW_TERM=bg` to launch the session as a
   **terminal-free Claude background agent** (Claude Code's Agent View,
   `claude agents`) with no tab at all. Tomorrow's `flow do <task>`
@@ -225,7 +226,8 @@ handles the rest.
 ## How it works under the hood
 
 `flow do <task>` selects the task's pinned harness, records its session
-identifier, and spawns a tab in zellij (when `$ZELLIJ` is set), kitty
+identifier, and spawns a tab in zellij (when `$ZELLIJ` is set), Rex
+(when `$REX_SESSION` is set or `$TERM_PROGRAM=rex`), kitty
 (when `$KITTY_WINDOW_ID` is set or `$TERM=xterm-kitty`), the backend
 named in `$FLOW_TERM` (when set), or Warp / iTerm2 / stock
 Terminal.app (auto-detected from `$TERM_PROGRAM`) — chosen in that
@@ -400,14 +402,16 @@ and reinstall the skill + hook.
 ## Where flow runs (and where we'd love help)
 
 Today flow runs on **macOS (iTerm2, Warp, stock Terminal.app, kitty,
-zellij, or Claude Code background agents via `FLOW_TERM=bg`) + Claude
+Rex, zellij, or Claude Code background agents via `FLOW_TERM=bg`) + Claude
 Code and Codex**. The background-agent backend is
 platform-agnostic (no terminal, no AppleScript) but Claude-only. zellij
 and kitty work on Linux too as a side effect — both are
 cross-platform and flow's zellij / kitty backends don't depend on
 any macOS APIs. Kitty needs `allow_remote_control yes` (or
 `socket-only`) in `kitty.conf` so flow can drive `kitty @ launch`
-from inside the running kitty instance.
+from inside the running kitty instance. Rex needs no setup: flow
+drives the `rex` CLI that Rex puts on `PATH` in every terminal, and
+opens the new tab in the Rex session you ran `flow do` from.
 
 The architecture is portable — session spawning is one small
 package — but other harnesses (Cursor, plain shell) and other

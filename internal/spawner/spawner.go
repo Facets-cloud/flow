@@ -1,9 +1,10 @@
-// Package spawner picks a terminal backend (zellij, kitty, Warp, iTerm2,
-// Ghostty, or macOS Terminal.app) at runtime and forwards SpawnTab to it.
+// Package spawner picks a terminal backend (zellij, Rex, kitty, Warp,
+// iTerm2, Ghostty, or macOS Terminal.app) at runtime and forwards SpawnTab to it.
 //
 // Selection priority (highest first):
 //
 //	$ZELLIJ set                                    → internal/zellij
+//	$REX_SESSION set or TERM_PROGRAM=rex           → internal/rex
 //	$KITTY_WINDOW_ID set or $TERM=xterm-kitty      → internal/kitty
 //	$FLOW_TERM=<valid backend>                     → that backend (user override)
 //	TERM_PROGRAM=WarpTerminal                      → internal/warp
@@ -12,7 +13,7 @@
 //	TERM_PROGRAM=ghostty                           → internal/ghostty
 //	anything else (or unset)                       → internal/iterm  (historical default)
 //
-// $ZELLIJ and kitty's per-window markers win over $FLOW_TERM because if
+// $ZELLIJ, Rex's and kitty's per-terminal markers win over $FLOW_TERM because if
 // the user is inside a session-manager terminal, that's where their
 // workflow lives — the host terminal is a substrate detail. $FLOW_TERM
 // lets users on non-standard hosts (tmux inside Warp, shell-script
@@ -28,6 +29,7 @@ import (
 	"flow/internal/ghostty"
 	"flow/internal/iterm"
 	"flow/internal/kitty"
+	"flow/internal/rex"
 	"flow/internal/terminal"
 	"flow/internal/warp"
 	"flow/internal/zellij"
@@ -44,6 +46,7 @@ const (
 	BackendKitty    Backend = "kitty"
 	BackendWarp     Backend = "warp"
 	BackendGhostty  Backend = "ghostty"
+	BackendRex      Backend = "rex"
 )
 
 // Override, if non-empty, forces a backend regardless of env vars.
@@ -77,12 +80,15 @@ func Detect() Backend {
 	if os.Getenv("ZELLIJ") != "" {
 		return BackendZellij
 	}
+	if os.Getenv("REX_SESSION") != "" || os.Getenv("TERM_PROGRAM") == "rex" {
+		return BackendRex
+	}
 	if os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("TERM") == "xterm-kitty" {
 		return BackendKitty
 	}
 	if v := os.Getenv("FLOW_TERM"); v != "" {
 		switch Backend(v) {
-		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty:
+		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty, BackendRex:
 			return Backend(v)
 		}
 		// Unknown value falls through to TERM_PROGRAM detection.
@@ -109,6 +115,8 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		return zellij.SpawnTab(title, cwd, command, envVars)
 	case BackendKitty:
 		return kitty.SpawnTab(title, cwd, command, envVars)
+	case BackendRex:
+		return rex.SpawnTab(title, cwd, command, envVars)
 	case BackendTerminal:
 		return terminal.SpawnTab(title, cwd, command, envVars)
 	case BackendWarp:
@@ -143,6 +151,8 @@ func FocusSession(sessionID, binary string) (bool, error) {
 		return zellij.FocusSession(sessionID, binary)
 	case BackendKitty:
 		return kitty.FocusSession(sessionID, binary)
+	case BackendRex:
+		return rex.FocusSession(sessionID, binary)
 	case BackendTerminal:
 		return terminal.FocusSession(sessionID, binary)
 	default:

@@ -71,6 +71,7 @@ func TestDetectFromEnv(t *testing.T) {
 		{"Apple_Terminal", BackendTerminal},
 		{"WarpTerminal", BackendWarp},
 		{"ghostty", BackendGhostty},
+		{"rex", BackendRex},
 		{"", BackendITerm},
 		{"WezTerm", BackendITerm},
 		{"vscode", BackendITerm},
@@ -78,6 +79,7 @@ func TestDetectFromEnv(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.termProgram, func(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
+			t.Setenv("REX_SESSION", "")
 			t.Setenv("KITTY_WINDOW_ID", "")
 			t.Setenv("TERM", "")
 			t.Setenv("FLOW_TERM", "")
@@ -96,6 +98,7 @@ func TestDetectFromEnv(t *testing.T) {
 // the dispatcher without relying on env-var mutation order.
 func TestOverrideBeatsEnv(t *testing.T) {
 	t.Setenv("ZELLIJ", "")
+	t.Setenv("REX_SESSION", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("TERM", "")
 	t.Setenv("FLOW_TERM", "iterm")
@@ -103,7 +106,7 @@ func TestOverrideBeatsEnv(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	for _, want := range []Backend{
-		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij, BackendGhostty,
+		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij, BackendGhostty, BackendRex,
 	} {
 		Override = want
 		if got := Detect(); got != want {
@@ -117,6 +120,7 @@ func TestOverrideBeatsEnv(t *testing.T) {
 // user is inside a zellij session regardless of which terminal hosts it.
 func TestDetectZellij(t *testing.T) {
 	t.Setenv("ZELLIJ", "0")
+	t.Setenv("REX_SESSION", "")
 	t.Setenv("KITTY_WINDOW_ID", "1")      // proves ZELLIJ wins over kitty
 	t.Setenv("TERM", "xterm-kitty")       // ditto
 	t.Setenv("FLOW_TERM", "iterm")        // proves ZELLIJ wins over FLOW_TERM
@@ -147,6 +151,7 @@ func TestDetectKitty(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
+			t.Setenv("REX_SESSION", "")
 			t.Setenv("KITTY_WINDOW_ID", tc.kittyWindowID)
 			t.Setenv("TERM", tc.term)
 			t.Setenv("FLOW_TERM", "")
@@ -174,10 +179,12 @@ func TestDetectFlowTermOverride(t *testing.T) {
 		{"kitty", BackendKitty},
 		{"warp", BackendWarp},
 		{"ghostty", BackendGhostty},
+		{"rex", BackendRex},
 	}
 	for _, tc := range cases {
 		t.Run(tc.flowTerm, func(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
+			t.Setenv("REX_SESSION", "")
 			t.Setenv("KITTY_WINDOW_ID", "")
 			t.Setenv("TERM", "")
 			t.Setenv("FLOW_TERM", tc.flowTerm)
@@ -196,6 +203,7 @@ func TestDetectFlowTermOverride(t *testing.T) {
 // inside kitty, that's where their workflow lives.
 func TestDetectKittyBeatsFlowTerm(t *testing.T) {
 	t.Setenv("ZELLIJ", "")
+	t.Setenv("REX_SESSION", "")
 	t.Setenv("KITTY_WINDOW_ID", "42")
 	t.Setenv("TERM", "")
 	t.Setenv("FLOW_TERM", "iterm")
@@ -210,6 +218,7 @@ func TestDetectKittyBeatsFlowTerm(t *testing.T) {
 // value is silently ignored and TERM_PROGRAM detection takes over.
 func TestDetectFlowTermInvalidFallsThrough(t *testing.T) {
 	t.Setenv("ZELLIJ", "")
+	t.Setenv("REX_SESSION", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("TERM", "")
 	t.Setenv("FLOW_TERM", "garbage-not-a-backend")
@@ -578,5 +587,51 @@ func stubAllRunners(t *testing.T) runnerFlags {
 		kitty:    &kittyCalled,
 		warp:     &warpCalled,
 		ghostty:  &ghosttyCalled,
+	}
+}
+
+// TestDetectRex verifies $REX_SESSION and TERM_PROGRAM=rex both route to
+// BackendRex, and that Rex's markers beat kitty and FLOW_TERM (Rex sets
+// TERM=xterm-256color, so TERM_PROGRAM / REX_SESSION are the only
+// signals; without this check Rex users fall back to the iTerm path).
+func TestDetectRex(t *testing.T) {
+	cases := []struct {
+		name          string
+		rexSession    string
+		termProgram   string
+		kittyWindowID string
+		flowTerm      string
+	}{
+		{"REX_SESSION set", "session:abc", "", "", ""},
+		{"TERM_PROGRAM=rex", "", "rex", "", ""},
+		{"both set", "session:abc", "rex", "", ""},
+		{"REX_SESSION beats kitty marker", "session:abc", "", "42", ""},
+		{"REX_SESSION beats FLOW_TERM", "session:abc", "", "", "iterm"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ZELLIJ", "")
+			t.Setenv("REX_SESSION", tc.rexSession)
+			t.Setenv("KITTY_WINDOW_ID", tc.kittyWindowID)
+			t.Setenv("TERM", "")
+			t.Setenv("FLOW_TERM", tc.flowTerm)
+			t.Setenv("TERM_PROGRAM", tc.termProgram)
+			Override = ""
+			if got := Detect(); got != BackendRex {
+				t.Errorf("got %q, want %q", got, BackendRex)
+			}
+		})
+	}
+}
+
+// TestDetectZellijBeatsRex — zellij running inside a Rex tab spawns
+// zellij tabs, same as zellij inside any other host terminal.
+func TestDetectZellijBeatsRex(t *testing.T) {
+	t.Setenv("ZELLIJ", "0")
+	t.Setenv("REX_SESSION", "session:abc")
+	t.Setenv("TERM_PROGRAM", "rex")
+	Override = ""
+	if got := Detect(); got != BackendZellij {
+		t.Errorf("got %q, want %q", got, BackendZellij)
 	}
 }
