@@ -54,6 +54,12 @@ type LaunchOpts struct {
 	// Inject is the first-user-message text to wrap with
 	// InjectionMarker and feed to the spawned session.
 	Inject string
+
+	// Resume marks a headless run on a session that already has a
+	// transcript: the harness must continue it rather than create it
+	// (claude: --resume instead of --session-id, which it rejects for an
+	// existing session as "already in use").
+	Resume bool
 }
 
 // BackgroundAgent is one entry from a harness's background-agent

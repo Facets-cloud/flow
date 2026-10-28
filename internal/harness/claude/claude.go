@@ -170,7 +170,11 @@ func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) 
 	if opts.Inject != "" {
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	argv := []string{"claude", "--session-id", sessionID, "-p", prompt}
+	idFlag := "--session-id"
+	if opts.Resume {
+		idFlag = "--resume"
+	}
+	argv := []string{"claude", idFlag, sessionID, "-p", prompt}
 	if opts.SkipPermissions {
 		argv = append(argv, "--dangerously-skip-permissions")
 	}
