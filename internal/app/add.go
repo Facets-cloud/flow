@@ -313,6 +313,14 @@ func addTask(args []string) int {
 	}
 	if parent != nil {
 		fmt.Printf("  (parent: %q)\n", parent.Slug)
+		// The parent session watches its child so the child's broadcasts
+		// land in the parent's inbox without a manual `flow watch`.
+		watcher := busSender{Assignee: busUser, TaskSlug: parent.Slug}.identity()
+		if err := flowdb.AddWatch(db, watcher, slug); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: auto-watch %s -> %s: %v\n", watcher, slug, err)
+		} else {
+			fmt.Printf("  (%s now watches %s)\n", watcher, slug)
+		}
 	}
 	fmt.Printf("Next: flow do %s\n", slug)
 	return 0
