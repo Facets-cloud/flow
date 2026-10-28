@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.29] — 2026-10-28
+
 ### Added
 
 - **Spawned tasks inherit their parent's project.** `flow add task` run
@@ -23,6 +25,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - **`flow update task <ref> --project <slug>` / `--clear-project`** to move
   a task between projects or make it floating. work_dir is not changed, so
   an attached session keeps working.
+
+### Fixed
+
+- **`flow do --auto` re-runs resume instead of dying.** Re-running auto on a
+  task whose session already ran failed with "Session ID already in use";
+  it now continues the session (`claude --resume`), so a paused auto keeps
+  its context.
+- **Codex hooks see the bound session.** Codex passes its thread id to hooks
+  only in the stdin payload, not `$CODEX_THREAD_ID`, so every hook in a bound
+  Codex session treated it as unbound. Hooks now read `session_id` from the
+  payload, falling back to the env var.
 
 ## [0.1.0-alpha.28] — 2026-09-07
 
