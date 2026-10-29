@@ -32,6 +32,18 @@ prints `parent:` on the child and `spun_off:` (comma-separated child
 slugs) on the parent. Use it to trace where a task came from, or to
 find the follow-ups a task fanned out.
 
+### Where a new task's work_dir comes from
+
+`flow add task` picks the work_dir in this order and prints it with its
+source:
+
+- `--work-dir X` uses X (`--mkdir` creates X if missing).
+- `--mkdir` alone gives the task a fresh `~/.flow/tasks/<slug>/workspace`,
+  ignoring the project's dir. Use it for scratch or delegated work that
+  must not run inside the parent's repo.
+- Neither: the project's work_dir (the project is inherited from the
+  parent task in a bound session), else a fresh workspace.
+
 ### Field edits — `flow update task` / `flow update project`
 
 `flow update task` is the canonical lane for in-place field edits on

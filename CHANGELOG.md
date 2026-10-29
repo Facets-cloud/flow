@@ -22,6 +22,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **`flow add task --mkdir` without `--work-dir` now gives the task a
+  fresh workspace.** It used to be silently ignored, so the task fell back
+  to the project's work_dir, including a project inherited from the parent
+  task, and ran inside that repo. `--mkdir` alone now creates
+  `~/.flow/tasks/<slug>/workspace` and uses it (the project link is kept).
+  `flow add task` also prints the chosen `work_dir` and its source (`from
+  project "<slug>"`, `new workspace`, or the explicit path). `flow update
+  task --mkdir` without `--work-dir` is a usage error.
 - **Monitor listener recipe.** The SessionStart hook, SKILL.md and
   `references/messaging.md` told agents to arm `Monitor(...,
   persistent: true)` with "no re-arming ever". Claude Code's Monitor has
