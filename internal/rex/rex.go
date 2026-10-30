@@ -80,15 +80,12 @@ var RunnerOutput = func(args []string) ([]byte, error) {
 	return out, err
 }
 
-// ProcessArgs returns the full argv string of a process. Rex's process
-// API deliberately returns only argv0 (other arguments can hold
-// secrets), so FocusSession reads the rest from ps. Tests override this.
-var ProcessArgs = func(pid int) (string, error) {
-	out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+// ProcessTable returns `ps -axo pid,ppid,args` for every process.
+// Rex's process API deliberately returns only argv0 (other arguments can
+// hold secrets), so FocusSession reads full command lines and parent
+// links from ps. Tests override this.
+var ProcessTable = func() ([]byte, error) {
+	return exec.Command("ps", "-axo", "pid,ppid,args").Output()
 }
 
 // Warn receives non-fatal notices, such as the Remote Control hint.
@@ -347,13 +344,18 @@ func showSession(sessionID, windowID, label string) {
 //
 //  1. rex ls --json, current session first
 //  2. per session, rex api call session.list_blocks
-//  3. for each placed block, rex api call com.superlogical.terminal.process
-//     → foreground {pid, argv0}
-//  4. skip blocks whose argv0/name doesn't contain `binary`; for the
-//     rest read the full argv via ps and apply the same UUID regex as
-//     the kitty/iterm/zellij backends
+//  3. one ps scan: the pids whose argv mentions `binary` and carries the
+//     session UUID (same regex as the kitty/iterm/zellij backends), plus
+//     all their ancestors
+//  4. for each placed block, rex api call com.superlogical.terminal.process
+//     → foreground pid; a block matches when that pid is in the set
 //  5. rex focus -s <session> <window_id> on the first hit, then bring
 //     that session into view if it isn't the current one
+//
+// Ancestors count because the harness isn't always the foreground
+// process. A long command is sourced from a temp script, and fish runs
+// commands from a sourced file inside its own process group, so Rex
+// reports the shell, not claude, as the foreground.
 func FocusSession(sessionID, binaryName string) (bool, error) {
 	if sessionID == "" {
 		return false, nil
@@ -368,9 +370,12 @@ func FocusSession(sessionID, binaryName string) (bool, error) {
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessions[i].ID == current && sessions[j].ID != current
 	})
-	needle := strings.ToLower(sessionID)
+	pids, err := harnessPIDs(strings.ToLower(sessionID), binaryName)
+	if err != nil || len(pids) == 0 {
+		return false, err
+	}
 	for _, s := range sessions {
-		windowID, err := findHarnessWindow(s.ID, needle, binaryName)
+		windowID, err := findHarnessWindow(s.ID, pids)
 		if err != nil {
 			return false, err
 		}
@@ -388,10 +393,49 @@ func FocusSession(sessionID, binaryName string) (bool, error) {
 	return false, nil
 }
 
-// findHarnessWindow returns the window id of the first block in the
-// given Rex session running `binary` with the session UUID needle, or ""
-// when none matches.
-func findHarnessWindow(rexSession, needle, binaryName string) (string, error) {
+// harnessPIDs returns the pids of processes whose argv mentions
+// binaryName and carries the session UUID needle, plus every ancestor of
+// those processes. Empty when no such process runs.
+func harnessPIDs(needle, binaryName string) (map[int]bool, error) {
+	out, err := ProcessTable()
+	if err != nil {
+		return nil, fmt.Errorf("ps: %w", err)
+	}
+	parent := map[int]int{}
+	var matched []int
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(f[0])
+		ppid, err2 := strconv.Atoi(f[1])
+		if err1 != nil || err2 != nil {
+			continue // header row
+		}
+		parent[pid] = ppid
+		if !strings.Contains(line, binaryName) {
+			continue
+		}
+		if m := sessionUUIDRowRe.FindStringSubmatch(line); len(m) >= 2 && strings.ToLower(m[1]) == needle {
+			matched = append(matched, pid)
+		}
+	}
+	pids := map[int]bool{}
+	for _, pid := range matched {
+		// Walk up to init; the pids check also stops a malformed cycle.
+		for pid > 1 && !pids[pid] {
+			pids[pid] = true
+			pid = parent[pid]
+		}
+	}
+	return pids, nil
+}
+
+// findHarnessWindow returns the window id of the first placed block in
+// the given Rex session whose foreground process is in pids, or "" when
+// none matches.
+func findHarnessWindow(rexSession string, pids map[int]bool) (string, error) {
 	out, err := RunnerOutput([]string{"api", "call", "session.list_blocks",
 		fmt.Sprintf(`{"session_id":%q}`, rexSession)})
 	if err != nil {
@@ -420,27 +464,15 @@ func findHarnessWindow(rexSession, needle, binaryName string) (string, error) {
 		}
 		var proc struct {
 			Foreground *struct {
-				PID   int    `json:"pid"`
-				Name  string `json:"name"`
-				Argv0 string `json:"argv0"`
+				PID int `json:"pid"`
 			} `json:"foreground"`
 		}
 		if err := json.Unmarshal(pout, &proc); err != nil || proc.Foreground == nil {
 			continue
 		}
-		fg := proc.Foreground
-		if !strings.Contains(fg.Argv0, binaryName) && !strings.Contains(fg.Name, binaryName) {
-			continue
+		if pids[proc.Foreground.PID] {
+			return b.WindowID, nil
 		}
-		argv, err := ProcessArgs(fg.PID)
-		if err != nil {
-			continue
-		}
-		m := sessionUUIDRowRe.FindStringSubmatch(argv)
-		if len(m) < 2 || strings.ToLower(m[1]) != needle {
-			continue
-		}
-		return b.WindowID, nil
 	}
 	return "", nil
 }

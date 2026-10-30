@@ -24,11 +24,14 @@ func stubRunner(t *testing.T, fn func(args []string) error) {
 	t.Cleanup(func() { Runner = old })
 }
 
-func stubProcessArgs(t *testing.T, fn func(pid int) (string, error)) {
+// stubProcessTable replaces the ps scan with fixed `pid ppid args` rows.
+func stubProcessTable(t *testing.T, rows ...string) {
 	t.Helper()
-	old := ProcessArgs
-	ProcessArgs = fn
-	t.Cleanup(func() { ProcessArgs = old })
+	old := ProcessTable
+	ProcessTable = func() ([]byte, error) {
+		return []byte("  PID  PPID ARGS\n" + strings.Join(rows, "\n") + "\n"), nil
+	}
+	t.Cleanup(func() { ProcessTable = old })
 }
 
 const windowNewJSON = `{"window_id":"window:w1","block_ids":["block:b1"],"revision":3}`
@@ -200,12 +203,9 @@ func TestFocusSessionMatches(t *testing.T) {
 		"block:b1": `{"foreground":{"pid":11,"name":"zsh","argv0":"-zsh"}}`,
 		"block:b2": `{"foreground":{"pid":22,"name":"claude.exe","argv0":"claude"}}`,
 	})
-	stubProcessArgs(t, func(pid int) (string, error) {
-		if pid != 22 {
-			t.Errorf("ps should only run for claude blocks, got pid %d", pid)
-		}
-		return "claude --resume " + uuidA + " --dangerously-skip-permissions", nil
-	})
+	stubProcessTable(t,
+		"   11     1 -zsh",
+		"   22     1 claude --resume "+uuidA+" --dangerously-skip-permissions")
 	var focusArgs []string
 	stubRunner(t, func(args []string) error {
 		focusArgs = append([]string(nil), args...)
@@ -227,13 +227,59 @@ func TestFocusSessionNoMatch(t *testing.T) {
 	fakeRex(t, twoBlocks, map[string]string{
 		"block:b2": `{"foreground":{"pid":22,"name":"claude.exe","argv0":"claude"}}`,
 	})
-	stubProcessArgs(t, func(pid int) (string, error) {
-		return "claude --session-id " + uuidB, nil
-	})
+	stubProcessTable(t, "   22     1 claude --session-id "+uuidB)
 	stubRunner(t, func(args []string) error {
 		t.Errorf("focus must not run without a match: %v", args)
 		return nil
 	})
+	ok, err := FocusSession(uuidA, "claude")
+	if err != nil || ok {
+		t.Fatalf("FocusSession = (%v, %v); want (false, nil)", ok, err)
+	}
+}
+
+// TestFocusSessionShellForeground — a freshly bootstrapped task under
+// fish: the long command is sourced from a temp script, fish keeps claude
+// in its own process group, and Rex reports the shell as the foreground.
+// The block still matches because the shell is claude's ancestor.
+func TestFocusSessionShellForeground(t *testing.T) {
+	t.Setenv("REX_SESSION", "session:s1")
+	fakeRex(t, twoBlocks, map[string]string{
+		"block:b1": `{"foreground":{"pid":11,"name":"zsh","argv0":"-zsh"}}`,
+		"block:b2": `{"foreground":{"pid":30,"name":"fish","argv0":"-fish"}}`,
+	})
+	stubProcessTable(t,
+		"   11     1 -zsh",
+		"   30     1 -fish",
+		"   31    30 claude --session-id "+uuidA+" You are the execution session")
+	var focusArgs []string
+	stubRunner(t, func(args []string) error {
+		focusArgs = append([]string(nil), args...)
+		return nil
+	})
+
+	ok, err := FocusSession(uuidA, "claude")
+	if err != nil || !ok {
+		t.Fatalf("FocusSession = (%v, %v); want (true, nil)", ok, err)
+	}
+	want := []string{"focus", "-s", "session:s1", "window:w2"}
+	if !slices.Equal(focusArgs, want) {
+		t.Errorf("focus argv = %v; want %v", focusArgs, want)
+	}
+}
+
+// TestFocusSessionNoHarnessProcess — when no process carries the UUID,
+// FocusSession returns (false, nil) without scanning any Rex block.
+func TestFocusSessionNoHarnessProcess(t *testing.T) {
+	t.Setenv("REX_SESSION", "session:s1")
+	stubRunnerOutput(t, func(args []string) ([]byte, error) {
+		if args[0] == "ls" {
+			return []byte(`{"sessions":[{"session_id":"session:s1","label":"main"}]}`), nil
+		}
+		t.Errorf("no Rex block scan expected, got %v", args)
+		return nil, nil
+	})
+	stubProcessTable(t, "   22     1 codex --resume "+uuidA)
 	ok, err := FocusSession(uuidA, "claude")
 	if err != nil || ok {
 		t.Fatalf("FocusSession = (%v, %v); want (false, nil)", ok, err)
@@ -251,9 +297,7 @@ func TestFocusSessionOutsideRex(t *testing.T) {
 		},
 		procs: map[string]string{"block:s1": claudeProc}}
 	f.install()
-	stubProcessArgs(t, func(pid int) (string, error) {
-		return "claude --resume " + uuidA, nil
-	})
+	stubProcessTable(t, "   22     1 claude --resume "+uuidA)
 	ok, err := FocusSession(uuidA, "claude")
 	if err != nil || !ok {
 		t.Fatalf("FocusSession = (%v, %v); want (true, nil)", ok, err)
@@ -519,9 +563,7 @@ func TestFocusSessionOtherSession(t *testing.T) {
 			"block:f1": claudeProc,
 		}}
 	f.install()
-	stubProcessArgs(t, func(pid int) (string, error) {
-		return "claude --resume " + uuidA, nil
-	})
+	stubProcessTable(t, "   22     1 claude --resume "+uuidA)
 
 	ok, err := FocusSession(uuidA, "claude")
 	if err != nil || !ok {
@@ -548,9 +590,7 @@ func TestFocusSessionCurrentFirst(t *testing.T) {
 		},
 		procs: map[string]string{"block:f1": claudeProc}}
 	f.install()
-	stubProcessArgs(t, func(pid int) (string, error) {
-		return "claude --resume " + uuidA, nil
-	})
+	stubProcessTable(t, "   22     1 claude --resume "+uuidA)
 
 	ok, err := FocusSession(uuidA, "claude")
 	if err != nil || !ok {
