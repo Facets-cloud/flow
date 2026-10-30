@@ -7,6 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Rex terminal backend.** `flow do` run inside
+  [Rex](https://www.superlogical.com/rex) (`$REX_SESSION` set or
+  `TERM_PROGRAM=rex`, or `FLOW_TERM=rex`) opens the task in a new Rex tab.
+  Previously Rex users fell through to the iTerm backend. An already-open
+  task's tab is found in any Rex session and focused; switching the Rex
+  app to another session needs **Remote Control** on in Rex settings, and
+  without it flow prints which session the tab is in. Commands over 512
+  bytes (the bootstrap prompt) go through a self-deleting temp script the
+  tab sources, because a just-started shell on macOS drops typed lines
+  over 1024 bytes, Enter included.
+- **Project terminal groups.** `flow update project <ref> --terminal-group
+  <name>` / `--clear-terminal-group` sets where `flow do` opens the
+  project's task tabs; `flow show project` shows it. For Rex the name is a
+  session label, created if missing. Ungrouped projects and floating tasks
+  open where `flow do` ran; other terminals ignore the group. Existing DBs
+  gain the nullable `projects.terminal_group` column on open.
+
 ## [0.1.0-alpha.29] — 2026-10-28
 
 ### Added

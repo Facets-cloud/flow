@@ -492,7 +492,13 @@ func cmdDo(args []string) int {
 	if root := os.Getenv("FLOW_ROOT"); root != "" {
 		spawnEnv = map[string]string{"FLOW_ROOT": root}
 	}
-	if err := spawner.SpawnTab(buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
+	// The project's terminal group (Rex session) decides where the tab
+	// opens; floating tasks and ungrouped projects open where flow ran.
+	group := ""
+	if project != nil && project.TerminalGroup.Valid {
+		group = project.TerminalGroup.String
+	}
+	if err := spawner.SpawnTabIn(group, buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
 		if needsBootstrap {
 			// Spawn failed before claude could write its jsonl. Undo
 			// both the session_id pre-allocation AND the status flip

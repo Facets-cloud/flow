@@ -379,16 +379,27 @@ func cmdUpdateProject(args []string) int {
 	ref := args[0]
 	fs := flagSet("update project")
 	priority := fs.String("priority", "", "new priority: high|medium|low")
+	terminalGroup := fs.String("terminal-group", "", "where flow do opens this project's task tabs (Rex session label)")
+	clearTerminalGroup := fs.Bool("clear-terminal-group", false, "open task tabs wherever flow do runs from")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if *priority == "" {
-		fmt.Fprintln(os.Stderr, "error: give at least one of --priority")
+	group := strings.TrimSpace(*terminalGroup)
+	if *priority == "" && group == "" && !*clearTerminalGroup {
+		fmt.Fprintln(os.Stderr, "error: give at least one of --priority, --terminal-group, --clear-terminal-group")
 		return 2
 	}
-	if !isValidPriority(*priority) {
+	if *priority != "" && !isValidPriority(*priority) {
 		fmt.Fprintf(os.Stderr,
 			"error: --priority must be high|medium|low (got %q)\n", *priority)
+		return 2
+	}
+	if group != "" && *clearTerminalGroup {
+		fmt.Fprintln(os.Stderr, "error: --terminal-group and --clear-terminal-group are mutually exclusive")
+		return 2
+	}
+	if *terminalGroup != "" && group == "" {
+		fmt.Fprintln(os.Stderr, "error: --terminal-group must not be blank (use --clear-terminal-group to unset)")
 		return 2
 	}
 
@@ -415,14 +426,34 @@ func cmdUpdateProject(args []string) int {
 	}
 
 	now := flowdb.NowISO()
-	if _, err := db.Exec(
-		`UPDATE projects SET priority=?, updated_at=? WHERE slug=?`,
-		*priority, now, p.Slug,
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "error: update priority: %v\n", err)
-		return 1
+	if *priority != "" {
+		if _, err := db.Exec(
+			`UPDATE projects SET priority=?, updated_at=? WHERE slug=?`,
+			*priority, now, p.Slug,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update priority: %v\n", err)
+			return 1
+		}
+		fmt.Printf("priority → %s\n", *priority)
 	}
-	fmt.Printf("priority → %s\n", *priority)
+	if group != "" || *clearTerminalGroup {
+		var val any
+		if group != "" {
+			val = group
+		}
+		if _, err := db.Exec(
+			`UPDATE projects SET terminal_group=?, updated_at=? WHERE slug=?`,
+			val, now, p.Slug,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "error: update terminal group: %v\n", err)
+			return 1
+		}
+		if group != "" {
+			fmt.Printf("terminal group → %s\n", group)
+		} else {
+			fmt.Println("terminal group cleared")
+		}
+	}
 	return 0
 }
 

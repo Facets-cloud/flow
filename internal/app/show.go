@@ -428,6 +428,9 @@ func printProjectMetadata(db *sql.DB, p *flowdb.Project, root string) {
 		wdLine = fmt.Sprintf("%s  [%s]", p.WorkDir, strings.Join(parts, ", "))
 	}
 	fmt.Printf("work_dir:    %s\n", wdLine)
+	if p.TerminalGroup.Valid {
+		fmt.Printf("terminal:    %s  (task tabs open in this terminal group)\n", p.TerminalGroup.String)
+	}
 
 	fmt.Printf("created:     %s\n", p.CreatedAt)
 	fmt.Printf("updated:     %s\n", p.UpdatedAt)

@@ -132,7 +132,7 @@ Edit / mutate:
                             [--waiting "<who or what>"] [--clear-waiting]
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
                             [--project <slug>] [--clear-project]
-  flow update project <ref> [--priority h|m|l]
+  flow update project <ref> [--priority h|m|l] [--terminal-group <name>] [--clear-terminal-group]
   flow do        <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard)
   flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
