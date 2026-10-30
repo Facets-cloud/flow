@@ -25,12 +25,23 @@ func Run(args []string) int {
 	// and `--version` — those manage the skill themselves or need to
 	// run before any install state exists. See maybeAutoUpgradeSkill.
 	switch cmd {
-	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec", "__owner-tick":
+	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec", "__owner-tick", selfUpgradeArg:
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
 	}
 
+	rc := dispatch(cmd, rest)
+	// Upgrade the binary after the command, so the command never waits.
+	// See maybeSelfUpgrade.
+	if selfUpgradeTrigger(cmd) {
+		maybeSelfUpgrade()
+	}
+	return rc
+}
+
+// dispatch runs the subcommand cmd and returns its exit code.
+func dispatch(cmd string, rest []string) int {
 	switch cmd {
 	case "--version", "-v", "version":
 		fmt.Println(Version)
@@ -49,6 +60,12 @@ func Run(args []string) int {
 		// Hidden: the detached owner-tick supervisor. Invoked only by
 		// ownerTickLauncher (via `flow owner tick-due`).
 		return cmdOwnerTick(rest)
+	case selfUpgradeArg:
+		// Hidden: the detached automatic upgrade. Invoked only by
+		// startDetachedSelfUpgrade.
+		return cmdSelfUpgrade()
+	case "upgrade":
+		return cmdUpgrade(rest)
 	case "run":
 		return cmdRun(rest)
 	case "done":
@@ -102,6 +119,8 @@ Setup:
   flow skill install [--force]
   flow skill uninstall
   flow skill update
+  flow upgrade [--check] [--force]             (install the latest release now; flow also upgrades
+                                                itself after a command — FLOW_NO_AUTO_UPGRADE=1 stops that)
 
 Create:
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]

@@ -735,10 +735,9 @@ Re-evaluate on every turn.
 
 **Triggers:** "update flow", "upgrade flow", "new flow version", "what
 version am I on", a bare `flow --version`, or a SessionStart
-`flow-version-stale:` signal. The procedure — capture `flow --version`, read
-the README install/upgrade sections at https://github.com/Facets-cloud/flow
-(do not invent download URLs), replace the binary, `xattr -d
-com.apple.quarantine`, `flow skill update`, re-check version — lives in
+`flow-version-stale:` signal. flow upgrades itself after a command; the
+signal means it could not. Run `flow upgrade` (ask before `--force`), then
+`flow --version`. The manual fallback and failure causes live in
 **references/upgrade.md**.
 ### 4.16a Tagging tasks
 
