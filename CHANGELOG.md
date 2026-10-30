@@ -7,6 +7,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **flow upgrades itself.** When the SessionStart hook finds a newer
+  release, flow downloads it in the background after a command, checks
+  its SHA-256 against the release, and renames it over the binary. The
+  next command refreshes the skill. `FLOW_NO_AUTO_UPGRADE=1` stops it.
+  Source builds, CI, root, and a binary folder that flow cannot write
+  are skipped.
+- **`flow upgrade [--check] [--force]`** installs the latest release now.
+
+### Fixed
+
+- The stale-version hint fired when the latest tag only differed from the
+  running version. It now fires only when the latest release is newer, by
+  semantic version order.
+
 ## [0.1.0-alpha.29] — 2026-10-28
 
 ### Added

@@ -144,21 +144,22 @@ func cmdHookSessionStart(args []string) int {
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
 // hint payloads when the local flow binary is older than the latest
-// GitHub release. Returns "" when the check fails, the cache is fresh
-// and matches, or the running binary is a dev build (no version
-// embedded). The check is best-effort and silent on any error —
-// session-start latency must not be impacted by a flaky network.
+// GitHub release. Returns "" when the check fails, the binary is not
+// older, the running binary is a dev build (no version embedded), or
+// the automatic upgrade takes care of it (selfUpgradeHandles). The
+// check is best-effort and silent on any error — session-start latency
+// must not be impacted by a flaky network.
 func appendStaleVersionHint() string {
 	if Version == "" || Version == "dev" {
 		return ""
 	}
 	latest := LatestRelease()
-	if latest == "" || latest == Version {
+	if latest == "" || !isNewerRelease(latest, Version) || selfUpgradeHandles(latest) {
 		return ""
 	}
 	return fmt.Sprintf(
 		" flow-version-stale: %s — the running flow binary is %s but a newer release is available. "+
-			"When natural, offer the user an upgrade per skill §4.15 (Upgrade flow itself). "+
+			"When natural, offer the user an upgrade (`flow upgrade`) per skill §4.15 (Upgrade flow itself). "+
 			"Do not interrupt active work to push this; surface it at a pause.",
 		latest, Version,
 	)

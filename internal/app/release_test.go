@@ -171,6 +171,8 @@ func TestAppendStaleVersionHintStaleEmitsHint(t *testing.T) {
 	old := Version
 	Version = "v0.1.0-alpha.3"
 	t.Cleanup(func() { Version = old })
+	// The automatic upgrade is off, so the hook must ask for it.
+	t.Setenv(selfUpgradeEnv, "1")
 
 	withFakeHTTP(t, func(url string) (*http.Response, error) {
 		return fakeHTTPResponse(t, 200, `{"tag_name":"v0.2.0"}`), nil
@@ -181,6 +183,7 @@ func TestAppendStaleVersionHintStaleEmitsHint(t *testing.T) {
 		"flow-version-stale: v0.2.0",
 		"v0.1.0-alpha.3",
 		"§4.15",
+		"flow upgrade",
 		"Do not interrupt active work",
 	} {
 		if !strings.Contains(got, want) {
