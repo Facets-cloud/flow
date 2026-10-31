@@ -13,8 +13,8 @@
 //     target session doesn't exist yet,
 //     rex new <session> --cwd <cwd> --window <title> --json
 //  2. rex send -s <session> -b <block> " <env-prefix><flat-command>\n"
-//  3. when the target session isn't the one flow ran in, ask the Mac
-//     app to show it (client.perform session.select)
+//  3. ask the Mac app to show the tab (client.perform session.select),
+//     whichever session it is in
 //
 // Step 1 opens a new tab running the default shell and returns the
 // tab's block id. Step 2 types the command into that block's PTY so
@@ -254,7 +254,12 @@ func SpawnTabIn(target, title, cwd, command string, envVars map[string]string) e
 		return err
 	}
 
-	if sessionID != "" && sessionID != current {
+	// Always ask the app to show the tab, even in the current session:
+	// `rex window new` makes it the session's active window on the
+	// server, but a Rex app window keeps showing the tab it was on (and
+	// with several app windows, re-applies it), so the view only moves
+	// when the app itself selects it.
+	if sessionID != "" {
 		showSession(sessionID, windowID, target)
 	}
 	return nil
@@ -327,7 +332,13 @@ func showSession(sessionID, windowID, label string) {
 		})
 		if _, err := RunnerOutput([]string{"api", "call", "client.perform", string(req)}); err != nil {
 			if strings.Contains(err.Error(), "Remote Control") {
-				fmt.Fprintf(Warn, "flow: the task's tab is in Rex session %q — switch to it, or turn on Remote Control in Rex Settings → Rex Server so flow can switch for you\n", label)
+				where := "the task's tab"
+				if label != "" {
+					where = fmt.Sprintf("the task's tab is in Rex session %q —", label)
+				} else {
+					where += " is open —"
+				}
+				fmt.Fprintf(Warn, "flow: %s switch to it, or turn on Remote Control in Rex Settings → Rex Server so flow can switch for you\n", where)
 				return
 			}
 			fmt.Fprintf(Warn, "flow: couldn't switch Rex to the new tab: %v\n", err)
@@ -349,8 +360,8 @@ func showSession(sessionID, windowID, label string) {
 //     all their ancestors
 //  4. for each placed block, rex api call com.superlogical.terminal.process
 //     → foreground pid; a block matches when that pid is in the set
-//  5. rex focus -s <session> <window_id> on the first hit, then bring
-//     that session into view if it isn't the current one
+//  5. rex focus -s <session> <window_id> on the first hit, then ask
+//     the app to show that tab
 //
 // Ancestors count because the harness isn't always the foreground
 // process. A long command is sourced from a temp script, and fish runs
@@ -385,9 +396,9 @@ func FocusSession(sessionID, binaryName string) (bool, error) {
 		if err := Runner([]string{"focus", "-s", s.ID, windowID}); err != nil {
 			return false, fmt.Errorf("rex focus: %w", err)
 		}
-		if s.ID != current {
-			showSession(s.ID, windowID, s.Label)
-		}
+		// `rex focus` only sets the server's active window; the app view
+		// follows only when the app selects the tab (see SpawnTabIn).
+		showSession(s.ID, windowID, s.Label)
 		return true, nil
 	}
 	return false, nil
