@@ -170,9 +170,8 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 
 // SpawnTabIn opens a new Rex tab in the session labelled target
 // (creating the session if needed), titles it, sets its cwd, types
-// `command` into the new tab's PTY, and brings the session into view
-// when it isn't the one flow ran in. An empty target means the current
-// session.
+// `command` into the new tab's PTY, and asks the Rex app to show the
+// tab. An empty target means the current session.
 //
 // envVars are attached as an inline shell prefix to `command` only —
 // they are present in the command's environment but do NOT persist in
@@ -304,6 +303,11 @@ func sendCommand(sessionID, blockID, command string) error {
 // the given session and window. Best effort: the tab already exists, so
 // a refusal (Remote Control off) or a missing app only prints a hint
 // naming the session (label) the tab is in.
+//
+// Rex registers one client per app process, not per app window (a second
+// window adds no client), and session.select acts on the app's front
+// window, so other open windows keep their tabs. "Every client" is in
+// practice one per Mac running the app.
 func showSession(sessionID, windowID, label string) {
 	out, err := RunnerOutput([]string{"client", "ls", "--json"})
 	if err != nil {
@@ -341,7 +345,7 @@ func showSession(sessionID, windowID, label string) {
 				fmt.Fprintf(Warn, "flow: %s switch to it, or turn on Remote Control in Rex Settings → Rex Server so flow can switch for you\n", where)
 				return
 			}
-			fmt.Fprintf(Warn, "flow: couldn't switch Rex to the new tab: %v\n", err)
+			fmt.Fprintf(Warn, "flow: couldn't switch Rex to the task's tab: %v\n", err)
 		}
 	}
 }
@@ -376,8 +380,8 @@ func FocusSession(sessionID, binaryName string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// Current session first: it's the likeliest home of the tab and
-	// avoids switching the user's view when it's already there.
+	// Current session first: it's the likeliest home of the tab, so the
+	// scan usually stops after one session.
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessions[i].ID == current && sessions[j].ID != current
 	})
