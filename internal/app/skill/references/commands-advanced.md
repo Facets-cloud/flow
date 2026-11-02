@@ -32,6 +32,17 @@ prints `parent:` on the child and `spun_off:` (comma-separated child
 slugs) on the parent. Use it to trace where a task came from, or to
 find the follow-ups a task fanned out.
 
+### `flow auto`: one-shot auto child
+
+`flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l]
+[--work-dir <p>] [--mkdir] [--harness claude|codex]` is `flow add task`
+(same parent link, project inheritance and auto-watch from a bound
+session) + writing the given text as the child's `brief.md` + `flow do
+--auto`. `--brief -` reads stdin. It refuses with exit 2 when the brief is
+missing or blank, refuses an existing `--slug`, and refuses inside an auto
+run (no grandchildren). It prints `spawning auto child: <slug>`. When to
+use it from a driver session: references/delegation.md.
+
 ### Where a new task's work_dir comes from
 
 `flow add task` picks the work_dir in this order and prints it with its

@@ -41,6 +41,8 @@ func Run(args []string) int {
 		return cmdAdd(rest)
 	case "do":
 		return cmdDo(rest)
+	case "auto":
+		return cmdAuto(rest)
 	case "__auto-exec":
 		// Hidden: the detached supervisor entry point for `flow do --auto`.
 		// Not listed in usage; invoked only by autoLauncher.
@@ -111,6 +113,9 @@ Create:
 Sessions:
   flow do                <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions]
   flow do --auto         <ref> [--harness claude|codex] (run headlessly in the background; self-completes via flow done)
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex]
+                         (one-shot: add task + write brief + do --auto; from a driver session the child
+                          gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
