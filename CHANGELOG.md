@@ -26,6 +26,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   open where `flow do` ran; other terminals ignore the group. Existing DBs
   gain the nullable `projects.terminal_group` column on open.
 
+### Fixed
+
+- **Rex: `flow do` now actually shows the task's tab.** Focusing an open
+  task's tab, or opening a new one, in the current Rex session reported
+  success but left the app on the previous tab: `rex focus` and `rex
+  window new` only set the server's active window, and the Rex app keeps
+  showing its own selection. flow now always asks the app to select the
+  tab (as it already did for other sessions); this needs Remote Control
+  on in Rex settings.
+
 ## [0.1.0-alpha.29] — 2026-10-28
 
 ### Added

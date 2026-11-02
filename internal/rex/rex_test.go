@@ -44,7 +44,9 @@ func TestSpawnTabBasicNoEnv(t *testing.T) {
 	t.Setenv("REX_SESSION", "session:s1")
 	var newArgs, sendArgs []string
 	stubRunnerOutput(t, func(args []string) ([]byte, error) {
-		newArgs = append([]string(nil), args...)
+		if args[0] == "window" {
+			newArgs = append([]string(nil), args...)
+		}
 		return []byte(windowNewJSON), nil
 	})
 	stubRunner(t, func(args []string) error {
@@ -72,7 +74,9 @@ func TestSpawnTabNoSession(t *testing.T) {
 	t.Setenv("REX_SESSION", "")
 	var newArgs, sendArgs []string
 	stubRunnerOutput(t, func(args []string) ([]byte, error) {
-		newArgs = append([]string(nil), args...)
+		if args[0] == "window" {
+			newArgs = append([]string(nil), args...)
+		}
 		return []byte(windowNewJSON), nil
 	})
 	stubRunner(t, func(args []string) error {
@@ -167,11 +171,19 @@ const (
 
 // fakeRex answers list_blocks and per-block process calls for
 // FocusSession tests. procs maps block id → process JSON.
-func fakeRex(t *testing.T, blocks string, procs map[string]string) {
+func fakeRex(t *testing.T, blocks string, procs map[string]string) *[]string {
 	t.Helper()
+	performed := &[]string{}
 	stubRunnerOutput(t, func(args []string) ([]byte, error) {
 		if len(args) == 2 && args[0] == "ls" {
 			return []byte(`{"sessions":[{"session_id":"session:s1","label":"main"}]}`), nil
+		}
+		if len(args) == 3 && args[0] == "client" && args[1] == "ls" {
+			return []byte(`{"clients":[{"client_id":"client:mac","info":{"kind":"app","platform":"macos"}}]}`), nil
+		}
+		if len(args) == 4 && args[0] == "api" && args[2] == "client.perform" {
+			*performed = append(*performed, args[3])
+			return []byte(`{}`), nil
 		}
 		if len(args) < 3 || args[0] != "api" || args[1] != "call" {
 			t.Fatalf("unexpected rex call %v", args)
@@ -190,6 +202,7 @@ func fakeRex(t *testing.T, blocks string, procs map[string]string) {
 		t.Fatalf("unexpected method %v", args[2])
 		return nil, nil
 	})
+	return performed
 }
 
 const twoBlocks = `{"blocks":[
@@ -199,7 +212,7 @@ const twoBlocks = `{"blocks":[
 
 func TestFocusSessionMatches(t *testing.T) {
 	t.Setenv("REX_SESSION", "session:s1")
-	fakeRex(t, twoBlocks, map[string]string{
+	performed := fakeRex(t, twoBlocks, map[string]string{
 		"block:b1": `{"foreground":{"pid":11,"name":"zsh","argv0":"-zsh"}}`,
 		"block:b2": `{"foreground":{"pid":22,"name":"claude.exe","argv0":"claude"}}`,
 	})
@@ -219,6 +232,11 @@ func TestFocusSessionMatches(t *testing.T) {
 	want := []string{"focus", "-s", "session:s1", "window:w2"}
 	if !slices.Equal(focusArgs, want) {
 		t.Errorf("focus argv = %v; want %v", focusArgs, want)
+	}
+	// rex focus alone doesn't move the app's view; the app must select
+	// the tab, even though it's in the current session.
+	if len(*performed) != 1 || !strings.Contains((*performed)[0], `"window:w2"`) {
+		t.Errorf("client.perform = %v; want one session.select of window:w2", *performed)
 	}
 }
 
@@ -450,8 +468,9 @@ func TestSpawnTabInExistingSession(t *testing.T) {
 	}
 }
 
-// TestSpawnTabInCurrentSession — routing to the session flow already
-// runs in must not switch the app's view.
+// TestSpawnTabInCurrentSession — a tab opened in the session flow runs
+// in is still selected through the app: `rex window new` alone leaves
+// the app showing its previous tab.
 func TestSpawnTabInCurrentSession(t *testing.T) {
 	t.Setenv("REX_SESSION", "session:cur")
 	f := &fakeServer{t: t, sessions: threeSessions}
@@ -462,13 +481,14 @@ func TestSpawnTabInCurrentSession(t *testing.T) {
 	if got := f.find("window", "new"); !slices.Contains(got, "session:cur") {
 		t.Errorf("window new = %v; want -s session:cur", got)
 	}
-	if f.count("client", "ls") != 0 || f.count("api", "call", "client.perform") != 0 {
-		t.Errorf("must not switch view for the current session; calls=%v", f.calls)
+	perform := f.find("api", "call", "client.perform")
+	if perform == nil || !strings.Contains(perform[3], `"session:cur"`) || !strings.Contains(perform[3], `"window:w1"`) {
+		t.Errorf("client.perform = %v; want session.select of window:w1 in session:cur", perform)
 	}
 }
 
-// TestSpawnTabInEmptyTargetSkipsLookup — no mapping means the old
-// behaviour exactly: no `rex ls`, no view switch.
+// TestSpawnTabInEmptyTargetSkipsLookup — no terminal group means no
+// session lookup; the tab opens in the current session and is shown.
 func TestSpawnTabInEmptyTargetSkipsLookup(t *testing.T) {
 	t.Setenv("REX_SESSION", "session:cur")
 	f := &fakeServer{t: t, sessions: threeSessions}
@@ -476,8 +496,11 @@ func TestSpawnTabInEmptyTargetSkipsLookup(t *testing.T) {
 	if err := SpawnTabIn("", "t", "/w", "x", nil); err != nil {
 		t.Fatalf("SpawnTabIn: %v", err)
 	}
-	if f.count("ls") != 0 || f.count("client", "ls") != 0 {
-		t.Errorf("empty target must not list sessions or clients; calls=%v", f.calls)
+	if f.count("ls") != 0 {
+		t.Errorf("empty target must not list sessions; calls=%v", f.calls)
+	}
+	if f.count("api", "call", "client.perform") != 1 {
+		t.Errorf("want the new tab shown via client.perform; calls=%v", f.calls)
 	}
 }
 
@@ -580,8 +603,8 @@ func TestFocusSessionOtherSession(t *testing.T) {
 }
 
 // TestFocusSessionCurrentFirst — when the current session holds the
-// tab, it is scanned first and no view switch happens, even if it is
-// listed last by rex ls.
+// tab, it is scanned first (and the scan stops there), even if it is
+// listed last by rex ls; the app is still asked to show the tab.
 func TestFocusSessionCurrentFirst(t *testing.T) {
 	t.Setenv("REX_SESSION", "session:fx")
 	f := &fakeServer{t: t, sessions: threeSessions,
@@ -599,8 +622,9 @@ func TestFocusSessionCurrentFirst(t *testing.T) {
 	if n := f.count("api", "call", "session.list_blocks"); n != 1 {
 		t.Errorf("list_blocks calls = %d; want 1 (current session first, then stop)", n)
 	}
-	if f.count("api", "call", "client.perform") != 0 {
-		t.Error("must not switch view when the tab is in the current session")
+	perform := f.find("api", "call", "client.perform")
+	if perform == nil || !strings.Contains(perform[3], `"window:f1"`) {
+		t.Errorf("client.perform = %v; want session.select of window:f1", perform)
 	}
 }
 

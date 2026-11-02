@@ -421,9 +421,11 @@ flow update project sessionm       --terminal-group sessionm
 ```
 
 `flow do` on an already-open task finds its tab in any Rex session.
-To let flow switch the Rex app to a tab in another session, turn on
-**Remote Control** in Rex Settings → Rex Server; without it flow opens
-or finds the tab and tells you which session it is in.
+Bringing a tab into view — a new one or an existing one, in this
+session or another — goes through the Rex app, so turn on **Remote
+Control** in Rex Settings → Rex Server. Without it flow still opens or
+finds the tab, prints a reminder, and leaves the app on its current
+tab.
 
 The architecture is portable — session spawning is one small
 package — but other harnesses (Cursor, plain shell) and other
