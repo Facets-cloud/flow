@@ -71,6 +71,10 @@ func cmdUpdateTask(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
+	if *mkdir && *workDir == "" {
+		fmt.Fprintln(os.Stderr, "error: --mkdir requires --work-dir <path>")
+		return 2
+	}
 	anyField := *workDir != "" || *status != "" || *priority != "" ||
 		*assignee != "" || *clearAssignee || *dueDate != "" || *clearDue ||
 		*waiting != "" || *clearWaiting ||

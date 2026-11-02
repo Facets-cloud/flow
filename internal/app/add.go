@@ -154,7 +154,7 @@ func addTask(args []string) int {
 	assigneeFlag := fs.String("assignee", "", "optional assignee (default: self)")
 	var tags stringSliceFlag
 	fs.Var(&tags, "tag", "attach a tag (repeatable: --tag foo --tag bar)")
-	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
+	mkdir := fs.Bool("mkdir", false, "with --work-dir: create it if missing; alone: give the task a fresh workspace dir (ignores the project dir)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -163,7 +163,6 @@ func addTask(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: priority must be high|medium|low, got %q\n", *priority)
 		return 2
 	}
-
 	dbPath, err := flowDBPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -227,7 +226,7 @@ func addTask(args []string) int {
 	// Resolve work_dir with the three-way decision from spec §5.2:
 	//   - --work-dir given       → use it (must exist or --mkdir)
 	//   - --project given, no wd → inherit from project
-	//   - both omitted           → auto-create ~/.flow/tasks/<slug>/workspace/
+	//   - --mkdir alone, or none → auto-create ~/.flow/tasks/<slug>/workspace/
 	root, err := flowRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -235,7 +234,7 @@ func addTask(args []string) int {
 	}
 	taskDir := filepath.Join(root, "tasks", slug)
 
-	var absWorkDir string
+	var absWorkDir, workDirSource string
 	switch {
 	case *workDir != "":
 		absWorkDir, err = resolveWorkDir(*workDir, *mkdir)
@@ -243,10 +242,13 @@ func addTask(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-	case projectWorkDir != "":
+	case projectWorkDir != "" && !*mkdir:
+		// --mkdir alone opts out of the project's dir: fresh workspace.
 		absWorkDir = projectWorkDir
+		workDirSource = fmt.Sprintf(" (from project %q)", projectSlug)
 	default:
 		absWorkDir = filepath.Join(taskDir, "workspace")
+		workDirSource = " (new workspace)"
 		if err := os.MkdirAll(absWorkDir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error: create workspace %s: %v\n", absWorkDir, err)
 			return 1
@@ -311,6 +313,7 @@ func addTask(args []string) int {
 			fmt.Printf("  (project inherited from current task %q; pass --project to override)\n", inheritedFrom)
 		}
 	}
+	fmt.Printf("  work_dir: %s%s\n", absWorkDir, workDirSource)
 	if parent != nil {
 		fmt.Printf("  (parent: %q)\n", parent.Slug)
 		// The parent session watches its child so the child's broadcasts
