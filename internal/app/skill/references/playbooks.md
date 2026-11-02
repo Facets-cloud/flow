@@ -37,7 +37,7 @@
 (header: "Brief", options: "Save it" / "Revise") to confirm. Do not
 run `flow add playbook` until the user picks "Save it". Then run it
 and overwrite the stub `brief.md` with the full content (Read once,
-then Edit/Write — same pattern as §5.2). Use the playbook brief
+then Edit/Write — same pattern as §4.2). Use the playbook brief
 template from §7.
 
 After save, use `AskUserQuestion` (header: "Run it now?", options:

@@ -26,7 +26,7 @@ basics in this order:
    an empty database and 5 knowledge-base files."
 
 2. **Create their first project.** "Let's set up a project — what's the
-   main thing you're working on right now?" Then enter the §5.3
+   main thing you're working on right now?" Then enter the §4.3
    add-project interview. This gets them a project and at least one task
    immediately.
 

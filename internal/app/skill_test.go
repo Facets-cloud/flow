@@ -381,7 +381,7 @@ func TestSkillSection414(t *testing.T) {
 		"### 4.14 Substantive-unrelated-work check",
 		"ongoing check, not one-shot",
 		"superpowers:brainstorming",
-		"Re-evaluate on every turn",
+		"triggers each turn",
 		"Process-skill ordering",
 	} {
 		if !strings.Contains(got, want) {

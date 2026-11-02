@@ -30,46 +30,24 @@ Tests use `$FLOW_ROOT` pointed at a temp directory and override `$HOME` so nothi
 flow/
 ├── main.go                          # thin entry point — calls app.Run()
 ├── internal/
-│   ├── app/                         # CLI commands and dispatch
-│   │   ├── app.go                   # Run(), printUsage()
-│   │   ├── helpers.go               # flagSet()
-│   │   ├── add.go                   # flow add project|task
-│   │   ├── archive.go               # flow archive|unarchive
-│   │   ├── do.go                    # flow do — session spawner
-│   │   ├── done.go                  # flow done
-│   │   ├── due.go                   # flow due
-│   │   ├── edit.go                  # flow edit
-│   │   ├── hook.go                  # flow hook session-start
-│   │   ├── init.go                  # flow init, flowRoot(), kbSeeds()
-│   │   ├── list.go                  # flow list tasks|projects
-│   │   ├── priority.go              # flow priority
-│   │   ├── show.go                  # flow show task|project
-│   │   ├── skill.go                 # flow skill install|uninstall|update
-│   │   ├── transcript.go            # flow transcript — session jsonl reader
-│   │   ├── waiting.go               # flow waiting
-│   │   ├── workdir.go               # flow workdir
-│   │   ├── bootstrap.go             # UUID gen, session file scanning
-│   │   ├── resolve.go               # task/project slug resolution
-│   │   ├── slug.go                  # name-to-slug conversion
+│   ├── app/                         # CLI commands and dispatch, one file for each subcommand
 │   │   ├── skill/SKILL.md           # embedded lean skill core (//go:embed skill)
 │   │   ├── skill/references/*.md     # on-demand workflow references (embedded)
 │   │   └── *_test.go
 │   ├── flowdb/                      # SQLite data layer
-│   │   ├── db.go                    # schema, models, CRUD queries
-│   │   └── db_test.go
+│   ├── harness/                     # agent CLI abstraction (claude/ is Claude Code, codex/ is Codex)
+│   ├── listfmt/                     # shared output renderer for `flow list`
+│   ├── stats/                       # usage and ROI analytics
+│   ├── ghostty/                     # Ghostty tab spawning
 │   ├── iterm/                       # iTerm2 tab spawning
-│   │   └── iterm.go
+│   ├── kitty/                       # kitty tab spawning
 │   ├── terminal/                    # macOS Terminal.app tab spawning
-│   │   └── terminal.go
 │   ├── warp/                        # Warp tab spawning (warp:// URI + osascript keystroke)
-│   │   └── warp.go
 │   ├── zellij/                      # zellij tab spawning
-│   │   └── zellij.go
 │   └── spawner/                     # backend selection + dispatch
-│       └── spawner.go
 ├── Makefile
 ├── README.md
-├── CLAUDE.md
+├── AGENTS.md
 ├── .gitignore
 ├── go.mod
 └── go.sum
@@ -79,7 +57,7 @@ flow/
 
 - **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `flowdb` and `spawner`.
 - **`internal/flowdb`** — schema DDL, model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, migrations. All DB access via `database/sql` + `modernc.org/sqlite`.
-- **`internal/spawner`** — picks a terminal backend at runtime (`$ZELLIJ` > `$FLOW_TERM` > `$TERM_PROGRAM` > historical iTerm default) and forwards `SpawnTab` to it. Exposes `Override` for test pinning.
+- **`internal/spawner`** — picks a terminal backend at runtime (`$ZELLIJ` > kitty markers (`$KITTY_WINDOW_ID` or `$TERM=xterm-kitty`) > `$FLOW_TERM` > `$TERM_PROGRAM` > historical iTerm default) and forwards `SpawnTab` to it. Exposes `Override` for test pinning.
 - **`internal/iterm`** — osascript-based iTerm2 tab spawning. Exposes `iterm.Runner` for test mocking.
 - **`internal/terminal`** — osascript-based macOS Terminal.app tab spawning. Requires Accessibility for the cmd-T keystroke via System Events.
 - **`internal/warp`** — Warp tab spawning via `warp://action/new_tab` URI + osascript keystroke of a self-deleting per-spawn shell script. Exposes `warp.Runner`, `warp.OpenURL`, `warp.WriteScript` for test mocking. Requires Accessibility (same gate as Terminal.app).
