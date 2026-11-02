@@ -9,6 +9,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Driver sessions delegate deterministic subtasks to auto children.**
+  The SessionStart hook now gives a bound, human-driven session a short
+  `flow driver delegation` block: carve scans, audits, fact-finding,
+  repro debugging, bulk passes and fix + PR work off to headless children
+  without asking, keep design and decisions inline, and leave live/prod
+  applies to the driver. Auto runs (marked by a new `FLOW_AUTO_RUN` env
+  var or a live auto run on the bound task) never get it. Skill: new
+  section 4.4a plus `references/delegation.md`.
+- **`flow auto "<name>" --brief <file|->`.** One shot for add task +
+  write brief + `flow do --auto`, with the same parent, project and
+  auto-watch as `flow add task`. Refuses without a brief, and inside an
+  auto run (no grandchildren).
+- **Auto child result contract.** A child with a parent writes its
+  findings as an update note on its own task and names it in its final
+  `flow message user/<parent>`; it is told not to spawn children itself.
 - **Parents auto-watch the tasks they spawn.** `flow add task` from a
   bound session now also subscribes that session (`user/<parent>`) to the
   new task and prints `(user/<parent> now watches <child>)`.

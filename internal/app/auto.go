@@ -131,7 +131,9 @@ func autoChildEnv() []string {
 	in := os.Environ()
 	out := make([]string, 0, len(in))
 	for _, kv := range in {
-		isSessionEnv := false
+		// A stale auto marker from an enclosing auto run never leaks: the
+		// launcher re-adds the right one for the run it starts.
+		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=")
 		for _, h := range allHarnesses() {
 			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
 				isSessionEnv = true
@@ -143,6 +145,23 @@ func autoChildEnv() []string {
 		}
 	}
 	return out
+}
+
+// autoRunEnvVar marks the environment of a headless auto run (value: the
+// task slug). Hooks and `flow auto` read it to tell an unattended child
+// from the human-driven driver session that spawned it.
+const autoRunEnvVar = "FLOW_AUTO_RUN"
+
+// isAutoRunSession reports whether the current process is (inside) a
+// headless auto run: the env marker is set, or the bound task's auto run
+// is live. Either signal is enough; the env marker covers a DB that has
+// not caught up, the DB status covers runs launched before the marker
+// existed.
+func isAutoRunSession(bound *flowdb.Task) bool {
+	if os.Getenv(autoRunEnvVar) != "" {
+		return true
+	}
+	return bound != nil && bound.AutoRunStatus.Valid && bound.AutoRunStatus.String == "running"
 }
 
 // launchAutoRun creates the per-run log directory, starts the detached
@@ -160,7 +179,8 @@ func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, erro
 	logName := time.Now().UTC().Format("2006-01-02-150405") + ".log"
 	logPath := filepath.Join(runsDir, logName)
 
-	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, autoChildEnv())
+	env := append(autoChildEnv(), autoRunEnvVar+"="+task.Slug)
+	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, env)
 	if err != nil {
 		return 0, "", err
 	}
@@ -303,6 +323,18 @@ func cmdAutoExec(args []string) int {
 	return 0
 }
 
+// autoResultContract is the parented child's result contract: findings go
+// in an update note on the child's own task, the final message to the
+// parent says where, and the child does all of its work itself (no
+// grandchildren, so delegation never recurses).
+func autoResultContract(parentSlug string) string {
+	return fmt.Sprintf(
+		"- Result contract: write your findings or result as an update note on YOUR OWN task (tasks/<your-slug>/updates/YYYY-MM-DD-<kebab>.md, the normal updates/ mechanism) before flow done. Your final flow message user/%s must name where to find it (your slug + the update file name), body <=200 chars.\n"+
+			"- Do the work yourself: do NOT spawn auto children of your own (no flow auto, no flow do --auto). Delegation is one level deep; if the work needs splitting, say so in your result and let the parent decide.\n",
+		parentSlug,
+	)
+}
+
 // buildAutoBootstrapPrompt is the bootstrap prompt for a headless,
 // unattended run. It differs from the interactive prompt in two load-
 // bearing ways: (1) there is no human, so the session must NOT use
@@ -324,7 +356,7 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 		parentRule = fmt.Sprintf(
 			"- Your parent task %[1]s spawned you and is listening. Report to it (this is authorized even if the brief does not mention it): run flow message user/%[1]s \"<one line, <=200 chars>\" at each milestone, when you are done, and when you are blocked. Do not wait for a reply; if flow rejects it because the parent is closed, carry on. Messaging the parent does not replace flow done.\n",
 			parentSlug,
-		)
+		) + autoResultContract(parentSlug)
 	}
 
 	return fmt.Sprintf(
