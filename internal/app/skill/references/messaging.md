@@ -92,8 +92,19 @@ flow watch <target> --as user        # subscribe the USER, not this session
 flow watch --list / --rm <target>    # inspect / unsubscribe
 ```
 
-Subscribe to whatever you depend on, coordinate with, or spawn from this
-session.
+Subscribe to whatever you depend on or coordinate with. Tasks you spawn
+are wired automatically:
+
+```
+parent P (bound session, inbox Monitor armed)
+  flow add task C     -> C.parent_slug = P, user/P now watches C
+  flow do --auto C    -> prints whether user/P watches C + Monitor reminder
+child C (headless)
+  prompt: flow message user/P at milestones and when done/blocked
+  -> lands in P's inbox -> P's Monitor wakes P
+```
+
+The child's reports only reach you if your inbox Monitor is armed.
 
 ## Consuming: unread vs. everything
 
@@ -128,13 +139,18 @@ Arm exactly ONE listener at session start so mail WAKES you instead of
 waiting for your next tool call. Which recipe depends on what you do with
 each message.
 
+Claude Code's Monitor tool may be a deferred tool: load its schema first
+with ToolSearch `select:Monitor`. It has NO `persistent` parameter, and
+`timeout_ms` is REQUIRED (default 300000, max 1800000); the monitor is
+killed at expiry and you get a notice. Always pass the max.
+
 **Consumer** — you fully handle each message yourself (act on it, answer
 it). This is the default for a normal task session. `pop` acks as it goes:
 
     Monitor(
-      command: "while true; do flow inbox pop --wait --timeout 300 --json || true; done",
-      description: "flow bus mail for this session",
-      persistent: true)
+      description: "flow inbox",
+      timeout_ms: 1800000,
+      command: "while true; do flow inbox pop --wait --timeout 300 --json || true; done")
 
 **Reader / relay** — you forward or merely observe, and must NOT ack (the
 message is answered elsewhere — e.g. you relay it to the user and they
@@ -142,12 +158,14 @@ answer over that channel). Use `--keep-unread` so watching never silently
 consumes someone else's mail:
 
     Monitor(
-      command: "while true; do flow inbox pop --wait --keep-unread --timeout 300 --json || true; done",
-      description: "flow bus relay — read without acking",
-      persistent: true)
+      description: "flow inbox relay (read without acking)",
+      timeout_ms: 1800000,
+      command: "while true; do flow inbox pop --wait --keep-unread --timeout 300 --json || true; done")
 
 Each popped message is one JSON event that wakes you; `--json` is silent
-on timeouts (zero noise); the loop listens all session with NO re-arming.
+on timeouts (zero noise). When the Monitor expires (timeout_ms reached)
+you get a notice: re-arm it immediately with the same call. After a
+compaction the SessionStart hook re-fires and repeats this recipe.
 FALLBACK when Monitor is unavailable (non-Claude harnesses): a background
 Bash `flow inbox pop --wait` (single-shot — re-arm after every wake). Keep
 one listener per identity. After a relay forwards a message and the human

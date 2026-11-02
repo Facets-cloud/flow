@@ -7,6 +7,41 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Parents auto-watch the tasks they spawn.** `flow add task` from a
+  bound session now also subscribes that session (`user/<parent>`) to the
+  new task and prints `(user/<parent> now watches <child>)`.
+- **Spawned auto runs report to their parent.** The `flow do --auto`
+  prompt for a task with a parent authorizes and asks the child to `flow
+  message user/<parent>` at milestones and when done or blocked.
+  Parentless tasks keep the old "message no one unless the brief says so"
+  rule.
+- **`flow do --auto` parent reminder.** Launching a child with a parent
+  prints whether the parent watches it and the inbox Monitor recipe.
+
+### Fixed
+
+- **`flow add task --mkdir` without `--work-dir` now gives the task a
+  fresh workspace.** It used to be silently ignored, so the task fell back
+  to the project's work_dir, including a project inherited from the parent
+  task, and ran inside that repo. `--mkdir` alone now creates
+  `~/.flow/tasks/<slug>/workspace` and uses it (the project link is kept).
+  `flow add task` also prints the chosen `work_dir` and its source (`from
+  project "<slug>"`, `new workspace`, or the explicit path). `flow update
+  task --mkdir` without `--work-dir` is a usage error.
+- **Monitor listener recipe.** The SessionStart hook, SKILL.md and
+  `references/messaging.md` told agents to arm `Monitor(...,
+  persistent: true)` with "no re-arming ever". Claude Code's Monitor has
+  no `persistent` param and requires `timeout_ms` (max 1800000). The
+  recipe now passes `description` + `timeout_ms: 1800000`, says to re-arm
+  on the expiry notice, and notes Monitor may need loading via ToolSearch.
+- **SessionStart hook re-fires after compaction.** The Claude hook matcher
+  is now `startup|resume|compact`, so a compacted session gets its task
+  context and listener discipline back. Re-running `flow init` (or `flow
+  skill install`) migrates an existing `startup|resume` entry in place
+  without duplicating it. Codex has no compact event and is unchanged.
+
 ## [0.1.0-alpha.30] — 2026-11-02
 
 ### Added
