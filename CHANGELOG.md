@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.31] — 2026-11-02
+
 ### Added
 
 - **Driver sessions delegate deterministic subtasks to auto children.**
