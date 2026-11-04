@@ -150,8 +150,10 @@ to prod", "may push a branch and open a PR, do NOT merge">
   done, and when blocked. Body is positional.
 - Write findings as an update note on your own task; name it in the
   final message.
-- do not wait on your own inbox: nobody will answer it. If a decision
-  truly needs the user, set waiting_on, message the driver, and exit.
+- never block waiting for a reply: keep working. Your inbox
+  Monitor runs in the background and surfaces any message (for example
+  from the user via the hub).
+  If a decision truly needs the user, set waiting_on, message the driver, and exit.
 - When Done when is met: flow done <slug>, then exit.
 ```
 

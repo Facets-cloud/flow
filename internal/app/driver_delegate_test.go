@@ -274,7 +274,7 @@ func TestSkillDelegationReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("references/delegation.md missing: %v", err)
 	}
-	for _, want := range []string{"flow auto", "Done when", "do not wait on your own inbox", "spawning auto child:", "grandchild"} {
+	for _, want := range []string{"flow auto", "Done when", "never block waiting for a reply", "spawning auto child:", "grandchild"} {
 		if !strings.Contains(string(ref), want) {
 			t.Errorf("delegation.md missing %q", want)
 		}

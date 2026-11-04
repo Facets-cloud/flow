@@ -250,3 +250,28 @@ func TestSkillCoreIntakeAsksDriverQuestion(t *testing.T) {
 		}
 	}
 }
+
+// Children get a background inbox Monitor from the SessionStart hook, so
+// brief guidance must say "don't block", not "don't wait on your inbox":
+// the old phrasing read as "skip the Monitor".
+func TestNoBlockWordingIsConsistent(t *testing.T) {
+	ref, err := fs.ReadFile(skillFiles(), "references/delegation.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for where, s := range map[string]string{
+		"delegation.md": string(ref),
+		"light block":   driverDelegationBlock(),
+		"driver block":  driverRoleBlock(),
+	} {
+		if strings.Contains(s, "wait on its own inbox") || strings.Contains(s, "wait on your own inbox") {
+			t.Errorf("%s still says not to wait on the inbox", where)
+		}
+		if !strings.Contains(s, "never block waiting for a reply") {
+			t.Errorf("%s missing \"never block waiting for a reply\"", where)
+		}
+	}
+	if !strings.Contains(string(ref), "Monitor runs in the background") {
+		t.Error("delegation.md template should explain the background Monitor")
+	}
+}
