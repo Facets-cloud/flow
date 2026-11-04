@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS projects (
     work_dir      TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
-    archived_at   TEXT
+    archived_at   TEXT,
+    terminal_group TEXT
 );
 
 CREATE TABLE IF NOT EXISTS playbooks (
@@ -138,6 +139,10 @@ type Project struct {
 	CreatedAt  string
 	UpdatedAt  string
 	ArchivedAt sql.NullString
+	// TerminalGroup is where `flow do` opens this project's task tabs in
+	// terminals that group tabs (today: the Rex session label). NULL
+	// means wherever flow ran from.
+	TerminalGroup sql.NullString
 }
 
 // Task mirrors the tasks table. ProjectSlug is nullable for floating tasks.
@@ -393,6 +398,17 @@ func runMigrations(db *sql.DB) error {
 			if _, err := db.Exec(col.ddl); err != nil {
 				return fmt.Errorf("add tasks.%s: %w", col.name, err)
 			}
+		}
+	}
+
+	// projects.terminal_group: where `flow do` opens the project's task
+	// tabs (Rex session label). Fresh DBs get it from schemaDDL; older
+	// DBs via ALTER. Nullable: NULL = wherever flow ran from.
+	if has, err := columnExists(db, "projects", "terminal_group"); err != nil {
+		return err
+	} else if !has {
+		if _, err := db.Exec(`ALTER TABLE projects ADD COLUMN terminal_group TEXT`); err != nil {
+			return fmt.Errorf("add projects.terminal_group: %w", err)
 		}
 	}
 
@@ -710,11 +726,11 @@ func columnExists(db *sql.DB, table, column string) (bool, error) {
 
 // ---------- project queries ----------
 
-const ProjectCols = "slug, name, status, priority, work_dir, created_at, updated_at, archived_at"
+const ProjectCols = "slug, name, status, priority, work_dir, created_at, updated_at, archived_at, terminal_group"
 
 func ScanProject(row interface{ Scan(dest ...any) error }) (*Project, error) {
 	var p Project
-	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
+	err := row.Scan(&p.Slug, &p.Name, &p.Status, &p.Priority, &p.WorkDir, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt, &p.TerminalGroup)
 	if err != nil {
 		return nil, err
 	}

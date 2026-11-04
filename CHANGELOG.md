@@ -23,6 +23,89 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   running version. It now fires only when the latest release is newer, by
   semantic version order.
 
+## [0.1.0-alpha.31] — 2026-11-02
+
+### Added
+
+- **Driver sessions delegate deterministic subtasks to auto children.**
+  The SessionStart hook now gives a bound, human-driven session a short
+  `flow driver delegation` block: carve scans, audits, fact-finding,
+  repro debugging, bulk passes and fix + PR work off to headless children
+  without asking, keep design and decisions inline, and leave live/prod
+  applies to the driver. Auto runs (marked by a new `FLOW_AUTO_RUN` env
+  var or a live auto run on the bound task) never get it. Skill: new
+  section 4.4a plus `references/delegation.md`.
+- **`flow auto "<name>" --brief <file|->`.** One shot for add task +
+  write brief + `flow do --auto`, with the same parent, project and
+  auto-watch as `flow add task`. Refuses without a brief, and inside an
+  auto run (no grandchildren).
+- **Auto child result contract.** A child with a parent writes its
+  findings as an update note on its own task and names it in its final
+  `flow message user/<parent>`; it is told not to spawn children itself.
+- **Parents auto-watch the tasks they spawn.** `flow add task` from a
+  bound session now also subscribes that session (`user/<parent>`) to the
+  new task and prints `(user/<parent> now watches <child>)`.
+- **Spawned auto runs report to their parent.** The `flow do --auto`
+  prompt for a task with a parent authorizes and asks the child to `flow
+  message user/<parent>` at milestones and when done or blocked.
+  Parentless tasks keep the old "message no one unless the brief says so"
+  rule.
+- **`flow do --auto` parent reminder.** Launching a child with a parent
+  prints whether the parent watches it and the inbox Monitor recipe.
+
+### Fixed
+
+- **`flow add task --mkdir` without `--work-dir` now gives the task a
+  fresh workspace.** It used to be silently ignored, so the task fell back
+  to the project's work_dir, including a project inherited from the parent
+  task, and ran inside that repo. `--mkdir` alone now creates
+  `~/.flow/tasks/<slug>/workspace` and uses it (the project link is kept).
+  `flow add task` also prints the chosen `work_dir` and its source (`from
+  project "<slug>"`, `new workspace`, or the explicit path). `flow update
+  task --mkdir` without `--work-dir` is a usage error.
+- **Monitor listener recipe.** The SessionStart hook, SKILL.md and
+  `references/messaging.md` told agents to arm `Monitor(...,
+  persistent: true)` with "no re-arming ever". Claude Code's Monitor has
+  no `persistent` param and requires `timeout_ms` (max 1800000). The
+  recipe now passes `description` + `timeout_ms: 1800000`, says to re-arm
+  on the expiry notice, and notes Monitor may need loading via ToolSearch.
+- **SessionStart hook re-fires after compaction.** The Claude hook matcher
+  is now `startup|resume|compact`, so a compacted session gets its task
+  context and listener discipline back. Re-running `flow init` (or `flow
+  skill install`) migrates an existing `startup|resume` entry in place
+  without duplicating it. Codex has no compact event and is unchanged.
+
+## [0.1.0-alpha.30] — 2026-11-02
+
+### Added
+
+- **Rex terminal backend.** `flow do` run inside
+  [Rex](https://www.superlogical.com/rex) (`$REX_SESSION` set or
+  `TERM_PROGRAM=rex`, or `FLOW_TERM=rex`) opens the task in a new Rex tab.
+  Previously Rex users fell through to the iTerm backend. An already-open
+  task's tab is found in any Rex session and focused; switching the Rex
+  app to another session needs **Remote Control** on in Rex settings, and
+  without it flow prints which session the tab is in. Commands over 512
+  bytes (the bootstrap prompt) go through a self-deleting temp script the
+  tab sources, because a just-started shell on macOS drops typed lines
+  over 1024 bytes, Enter included.
+- **Project terminal groups.** `flow update project <ref> --terminal-group
+  <name>` / `--clear-terminal-group` sets where `flow do` opens the
+  project's task tabs; `flow show project` shows it. For Rex the name is a
+  session label, created if missing. Ungrouped projects and floating tasks
+  open where `flow do` ran; other terminals ignore the group. Existing DBs
+  gain the nullable `projects.terminal_group` column on open.
+
+### Fixed
+
+- **Rex: `flow do` now actually shows the task's tab.** Focusing an open
+  task's tab, or opening a new one, in the current Rex session reported
+  success but left the app on the previous tab: `rex focus` and `rex
+  window new` only set the server's active window, and the Rex app keeps
+  showing its own selection. flow now always asks the app to select the
+  tab (as it already did for other sessions); this needs Remote Control
+  on in Rex settings.
+
 ## [0.1.0-alpha.29] — 2026-10-28
 
 ### Added

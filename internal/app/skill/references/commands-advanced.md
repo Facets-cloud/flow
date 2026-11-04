@@ -32,11 +32,34 @@ prints `parent:` on the child and `spun_off:` (comma-separated child
 slugs) on the parent. Use it to trace where a task came from, or to
 find the follow-ups a task fanned out.
 
+### `flow auto`: one-shot auto child
+
+`flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l]
+[--work-dir <p>] [--mkdir] [--harness claude|codex]` is `flow add task`
+(same parent link, project inheritance and auto-watch from a bound
+session) + writing the given text as the child's `brief.md` + `flow do
+--auto`. `--brief -` reads stdin. It refuses with exit 2 when the brief is
+missing or blank, refuses an existing `--slug`, and refuses inside an auto
+run (no grandchildren). It prints `spawning auto child: <slug>`. When to
+use it from a driver session: references/delegation.md.
+
+### Where a new task's work_dir comes from
+
+`flow add task` picks the work_dir in this order and prints it with its
+source:
+
+- `--work-dir X` uses X (`--mkdir` creates X if missing).
+- `--mkdir` alone gives the task a fresh `~/.flow/tasks/<slug>/workspace`,
+  ignoring the project's dir. Use it for scratch or delegated work that
+  must not run inside the parent's repo.
+- Neither: the project's work_dir (the project is inherited from the
+  parent task in a bound session), else a fresh workspace.
+
 ### Field edits — `flow update task` / `flow update project`
 
 `flow update task` is the canonical lane for in-place field edits on
 a task. `flow update project` is the same for project rows (priority
-only, for now). All field setters live here — there are no per-field
+and terminal group). All field setters live here — there are no per-field
 mini-commands like `flow priority` / `flow due` / `flow waiting` /
 `flow assignee` (those used to exist; they were folded into update).
 
@@ -53,6 +76,7 @@ flow update task <ref>
 
 flow update project <ref>
     [--priority high|medium|low]
+    [--terminal-group <name>] [--clear-terminal-group]
 ```
 
 When to use which flag:
@@ -70,6 +94,11 @@ When to use which flag:
   status. Setting status to a value it already has is a no-op.
 - **`--priority <p>`** — change a task or project priority. Same enum
   as creation: high|medium|low.
+- **`--terminal-group <name>` / `--clear-terminal-group`** (project) —
+  where `flow do` opens the project's task tabs in terminals that
+  group tabs. Today that's Rex: the name is a Rex session label,
+  created if missing (e.g. all `tekion-*` projects → `tekion`). Unset
+  = the tab opens wherever `flow do` ran. Other terminals ignore it.
 - **`--assignee <name>` / `--clear-assignee`** — set or clear the task
   assignee. Convention: NULL = "self" (default); any other value =
   "assigned to that name". The list/show output surfaces the assignee

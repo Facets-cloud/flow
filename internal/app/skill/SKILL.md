@@ -148,6 +148,8 @@ Sessions
                               (run headlessly in the background — no tab, no human; the
                                session does the work and self-completes via `flow done`.
                                Implies --dangerously-skip-permissions. Cannot combine with --here.)
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority p] [--work-dir <p>] [--mkdir] [--harness h]
+                              (add task + write brief + do --auto in one shot; see §4.4a)
   flow done             <ref>
 
 Playbook runs
@@ -450,6 +452,18 @@ other harness" — for a task that ALREADY has a session (harness pinned, so
 `--harness` is rejected). Read **references/harness-transfer.md** and follow
 it: progress note → `flow transcript` handoff file → un-pin via the scoped
 sqlite UPDATE → `flow do --harness <h> --with-file <handoff>`.
+### 4.4a Driver delegation (auto children)
+
+In a bound, human-driven session (the hook prints `flow driver
+delegation`), carve deterministic subtasks (scan, audit, fact-finding,
+repro debug, bulk/mechanical pass, fix + PR + test) off to headless
+children: `flow auto "<name>" --slug <s> --brief <file|->`. No §4.2
+interview and no §4.4 mode question; announce `spawning auto child:
+<slug>` and keep going. Design, decisions, quick answers and live/prod
+applies stay inline with the user. Auto children never spawn
+grandchildren. Brief template, result contract, examples → read
+**references/delegation.md**. §4.4 launch defaults are unchanged.
+
 ### 4.5 Save a progress note
 
 **Triggers:** "save a note", "log progress", "write an update", "note
@@ -673,63 +687,47 @@ intake. "The bootstrapped task" for drift/close-out purposes includes
 playbook-run tasks.
 ### 4.14 Substantive-unrelated-work check (passive, ongoing)
 
-This is a **passive workflow** that runs alongside every other workflow.
-It fires when substantive work emerges that doesn't belong to the
-current task binding.
+A **passive workflow** alongside every other: it fires when substantive
+work emerges that doesn't belong to the current task binding.
 
 **Triggers (any one is enough):**
 
-- In a **dispatch session** (`flow show task` reports unbound):
-  - You've been in active design / brainstorming / debugging
-    discussion for ≥ 2 turns about a concrete topic, OR
-  - You've made any Edit/Write tool calls, OR
-  - You've invoked a process skill (`superpowers:brainstorming`,
-    `superpowers:writing-plans`, `superpowers:executing-plans`,
-    `superpowers:systematic-debugging`,
-    `superpowers:test-driven-development`) — a process-skill invocation
-    is itself a substantive-work signal.
-- In a **bound session** (`flow show task` resolves a task): same triggers as §4.11
-  (work moved off the bootstrapped task's scope).
+- **Dispatch session** (`flow show task` reports unbound): ≥ 2 turns of
+  design / brainstorming / debugging on a concrete topic; OR any
+  Edit/Write call; OR a process skill invoked (`superpowers:brainstorming`,
+  `superpowers:writing-plans`, `superpowers:executing-plans`,
+  `superpowers:systematic-debugging`, `superpowers:test-driven-development`):
+  the invocation is itself the signal.
+- **Bound session**: same triggers as §4.11 (work left the task's scope).
 
-**NOT a trigger:**
-
-- One-off question answered in a single turn.
-- Reading files / running queries to inform an answer.
-- The very first message after session start (you don't yet know if
-  this is one-off or substantive).
+**NOT a trigger:** a one-off question answered in one turn; reading
+files / running queries to inform an answer; the very first message
+after session start.
 
 **Recipe:**
 
 1. Pause current work.
 2. Run `flow list tasks --status in-progress` and
-   `flow list tasks --status backlog --priority high` to see candidates.
-3. Use AskUserQuestion to offer three options:
-   - **Create a new flow task** for this work — run §4.2 intake.
-     §4.2's "Open now?" tail will offer **Continue here (bind this
-     session)** alongside new-tab and backlog (since this is a
-     dispatch session). Continue-here is usually the right pick
-     from this path: substantive work has already started in this
-     conversation, and binding preserves the transcript.
-   - **Switch to an existing task** — list candidates as options. On
-     selection, by default spawn `flow do <slug>` (new tab). Note:
-     if THIS session is already bound to another task, do NOT offer
-     `flow do --here <existing-slug>` as a sub-option — the binary
-     would refuse (session_id uniqueness invariant), and even
-     `--force` doesn't override it.
-   - **Proceed ad-hoc** (user accepts no resumability, no context
-     accumulation).
+   `flow list tasks --status backlog --priority high` for candidates.
+3. AskUserQuestion with three options:
+   - **Create a new flow task** → §4.2 intake. Its "Open now?" tail
+     offers **Continue here (bind this session)**, usually the right
+     pick here: work already started in this conversation, and binding
+     keeps the transcript.
+   - **Switch to an existing task** → list candidates; on selection spawn
+     `flow do <slug>` (new tab). If THIS session is already bound, never
+     offer `flow do --here <existing-slug>`: the binary refuses
+     (session_id uniqueness), even with `--force`.
+   - **Proceed ad-hoc** (no resumability, no context accumulation).
 
-**Process-skill ordering:** when a process skill triggers this check,
-load the skill first (so the user sees the right tool engage), then
-**before** taking the skill's first concrete action, run the check.
-If the user picks "create new task" or "switch to existing task," the
-process skill resumes inside the new session, not this one.
+**Process-skill ordering:** load the process skill first (so the user
+sees it engage), then run this check **before** its first concrete
+action. On "create new" or "switch", the process skill resumes in the
+new session, not this one.
 
-**Important: this is an ongoing check, not one-shot.** Re-evaluate the
-triggers each turn — especially when transitioning into design /
-implementation / debugging work. The SessionStart hook gets you the
-first check; you are responsible for every subsequent check.
-Re-evaluate on every turn.
+**Important: this is an ongoing check, not one-shot.** The SessionStart
+hook gets you the first check; you own every later one, especially when
+moving into design / implementation / debugging. Re-evaluate on every turn.
 
 ### 4.15 Upgrade flow itself
 
@@ -785,31 +783,31 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    if someone must act, message them too. You can NEVER message your own
    address (flow rejects it).
 
-**Auto-mode exception:** a `flow do --auto` agent runs unwatched — a
-silent run looks stuck, so post progress via `flow message user`/`flow
-broadcast` as you go, not only for a decision.
+**Auto-mode exception:** a `flow do --auto` agent runs unwatched: it posts
+progress via `flow broadcast`, and if its task has a parent its prompt
+says to `flow message user/<parent>` at milestones and when done/blocked,
+put its result in an update note it names, and spawn no children (§4.4a).
 
 Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
-**Consuming.** `flow inbox` lists unread; `flow inbox --all` lists
-everything retained (read + unread); `flow inbox read <id>` shows/acks one
-specific message out of order; `flow inbox pop` consumes the oldest.
-`--as user` drains the human queue from a monitor session; `--json` for
-scripts. At session start arm ONE persistent **Monitor** — pick by role:
+**Consuming.** `flow inbox` lists unread; `--all` lists everything
+retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
+the oldest. `--as user` drains the human queue. At
+session start arm ONE inbox **Monitor** (a deferred tool: load it with
+ToolSearch `select:Monitor` first). It has no `persistent` param;
+`timeout_ms` is REQUIRED (max 1800000):
 
-- **Consumer** (you handle each message): `Monitor(command: 'while true;
-  do flow inbox pop --wait --timeout 300 --json || true; done',
-  persistent: true)` — `pop` acks as it goes.
-- **Reader / relay** (you forward or just watch — must NOT ack): same loop
-  with `pop --wait --keep-unread` — wakes you without consuming the answer
-  (plain `pop` would silently ack mail you're only forwarding — the trap).
+- **Consumer** (default; `pop` acks as it goes): `Monitor(description:
+  "flow inbox", timeout_ms: 1800000, command: 'while true; do flow inbox
+  pop --wait --timeout 300 --json || true; done')`
+- **Reader / relay** (must NOT ack): same call with `pop --wait
+  --keep-unread`; plain `pop` would silently ack mail you only forward.
 
-Every message wakes you as an event, no re-arming (--json is silent on
-timeouts). Fallback without Monitor: background Bash `flow inbox pop
---wait`, single-shot — re-arm per wake. `flow watch <task|project|assignee>`
-subscribes you — watch what you depend on and tasks you create. flow ships
-NO notification UI and hooks NEVER consume — never assume a message
-visually alerted anyone.
+Each message wakes you as an event. On expiry you get a notice: re-arm it
+immediately. No Monitor: background Bash `flow inbox pop --wait`, re-arm
+per wake. `flow watch <task|project|assignee>` subscribes you; tasks you
+create from a bound session are auto-watched. No notification UI; hooks
+NEVER consume.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 
@@ -929,13 +927,10 @@ proposing any plan:
    and it's your authoritative instructions. The playbook's live
    `brief.md` may have evolved since; you don't need to re-read it.
 
-   **Files listed under `other:`** in any `flow show` output (task,
-   project, or playbook) are sidecar references — research notes, decision
-   trees, design docs, etc. dropped into the entity's directory. Do **not**
-   read them eagerly. Read them on demand when something in the brief, in
-   user input, or in the work makes them relevant. This matches the
-   lazy-load principle for KB files (§5.10 in the skill, §4.10 in the
-   section numbering).
+   **Files listed under `other:`** in any `flow show` output are sidecar
+   references (research notes, decision trees, design docs). Do **not**
+   read them eagerly; read on demand when the brief, user input, or the
+   work makes them relevant (same lazy-load rule as KB files, §4.10).
 
 3. **Load the parent project context, if any.** If `flow show task`
    printed a `project:` line that isn't `(floating)`, run:

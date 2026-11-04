@@ -131,7 +131,9 @@ func autoChildEnv() []string {
 	in := os.Environ()
 	out := make([]string, 0, len(in))
 	for _, kv := range in {
-		isSessionEnv := false
+		// A stale auto marker from an enclosing auto run never leaks: the
+		// launcher re-adds the right one for the run it starts.
+		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=")
 		for _, h := range allHarnesses() {
 			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
 				isSessionEnv = true
@@ -143,6 +145,23 @@ func autoChildEnv() []string {
 		}
 	}
 	return out
+}
+
+// autoRunEnvVar marks the environment of a headless auto run (value: the
+// task slug). Hooks and `flow auto` read it to tell an unattended child
+// from the human-driven driver session that spawned it.
+const autoRunEnvVar = "FLOW_AUTO_RUN"
+
+// isAutoRunSession reports whether the current process is (inside) a
+// headless auto run: the env marker is set, or the bound task's auto run
+// is live. Either signal is enough; the env marker covers a DB that has
+// not caught up, the DB status covers runs launched before the marker
+// existed.
+func isAutoRunSession(bound *flowdb.Task) bool {
+	if os.Getenv(autoRunEnvVar) != "" {
+		return true
+	}
+	return bound != nil && bound.AutoRunStatus.Valid && bound.AutoRunStatus.String == "running"
 }
 
 // launchAutoRun creates the per-run log directory, starts the detached
@@ -160,7 +179,8 @@ func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, erro
 	logName := time.Now().UTC().Format("2006-01-02-150405") + ".log"
 	logPath := filepath.Join(runsDir, logName)
 
-	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, autoChildEnv())
+	env := append(autoChildEnv(), autoRunEnvVar+"="+task.Slug)
+	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, env)
 	if err != nil {
 		return 0, "", err
 	}
@@ -261,7 +281,11 @@ func cmdAutoExec(args []string) int {
 	if task.PlaybookSlug.Valid {
 		playbookSlug = task.PlaybookSlug.String
 	}
-	prompt := buildAutoBootstrapPrompt(slug, task.Kind, playbookSlug)
+	parentSlug := ""
+	if task.ParentSlug.Valid {
+		parentSlug = task.ParentSlug.String
+	}
+	prompt := buildAutoBootstrapPrompt(slug, task.Kind, playbookSlug, parentSlug)
 
 	// Resolve the task's harness (claude today; codex/gemini once their
 	// adapters implement AutoRunArgv). The --with instruction rides via
@@ -299,19 +323,40 @@ func cmdAutoExec(args []string) int {
 	return 0
 }
 
+// autoResultContract is the parented child's result contract: findings go
+// in an update note on the child's own task, the final message to the
+// parent says where, and the child does all of its work itself (no
+// grandchildren, so delegation never recurses).
+func autoResultContract(parentSlug string) string {
+	return fmt.Sprintf(
+		"- Result contract: write your findings or result as an update note on YOUR OWN task (tasks/<your-slug>/updates/YYYY-MM-DD-<kebab>.md, the normal updates/ mechanism) before flow done. Your final flow message user/%s must name where to find it (your slug + the update file name), body <=200 chars.\n"+
+			"- Do the work yourself: do NOT spawn auto children of your own (no flow auto, no flow do --auto). Delegation is one level deep; if the work needs splitting, say so in your result and let the parent decide.\n",
+		parentSlug,
+	)
+}
+
 // buildAutoBootstrapPrompt is the bootstrap prompt for a headless,
 // unattended run. It differs from the interactive prompt in two load-
 // bearing ways: (1) there is no human, so the session must NOT use
 // AskUserQuestion or wait for input — it proceeds on best judgment; and
 // (2) the session is responsible for closing itself out via `flow done`
-// when the brief's acceptance criteria are met.
-func buildAutoBootstrapPrompt(slug, kind, playbookSlug string) string {
+// when the brief's acceptance criteria are met. A non-empty parentSlug
+// (the task was spawned from a bound session) adds a standing
+// authorization to report milestones to that parent's inbox.
+func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) string {
 	showStep := "2. Run: flow show task. Read the file at the brief: path AND every file under updates:. Files under other: are on-demand references."
 	if kind == "playbook_run" {
 		showStep = fmt.Sprintf(
 			"2. Run: flow show playbook %s for context, then flow show task. Read the run brief at the brief: path (it is a frozen snapshot — your authoritative instructions) AND every file under updates:. Do NOT edit the run brief.",
 			playbookSlug,
 		)
+	}
+	parentRule := ""
+	if parentSlug != "" {
+		parentRule = fmt.Sprintf(
+			"- Your parent task %[1]s spawned you and is listening. Report to it (this is authorized even if the brief does not mention it): run flow message user/%[1]s \"<one line, <=200 chars>\" at each milestone, when you are done, and when you are blocked. Do not wait for a reply; if flow rejects it because the parent is closed, carry on. Messaging the parent does not replace flow done.\n",
+			parentSlug,
+		) + autoResultContract(parentSlug)
 	}
 
 	return fmt.Sprintf(
@@ -325,6 +370,7 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug string) string {
 			"- Do NOT use AskUserQuestion and do NOT wait for user input — there is no one to answer. Where the interactive workflow would ask, decide using best engineering judgment and proceed. Resolve any deferred/unclear brief sections yourself rather than stopping.\n"+
 			"- Follow the repo's conventions (build/test commands, TDD if the repo expects it). Verify your work by running the tests before considering the task complete.\n"+
 			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
+			parentRule+
 			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and CLAUDE.md, search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
 			"Closing out:\n"+
 			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",

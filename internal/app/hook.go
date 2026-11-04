@@ -81,8 +81,10 @@ func readHookPayload() (p hookPayload, ok bool) {
 }
 
 // cmdHookSessionStart emits a Claude Code SessionStart hook response.
-// Wired via ~/.claude/settings.json with a matcher of "startup|resume"
-// so it fires for both fresh spawns and `claude --resume`.
+// Wired via ~/.claude/settings.json with a matcher of
+// "startup|resume|compact" so it fires for fresh spawns, `claude
+// --resume`, AND after compaction (the compacted context has lost the
+// task reload + listener discipline; this output restores it).
 //
 // Two modes, branching on whether this session is bound to a flow
 // task. The binding is discovered via reverse-lookup of the hook
@@ -102,13 +104,19 @@ func cmdHookSessionStart(args []string) int {
 	}
 	readHookPayload()
 
-	slug := lookupBoundTaskSlug()
-	if slug == "" {
+	bound := lookupBoundTask()
+	if bound == nil {
 		// Unbound sessions are where the human usually sits — surface
 		// their pending-mail count here too (inform-only).
 		return emitAmbientSkillHint()
 	}
+	slug := bound.Slug
 	pageCtx := busSessionStartContext()
+	// Only the human-driven driver session may delegate. An auto child
+	// never sees this block, so delegation cannot recurse.
+	if !isAutoRunSession(bound) {
+		pageCtx += driverDelegationBlock()
+	}
 
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
@@ -140,6 +148,24 @@ func cmdHookSessionStart(args []string) int {
 	)
 
 	return emitSessionStartContext(instructions + appendStaleVersionHint() + pageCtx)
+}
+
+// driverDelegationBlock is the SessionStart context that tells a bound,
+// human-driven session it may carve deterministic subtasks off to headless
+// auto children instead of waiting to be told "flow auto" each time.
+// Full recipe: skill references/delegation.md.
+func driverDelegationBlock() string {
+	return " flow driver delegation: you are the DRIVER session for this task. Carve smaller " +
+		"deterministic subtasks off to headless auto children instead of doing them inline: " +
+		"scans, audits, fact-finding, repro debugging, bulk/mechanical passes, fix + PR + test " +
+		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
+		"answers. Live/prod changes: the child plans and gates only; you apply them with the user. " +
+		"How: write a brief (goal, where, Done when, gates, report via flow message, do not wait " +
+		"on its own inbox) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
+		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
+		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
+		"the child messages you, verify its result (it names its update note) before reporting " +
+		"to the user. Children cannot spawn grandchildren. Recipe: flow skill references/delegation.md."
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart

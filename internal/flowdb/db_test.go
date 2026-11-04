@@ -671,3 +671,58 @@ func TestMigrationDeduplicatesSessionIDs(t *testing.T) {
 	}
 	db2.Close()
 }
+
+// TestMigrationAddsProjectTerminalGroup — a DB whose projects table
+// predates terminal_group gets the column on open, existing rows read
+// back with a NULL group, and GetProject (which selects ProjectCols)
+// works on the migrated row.
+func TestMigrationAddsProjectTerminalGroup(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "flow.db")
+	pre, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pre.Exec(`
+		CREATE TABLE projects (
+			slug TEXT PRIMARY KEY, name TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active', priority TEXT NOT NULL DEFAULT 'medium',
+			work_dir TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			archived_at TEXT
+		);
+		INSERT INTO projects (slug, name, work_dir, created_at, updated_at)
+			VALUES ('legacy', 'Legacy', '/tmp', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+	`); err != nil {
+		pre.Close()
+		t.Fatalf("seed: %v", err)
+	}
+	pre.Close()
+
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer db.Close()
+	if has, err := columnExists(db, "projects", "terminal_group"); err != nil || !has {
+		t.Fatalf("terminal_group exists=%v err=%v; want true", has, err)
+	}
+	p, err := GetProject(db, "legacy")
+	if err != nil {
+		t.Fatalf("GetProject on migrated row: %v", err)
+	}
+	if p.TerminalGroup.Valid {
+		t.Errorf("legacy row group = %q; want NULL", p.TerminalGroup.String)
+	}
+	if _, err := db.Exec(`UPDATE projects SET terminal_group='tekion' WHERE slug='legacy'`); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ = GetProject(db, "legacy"); p.TerminalGroup.String != "tekion" {
+		t.Errorf("round-trip group = %q; want tekion", p.TerminalGroup.String)
+	}
+	// Re-opening an already-migrated DB is a no-op.
+	db.Close()
+	if db2, err := OpenDB(dbPath); err != nil {
+		t.Fatalf("reopen migrated DB: %v", err)
+	} else {
+		db2.Close()
+	}
+}

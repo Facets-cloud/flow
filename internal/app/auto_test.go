@@ -323,7 +323,7 @@ func TestAutoRunnerUsesHarnessArgv(t *testing.T) {
 // instructs self-closure via flow done, AND insists on persisting toward
 // a closeable state (giving up only as a last resort).
 func TestBuildAutoBootstrapPrompt(t *testing.T) {
-	p := buildAutoBootstrapPrompt("my-task", "regular", "")
+	p := buildAutoBootstrapPrompt("my-task", "regular", "", "")
 	for _, want := range []string{
 		"my-task", "flow done", "AskUserQuestion", "autonomous",
 		"PERSIST", "LAST RESORT", "EXHAUST",
