@@ -182,14 +182,24 @@ doesn't refuse to run the unsigned binary.
 
 ## Upgrade
 
-In any Claude Code session:
+flow upgrades itself. The SessionStart hook checks GitHub for the
+latest release once a day. When a newer release exists, flow
+downloads it in the background after a command, checks its SHA-256,
+and replaces the binary. The next flow command refreshes the skill
+and the hooks. The upgrade log is `~/.flow/self-upgrade.log`.
 
-> Upgrade flow from https://github.com/Facets-cloud/flow
-
-Claude fetches the latest release binary and runs `flow skill
-update` to refresh the skill and re-wire the SessionStart and
-UserPromptSubmit hooks. Check the running version with
+To upgrade now, run `flow upgrade`. To only check, run
+`flow upgrade --check`. Check the running version with
 `flow --version`.
+
+flow does not upgrade itself in these cases:
+
+- `FLOW_NO_AUTO_UPGRADE=1` is set, or `CI` is set.
+- The binary is a source build (`make install`). Run
+  `flow upgrade --force` to replace it with the latest release.
+- flow runs as root, or it cannot write to the folder of its binary
+  (for example, `/usr/local/bin` that root owns). Install flow in
+  `~/.local/bin` instead.
 
 ## Quickstart
 
