@@ -298,7 +298,10 @@ section is unclear, ask; if the user says "I don't know yet", write
    "Yes, create it" / "No, I'll fix the path") if the path doesn't exist.
 4. **Priority** — AskUserQuestion "High" / "Medium (Recommended)" / "Low",
    default Medium. Skip if already stated.
-5. **Driver?** — AskUserQuestion per §4.4a (references/delegation.md).
+5. **Driver?** — AskUserQuestion "How should this task run?":
+   "Driver (Recommended)" (owns it end to end, spawns `flow auto`
+   children) / "Regular" (this session only). Recommend Driver for
+   multi-part goals; on Driver add `--tag driver`. Never skip.
 
 Also, before saving: **project attachment** — AskUserQuestion with one
 option per existing project (label = slug, desc = name) plus "None
@@ -463,7 +466,7 @@ decisions, verifying results, live/prod applies inline. Other bound
 sessions delegate lightly. No §4.2/§4.4 asks;
 announce `spawning auto child: <slug>`. Make one mid-session: `flow
 update task <bound> --tag driver` (prints the block). No grandchildren.
-Intake question, habits, brief template → **references/delegation.md**.
+Habits, brief template → **references/delegation.md**.
 
 ### 4.5 Save a progress note
 
@@ -666,10 +669,7 @@ the `<current-slug>` and the one-line drift):
 - **Later** — offer a drift note (AskUserQuestion "Yes, save a drift
   note" / "No, just continue") on the current task, then continue.
 
-This lives in the skill, not the hook, because detection needs
-session state (edits, debug topics) that only exists in the running
-conversation. Note "the bootstrapped task" includes playbook-run tasks —
-same triggers and recipe.
+Note "the bootstrapped task" includes playbook-run tasks.
 
 ### 4.12–4.13 Playbooks (add · run · capture-back)
 
