@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"io/fs"
 	"strings"
 	"testing"
 
@@ -232,5 +233,20 @@ func TestCompletedChildSendsNoCrashNotice(t *testing.T) {
 	msgs, _ := pendingForIdentity(openFlowDB(t), busSender{Assignee: busUser, TaskSlug: "parent"})
 	if len(msgs) != 0 {
 		t.Errorf("completed child should not post a crash notice; got %d", len(msgs))
+	}
+}
+
+// The intake driver question must be spelled out in the resident core:
+// a pointer to a reference file alone gets skipped in practice.
+func TestSkillCoreIntakeAsksDriverQuestion(t *testing.T) {
+	core, err := fs.ReadFile(skillFiles(), "SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(core)
+	for _, want := range []string{"How should this task run?", "--tag driver", "Driver (Recommended)"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("SKILL.md intake missing %q", want)
+		}
 	}
 }
