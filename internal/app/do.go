@@ -1064,6 +1064,11 @@ func cmdDoHere(query string, force bool) int {
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	// A session bound mid-flight missed SessionStart, so hand it the
+	// role block now (driver or light delegation).
+	if blk := roleBlockFor(db, task); blk != "" {
+		fmt.Println(strings.TrimSpace(blk))
+	}
 	return 0
 }
 

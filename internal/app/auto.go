@@ -314,6 +314,9 @@ func cmdAutoExec(args []string) int {
 	if err := finalizeAutoRun(db, slug, status); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: finalize auto run %q: %v\n", slug, err)
 	}
+	if status == "dead" {
+		notifyParentOfDeadChild(db, task)
+	}
 
 	if runErr != nil {
 		fmt.Fprintf(os.Stderr, "auto run for %q failed: %v\n", slug, runErr)

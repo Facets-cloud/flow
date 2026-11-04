@@ -115,7 +115,11 @@ func cmdHookSessionStart(args []string) int {
 	// Only the human-driven driver session may delegate. An auto child
 	// never sees this block, so delegation cannot recurse.
 	if !isAutoRunSession(bound) {
-		pageCtx += driverDelegationBlock()
+		if isDriverSlug(slug) {
+			pageCtx += driverRoleBlock()
+		} else {
+			pageCtx += driverDelegationBlock()
+		}
 	}
 
 	instructions := fmt.Sprintf(
@@ -155,7 +159,7 @@ func cmdHookSessionStart(args []string) int {
 // auto children instead of waiting to be told "flow auto" each time.
 // Full recipe: skill references/delegation.md.
 func driverDelegationBlock() string {
-	return " flow driver delegation: you are the DRIVER session for this task. Carve smaller " +
+	return " flow driver delegation: you may carve smaller " +
 		"deterministic subtasks off to headless auto children instead of doing them inline: " +
 		"scans, audits, fact-finding, repro debugging, bulk/mechanical passes, fix + PR + test " +
 		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
@@ -323,11 +327,15 @@ func cmdHookUserPromptSubmit(args []string) int {
 		}
 		return emitHookContext("UserPromptSubmit", strings.TrimSpace(pageCtx))
 	}
+	role := ""
+	if isDriverSlug(t.Slug) {
+		role = " [driver]"
+	}
 	anchor := fmt.Sprintf(
-		"flow session → task %q (%s). Per §4.11/§4.7: if this prompt is "+
+		"flow session → task %q (%s)%s. Per §4.11/§4.7: if this prompt is "+
 			"unrelated work, offer a new task; if it signals the task is done, "+
 			"offer to close it out. Else proceed silently.",
-		t.Name, t.Slug,
+		t.Name, t.Slug, role,
 	)
 	return emitHookContext("UserPromptSubmit", anchor+pageCtx)
 }

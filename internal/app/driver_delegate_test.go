@@ -286,6 +286,7 @@ func TestNoEmDashInDelegationText(t *testing.T) {
 	texts := map[string]string{
 		"delegation.md": string(ref),
 		"hook block":    driverDelegationBlock(),
+		"driver block":  driverRoleBlock(),
 		"prompt":        buildAutoBootstrapPrompt("c", "regular", "", "p"),
 	}
 	for where, s := range texts {
