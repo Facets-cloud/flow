@@ -83,6 +83,8 @@ func Run(args []string) int {
 		return cmdMessage(rest)
 	case "connector":
 		return cmdConnector(rest)
+	case "human":
+		return cmdHuman(rest)
 	case "inbox":
 		return cmdInbox(rest)
 	case "broadcast", "post":

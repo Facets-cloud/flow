@@ -555,3 +555,108 @@ func TestB4DispatchAllFailLeavesUnnotified(t *testing.T) {
 		t.Errorf("notified_at set though every connector failed")
 	}
 }
+
+func humanRC(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	var rc int
+	out := captureStdout(t, func() { rc = cmdHuman(args) })
+	return rc, out
+}
+
+// B7: flow human reply|seen are connector-only (FLOW_CONNECTOR_TOKEN).
+func TestB7HumanReplyAndSeen(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	mkBusTask(t, db, "gone", "sid-gone")
+	stubDispatchLauncher(t, nil)
+	installFakeConnector(t, "desk", `"ask"`, "exit 0")
+	secret := withSecret(t, "desk")
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-asker")
+	if rc := msgRC(t, "user", "ship?", "--options", "Yes|No"); rc != 0 {
+		t.Fatal(rc)
+	}
+	if rc := msgRC(t, "user", "fyi-ish ask"); rc != 0 {
+		t.Fatal(rc)
+	}
+	ask, other := rowByBody(t, db, "ship?"), rowByBody(t, db, "fyi-ish ask")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-gone")
+	if rc := msgRC(t, "user", "orphan ask"); rc != 0 {
+		t.Fatal(rc)
+	}
+	orphan := rowByBody(t, db, "orphan ask")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+
+	// Without the token (an agent, a plain terminal) nothing changes.
+	for _, tok := range []string{"", "wrong"} {
+		t.Setenv("FLOW_CONNECTOR_TOKEN", tok)
+		if rc, _ := humanRC(t, "reply", ask.ID, "Yes"); rc != 1 {
+			t.Errorf("reply with token %q rc=%d, want 1", tok, rc)
+		}
+		if rc, _ := humanRC(t, "seen", ask.ID); rc != 1 {
+			t.Errorf("seen with token %q rc=%d, want 1", tok, rc)
+		}
+	}
+	if m, _ := flowdb.GetBusMessageByID(db, ask.ID); m.SeenAt != "" || m.AnsweredAt != "" {
+		t.Fatalf("tokenless call changed the row: %+v", m)
+	}
+
+	t.Setenv("FLOW_CONNECTOR_TOKEN", secret)
+	if rc, _ := humanRC(t, "seen", other.ID); rc != 0 {
+		t.Fatalf("seen rc=%d", rc)
+	}
+	if m, _ := flowdb.GetBusMessageByID(db, other.ID); m.SeenAt == "" || m.ConsumedByIdentity != "connector:desk" || m.AnsweredAt != "" {
+		t.Errorf("seen row: %+v", m)
+	}
+	if rc, _ := humanRC(t, "seen", other.ID); rc != 0 {
+		t.Errorf("repeat seen rc=%d", rc)
+	}
+
+	if rc, out := humanRC(t, "reply", ask.ID, "Yes — after lunch"); rc != 0 {
+		t.Fatalf("reply rc=%d %s", rc, out)
+	}
+	m, _ := flowdb.GetBusMessageByID(db, ask.ID)
+	if m.SeenAt == "" || m.AnsweredAt == "" || m.Status != "acked" || m.ConsumedByIdentity != "connector:desk" {
+		t.Errorf("answered row: %+v", m)
+	}
+	replies, err := flowdb.AllForTask(db, "asker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replies) != 1 || replies[0].ReplyTo != ask.ID || replies[0].Body != "Yes — after lunch" ||
+		replies[0].FromAssignee != "user" || replies[0].FromTaskSlug != "" || replies[0].Status != "pending" {
+		t.Fatalf("reply rows = %+v", replies)
+	}
+	// Idempotent: a second reply records nothing new.
+	if rc, _ := humanRC(t, "reply", ask.ID, "No"); rc != 0 {
+		t.Errorf("repeat reply rc=%d", rc)
+	}
+	if again, _ := flowdb.AllForTask(db, "asker"); len(again) != 1 {
+		t.Errorf("repeat reply delivered again: %d rows", len(again))
+	}
+
+	// Asking task closed: still answered, warning, exit 0, no undeliverable row.
+	if _, err := db.Exec(`UPDATE tasks SET status='done' WHERE slug='gone'`); err != nil {
+		t.Fatal(err)
+	}
+	rc, out := humanRC(t, "reply", orphan.ID, "too late") // captures stderr too
+	if rc != 0 || !strings.Contains(out, "warning") || !strings.Contains(out, `"gone" is done`) {
+		t.Errorf("orphan reply rc=%d out=%q", rc, out)
+	}
+	if m, _ := flowdb.GetBusMessageByID(db, orphan.ID); m.AnsweredAt == "" {
+		t.Errorf("orphan not recorded answered")
+	}
+	if rows, _ := flowdb.AllForTask(db, "gone"); len(rows) != 0 {
+		t.Errorf("reply delivered to a done task: %+v", rows)
+	}
+
+	if rc, _ := humanRC(t, "reply", "nope", "x"); rc != 1 {
+		t.Errorf("unknown id rc=%d", rc)
+	}
+	for _, args := range [][]string{{}, {"reply", ask.ID}, {"reply", ask.ID, "  "}, {"seen"}, {"wat"}} {
+		if rc, _ := humanRC(t, args...); rc != 2 {
+			t.Errorf("%q rc=%d, want 2", args, rc)
+		}
+	}
+}

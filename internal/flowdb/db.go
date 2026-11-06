@@ -295,12 +295,14 @@ func OpenDB(path string) (*sql.DB, error) {
 		}
 	}
 	// Human-connector columns: ask options (JSON array), the --fyi flag and
-	// the send-time ping decision, and when a connector accepted the ping.
+	// the send-time ping decision, when a connector accepted the ping, and
+	// when a connector recorded the human's answer.
 	for _, c := range []struct{ col, ddl string }{
 		{"options", "ALTER TABLE bus_messages ADD COLUMN options TEXT"},
 		{"fyi", "ALTER TABLE bus_messages ADD COLUMN fyi INTEGER NOT NULL DEFAULT 0"},
 		{"ping", "ALTER TABLE bus_messages ADD COLUMN ping INTEGER NOT NULL DEFAULT 0"},
 		{"notified_at", "ALTER TABLE bus_messages ADD COLUMN notified_at TEXT"},
+		{"answered_at", "ALTER TABLE bus_messages ADD COLUMN answered_at TEXT"},
 	} {
 		if has, err := columnExists(db, "bus_messages", c.col); err == nil && !has {
 			if _, err := db.Exec(c.ddl); err != nil {
