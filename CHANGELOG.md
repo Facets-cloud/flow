@@ -19,12 +19,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   close-out sweep, and the `flow __auto-exec` supervisor runs it once the
   harness process has exited. Before, the sweep ran as a nested `codex exec`
   inside the live run. Claude and interactive `flow done` still sweep inline.
+  Root cause, confirmed live: Codex's shell tool backgrounds `flow done`
+  after ~10s, the agent ends its turn, and the exiting run kills the
+  sweep. An inline sweep (plain or `--ephemeral`) cannot survive that.
+- **Codex Stop hook output.** In Codex sessions the watcher broadcast
+  nudge is emitted as `{"decision":"block","reason":…}`. Codex's Stop
+  schema rejects `hookSpecificOutput`.
+- **Codex `$CODEX_HOME`.** The flow skill and `hooks.json` install under
+  `$CODEX_HOME` when it is set (default `~/.codex`), where Codex reads them.
+- **Harness-neutral session prompts.** The bootstrap, auto-run, close-out
+  sweep and owner-tick prompts no longer assume Claude. They say to use the
+  Skill tool if the harness has one, or else read the flow `SKILL.md` (the
+  real Codex path is spelled out), and they name `CLAUDE.md / AGENTS.md`.
 
 ### Added
 
 - Codex auto runs write the session's final message (`codex exec -o`) to
   `auto-runs/<run>.last.txt` next to the run log; `flow show task` lists it
   as `auto_run_last:` once it exists.
+- **Codex hooks.** `flow skill install` now installs the UserPromptSubmit,
+  PreToolUse and Stop hooks for Codex too (Codex 0.166 fires them; before,
+  only SessionStart was installed). The entries have no matcher, because
+  Codex tool names differ from Claude's.
+- **Hooks fire in headless Codex runs.** Auto runs, the close-out sweep and
+  owner ticks pass `--dangerously-bypass-hook-trust`, so hooks fire without
+  a one-time interactive trust approval, as they do under Claude. Interactive
+  launches keep Codex's trust prompt.
 
 ## [0.1.0-alpha.34] — 2026-11-06
 
