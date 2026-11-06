@@ -163,8 +163,10 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
   flow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
 
 Human connectors (opt-in pings for asks to the human — skill references/connectors.md):
-  flow connector add <dir>           (validate, install, store its secret, send a test notification)
+  flow connector add <dir|sample>    (validate, install, store its secret, send a test notification;
+                                      <sample> = a built-in name such as macos — no checkout needed)
   flow connector list
+  flow connector list --available    (built-in sample connectors)
   flow connector remove <name>       (delete the connector and its secret)
   flow connector test [<name>]
   flow human reply <id> "<text>"     (connectors only, FLOW_CONNECTOR_TOKEN: answer → asking task's inbox)

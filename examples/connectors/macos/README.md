@@ -24,7 +24,8 @@ agent ── flow message user "q" --options "A|B" ──► flow (row stored, p
 ## Install
 
 ```bash
-flow connector add examples/connectors/macos   # copies it, stores a secret, shows a test dialog
+flow connector add macos                       # built into flow: copies it, stores a secret, shows a test dialog
+flow connector add examples/connectors/macos   # same, from a repo checkout
 flow connector list
 flow connector test macos                      # another test dialog
 flow connector remove macos                    # uninstall (folder + secret)

@@ -684,6 +684,7 @@ func TestB9SkillTeachesConnectors(t *testing.T) {
 		"connector.json", `"contract": 1`, "FLOW_CONNECTOR_TOKEN", "FLOW_BIN", "FLOW_ROOT",
 		"run send", "run test", `"reply_hint"`, `"options"`, "human reply <id>", "human seen <id>",
 		"flow connector add", "30s", "exit 0", "dispatch.log", "examples/connectors/macos",
+		"flow connector add macos", "flow connector list --available",
 	} {
 		if !strings.Contains(ref, want) {
 			t.Errorf("references/connectors.md lacks %q", want)
@@ -722,7 +723,7 @@ func TestB9FlowFYIsNeverPing(t *testing.T) {
 // B10: the CLI usage, README and CHANGELOG document the connectors MVP.
 func TestB10DocsCoverConnectors(t *testing.T) {
 	usage := captureStdout(t, printUsage)
-	for _, want := range []string{"--options", "--fyi", "flow connector add <dir>", "flow connector list",
+	for _, want := range []string{"--options", "--fyi", "flow connector add <dir|sample>", "flow connector list", "flow connector list --available",
 		"flow connector remove <name>", "flow connector test [<name>]", "flow human reply <id>", "flow human seen <id>"} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage lacks %q", want)
@@ -732,7 +733,7 @@ func TestB10DocsCoverConnectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"### Human connectors", `--options "Yes|No"`, "flow connector add examples/connectors/macos", "--fyi"} {
+	for _, want := range []string{"### Human connectors", `--options "Yes|No"`, "flow connector add macos", "flow connector list --available", "--fyi"} {
 		if !strings.Contains(string(readme), want) {
 			t.Errorf("README lacks %q", want)
 		}
@@ -745,7 +746,8 @@ func TestB10DocsCoverConnectors(t *testing.T) {
 	if i := strings.Index(unreleased, "\n## ["); i > 0 {
 		unreleased = unreleased[:i]
 	}
-	for _, want := range []string{"### Added", "connector", "--options", "--fyi", "flow human reply"} {
+	for _, want := range []string{"### Added", "connector", "--options", "--fyi", "flow human reply",
+		"flow connector add macos", "--available"} {
 		if !strings.Contains(unreleased, want) {
 			t.Errorf("CHANGELOG [Unreleased] lacks %q", want)
 		}
@@ -766,5 +768,63 @@ func TestB4PayloadIsNotHTMLEscaped(t *testing.T) {
 	b, _ := os.ReadFile(got)
 	if !strings.Contains(string(b), `"body":"a<b && c>d"`) {
 		t.Errorf("payload = %s", b)
+	}
+}
+
+// fakeRunConnector replaces connector execution for one test and records
+// each "<name> <verb> <exec-mode>" invocation.
+func fakeRunConnector(t *testing.T) *[]string {
+	t.Helper()
+	var calls []string
+	orig := runConnector
+	t.Cleanup(func() { runConnector = orig })
+	runConnector = func(m *connector.Manifest, verb string, payload []byte, env []string, timeout time.Duration) error {
+		fi, err := os.Stat(m.ExecPath())
+		if err != nil {
+			return err
+		}
+		calls = append(calls, m.Name+" "+verb+" "+fi.Mode().Perm().String())
+		return nil
+	}
+	return &calls
+}
+
+// Packaging: a binary-only install (no repo checkout) can add a sample
+// connector by name; the samples are embedded from examples/connectors.
+func TestConnectorAddEmbeddedSample(t *testing.T) {
+	root := setupFlowRoot(t)
+	kc := fakeAppKeychain(t)
+	calls := fakeRunConnector(t)
+	t.Chdir(t.TempDir()) // no ./macos directory here: the name must resolve to the embedded copy
+
+	rc, out := connectorRC(t, "list", "--available")
+	if rc != 0 || !strings.Contains(out, "macos") {
+		t.Fatalf("list --available rc=%d out=%s", rc, out)
+	}
+
+	if rc, out := connectorRC(t, "add", "macos"); rc != 0 {
+		t.Fatalf("add macos rc=%d out=%s", rc, out)
+	}
+	inst := filepath.Join(root, "connectors", "macos")
+	fi, err := os.Stat(filepath.Join(inst, "run"))
+	if err != nil || fi.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("embedded run lacks exec bit: %v %v", fi, err)
+	}
+	for _, f := range []string{"connector.json", "README.md"} {
+		if _, err := os.Stat(filepath.Join(inst, f)); err != nil {
+			t.Errorf("%s not installed: %v", f, err)
+		}
+	}
+	if len(*calls) != 1 || !strings.HasPrefix((*calls)[0], "macos test -rwx") {
+		t.Errorf("test invocation = %q", *calls)
+	}
+	if len(kc) != 1 {
+		t.Errorf("no secret stored: %v", kc)
+	}
+
+	// Unknown name (and not a directory) → exit 1 naming what's available.
+	rc, out = connectorRC(t, "add", "nosuch")
+	if rc != 1 || !strings.Contains(out, "macos") {
+		t.Errorf("unknown sample rc=%d out=%s", rc, out)
 	}
 }

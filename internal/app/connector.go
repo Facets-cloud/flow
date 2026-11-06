@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,9 +13,90 @@ import (
 	"syscall"
 	"time"
 
+	connectorsamples "flow/examples/connectors"
 	"flow/internal/connector"
 	"flow/internal/flowdb"
 )
+
+// sampleConnectors is the embedded copy of examples/connectors (one dir
+// per sample). Overridable in tests.
+var sampleConnectors fs.FS = connectorsamples.Samples
+
+// runConnector executes one connector verb. Overridable in tests.
+var runConnector = connector.Run
+
+// chmodSampleExec marks the manifest's exec target executable. It reads
+// the raw manifest because connector.Load already demands the exec bit.
+func chmodSampleExec(dir string) error {
+	raw, err := os.ReadFile(filepath.Join(dir, connector.ManifestFile))
+	if err != nil {
+		return err
+	}
+	var mf struct {
+		Exec string `json:"exec"`
+	}
+	if err := json.Unmarshal(raw, &mf); err != nil {
+		return err
+	}
+	rel := filepath.Clean(filepath.FromSlash(mf.Exec))
+	if mf.Exec == "" || !filepath.IsLocal(rel) {
+		return fmt.Errorf("sample exec %q must be a path inside the folder", mf.Exec)
+	}
+	return os.Chmod(filepath.Join(dir, rel), 0o755)
+}
+
+// availableSamples lists the embedded sample connector names, sorted.
+func availableSamples() []string {
+	ents, err := fs.ReadDir(sampleConnectors, ".")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range ents {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
+// extractSample writes the embedded sample <name> into a fresh temp dir
+// and returns that connector folder plus a cleanup func. embed keeps no
+// file modes, so files land 0644 and the manifest's exec target 0755.
+func extractSample(name string) (string, func(), error) {
+	sub, err := fs.Sub(sampleConnectors, name)
+	if err != nil {
+		return "", nil, err
+	}
+	tmp, err := os.MkdirTemp("", "flow-connector-sample-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	dir := filepath.Join(tmp, name)
+	err = fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dir, filepath.FromSlash(path))
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := fs.ReadFile(sub, path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err == nil {
+		err = chmodSampleExec(dir)
+	}
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return dir, cleanup, nil
+}
 
 // Human connectors: opt-in executables that ping the human about mail
 // addressed to them (contract v1, see internal/connector and the skill
@@ -162,7 +244,7 @@ func invokeConnector(m *connector.Manifest, verb string, p connector.Payload) er
 	payload := bytes.TrimRight(buf.Bytes(), "\n")
 	env := append(connectorEnv(),
 		"FLOW_CONNECTOR_TOKEN="+secret, "FLOW_BIN="+flowBinPath(), "FLOW_ROOT="+root)
-	return connector.Run(m, verb, payload, env, connectorTimeout)
+	return runConnector(m, verb, payload, env, connectorTimeout)
 }
 
 // testPayload is what `run test` receives: the send shape with id "test".
@@ -174,8 +256,10 @@ func testPayload() connector.Payload {
 }
 
 const connectorUsage = `usage: flow connector <add|list|remove|test> ...
-  flow connector add <dir>        validate, install, store a secret, run its test
+  flow connector add <dir|sample> validate, install, store a secret, run its test
+                                  (<sample> = a built-in name, e.g. macos)
   flow connector list             installed connectors
+  flow connector list --available built-in sample connectors (no checkout needed)
   flow connector remove <name>    delete the connector and its secret
   flow connector test [<name>]    send a test notification (all if no name)`
 
@@ -207,10 +291,33 @@ func cmdConnector(args []string) int {
 
 func cmdConnectorAdd(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: flow connector add <dir>")
+		fmt.Fprintln(os.Stderr, "usage: flow connector add <dir|sample>")
 		return 2
 	}
-	src, err := filepath.Abs(args[0])
+	// An existing directory wins; otherwise the arg names an embedded
+	// sample, so a binary-only install needs no repo checkout.
+	src := args[0]
+	if fi, err := os.Stat(src); err != nil || !fi.IsDir() {
+		known := false
+		for _, n := range availableSamples() {
+			if n == src {
+				known = true
+			}
+		}
+		if !known {
+			fmt.Fprintf(os.Stderr, "error: %q is neither a connector directory nor a built-in sample (available: %s)\n",
+				src, strings.Join(availableSamples(), ", "))
+			return 1
+		}
+		dir, cleanup, err := extractSample(src)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: unpack sample %s: %v\n", src, err)
+			return 1
+		}
+		defer cleanup()
+		src = dir
+	}
+	src, err := filepath.Abs(src)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -264,8 +371,15 @@ func cmdConnectorAdd(args []string) int {
 }
 
 func cmdConnectorList(args []string) int {
+	if len(args) == 1 && args[0] == "--available" {
+		fmt.Println("built-in sample connectors (install: flow connector add <name>):")
+		for _, n := range availableSamples() {
+			fmt.Printf("  %s\n", n)
+		}
+		return 0
+	}
 	if len(args) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: flow connector list")
+		fmt.Fprintln(os.Stderr, "usage: flow connector list [--available]")
 		return 2
 	}
 	root, err := connectorsRoot()

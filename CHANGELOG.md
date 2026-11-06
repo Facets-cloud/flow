@@ -30,7 +30,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
     the human. A reply records `answered_at` and delivers the text to the
     asking task. Repeats are idempotent.
   - Contract v1 is documented in the skill's `references/connectors.md`.
-    `examples/connectors/macos` is a stock-macOS dialog connector.
+    `examples/connectors/macos` is a stock-macOS dialog connector. It is
+    built into the binary, so `flow connector add macos` works without a
+    repo checkout (`flow connector list --available` lists the built-in
+    samples; an existing directory argument still installs from that path).
   - flow's own FYIs to the human (the closed-parent report in the auto
     prompt, the dead-child notice) are sent as `--fyi`.
 

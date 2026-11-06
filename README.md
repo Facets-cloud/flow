@@ -331,11 +331,13 @@ flow message user "imports 3/5 done" --fyi   # progress: stored and listed, neve
 ```
 
 By default an ask just waits in `flow inbox`. Install a **connector** and
-flow pings you through it. The repo ships a native macOS dialog
-connector:
+flow pings you through it. flow ships a native macOS dialog connector,
+built into the binary (the source is `examples/connectors/macos`):
 
 ```bash
-flow connector add examples/connectors/macos   # shows a test dialog
+flow connector add macos                 # no checkout needed; shows a test dialog
+flow connector list --available          # built-in samples
+flow connector add ./my-connector        # or install your own folder
 flow connector list
 flow connector remove macos
 ```

@@ -5,7 +5,8 @@ asks them something (`flow message user "<q>"`), and relays the answer back
 to the asking task. Nothing pings unless the user installed one. This page
 is the full public contract: it is enough to write a connector from
 scratch. A working sample is `examples/connectors/macos` in the flow repo
-(a native macOS dialog).
+(a native macOS dialog). It is also built into the flow binary, so
+`flow connector add macos` works with no repo checkout.
 
 ```
 agent: flow message user "q" --options "A|B"      (returns at once)
@@ -114,11 +115,15 @@ inbox`.
 
 ```
 flow connector add <dir>       validate, copy to $FLOW_ROOT/connectors/<name>/, store a secret, run `run test`
+flow connector add macos       same, from the copy built into the binary (no checkout needed)
 flow connector list            installed connectors, their events and where the secret lives
+flow connector list --available  built-in sample names
 flow connector test [<name>]   send a test notification (all if no name)
 flow connector remove <name>   delete the folder and its secret
 ```
 
+`add` treats its argument as a path when that directory exists, otherwise
+as a built-in sample name; an unknown name exits 1 and lists the samples.
 If `add`'s test fails, the install is rolled back. To change an installed
 connector, `remove` it and `add` it again; the secret is regenerated.
 
