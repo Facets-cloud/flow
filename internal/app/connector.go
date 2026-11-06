@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -152,10 +153,13 @@ func invokeConnector(m *connector.Manifest, verb string, p connector.Payload) er
 	if p.Options == nil {
 		p.Options = []string{}
 	}
-	payload, err := json.Marshal(p)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // keep <, >, & literal for simple shell parsers
+	if err := enc.Encode(p); err != nil {
 		return err
 	}
+	payload := bytes.TrimRight(buf.Bytes(), "\n")
 	env := append(connectorEnv(),
 		"FLOW_CONNECTOR_TOKEN="+secret, "FLOW_BIN="+flowBinPath(), "FLOW_ROOT="+root)
 	return connector.Run(m, verb, payload, env, connectorTimeout)

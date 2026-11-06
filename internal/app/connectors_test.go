@@ -751,3 +751,20 @@ func TestB10DocsCoverConnectors(t *testing.T) {
 		}
 	}
 }
+
+// B4: the stdin payload is plain JSON without HTML escaping, so simple
+// shell connectors see "<", ">" and "&" as typed.
+func TestB4PayloadIsNotHTMLEscaped(t *testing.T) {
+	setupFlowRoot(t)
+	got := filepath.Join(t.TempDir(), "got")
+	installFakeConnector(t, "raw", `"ask"`, "cat > "+got)
+	withSecret(t, "raw")
+	m := installedConnectors()[0]
+	if err := invokeConnector(m, "send", connector.Payload{ID: "x", Body: "a<b && c>d", Kind: "ask"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(got)
+	if !strings.Contains(string(b), `"body":"a<b && c>d"`) {
+		t.Errorf("payload = %s", b)
+	}
+}
