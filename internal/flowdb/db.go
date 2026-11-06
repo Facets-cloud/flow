@@ -284,6 +284,21 @@ func OpenDB(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("migrate bus_messages.reply_to: %w", err)
 		}
 	}
+	// bus_messages.seen_at arrived with the human-mail fixes: human mail is
+	// unread until a human has seen it. On first add, stamp every existing
+	// human row seen — the old mail is left behind rather than resurfaced
+	// as a backlog of stale asks and broadcasts.
+	if has, err := columnExists(db, "bus_messages", "seen_at"); err == nil && !has {
+		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate bus_messages.seen_at: %w", err)
+		}
+		if _, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE to_task_slug IS NULL AND to_assignee=?`,
+			NowISO(), BusUser); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("stamp legacy seen_at: %w", err)
+		}
+	}
 	return db, nil
 }
 

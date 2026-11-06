@@ -161,13 +161,13 @@ func busPreToolUseContext() string {
 // humanPendingNotice renders the inform-only "the USER has mail" line
 // ("" when their queue is empty).
 func humanPendingNotice(db *sql.DB) string {
-	n, err := flowdb.PendingCountForHuman(db, busUser)
-	if err != nil || n == 0 {
+	asks, fyi, err := flowdb.HumanUnreadCounts(db, busUser)
+	if err != nil || asks+fyi == 0 {
 		return ""
 	}
 	return fmt.Sprintf(
-		" flow-bus: %d pending message(s)/broadcast(s) await the USER — tell them at the "+
-			"start of your reply; they read them with `flow inbox --as user` (never consume these yourself).", n)
+		" flow-bus: unread mail for the USER: %d ask(s) await you · %d FYI — tell them at the "+
+			"start of your reply; they read them with `flow inbox --as user` (never consume these yourself).", asks, fyi)
 }
 
 // busHumanPendingNotice is the standalone variant for the unbound

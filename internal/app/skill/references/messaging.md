@@ -22,8 +22,10 @@ flow message user "coinswitch-gcp-migration: prod release plan ready, needs your
 flow message user "blocked on your GCP login — state bucket perms broken" --urgent
 ```
 
-- `user` (the reserved local human) stays **unread** until answered — it
-  never expires while unread.
+- `user` (the reserved local human) stays **unread** until a human has
+  seen it, whatever any reader did with it — it never expires while
+  unread. Hook notices to the human split it as "N ask(s) await you · M
+  FYI" (FYI = broadcasts).
 - Use ONLY for the three cases above. NOT for routine progress, and not
   when the user is clearly active in this session (they'll see it live).
 - ONE message per wait — NEVER re-send.

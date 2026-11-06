@@ -81,6 +81,15 @@ func pendingForIdentity(db *sql.DB, s busSender) ([]*flowdb.BusMessage, error) {
 	return flowdb.PendingForHuman(db, s.Assignee)
 }
 
+// unreadForIdentity returns what an `inbox` listing calls unread: pending
+// task mail, or the human queue's unread rows (flowdb.UnreadForHuman).
+func unreadForIdentity(db *sql.DB, s busSender) ([]*flowdb.BusMessage, error) {
+	if s.TaskSlug != "" {
+		return flowdb.PendingForTask(db, s.TaskSlug)
+	}
+	return flowdb.UnreadForHuman(db, s.Assignee)
+}
+
 // busMsgJSON is the stable machine-readable rendering of a message.
 type busMsgJSON struct {
 	ID        string   `json:"id"`
@@ -111,11 +120,11 @@ func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
 	}
 }
 
-// mailLabel maps the internal status to the mail-model nomenclature the
-// bus presents to humans: pending = "unread", everything consumed
-// (delivered/acked) = "read".
+// mailLabel maps a row to the mail-model nomenclature: "unread" or
+// "read", by the same predicate the listing and counts use (human mail is
+// unread until a human has seen it; other mail while pending).
 func mailLabel(m *flowdb.BusMessage) string {
-	if m.Status == "pending" {
+	if m.IsUnread() {
 		return "unread"
 	}
 	return "read"
@@ -194,7 +203,7 @@ func inboxList(args []string) int {
 // unread (pending) by default, or the whole retained queue when all=true.
 func listForIdentity(db *sql.DB, s busSender, all bool) ([]*flowdb.BusMessage, error) {
 	if !all {
-		return pendingForIdentity(db, s)
+		return unreadForIdentity(db, s)
 	}
 	if s.TaskSlug != "" {
 		return flowdb.AllForTask(db, s.TaskSlug)

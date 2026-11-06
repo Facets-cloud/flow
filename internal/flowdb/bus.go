@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     acked_at           TEXT,
     waited_s           REAL,
     acked_by           TEXT,
-    reply_to           TEXT
+    reply_to           TEXT,
+    seen_at            TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
     ON bus_messages(to_assignee, to_task_slug, status);
@@ -86,11 +87,36 @@ type BusMessage struct {
 	Status          string
 	WaitedS         float64
 	ReplyTo         string // parent message id (`--reply-to`), "" if none
+	SeenAt          string // when a HUMAN saw it (human mail only), "" if unseen
+}
+
+// BusUser is the reserved assignee for the local human. "Human mail" is
+// every row to BusUser with no task — directed messages AND broadcasts.
+const BusUser = "user"
+
+// humanUnreadWhere is THE unread predicate for a human queue: the local
+// human's mail is unread until a human has seen it (seen_at), whatever
+// its delivery status; another assignee's queue (drained by a transport
+// worker via --as) is unread while still pending. Shared by the listing,
+// the counts, and the mail label so they never drift.
+func humanUnreadWhere(assignee string) string {
+	if assignee == BusUser {
+		return `to_assignee=? AND to_task_slug IS NULL AND seen_at IS NULL`
+	}
+	return `to_assignee=? AND to_task_slug IS NULL AND status='pending'`
+}
+
+// IsUnread applies the same predicate to one row in Go.
+func (m *BusMessage) IsUnread() bool {
+	if m.ToTaskSlug == "" && m.ToAssignee == BusUser {
+		return m.SeenAt == ""
+	}
+	return m.Status == "pending"
 }
 
 const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug,''),
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
-    urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,'')`
+    urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,'')`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -107,7 +133,7 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		var urgent int
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
-			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo); err != nil {
+			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
@@ -142,6 +168,39 @@ func PendingForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {
 // PendingForTask returns undelivered rows addressed to a task's session.
 func PendingForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
 	return queryBusMsgs(db, `status='pending' AND to_task_slug=?`, slug)
+}
+
+// UnreadForHuman returns the human queue's unread rows (see
+// humanUnreadWhere) — what `flow inbox --as <assignee>` lists.
+func UnreadForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {
+	return queryBusMsgs(db, humanUnreadWhere(assignee), assignee)
+}
+
+// HumanUnreadCounts splits a human queue's unread rows into asks
+// (directed messages) and FYI (broadcasts).
+func HumanUnreadCounts(db *sql.DB, assignee string) (asks, fyi int, err error) {
+	err = db.QueryRow(`SELECT
+        COALESCE(SUM(CASE WHEN kind='message' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN kind='broadcast' THEN 1 ELSE 0 END),0)
+        FROM bus_messages WHERE `+humanUnreadWhere(assignee), assignee).Scan(&asks, &fyi)
+	return
+}
+
+// MarkSeen stamps seen_at on rows that are still unseen and returns the
+// ids it newly stamped. A human seeing human mail is what makes it read.
+func MarkSeen(db *sql.DB, ids []string) ([]string, error) {
+	var out []string
+	now := NowISO()
+	for _, id := range ids {
+		res, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE id=? AND seen_at IS NULL`, now, id)
+		if err != nil {
+			return out, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // AllForHuman returns EVERY row still in the table (any status — unread,
@@ -181,6 +240,14 @@ func ReadMessageByID(db *sql.DB, id, by string) (m *BusMessage, newly bool, err 
 		return nil, false, err
 	}
 	toHuman := m.ToTaskSlug == "" && m.Kind == "message"
+	if m.ToTaskSlug == "" && m.ToAssignee == BusUser && m.Kind == "broadcast" {
+		// A broadcast to the human is read once seen; no ack semantics.
+		ids, err := MarkSeen(db, []string{m.ID})
+		if len(ids) > 0 {
+			m.SeenAt = NowISO()
+		}
+		return m, len(ids) > 0, err
+	}
 	switch {
 	case toHuman && (m.Status == "pending" || m.Status == "delivered"):
 		claimed, err := claimAckedAnyState(db, m, by)
@@ -203,9 +270,10 @@ func ReadMessageByID(db *sql.DB, id, by string) (m *BusMessage, newly bool, err 
 func claimAckedAnyState(db *sql.DB, m *BusMessage, by string) (bool, error) {
 	m.WaitedS = waitedSeconds(m.CreatedAt, time.Now())
 	res, err := db.Exec(
-		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=?
+		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=?,
+             seen_at=COALESCE(seen_at, ?)
          WHERE id=? AND status IN ('pending','delivered')`,
-		NowISO(), m.WaitedS, by, m.ID)
+		NowISO(), m.WaitedS, by, NowISO(), m.ID)
 	if err != nil {
 		return false, err
 	}
@@ -263,8 +331,9 @@ func AckHumanMessagesFromSession(db *sql.DB, sessionID, toAssignee, by string) (
 func ClaimAcked(db *sql.DB, m *BusMessage, by string) (bool, error) {
 	m.WaitedS = waitedSeconds(m.CreatedAt, time.Now())
 	res, err := db.Exec(
-		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=? WHERE id=? AND status='pending'`,
-		NowISO(), m.WaitedS, by, m.ID)
+		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=?,
+             seen_at=COALESCE(seen_at, ?) WHERE id=? AND status='pending'`,
+		NowISO(), m.WaitedS, by, NowISO(), m.ID)
 	if err != nil {
 		return false, err
 	}
@@ -344,11 +413,11 @@ func GetBusStats(db *sql.DB, assignee string) (*BusStats, error) {
         WHERE kind='message' AND status='acked' AND to_assignee=? AND to_task_slug IS NULL
         ORDER BY waited_s LIMIT 1 OFFSET ?`, assignee, s.Acked/2)
 	_ = row.Scan(&s.MedWait) // best-effort; zero rows leaves 0
-	row = db.QueryRow(`SELECT COUNT(*) FROM bus_messages
-        WHERE kind='message' AND status='pending' AND to_assignee=? AND to_task_slug IS NULL`, assignee)
-	if err := row.Scan(&s.Pending); err != nil {
+	asks, _, err := HumanUnreadCounts(db, assignee)
+	if err != nil {
 		return nil, err
 	}
+	s.Pending = asks
 	row = db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE kind='broadcast'`)
 	if err := row.Scan(&s.Broadcasts); err != nil {
 		return nil, err
@@ -367,8 +436,7 @@ func PendingCountForTask(db *sql.DB, slug string) (int, error) {
 // PendingCountForHuman is the human-queue equivalent.
 func PendingCountForHuman(db *sql.DB, assignee string) (int, error) {
 	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages
-        WHERE status='pending' AND to_assignee=? AND to_task_slug IS NULL`, assignee).Scan(&n)
+	err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE `+humanUnreadWhere(assignee), assignee).Scan(&n)
 	return n, err
 }
 
@@ -550,7 +618,8 @@ const busKeepRolled = 1000
 // between the DELETE and its keep-newest subquery so they never drift.
 const busRollable = `(kind='broadcast'
     OR status='acked'
-    OR (status='delivered' AND to_task_slug IS NOT NULL))`
+    OR (status='delivered' AND to_task_slug IS NOT NULL)
+    OR (to_task_slug IS NULL AND seen_at IS NOT NULL))`
 
 // SweepBus applies retention: rollable rows roll by count (the newest
 // busKeepRolled are kept, older ones deleted). Cheap enough to run

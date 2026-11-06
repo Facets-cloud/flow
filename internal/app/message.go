@@ -168,7 +168,7 @@ func cmdMessage(args []string) int {
 // multi-user addressing rides on tasks.assignee. Deliberately not
 // "self": that spelling confused agents into reading `message self` as
 // talking to themselves.
-const busUser = "user"
+const busUser = flowdb.BusUser
 
 const busBodyMax = 500
 

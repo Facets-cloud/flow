@@ -147,3 +147,91 @@ func TestF2SkillDropsPopAsUser(t *testing.T) {
 		t.Error("skill still advertises popping the human queue as an agent action")
 	}
 }
+
+// F3: human mail is unread until a HUMAN has seen it (seen_at), whatever
+// its delivery status — a `delivered` row left by a legacy keep-unread
+// reader is still unread. One predicate drives list, count and label, and
+// the notice separates asks from FYI broadcasts.
+func TestF3HumanMailUnreadUntilSeen(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	ask := sendHumanAsk(t, db, "sid-asker", "pick a region")
+	if err := flowdb.AddWatch(db, "user", "asker"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if rc := cmdBroadcast([]string{"halfway there"}); rc != 0 {
+			t.Fatal("broadcast")
+		}
+	})
+	// Simulate a reader that claimed both to delivered (pre-F2 behavior).
+	if _, err := db.Exec(`UPDATE bus_messages SET status='delivered', delivered_at=?`, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+
+	listUser := func() []busMsgJSON {
+		out := captureStdout(t, func() { _ = cmdInbox([]string{"--as", "user", "--json"}) })
+		var rows []busMsgJSON
+		if err := json.Unmarshal([]byte(out), &rows); err != nil {
+			t.Fatalf("parse %v\n%s", err, out)
+		}
+		return rows
+	}
+	rows := listUser()
+	if len(rows) != 2 {
+		t.Fatalf("delivered-but-unseen human mail hidden: %d rows", len(rows))
+	}
+	for _, r := range rows {
+		if r.Mail != "unread" {
+			t.Errorf("row %s labelled %q, want unread", r.ID, r.Mail)
+		}
+	}
+	notice := humanPendingNotice(db)
+	if !strings.Contains(notice, "1 ask(s) await you · 1 FYI") {
+		t.Errorf("notice must separate asks from FYI: %q", notice)
+	}
+
+	// The human reads the ask from their own terminal → seen → not unread.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"read", ask}); rc != 0 {
+			t.Fatal("read")
+		}
+	})
+	var seen string
+	_ = db.QueryRow(`SELECT COALESCE(seen_at,'') FROM bus_messages WHERE id=?`, ask).Scan(&seen)
+	if seen == "" {
+		t.Error("human read did not stamp seen_at")
+	}
+	if rows = listUser(); len(rows) != 1 || rows[0].Kind != "broadcast" {
+		t.Errorf("after reading the ask, unread = %+v", rows)
+	}
+	if n := humanPendingNotice(db); !strings.Contains(n, "0 ask(s) await you · 1 FYI") {
+		t.Errorf("notice after read: %q", n)
+	}
+}
+
+// F3 legacy: when seen_at is first added, every pre-existing human row is
+// stamped seen (the user chose to leave old mail behind).
+func TestF3MigrationStampsLegacyHumanMailSeen(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	t.Setenv("FLOW_AUTO_RUN", "")
+	sendHumanAsk(t, db, "sid-asker", "old ask")
+	if _, err := db.Exec(`ALTER TABLE bus_messages DROP COLUMN seen_at`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db2 := openFlowDB(t) // re-open runs the migration
+	var n int
+	_ = db2.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE seen_at IS NULL`).Scan(&n)
+	if n != 0 {
+		t.Errorf("legacy human rows not stamped seen: %d unseen", n)
+	}
+	if notice := humanPendingNotice(db2); notice != "" {
+		t.Errorf("legacy mail still announced: %q", notice)
+	}
+}
