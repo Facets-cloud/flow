@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     consumed_by_identity TEXT,
     consumed_by_session  TEXT,
     options            TEXT,
-    fyi                INTEGER NOT NULL DEFAULT 0
+    fyi                INTEGER NOT NULL DEFAULT 0,
+    ping               INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
     ON bus_messages(to_assignee, to_task_slug, status);
@@ -109,6 +110,9 @@ type BusMessage struct {
 	Options []string
 	// FYI marks human mail that is stored and listed but never pinged.
 	FYI bool
+	// Ping is the send-time decision to notify the human through the
+	// installed connectors (see InsertBusMessage).
+	Ping bool
 }
 
 // Consumer identifies who changes a row's state: By is the verb recorded
@@ -148,7 +152,7 @@ const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
     urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,''),
     COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,''),
-    COALESCE(options,''), fyi`
+    COALESCE(options,''), fyi, ping`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -162,16 +166,17 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 	var out []*BusMessage
 	for rows.Next() {
 		m := &BusMessage{}
-		var urgent, fyi int
+		var urgent, fyi, ping int
 		var options string
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
 			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt,
-			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi); err != nil {
+			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
 		m.FYI = fyi == 1
+		m.Ping = ping == 1
 		if options != "" {
 			_ = json.Unmarshal([]byte(options), &m.Options)
 		}
@@ -180,19 +185,38 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 	return out, rows.Err()
 }
 
-// InsertBusMessage inserts one message row (always status=pending).
+// InsertBusMessage inserts one message row (always status=pending) and
+// sets m.Ping to the send-time ping decision, made in the same statement
+// so two concurrent asks from one task cannot both ping:
+//
+//   - only a directed message to the local human (no task) can ping;
+//     broadcasts, task mail, other assignees and --fyi never do;
+//   - --urgent always pings, and so does a sender with no task;
+//   - otherwise one ping per sender task until the human has seen it:
+//     no ping while that task has a pinged ask still unseen.
 func InsertBusMessage(db *sql.DB, m *BusMessage) error {
 	options, err := optionsJSON(m.Options)
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT INTO bus_messages
+	candidate := m.Kind == "message" && m.ToTaskSlug == "" && m.ToAssignee == BusUser && !m.FYI
+	forced := candidate && (m.Urgent || m.FromTaskSlug == "")
+	var ping int
+	err = db.QueryRow(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`,
+         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi, ping)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,
+          CASE WHEN ?=0 THEN 0 WHEN ?=1 THEN 1
+               WHEN EXISTS (SELECT 1 FROM bus_messages
+                            WHERE from_task_slug=? AND kind='message' AND to_task_slug IS NULL
+                              AND to_assignee=? AND ping=1 AND seen_at IS NULL) THEN 0
+               ELSE 1 END)
+        RETURNING ping`,
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
-		m.Body, boolInt(m.Urgent), NullIfEmpty(m.ReplyTo), options, boolInt(m.FYI))
+		m.Body, boolInt(m.Urgent), NullIfEmpty(m.ReplyTo), options, boolInt(m.FYI),
+		boolInt(candidate), boolInt(forced), m.FromTaskSlug, BusUser).Scan(&ping)
+	m.Ping = ping == 1
 	return err
 }
 

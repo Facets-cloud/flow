@@ -92,3 +92,63 @@ func TestB1MessageOptionsAndFYI(t *testing.T) {
 		}
 	}
 }
+
+// B2: the ping decision is made at SEND time and stored on the row.
+func TestB2PingDecisionAtSend(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	mkBusTask(t, db, "peer", "sid-peer")
+
+	send := func(sid string, args ...string) *flowdb.BusMessage {
+		t.Helper()
+		t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+		if rc := msgRC(t, args...); rc != 0 {
+			t.Fatalf("send %q rc=%d", args, rc)
+		}
+		return rowByBody(t, db, args[1])
+	}
+	want := func(m *flowdb.BusMessage, ping bool) {
+		t.Helper()
+		if m.Ping != ping {
+			t.Errorf("%q: ping=%v, want %v", m.Body, m.Ping, ping)
+		}
+	}
+
+	a1 := send("sid-asker", "user", "ask one")
+	want(a1, true)
+	want(send("sid-asker", "user", "ask two"), false) // one ping per task until answered
+	u := send("sid-asker", "user", "urgent one", "--urgent")
+	want(u, true) // --urgent always pings
+	want(send("sid-asker", "user", "progress", "--fyi"), false)
+	want(send("sid-peer", "user", "peer ask"), true) // per task, not global
+	// A sender with no task (the CLI refuses unbound → user, but other
+	// writers such as a workspace transport can) always pings.
+	for _, id := range []string{"nt1", "nt2"} {
+		m := &flowdb.BusMessage{ID: id, CreatedAt: flowdb.NowISO(), Kind: "message",
+			FromAssignee: "user", ToAssignee: "user", Body: id}
+		if err := flowdb.InsertBusMessage(db, m); err != nil {
+			t.Fatal(err)
+		}
+		want(m, true)
+	}
+	want(send("sid-asker", "alice", "to alice"), false) // not the local human
+	want(send("sid-asker", "user/peer", "task mail"), false)
+
+	// Once the human has seen every pinged ask from the task, it may ping again.
+	c := flowdb.Consumer{By: "test", Identity: "user"}
+	if _, err := flowdb.MarkSeen(db, []string{a1.ID, u.ID}, c); err != nil {
+		t.Fatal(err)
+	}
+	want(send("sid-asker", "user", "ask three"), true)
+
+	// Broadcasts are never pinged.
+	b := &flowdb.BusMessage{ID: "bcast1", CreatedAt: flowdb.NowISO(), Kind: "broadcast",
+		FromAssignee: "user", ToAssignee: "user", Body: "b"}
+	if err := flowdb.InsertBusMessage(db, b); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := flowdb.GetBusMessageByID(db, "bcast1"); m.Ping || b.Ping {
+		t.Errorf("broadcast pinged")
+	}
+}
