@@ -201,11 +201,11 @@ type TaskFilter struct {
 	Status          string
 	Project         string
 	Priority        string
-	Kind            string // "regular" (default), "playbook_run", or "" for all
-	PlaybookSlug    string // optional; filter to runs of one playbook
+	Kind            string   // "regular" (default), "playbook_run", or "" for all
+	PlaybookSlug    string   // optional; filter to runs of one playbook
 	Tag             string   // optional; only tasks carrying this tag (already normalized)
 	Tags            []string // optional; tasks must carry ALL of these (intersection; already normalized)
-	Since           string // RFC3339 or "" for no lower bound
+	Since           string   // RFC3339 or "" for no lower bound
 	IncludeArchived bool
 	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
 }
@@ -291,6 +291,18 @@ func OpenDB(path string) (*sql.DB, error) {
 			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
 				db.Close()
 				return nil, fmt.Errorf("migrate bus_messages.%s: %w", col, err)
+			}
+		}
+	}
+	// Human-connector columns: ask options (JSON array) and the --fyi flag.
+	for _, c := range []struct{ col, ddl string }{
+		{"options", "ALTER TABLE bus_messages ADD COLUMN options TEXT"},
+		{"fyi", "ALTER TABLE bus_messages ADD COLUMN fyi INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if has, err := columnExists(db, "bus_messages", c.col); err == nil && !has {
+			if _, err := db.Exec(c.ddl); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
 			}
 		}
 	}

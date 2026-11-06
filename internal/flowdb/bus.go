@@ -2,6 +2,7 @@ package flowdb
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -45,7 +46,9 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     reply_to           TEXT,
     seen_at            TEXT,
     consumed_by_identity TEXT,
-    consumed_by_session  TEXT
+    consumed_by_session  TEXT,
+    options            TEXT,
+    fyi                INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
     ON bus_messages(to_assignee, to_task_slug, status);
@@ -101,6 +104,11 @@ type BusMessage struct {
 	// acked or saw the row (bus address + harness session id).
 	ConsumedByIdentity string
 	ConsumedBySession  string
+	// Options are the answer choices of a human ask (`--options "A|B"`),
+	// stored as a JSON array; nil when none.
+	Options []string
+	// FYI marks human mail that is stored and listed but never pinged.
+	FYI bool
 }
 
 // Consumer identifies who changes a row's state: By is the verb recorded
@@ -139,7 +147,8 @@ func (m *BusMessage) IsUnread() bool {
 const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug,''),
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
     urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,''),
-    COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,'')`
+    COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,''),
+    COALESCE(options,''), fyi`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -153,14 +162,19 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 	var out []*BusMessage
 	for rows.Next() {
 		m := &BusMessage{}
-		var urgent int
+		var urgent, fyi int
+		var options string
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
 			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt,
-			&m.ConsumedByIdentity, &m.ConsumedBySession); err != nil {
+			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
+		m.FYI = fyi == 1
+		if options != "" {
+			_ = json.Unmarshal([]byte(options), &m.Options)
+		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -168,18 +182,37 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 
 // InsertBusMessage inserts one message row (always status=pending).
 func InsertBusMessage(db *sql.DB, m *BusMessage) error {
-	urgent := 0
-	if m.Urgent {
-		urgent = 1
+	options, err := optionsJSON(m.Options)
+	if err != nil {
+		return err
 	}
-	_, err := db.Exec(`INSERT INTO bus_messages
+	_, err = db.Exec(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status, reply_to)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?)`,
+         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`,
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
-		m.Body, urgent, NullIfEmpty(m.ReplyTo))
+		m.Body, boolInt(m.Urgent), NullIfEmpty(m.ReplyTo), options, boolInt(m.FYI))
 	return err
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// optionsJSON encodes ask options for the options column (NULL when none).
+func optionsJSON(opts []string) (any, error) {
+	if len(opts) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(opts)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
 }
 
 // PendingForHuman returns pending rows addressed to the human
@@ -201,11 +234,11 @@ func UnreadForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {
 }
 
 // HumanUnreadCounts splits a human queue's unread rows into asks
-// (directed messages) and FYI (broadcasts).
+// (directed messages) and FYI (broadcasts and `--fyi` messages).
 func HumanUnreadCounts(db *sql.DB, assignee string) (asks, fyi int, err error) {
 	err = db.QueryRow(`SELECT
-        COALESCE(SUM(CASE WHEN kind='message' THEN 1 ELSE 0 END),0),
-        COALESCE(SUM(CASE WHEN kind='broadcast' THEN 1 ELSE 0 END),0)
+        COALESCE(SUM(CASE WHEN kind='message' AND fyi=0 THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN kind='broadcast' OR fyi=1 THEN 1 ELSE 0 END),0)
         FROM bus_messages WHERE `+humanUnreadWhere(assignee), assignee).Scan(&asks, &fyi)
 	return
 }
