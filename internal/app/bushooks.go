@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 )
 
 // Message-bus hook handlers — strictly CLI/context primitives, no UI,
@@ -48,6 +49,43 @@ import (
 const inboxMonitorLoop = "while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; " +
 	"[ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done"
 
+// claudeListenerDiscipline is the SessionStart listener instruction for
+// harnesses whose mail reaches the agent through a polling Monitor loop
+// (claude, codex).
+const claudeListenerDiscipline = " flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
+	"deferred tool: load it first with ToolSearch \"select:Monitor\"). The loop is " +
+	"required (Monitor streams stdout lines as events): " +
+	"Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop +
+	"'). Every message then " +
+	"wakes you as an event (--json is silent on timeouts). timeout_ms is required and " +
+	"capped at 1800000: when the Monitor expires you get a notice, re-arm it immediately " +
+	"with the same call. Only if Monitor is unavailable, fall back to a background Bash " +
+	"`flow inbox pop --wait` and re-arm it after every wake. Also subscribe to what this " +
+	"task depends on: `flow watch <task-or-project-slug>` for anything you are waiting on, " +
+	"or coordinating with (tasks you create from this session are watched automatically). " +
+	"Children you spawn report via flow message, and only an armed Monitor hears them."
+
+// opencodeListenerDiscipline replaces claudeListenerDiscipline for
+// opencode-bound tasks: flow's opencode plugin injects inbox mail into
+// the conversation as `[flow inbox]` prompts, so an armed listener would
+// double-deliver (and Monitor does not exist there).
+const opencodeListenerDiscipline = " flow-bus: messages to this task are delivered INTO this conversation " +
+	"automatically by flow's opencode plugin, as prompts starting with `[flow inbox]` " +
+	"(each one is already consumed — act on it). Do NOT start an inbox listener or " +
+	"Monitor loop. Subscribe to what this task depends on: " +
+	"`flow watch <task-or-project-slug>`."
+
+// taskBoundHarnessIsOpencode reports whether slug's task row is pinned to
+// the opencode harness. Lookup errors fall back to false so the existing
+// claude/codex listener text is emitted.
+func taskBoundHarnessIsOpencode(db *sql.DB, slug string) bool {
+	t, err := flowdb.GetTask(db, slug)
+	if err != nil || t == nil {
+		return false
+	}
+	return t.Harness.Valid && t.Harness.String == string(harness.NameOpencode)
+}
+
 // busSessionStartContext returns extra SessionStart context (may be "").
 func busSessionStartContext() string {
 	db, err := openBusDB()
@@ -61,18 +99,11 @@ func busSessionStartContext() string {
 	b.WriteString(surfaceHumanMail(db, s.SessionID))
 	if s.TaskSlug != "" {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
-		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
-			"deferred tool: load it first with ToolSearch \"select:Monitor\"). The loop is " +
-			"required (Monitor streams stdout lines as events): " +
-			"Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop +
-			"'). Every message then " +
-			"wakes you as an event (--json is silent on timeouts). timeout_ms is required and " +
-			"capped at 1800000: when the Monitor expires you get a notice, re-arm it immediately " +
-			"with the same call. Only if Monitor is unavailable, fall back to a background Bash " +
-			"`flow inbox pop --wait` and re-arm it after every wake. Also subscribe to what this " +
-			"task depends on: `flow watch <task-or-project-slug>` for anything you are waiting on, " +
-			"or coordinating with (tasks you create from this session are watched automatically). " +
-			"Children you spawn report via flow message, and only an armed Monitor hears them.")
+		if taskBoundHarnessIsOpencode(db, s.TaskSlug) {
+			b.WriteString(opencodeListenerDiscipline)
+		} else {
+			b.WriteString(claudeListenerDiscipline)
+		}
 	}
 	return b.String()
 }

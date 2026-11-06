@@ -273,6 +273,66 @@ func TestFocusSessionUUIDCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestFocusSessionOpencodeShortFlag covers opencode's `-s <ses_…>`
+// argv shape, which the UUID regex doesn't recognize.
+func TestFocusSessionOpencodeShortFlag(t *testing.T) {
+	const sid = "ses_0123456789ABCDEFGHIJKLMNOP"
+	listJSON := `[
+	  {"tabs": [
+	    {"windows": [
+	      {"id": 21, "foreground_processes": [
+	        {"cmdline": ["opencode", "-s", "ses_0123456789ABCDEFGHIJKLMNOP", "--prompt", "hello"]}
+	      ]}
+	    ]}
+	  ]}
+	]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte(listJSON), nil })
+	var focusArgs []string
+	old := Runner
+	Runner = func(args []string) error { focusArgs = append([]string(nil), args...); return nil }
+	t.Cleanup(func() { Runner = old })
+
+	focused, err := FocusSession(sid, "opencode")
+	if err != nil || !focused {
+		t.Fatalf("got (%v, %v); want (true, nil)", focused, err)
+	}
+	want := []string{"@", "focus-window", "--match=id:21"}
+	if !slices.Equal(focusArgs, want) {
+		t.Errorf("focus argv = %v; want %v", focusArgs, want)
+	}
+}
+
+// TestFocusSessionOpencodeLongFlagAndCaseSensitive covers `--session=<id>`
+// and pins the case-SENSITIVE compare for opencode ids (unlike UUIDs).
+func TestFocusSessionOpencodeLongFlagAndCaseSensitive(t *testing.T) {
+	const lower = "ses_abcdefghijklmnopqrstuvwxyz"
+	const upper = "ses_ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	listJSON := `[
+	  {"tabs": [
+	    {"windows": [
+	      {"id": 22, "foreground_processes": [
+	        {"cmdline": ["opencode", "--session=` + upper + `"]}
+	      ]}
+	    ]}
+	  ]}
+	]`
+	stubRunnerOutput(t, func(args []string) ([]byte, error) { return []byte(listJSON), nil })
+	old := Runner
+	focusedCalls := 0
+	Runner = func(args []string) error { focusedCalls++; return nil }
+	t.Cleanup(func() { Runner = old })
+
+	if focused, err := FocusSession(lower, "opencode"); err != nil || focused {
+		t.Errorf("lowercase id must not match uppercase argv; got (%v, %v)", focused, err)
+	}
+	if focusedCalls != 0 {
+		t.Errorf("focus-window called %d times on a case mismatch, want 0", focusedCalls)
+	}
+	if focused, err := FocusSession(upper, "opencode"); err != nil || !focused {
+		t.Errorf("exact id should match --session=<id>; got (%v, %v)", focused, err)
+	}
+}
+
 // TestFocusSessionAcrossOSWindows — the match scan walks every OS
 // window, not just the first.
 func TestFocusSessionAcrossOSWindows(t *testing.T) {

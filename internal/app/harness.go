@@ -191,6 +191,18 @@ func liveSessionsForTasks(tasks []*flowdb.Task) map[string]int {
 	return merged
 }
 
+// liveCountFor returns the live-process count for sessionID from a
+// LiveSessionIDs map. Case-insensitive harnesses (claude, codex) key
+// their maps by lowercased UUID; opencode keys `ses_…` ids exactly
+// (base62 is case-sensitive). Try the exact id first, then fall back to
+// the historical lowercase form so both shapes resolve.
+func liveCountFor(live map[string]int, sessionID string) int {
+	if n, ok := live[sessionID]; ok {
+		return n
+	}
+	return live[strings.ToLower(sessionID)]
+}
+
 // bgAgentStatus returns the live background-agent entry for a task's bound
 // session, or nil if the task isn't bg-bound, has no session, the harness
 // can't host background agents, or the session isn't currently running.

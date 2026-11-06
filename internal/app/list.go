@@ -347,7 +347,7 @@ func listTasksCmd(args []string) int {
 		if t.Assignee.Valid {
 			r.Assignee = t.Assignee.String
 		}
-		if t.SessionID.Valid && live[strings.ToLower(t.SessionID.String)] > 0 {
+		if t.SessionID.Valid && liveCountFor(live, t.SessionID.String) > 0 {
 			r.Live = true
 		}
 		if t.AutoRunStatus.Valid && t.AutoRunStatus.String != "" {

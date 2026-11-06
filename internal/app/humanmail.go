@@ -17,6 +17,9 @@ var flowPromptPrefixes = []string{
 	"You are the autonomous OWNER",
 	"You are running ONE tick of the flow OWNER",
 	"You are running an automated close-out sweep",
+	// Injected by flow's opencode plugin (inbox delivery / turn nudge).
+	"[flow inbox]",
+	"[flow]",
 }
 
 // isHumanPrompt reports whether a UserPromptSubmit payload is a prompt the

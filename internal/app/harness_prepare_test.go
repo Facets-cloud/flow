@@ -1,0 +1,138 @@
+package app
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"flow/internal/flowdb"
+	"flow/internal/harness"
+	"flow/internal/harness/claude"
+	"flow/internal/harness/opencode"
+)
+
+// stubOpencodeAPI replaces opencode.APIRunner with a recorder that also
+// honors a forced failure for session.create. Returns the captured call
+// argument lists and the last session.create payload (decoded lazily by
+// the caller).
+func stubOpencodeAPI(t *testing.T, failCreate bool) *[][]string {
+	t.Helper()
+	var calls [][]string
+	old := opencode.APIRunner
+	opencode.APIRunner = func(args ...string) ([]byte, error) {
+		copied := append([]string(nil), args...)
+		calls = append(calls, copied)
+		if failCreate && len(args) > 0 && args[0] == "session.create" {
+			return nil, errors.New("simulated opencode server failure")
+		}
+		return []byte("{}"), nil
+	}
+	t.Cleanup(func() { opencode.APIRunner = old })
+	return &calls
+}
+
+// TestPrepareHarnessSessionClaudeNoOp: claude does not implement
+// SessionPreparer, so prepareHarnessSession is a no-op and writes no
+// opencode files.
+func TestPrepareHarnessSessionClaudeNoOp(t *testing.T) {
+	setupFlowRoot(t)
+	task := &flowdb.Task{Slug: "claude-task", WorkDir: t.TempDir()}
+
+	if err := prepareHarnessSession(claude.New(), task, "658bf2be-5ae3-4842-a8a4-e0d0b785514d", false); err != nil {
+		t.Fatalf("prepareHarnessSession(claude) = %v, want nil", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ocDir := filepath.Join(home, ".config", "opencode")
+	if _, err := os.Stat(ocDir); !os.IsNotExist(err) {
+		t.Errorf("claude prepare wrote %s (err=%v), want no opencode files", ocDir, err)
+	}
+}
+
+// TestPrepareHarnessSessionOpencodeInstallsAndPrepares pins the opencode
+// prepare contract: skill tree + VERSION sidecar + plugin written under
+// $HOME/.config/opencode, and session.create called with flow metadata
+// carrying the task slug, FLOW_ROOT, and the auto flag.
+func TestPrepareHarnessSessionOpencodeInstallsAndPrepares(t *testing.T) {
+	setupFlowRoot(t)
+	calls := stubOpencodeAPI(t, false)
+
+	const slug = "oc-task"
+	const sid = "ses_0123456789ABCDEFGHIJKLMNOP"
+	task := &flowdb.Task{Slug: slug, WorkDir: t.TempDir()}
+
+	if err := prepareHarnessSession(opencode.New(), task, sid, true); err != nil {
+		t.Fatalf("prepareHarnessSession = %v", err)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillPath := filepath.Join(home, ".config", "opencode", "skills", "flow", "SKILL.md")
+	if b, err := os.ReadFile(skillPath); err != nil || len(b) == 0 {
+		t.Fatalf("SKILL.md not installed at %s: %v", skillPath, err)
+	}
+	versionPath := filepath.Join(home, ".config", "opencode", "skills", "flow", "VERSION")
+	if b, err := os.ReadFile(versionPath); err != nil || strings.TrimSpace(string(b)) != Version {
+		t.Fatalf("VERSION = %q (err=%v), want %q", string(b), err, Version)
+	}
+	pluginPath := filepath.Join(home, ".config", "opencode", "plugins", "flow", "index.js")
+	if b, err := os.ReadFile(pluginPath); err != nil || len(b) == 0 {
+		t.Fatalf("plugin not installed at %s: %v", pluginPath, err)
+	}
+
+	var createPayload map[string]any
+	for _, c := range *calls {
+		if len(c) >= 3 && c[0] == "session.create" && c[1] == "-d" {
+			if err := json.Unmarshal([]byte(c[2]), &createPayload); err != nil {
+				t.Fatalf("decode session.create payload: %v", err)
+			}
+		}
+	}
+	if createPayload == nil {
+		t.Fatalf("APIRunner never got session.create; calls=%v", *calls)
+	}
+	if got := createPayload["id"]; got != sid {
+		t.Errorf("session.create id = %v, want %s", got, sid)
+	}
+	meta, _ := createPayload["metadata"].(map[string]any)
+	flow, _ := meta["flow"].(map[string]any)
+	if got := flow["taskSlug"]; got != slug {
+		t.Errorf("metadata.flow.taskSlug = %v, want %s", got, slug)
+	}
+	if got := flow["auto"]; got != true {
+		t.Errorf("metadata.flow.auto = %v, want true", got)
+	}
+	if got := flow["flowRoot"]; got != os.Getenv("FLOW_ROOT") {
+		t.Errorf("metadata.flow.flowRoot = %v, want %q", got, os.Getenv("FLOW_ROOT"))
+	}
+
+	// A second call with a matching VERSION must not rewrite the skill.
+	if err := os.WriteFile(skillPath, []byte("sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareHarnessSession(opencode.New(), task, sid, false); err != nil {
+		t.Fatalf("second prepareHarnessSession = %v", err)
+	}
+	if b, _ := os.ReadFile(skillPath); string(b) != "sentinel" {
+		t.Errorf("second prepare rewrote SKILL.md (got %q); VERSION match should skip install", string(b))
+	}
+}
+
+// TestPrepareHarnessSessionNoopForNonPreparer guards the capability
+// boundary the no-op branch relies on.
+func TestPrepareHarnessSessionNoopForNonPreparer(t *testing.T) {
+	// Compile-time guard: claude must NOT implement SessionPreparer.
+	if _, ok := claude.New().(harness.SessionPreparer); ok {
+		t.Fatal("claude implements SessionPreparer; the no-op branch would never run")
+	}
+	if _, ok := opencode.New().(harness.SessionPreparer); !ok {
+		t.Fatal("opencode does not implement SessionPreparer")
+	}
+}

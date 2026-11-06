@@ -168,11 +168,19 @@ var sessionUUIDRowRe = regexp.MustCompile(
 	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
 )
 
+// sessionOpencodeRowRe matches an opencode invocation carrying a
+// `ses_…` session id via `-s` / `--session` (space or `=` separated).
+// opencode ids are case-sensitive, unlike UUIDs.
+var sessionOpencodeRowRe = regexp.MustCompile(
+	`(?:^|\s)(?:-s|--session)(?:\s+|=)(ses_[0-9A-Za-z]{26})\b`,
+)
+
 // windowIDForHarnessSession parses `kitty @ ls` JSON and returns the
 // kitty window id of the first window whose foreground_processes
 // contain a process matching `binary` and carrying the given session
-// UUID. Returns (0, false, nil) on no match, (0, false, err) only on
-// JSON parse failure.
+// id (a Claude UUID via --session-id/--resume, or an opencode `ses_…`
+// via -s/--session). Returns (0, false, nil) on no match, (0, false,
+// err) only on JSON parse failure.
 func windowIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int, bool, error) {
 	var osWindows []kittyOSWindow
 	if err := json.Unmarshal(jsonBytes, &osWindows); err != nil {
@@ -188,6 +196,14 @@ func windowIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int,
 					}
 					joined := strings.Join(proc.Cmdline, " ")
 					if !strings.Contains(joined, binary) {
+						continue
+					}
+					// opencode ids compare case-sensitively; UUIDs
+					// keep the historical case-insensitive compare.
+					if matches := sessionOpencodeRowRe.FindStringSubmatch(joined); len(matches) >= 2 {
+						if matches[1] == sessionID {
+							return win.ID, true, nil
+						}
 						continue
 					}
 					matches := sessionUUIDRowRe.FindStringSubmatch(joined)
