@@ -25,6 +25,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **kitty no longer truncates long spawn commands.** flow types the
+  command into the new kitty tab, and when it arrives before the shell is
+  ready macOS cuts it at 1024 bytes, leaving the shell on an unterminated
+  quote. Commands over 900 bytes now run from a self-deleting temp script;
+  shorter ones are typed as before.
 - **`FLOW_TERM=bg` spawns no longer fail on newer `claude --bg` output.**
   Newer Claude Code prints a `Starting background service…` line before
   the `backgrounded · <id> · <name>` banner. flow only read the first
