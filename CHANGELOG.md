@@ -21,7 +21,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `~/.config/opencode/plugins/flow/` replaces Claude's hooks: it adds the
   session-start and per-prompt context, sends the turn-end broadcast nudge,
   and delivers `flow message` mail into the live session as
-  `[flow inbox] …` prompts.
+  `[flow inbox] …` prompts. A small TUI plugin (`~/.config/opencode/flow-tui`,
+  listed in `cli.json`) makes liveness follow the session on screen. `flow do
+  --here` works from inside opencode, an installed opencode plugin and skill
+  refresh on flow upgrades, and owners can run on opencode with `flow add owner
+  --harness opencode`.
 
 ### Fixed
 

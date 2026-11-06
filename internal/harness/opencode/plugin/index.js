@@ -66,7 +66,7 @@ const SCAN_INTERVAL_MS = 15_000; // attachment scan period (resumed sessions, re
 const POLL_MS = 3_000; // inbox listener poll period while a client is attached
 const INJECT_TIMEOUT_MS = 30_000; // `opencode api session.prompt` budget
 const INJECT_RETRY_MS = 3_000; // pause between delivery attempts of a claimed message
-const NEGATIVE_TTL_MS = 60_000; // re-check a session that had no flow metadata after this
+const NEGATIVE_TTL_MS = 5_000; // re-check a session that had no flow metadata after this
 
 // One instance is loaded per directory and every instance sees every server
 // event, so state lives on globalThis and is deduped per session.
