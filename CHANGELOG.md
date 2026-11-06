@@ -23,7 +23,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
     `send` (30s timeout each, in parallel, logged to
     `connectors/dispatch.log`, `notified_at` stamped).
   - `flow connector add|list|remove|test`. Each connector gets a random
-    secret in the macOS keychain (`flow-connector-<name>`), or a 0600
+    secret in the macOS keychain (service `flow-connector-<name>`,
+    account `flow-<hash of the resolved FLOW_ROOT>`, so two flow homes on
+    one Mac never share or overwrite a connector's secret), or a 0600
     file under `$FLOW_ROOT/secrets/` where there is no keychain.
   - `flow human reply <id> "<text>"` / `flow human seen <id>` work only
     with a connector's `FLOW_CONNECTOR_TOKEN`, so agents can't answer for

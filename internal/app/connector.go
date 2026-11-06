@@ -214,7 +214,10 @@ func secretStore() (connector.SecretStore, error) {
 	if err != nil {
 		return connector.SecretStore{}, err
 	}
-	return connector.SecretStore{FileDir: filepath.Join(root, "secrets")}, nil
+	return connector.SecretStore{
+		FileDir: filepath.Join(root, "secrets"),
+		Account: connector.KeychainAccount(root),
+	}, nil
 }
 
 // invokeConnector runs one verb of an installed connector with its secret,

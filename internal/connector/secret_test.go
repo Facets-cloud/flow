@@ -17,28 +17,28 @@ func fakeKeychain(t *testing.T, broken bool) map[string]string {
 	set, get, del := KeychainSet, KeychainGet, KeychainDelete
 	t.Cleanup(func() { KeychainSet, KeychainGet, KeychainDelete = set, get, del })
 	unavailable := errors.New("no keychain")
-	KeychainSet = func(service, secret string) error {
+	KeychainSet = func(service, account, secret string) error {
 		if broken {
 			return unavailable
 		}
-		store[service] = secret
+		store[service+"@"+account] = secret
 		return nil
 	}
-	KeychainGet = func(service string) (string, error) {
+	KeychainGet = func(service, account string) (string, error) {
 		if broken {
 			return "", unavailable
 		}
-		s, ok := store[service]
+		s, ok := store[service+"@"+account]
 		if !ok {
 			return "", ErrNoSecret
 		}
 		return s, nil
 	}
-	KeychainDelete = func(service string) error {
+	KeychainDelete = func(service, account string) error {
 		if broken {
 			return unavailable
 		}
-		delete(store, service)
+		delete(store, service+"@"+account)
 		return nil
 	}
 	return store
@@ -46,12 +46,12 @@ func fakeKeychain(t *testing.T, broken bool) map[string]string {
 
 func TestSecretStoreKeychain(t *testing.T) {
 	kc := fakeKeychain(t, false)
-	s := SecretStore{FileDir: filepath.Join(t.TempDir(), "secrets")}
+	s := SecretStore{FileDir: filepath.Join(t.TempDir(), "secrets"), Account: "flow-abc"}
 	where, err := s.Put("desk", "s3cret")
 	if err != nil || where != "keychain" {
 		t.Fatalf("Put = %q, %v", where, err)
 	}
-	if kc["flow-connector-desk"] != "s3cret" {
+	if kc["flow-connector-desk@flow-abc"] != "s3cret" {
 		t.Errorf("keychain service name: %v", kc)
 	}
 	if _, err := os.Stat(filepath.Join(s.FileDir, "desk")); !os.IsNotExist(err) {
@@ -145,3 +145,51 @@ func TestRunPassesVerbStdinEnvAndTimesOut(t *testing.T) {
 }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+// Two flow homes on one Mac must not share or overwrite a connector's
+// keychain secret: the account is derived from the resolved FLOW_ROOT.
+func TestKeychainAccountIsPerFlowRoot(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(a, link); err != nil {
+		t.Fatal(err)
+	}
+	accA, accB := KeychainAccount(a), KeychainAccount(b)
+	if accA == accB {
+		t.Fatalf("distinct roots share account %q", accA)
+	}
+	if !strings.HasPrefix(accA, "flow-") || len(accA) != len("flow-")+12 {
+		t.Errorf("account %q, want flow-<12 hex>", accA)
+	}
+	if KeychainAccount(link) != accA || KeychainAccount(a+"/.") != accA {
+		t.Errorf("symlinked/unclean root changes the account")
+	}
+	if KeychainAccount(a) != accA {
+		t.Errorf("account is not deterministic")
+	}
+
+	kc := fakeKeychain(t, false)
+	sa := SecretStore{FileDir: filepath.Join(a, "secrets"), Account: accA}
+	sb := SecretStore{FileDir: filepath.Join(b, "secrets"), Account: accB}
+	if _, err := sa.Put("macos", "secret-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sb.Put("macos", "secret-b"); err != nil {
+		t.Fatal(err)
+	}
+	if len(kc) != 2 {
+		t.Fatalf("want 2 keychain entries, got %v", kc)
+	}
+	if got, _ := sa.Get("macos"); got != "secret-a" {
+		t.Errorf("home A reads %q", got)
+	}
+	if err := sb.Delete("macos"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sa.Get("macos"); err != nil || got != "secret-a" {
+		t.Errorf("deleting in home B touched home A: %q %v", got, err)
+	}
+	if sb.Where("macos") != "" {
+		t.Errorf("home B secret survived delete")
+	}
+}

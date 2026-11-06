@@ -72,8 +72,10 @@ Environment (the connector's whole environment is the caller's, minus the
 harness session variables, plus these):
 
 - `FLOW_CONNECTOR_TOKEN`: this connector's secret. It is generated on
-  install and kept in the macOS keychain (service `flow-connector-<name>`)
-  or a 0600 file under `$FLOW_ROOT/secrets/`. It is never in flow.db or
+  install and kept in the macOS keychain (service `flow-connector-<name>`,
+  account `flow-<12 hex of sha256 of the resolved FLOW_ROOT>`, so each
+  flow home on a Mac has its own) or a 0600 file under
+  `$FLOW_ROOT/secrets/`. It is never in flow.db or
   the folder. Never log it.
 - `FLOW_BIN`: the absolute path of the flow binary. Call back with
   `"$FLOW_BIN"`, not `flow`.

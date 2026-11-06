@@ -348,8 +348,9 @@ there. flow pings once per task until you've seen it (`--urgent` always
 pings), broadcasts and `--fyi` never ping, and nothing pings unless you
 installed a connector. Connectors are any executable that follows a small
 JSON contract (`run send` / `run test`, answering with `flow human reply`).
-Each one gets its own secret, kept in the macOS keychain, so an agent
-can't answer for you. Contract v1, with enough detail to write your own:
+Each one gets its own secret, kept in the macOS keychain (scoped to the
+flow home, so two `FLOW_ROOT`s never share one), so an agent can't
+answer for you. Contract v1, with enough detail to write your own:
 [`internal/app/skill/references/connectors.md`](internal/app/skill/references/connectors.md).
 
 ### `flow stats`

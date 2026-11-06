@@ -250,9 +250,9 @@ func TestB3SendSpawnsDispatchOnlyWithConnectors(t *testing.T) {
 // back to 0600 files under the temp FLOW_ROOT.
 func init() {
 	unavailable := errors.New("keychain disabled in tests")
-	connector.KeychainSet = func(string, string) error { return unavailable }
-	connector.KeychainGet = func(string) (string, error) { return "", unavailable }
-	connector.KeychainDelete = func(string) error { return unavailable }
+	connector.KeychainSet = func(string, string, string) error { return unavailable }
+	connector.KeychainGet = func(string, string) (string, error) { return "", unavailable }
+	connector.KeychainDelete = func(string, string) error { return unavailable }
 }
 
 // fakeAppKeychain installs an in-memory keychain for one test.
@@ -261,15 +261,20 @@ func fakeAppKeychain(t *testing.T) map[string]string {
 	kc := map[string]string{}
 	set, get, del := connector.KeychainSet, connector.KeychainGet, connector.KeychainDelete
 	t.Cleanup(func() { connector.KeychainSet, connector.KeychainGet, connector.KeychainDelete = set, get, del })
-	connector.KeychainSet = func(s, v string) error { kc[s] = v; return nil }
-	connector.KeychainGet = func(s string) (string, error) {
-		if v, ok := kc[s]; ok {
+	connector.KeychainSet = func(s, a, v string) error { kc[s+"@"+a] = v; return nil }
+	connector.KeychainGet = func(s, a string) (string, error) {
+		if v, ok := kc[s+"@"+a]; ok {
 			return v, nil
 		}
 		return "", connector.ErrNoSecret
 	}
-	connector.KeychainDelete = func(s string) error { delete(kc, s); return nil }
+	connector.KeychainDelete = func(s, a string) error { delete(kc, s+"@"+a); return nil }
 	return kc
+}
+
+// kcKey is fakeAppKeychain's map key for connector name in flow root.
+func kcKey(name, root string) string {
+	return connector.KeychainService(name) + "@" + connector.KeychainAccount(root)
 }
 
 // srcConnector writes an uninstalled connector folder (outside FLOW_ROOT)
@@ -317,7 +322,7 @@ func TestB6ConnectorAddListRemoveTest(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(inst, "run")); err != nil || fi.Mode().Perm()&0o111 == 0 {
 		t.Errorf("exec bit lost: %v", err)
 	}
-	secret := kc[connector.KeychainService("desk")]
+	secret := kc[kcKey("desk", root)]
 	if len(secret) < 32 {
 		t.Fatalf("no keychain secret: %v", kc)
 	}
@@ -358,7 +363,7 @@ func TestB6ConnectorAddListRemoveTest(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "connectors", "flaky")); !os.IsNotExist(err) {
 		t.Errorf("failed add left a folder")
 	}
-	if _, ok := kc[connector.KeychainService("flaky")]; ok {
+	if _, ok := kc[kcKey("flaky", root)]; ok {
 		t.Errorf("failed add left a secret")
 	}
 
@@ -685,6 +690,7 @@ func TestB9SkillTeachesConnectors(t *testing.T) {
 		"run send", "run test", `"reply_hint"`, `"options"`, "human reply <id>", "human seen <id>",
 		"flow connector add", "30s", "exit 0", "dispatch.log", "examples/connectors/macos",
 		"flow connector add macos", "flow connector list --available",
+		"account `flow-<12 hex of sha256 of the resolved FLOW_ROOT>`",
 	} {
 		if !strings.Contains(ref, want) {
 			t.Errorf("references/connectors.md lacks %q", want)
@@ -826,5 +832,38 @@ func TestConnectorAddEmbeddedSample(t *testing.T) {
 	rc, out = connectorRC(t, "add", "nosuch")
 	if rc != 1 || !strings.Contains(out, "macos") {
 		t.Errorf("unknown sample rc=%d out=%s", rc, out)
+	}
+}
+
+// Two flow homes on one Mac keep separate keychain secrets for the same
+// connector name; removing it in one leaves the other's intact.
+func TestConnectorKeychainScopedPerFlowRoot(t *testing.T) {
+	kc := fakeAppKeychain(t)
+	fakeRunConnector(t)
+	src := srcConnector(t, "desk", "exit 0")
+
+	rootA := setupFlowRoot(t)
+	if rc, out := connectorRC(t, "add", src); rc != 0 {
+		t.Fatalf("add in A rc=%d %s", rc, out)
+	}
+	rootB := setupFlowRoot(t)
+	if rootA == rootB {
+		t.Fatal("setupFlowRoot reused the root")
+	}
+	if rc, out := connectorRC(t, "add", src); rc != 0 {
+		t.Fatalf("add in B rc=%d %s", rc, out)
+	}
+	a, b := kc[kcKey("desk", rootA)], kc[kcKey("desk", rootB)]
+	if a == "" || b == "" || a == b || len(kc) != 2 {
+		t.Fatalf("want two distinct per-home secrets, got %v", kc)
+	}
+	if rc, _ := connectorRC(t, "remove", "desk"); rc != 0 { // in B (current FLOW_ROOT)
+		t.Fatal("remove in B")
+	}
+	if _, ok := kc[kcKey("desk", rootB)]; ok {
+		t.Errorf("B's secret survived remove")
+	}
+	if kc[kcKey("desk", rootA)] != a {
+		t.Errorf("removing in B touched A's secret: %v", kc)
 	}
 }
