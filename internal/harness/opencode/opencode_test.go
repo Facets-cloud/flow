@@ -252,6 +252,128 @@ func TestLiveSessionIDs(t *testing.T) {
 	}
 }
 
+// writeClientReport writes a TUI reporter file. A null sessionID models a
+// client that is on the home (or any non-session) screen.
+func writeClientReport(t *testing.T, dir, pid, sessionID string, null bool) {
+	t.Helper()
+	sid := `"` + sessionID + `"`
+	if null {
+		sid = "null"
+	}
+	body := `{"pid":` + pid + `,"sessionID":` + sid + `,"updated":1}`
+	if err := os.WriteFile(filepath.Join(dir, pid+".json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLiveSessionIDsUsesClientReports pins the TUI-report liveness rule: a
+// report for an opencode client pid is authoritative (argv is ignored), and
+// only clients present in the current ps snapshot are considered.
+func TestLiveSessionIDsUsesClientReports(t *testing.T) {
+	origPS := PSRunner
+	origClients := ClientsDir
+	t.Cleanup(func() {
+		PSRunner = origPS
+		ClientsDir = origClients
+	})
+
+	withReports := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		ClientsDir = func() (string, error) { return dir, nil }
+		return dir
+	}
+
+	a, b, c, d := sidOf("A"), sidOf("B"), sidOf("C"), sidOf("D")
+
+	t.Run("report overrides argv", func(t *testing.T) {
+		dir := withReports(t)
+		writeClientReport(t, dir, "200", b, false)
+		PSRunner = func() ([]byte, error) {
+			return []byte("200 opencode -s " + a + " --prompt 'x'"), nil
+		}
+		live, err := New().LiveSessionIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if live[b] != 1 {
+			t.Errorf("live[%s]=%d, want 1 (report wins over argv)", b, live[b])
+		}
+		if live[a] != 0 {
+			t.Errorf("live[%s]=%d, want 0 (stale argv id ignored)", a, live[a])
+		}
+		if len(live) != 1 {
+			t.Errorf("live=%v, want only the reported session", live)
+		}
+	})
+
+	t.Run("null report means no session", func(t *testing.T) {
+		dir := withReports(t)
+		writeClientReport(t, dir, "201", "", true)
+		PSRunner = func() ([]byte, error) {
+			return []byte("201 opencode -s " + a + " --prompt 'x'"), nil
+		}
+		live, err := New().LiveSessionIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(live) != 0 {
+			t.Errorf("live=%v, want empty (client is not showing the argv session)", live)
+		}
+	})
+
+	t.Run("bare client follows the report", func(t *testing.T) {
+		dir := withReports(t)
+		writeClientReport(t, dir, "202", c, false)
+		PSRunner = func() ([]byte, error) {
+			return []byte("202 /Users/a/.opencode/bin/opencode"), nil
+		}
+		live, err := New().LiveSessionIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if live[c] != 1 || len(live) != 1 {
+			t.Errorf("live=%v, want only %s", live, c)
+		}
+	})
+
+	t.Run("unreadable report falls back to argv", func(t *testing.T) {
+		dir := withReports(t)
+		if err := os.WriteFile(filepath.Join(dir, "203.json"), []byte(`{"pid":203,`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		PSRunner = func() ([]byte, error) {
+			return []byte("203 opencode -s " + a + " --prompt 'x'"), nil
+		}
+		live, err := New().LiveSessionIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if live[a] != 1 || len(live) != 1 {
+			t.Errorf("live=%v, want argv fallback %s", live, a)
+		}
+	})
+
+	t.Run("stale reports for non-opencode pids are ignored", func(t *testing.T) {
+		dir := withReports(t)
+		writeClientReport(t, dir, "204", d, false) // pid 204 is claude, not opencode
+		writeClientReport(t, dir, "300", d, false) // pid 300 is not in ps at all
+		PSRunner = func() ([]byte, error) {
+			return []byte(strings.Join([]string{
+				"204 claude --session-id 658bf2be-5ae3-4842-a8a4-e0d0b785514d",
+				"205 /usr/bin/tail -f log",
+			}, "\n")), nil
+		}
+		live, err := New().LiveSessionIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(live) != 0 {
+			t.Errorf("live=%v, want empty (stale reports must not count)", live)
+		}
+	})
+}
+
 func TestInstallSessionStartHook(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -290,6 +412,144 @@ func TestInstallSessionStartHook(t *testing.T) {
 	}
 	if removed, err := h.UninstallSessionStartHook("ignored"); err != nil || removed {
 		t.Fatalf("second uninstall removed=%v err=%v", removed, err)
+	}
+}
+
+func readJSONFile(t *testing.T, path string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return doc
+}
+
+func hasString(values []any, want string) bool {
+	for _, v := range values {
+		if s, ok := v.(string); ok && s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestInstallSessionStartHookRegistersTUI pins the TUI reporter install: the
+// plugin file, cli.json registration, idempotence, and uninstall cleanup.
+func TestInstallSessionStartHookRegistersTUI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	h := New()
+	base := filepath.Join(home, ".config", "opencode")
+	tuiPath := filepath.Join(base, "flow-tui", "tui.js")
+	cliPath := filepath.Join(base, "cli.json")
+
+	added, err := h.InstallSessionStartHook("ignored")
+	if err != nil || !added {
+		t.Fatalf("first install added=%v err=%v", added, err)
+	}
+	raw, err := os.ReadFile(tuiPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, tuiJS) {
+		t.Errorf("tui.js bytes = %q, want %q", raw, tuiJS)
+	}
+	doc := readJSONFile(t, cliPath)
+	plugins, ok := doc["plugins"].([]any)
+	if !ok || !hasString(plugins, "./flow-tui") {
+		t.Errorf("cli.json plugins=%v, want ./flow-tui", doc["plugins"])
+	}
+
+	if added, err := h.InstallSessionStartHook("ignored"); err != nil || added {
+		t.Fatalf("idempotent install added=%v err=%v", added, err)
+	}
+
+	removed, err := h.UninstallSessionStartHook("ignored")
+	if err != nil || !removed {
+		t.Fatalf("uninstall removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(filepath.Dir(tuiPath)); !os.IsNotExist(err) {
+		t.Errorf("flow-tui dir still present after uninstall: %v", err)
+	}
+	doc = readJSONFile(t, cliPath)
+	plugins, _ = doc["plugins"].([]any)
+	if hasString(plugins, "./flow-tui") {
+		t.Errorf("cli.json still lists ./flow-tui after uninstall: %v", doc["plugins"])
+	}
+}
+
+// TestInstallSessionStartHookPreservesCliConfig keeps foreign plugin entries
+// and unrelated keys intact, appending flow's entry (and removing only it).
+func TestInstallSessionStartHookPreservesCliConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	base := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cliPath := filepath.Join(base, "cli.json")
+	if err := os.WriteFile(cliPath, []byte(`{"plugins":["./herdr-opencode"],"x":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New()
+	if added, err := h.InstallSessionStartHook("ignored"); err != nil || !added {
+		t.Fatalf("install added=%v err=%v", added, err)
+	}
+	doc := readJSONFile(t, cliPath)
+	if doc["x"] != float64(1) {
+		t.Errorf("unrelated key dropped: %v", doc)
+	}
+	plugins, _ := doc["plugins"].([]any)
+	if len(plugins) != 2 || plugins[0] != "./herdr-opencode" || plugins[1] != "./flow-tui" {
+		t.Errorf("plugins=%v, want [\"./herdr-opencode\" \"./flow-tui\"]", plugins)
+	}
+
+	if removed, err := h.UninstallSessionStartHook("ignored"); err != nil || !removed {
+		t.Fatalf("uninstall removed=%v err=%v", removed, err)
+	}
+	doc = readJSONFile(t, cliPath)
+	if doc["x"] != float64(1) {
+		t.Errorf("unrelated key dropped on uninstall: %v", doc)
+	}
+	plugins, _ = doc["plugins"].([]any)
+	if len(plugins) != 1 || plugins[0] != "./herdr-opencode" {
+		t.Errorf("plugins=%v, want only ./herdr-opencode", plugins)
+	}
+}
+
+// TestInstallSessionStartHookInvalidCliConfig leaves invalid JSON untouched
+// and does not fail the install: the server plugin still works.
+func TestInstallSessionStartHookInvalidCliConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	base := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cliPath := filepath.Join(base, "cli.json")
+	invalid := []byte(`{"plugins": [`)
+	if err := os.WriteFile(cliPath, invalid, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New()
+	if _, err := h.InstallSessionStartHook("ignored"); err != nil {
+		t.Fatalf("invalid cli.json must not fail install: %v", err)
+	}
+	raw, err := os.ReadFile(cliPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, invalid) {
+		t.Errorf("invalid cli.json was modified: %q", raw)
+	}
+	if _, err := os.Stat(filepath.Join(base, "flow-tui", "tui.js")); err != nil {
+		t.Errorf("tui.js not written alongside an invalid cli.json: %v", err)
 	}
 }
 

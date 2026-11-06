@@ -50,6 +50,10 @@
 // Session-scoped caches are dropped on load because the hook output format may
 // have changed with the code.
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 const HOOK_TIMEOUT_MS = 20_000;
 const PS_TIMEOUT_MS = 5_000;
 const STOP_DEDUPE_MS = 3_000; // window that collapses duplicated succeeded events
@@ -254,22 +258,69 @@ function sessionStartContext(ctx, meta, sessionID) {
   return started;
 }
 
-// psCommands runs one `ps -axo command` and returns its output lines, or null
-// when ps itself failed. Callers decide what a failure means: the live guard
-// fails open, the attachment scan fails closed.
+// CLIENTS_DIR is where the flow TUI reporter (tui.js) writes one JSON file
+// per opencode client process. It is read to follow the session on screen,
+// which the client's argv cannot do after the user switches sessions.
+let CLIENTS_DIR = "";
+try {
+  CLIENTS_DIR = path.join(os.homedir(), ".local", "state", "flow", "opencode-clients");
+} catch { /* no home dir: argv-only */ }
+
+// psCommands runs one `ps -axo pid,command` and returns its output lines, or
+// null when ps itself failed. Callers decide what a failure means: the live
+// guard fails open, the attachment scan fails closed.
 async function psCommands() {
-  const ps = await spawnCollect(["ps", "-axo", "command"], { stdout: "pipe", stderr: "ignore" }, PS_TIMEOUT_MS);
+  const ps = await spawnCollect(["ps", "-axo", "pid,command"], { stdout: "pipe", stderr: "ignore" }, PS_TIMEOUT_MS);
   if (ps.code !== 0) return null;
   return ps.stdout.split("\n");
 }
 
 // opencodeClients keeps only the ps lines whose argv0 is the opencode binary,
 // so unrelated processes that happen to carry a session id are ignored.
+// Each client is { pid, command }.
 function opencodeClients(lines) {
-  return (lines || []).filter((line) => {
-    const argv0 = line.trim().split(/\s+/)[0] || "";
-    return argv0.split("/").pop() === "opencode";
-  });
+  const clients = [];
+  for (const line of lines || []) {
+    const match = line.trim().match(/^(\d+)\s+(.*)$/);
+    if (!match) continue;
+    const command = match[2].trim();
+    const argv0 = command.split(/\s+/)[0] || "";
+    if (argv0.split("/").pop() !== "opencode") continue;
+    clients.push({ pid: match[1], command });
+  }
+  return clients;
+}
+
+// clientReport reads the TUI reporter file for a pid. Missing, unreadable or
+// non-object files yield null so the caller falls back to argv.
+function clientReport(pid) {
+  if (!CLIENTS_DIR || !pid) return null;
+  try {
+    const report = JSON.parse(fs.readFileSync(path.join(CLIENTS_DIR, `${pid}.json`), "utf8"));
+    return report && typeof report === "object" && !Array.isArray(report) ? report : null;
+  } catch {
+    return null;
+  }
+}
+
+// argvSessionIDs extracts every -s/--session id from a client's command line.
+function argvSessionIDs(command) {
+  const ids = [];
+  const re = /(?:^|\s)(?:-s|--session)(?:\s+|=)(ses_[0-9A-Za-z]{26})(?=\s|$)/g;
+  for (const match of command.matchAll(re)) ids.push(match[1]);
+  return ids;
+}
+
+// clientSessionIDs applies flow's liveness rule: a reporter file for the pid
+// is authoritative — its sessionID is the client's session (a null
+// sessionID means no session is on screen), and argv is ignored. Without a
+// report, the argv -s/--session id is used.
+function clientSessionIDs(client) {
+  const report = clientReport(client.pid);
+  if (report) {
+    return typeof report.sessionID === "string" && report.sessionID !== "" ? [report.sessionID] : [];
+  }
+  return argvSessionIDs(client.command);
 }
 
 // clientLive is flow's live-guard ps check: is an opencode client attached?
@@ -277,21 +328,21 @@ function opencodeClients(lines) {
 async function clientLive(sessionID) {
   const lines = await psCommands();
   if (lines === null) return true;
-  const re = new RegExp(`(?:^|\\s)(?:-s|--session)(?:\\s+|=)${sessionID}(?=\\s|$)`);
-  return opencodeClients(lines).some((line) => re.test(line));
+  return opencodeClients(lines).some((client) => clientSessionIDs(client).includes(sessionID));
 }
 
 // attachedSessions is the set of session ids carried by live opencode clients
-// (`opencode -s ses_…` / `--session ses_…`). It is what keeps the inbox relay
-// alive for a session that was resumed without a prompt, or whose listener
-// died with a plugin reload: no turn starts, so no started event fires.
-// A ps failure yields an empty set — this scan is a repair path, not a gate.
+// (a TUI reporter's on-screen session, else the argv `-s ses_…` id). It is
+// what keeps the inbox relay alive for a session that was resumed without a
+// prompt, or whose listener died with a plugin reload: no turn starts, so no
+// started event fires. A ps failure yields an empty set — this scan is a
+// repair path, not a gate.
 async function attachedSessions() {
   const ids = new Set();
   const lines = await psCommands();
-  const re = /(?:^|\s)(?:-s|--session)(?:\s+|=)(ses_[0-9A-Za-z]{26})(?=\s|$)/g;
-  for (const line of opencodeClients(lines)) {
-    for (const match of line.matchAll(re)) ids.add(match[1]);
+  if (lines === null) return ids;
+  for (const client of opencodeClients(lines)) {
+    for (const id of clientSessionIDs(client)) ids.add(id);
   }
   return ids;
 }

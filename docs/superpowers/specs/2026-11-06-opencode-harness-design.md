@@ -22,9 +22,10 @@ opencode (DeepSeek through the opencode Go subscription) does the bulk work.
 | TUI has no `--model`. A session created with a `model` keeps it. | Model is set at session creation (API), and with `-m` for `run`. |
 | `--auto` (client flag) auto-approves anything **not explicitly denied**. Config `deny` rules still apply. `OPENCODE_CONFIG_CONTENT` is ignored on the shared server. | `--dangerously-skip-permissions` → `--auto`. Nothing weakens a project `opencode.json`. |
 | `opencode api <operationId> --param k=v -d <json>` authenticates to the running server by itself. `session.create` is idempotent for an existing id; `session.update` takes `metadata`. | flow prepares sessions with `opencode api`, no HTTP client or credentials in Go. |
-| v2 server plugins: `~/.config/opencode/plugins/<name>/index.js`, `export default { id, setup(ctx) }`. Hooks: `ctx.event.subscribe()` (`session.execution.started/succeeded`, whole-server), `ctx.session.hook("prompt")`, `ctx.session.hook("context", (e) => e.system.push({type:"text",text}))` (runs before every model call of the agent loop; changes are not persisted; `e.sessionID` identifies the session; may be async). **Not usable on 2.0.32** (though documented): `ctx.session.instructions` does not exist and a plugin-side `ctx.session.prompt` resolves without queueing anything. `opencode api session.prompt --param sessionID=<id> -d {"text","delivery":"steer"\|"queue"}` from a child process does work, and does not replace the TUI's forwarded env. New or rewritten plugin files load without restart, but the old module's cleanup is **not** called. | flow ships one embedded JS plugin that bridges opencode events to the existing `flow hook …` commands. |
+| v2 server plugins: `~/.config/opencode/plugins/<name>/index.js`, `export default { id, setup(ctx) }`. Hooks: `ctx.event.subscribe()` (`session.execution.started/succeeded`, whole-server), `ctx.session.hook("prompt")`, `ctx.session.hook("context", (e) => e.system.push({type:"text",text}))` (runs before every model call of the agent loop; changes are not persisted; `e.sessionID` identifies the session; may be async). **Not usable on 2.0.32** (though documented): `ctx.session.instructions` does not exist and a plugin-side `ctx.session.prompt` resolves without queueing anything. `opencode api session.prompt --param sessionID=<id> -d {"text","delivery":"steer"\|"queue"}` from a child process does work, and does not replace the TUI's forwarded env. New or rewritten plugin files load without restart, but the old module's cleanup is **not** called. | flow ships one embedded JS server plugin that bridges opencode events to the existing `flow hook …` commands, plus a separate TUI reporter (below). |
 | `opencode session export <id>` prints `{info, messages[]}`; messages are `user` (`text`), `assistant` (`content[]` of `text`/`reasoning`/`tool`), `idle`, `synthetic`… | `flow transcript` renders from the export. |
 | opencode loads skills from `~/.config/opencode/skills/<name>/SKILL.md` (and `~/.claude/skills`). It has a native `skill` tool. | flow installs the skill to `~/.config/opencode/skills/flow/`. |
+| opencode v2 TUI plugins: a directory listed in `~/.config/opencode/cli.json` as `{"plugins": ["./<dir>"]}` (relative to `~/.config/opencode`). opencode loads `<dir>/tui.js`, whose default export is `{ id, setup(api) }`. `setup` runs inside the TUI client process and may return a cleanup function. `api.ui.router.current()` returns `{type:"session", sessionID}` when a session is on screen; `api.data.session.get(id)` returns session info including `parentID`. There is no reliable route-change event. | flow ships a tiny TUI plugin that reports the on-screen (root) session per client pid, so liveness follows the user across in-TUI session switches. |
 
 ## Adapter — `internal/harness/opencode`
 
@@ -39,11 +40,11 @@ opencode (DeepSeek through the opencode Go subscription) does the bulk work.
 | `ResumeCmd(id, o)` | `opencode -s <id> [--auto] [--prompt '<marker>\n<inject>']` |
 | `AutoRunArgv(id, prompt, o)` | `opencode run -s <id> [--auto] [-m <model>] <prompt[+inject]>` |
 | `SkipPermissionsRun(prompt)` | `opencode run --auto [-m <model>] <prompt>` (sessionless; close-out sweep) |
-| `LiveSessionIDs()` | ps scan: lines whose argv0 basename is `opencode` and that carry `-s`/`--session` `<ses…>`; one count per line |
+| `LiveSessionIDs()` | ps scan: lines whose argv0 basename is `opencode` (pid parsed from `pid,command`); a TUI report for that pid wins over argv, otherwise the `-s`/`--session` `<ses…>` id is used; one count per line |
 | `RenderTranscript` | `opencode session export <id>` → same `─── User ───` / `─── Assistant ───` / `─── Tool: x ───` / `─── Result ───` shape as codex; `compact` drops reasoning and results |
 | `SkillInstallPath()` | `~/.config/opencode/skills/flow/SKILL.md` |
-| `InstallSessionStartHook` | writes the embedded plugin to `~/.config/opencode/plugins/flow/index.js` (only when content differs; `added` = changed) |
-| `UninstallSessionStartHook` | removes `~/.config/opencode/plugins/flow/` |
+| `InstallSessionStartHook` | writes the embedded server plugin to `~/.config/opencode/plugins/flow/index.js` and the TUI reporter to `~/.config/opencode/flow-tui/tui.js` (each only when content differs), and adds `"./flow-tui"` to `~/.config/opencode/cli.json` (`added` = any change) |
+| `UninstallSessionStartHook` | removes `~/.config/opencode/plugins/flow/` and `~/.config/opencode/flow-tui/`, and removes `"./flow-tui"` from `cli.json` (leaving the rest of the file intact) |
 | other `Install*Hook` | no-op `(false, nil)` — the plugin covers them |
 
 Model: `$FLOW_OPENCODE_MODEL` (`provider/model`, e.g.
@@ -85,8 +86,9 @@ factored into one helper shared by the three sites.
 ## Hooks parity — the flow opencode plugin
 
 One file, `internal/harness/opencode/plugin/index.js`, embedded with
-`//go:embed`. It runs in the opencode server. State lives on `globalThis`
-because the server loads one plugin instance per directory and every
+`//go:embed` (the TUI reporter `plugin/tui.js` is embedded the same way and
+installed separately). It runs in the opencode server. State lives on
+`globalThis` because the server loads one plugin instance per directory and every
 instance sees every server event; the global map dedupes per session.
 Each module evaluation stamps a generation on that state; listeners, scans
 and hooks from an older generation retire themselves, since opencode
@@ -117,6 +119,45 @@ Flow-side changes needed for parity:
 - `isHumanPrompt`: treat `[flow inbox]` and `[flow]` prefixed prompts as
   non-human (add to `flowPromptPrefixes`).
 
+## TUI reporter and liveness
+
+The TUI client's argv (`opencode -s <id>`) is a snapshot from launch: it goes
+stale when the user switches sessions inside the TUI, and a bare `opencode`
+that navigated to a flow session carries no id at all. flow therefore ships a
+second, TUI-side plugin, `internal/harness/opencode/plugin/tui.js` (embedded as
+`tuiJS`), installed to `~/.config/opencode/flow-tui/tui.js` and registered in
+`~/.config/opencode/cli.json` as `"./flow-tui"`.
+
+`setup(api)` runs in the TUI client process. Every second it reads
+`api.ui.router.current()`; when the route is `{type:"session", sessionID}` it
+walks `parentID` via `api.data.session.get` to the root session (loop-guarded;
+a child/subagent session resolves to its task session). When the resolved
+value changes it writes
+`~/.local/state/flow/opencode-clients/<process.pid>.json` =
+`{"pid", "sessionID": <root or null>, "updated": <ms>}` via mkdir -p,
+tmp-file + rename. `sessionID: null` means the client is on a non-session
+screen. Cleanup and `process.on("exit")` delete the file. The reporter never
+throws, so a broken route or lookup can never take down the TUI.
+
+Liveness rule, per opencode client process with pid P (Go `LiveSessionIDs` and
+the server plugin's `attachedSessions`/`clientLive` share it):
+
+1. Find clients in `ps -axo pid,command` whose argv0 basename is `opencode`.
+2. If `~/.local/state/flow/opencode-clients/P.json` exists and parses, it is
+   authoritative: a non-null `sessionID` is that client's session and argv is
+   ignored; a null `sessionID` means the client has no session on screen.
+3. Otherwise fall back to the argv `-s`/`--session` id.
+4. Reports whose pid is not an opencode client in the current ps snapshot are
+   stale and ignored (Go deletes them best-effort).
+
+A missing reports directory is not an error — it just means argv-only
+behaviour (the old rule). In the server plugin, `clientLive` keeps failing
+open when `ps` itself fails; `attachedSessions` keeps failing closed (empty).
+
+If `cli.json` exists but is not valid JSON, install leaves it untouched and
+does not fail: the server plugin still works, only the TUI reporter is not
+registered.
+
 ## Permissions and precedence
 
 - `--dangerously-skip-permissions` / `--auto` runs → opencode `--auto`.
@@ -144,14 +185,14 @@ are sent exactly as before.
 
 ## Live guard and focus
 
-`LiveSessionIDs` drives the existing guard. Focus: kitty's
-`windowIDForHarnessSession` also matches `-s|--session <ses…>` so `flow do`
-on a live opencode task switches to its tab. Other backends fall through to
-the existing "running elsewhere — pass --force" error.
+`LiveSessionIDs` drives the existing guard, using the TUI report when one
+exists (so a session switch inside the TUI is followed) and argv otherwise.
+Focus: kitty's `windowIDForHarnessSession` also matches `-s|--session <ses…>`
+so `flow do` on a live opencode task switches to its tab. Other backends fall
+through to the existing "running elsewhere — pass --force" error.
 
 ## Known limits
 
-- The TUI's argv id goes stale if the user switches sessions inside the TUI.
 - Server restart: listeners restart on the session's next turn; until then
   pending mail is still surfaced by the session-start context.
 - The skill text is Claude-flavoured (AskUserQuestion, Monitor). opencode

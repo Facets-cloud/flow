@@ -278,7 +278,10 @@ then system and managed settings.
 **Hooks.** opencode has no hook config, so flow installs a small plugin to
 `~/.config/opencode/plugins/flow/` (and the skill to
 `~/.config/opencode/skills/flow/`) the first time it opens an opencode task,
-and refreshes both on upgrade. The plugin is active only for sessions flow
+and refreshes both on upgrade. flow also registers a small TUI plugin
+(`~/.config/opencode/flow-tui`, listed in `~/.config/opencode/cli.json`) so
+liveness follows the session on screen, even after switching sessions inside
+the TUI. The plugin is active only for sessions flow
 created. It provides the SessionStart context, the per-prompt anchor, the
 turn-end broadcast nudge, and inbox delivery: a `flow message` to the task
 arrives in the live session as a `[flow inbox] …` prompt, without a Monitor

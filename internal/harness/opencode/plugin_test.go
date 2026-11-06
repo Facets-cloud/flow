@@ -261,11 +261,56 @@ func TestPluginJSNeverThrows(t *testing.T) {
 			t.Errorf("plugin is missing %q", frag)
 		}
 	}
-	// The plugin must stay dependency-free: no bare imports at all.
+	// The plugin must stay dependency-free: only built-in `node:` imports.
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "require(") {
-			t.Errorf("plugin has a dependency: %q", trimmed)
+		if strings.HasPrefix(trimmed, "import ") {
+			if !strings.Contains(trimmed, `"node:`) {
+				t.Errorf("plugin imports a non-builtin dependency: %q", trimmed)
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "require(") {
+			t.Errorf("plugin has a CommonJS dependency: %q", trimmed)
+		}
+	}
+}
+
+// TestPluginJSFollowsTUIReports pins the liveness rule shared with the Go
+// adapter: a TUI reporter file for a client pid wins over its (stale) argv id.
+func TestPluginJSFollowsTUIReports(t *testing.T) {
+	src := pluginSource(t)
+	for _, frag := range []string{
+		"opencode-clients",
+		`"ps", "-axo", "pid,command"`,
+		"clientReport",
+		"clientSessionIDs",
+		"fs.readFileSync",
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("server plugin is missing TUI-report fragment %q", frag)
+		}
+	}
+}
+
+// TestTuiPluginReporter pins the embedded TUI plugin: it polls the route,
+// reports the root session to the per-pid file, and cleans up on exit.
+func TestTuiPluginReporter(t *testing.T) {
+	src := string(tuiJS)
+	if len(src) < 500 {
+		t.Fatalf("embedded TUI plugin is %d bytes — missing?", len(src))
+	}
+	for _, frag := range []string{
+		`id: "flow.tui"`,
+		"ui.router.current",
+		"opencode-clients",
+		"process.pid",
+		"parentID",
+		"setInterval",
+		`process.on("exit"`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("TUI plugin is missing %q", frag)
 		}
 	}
 }
