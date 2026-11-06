@@ -1094,5 +1094,5 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 	} else {
 		fmt.Printf("  %s is NOT watching %s; from the parent session run: flow watch %s\n", watcher, task.Slug, task.Slug)
 	}
-	fmt.Println("  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: 'while true; do flow inbox pop --wait --timeout 300 --json || true; done'); re-arm it when it expires.")
+	fmt.Println("  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop + "'); re-arm it when it expires.")
 }

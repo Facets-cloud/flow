@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"flow/internal/flowdb"
@@ -24,7 +25,9 @@ import (
 // targets and acks a specific message out of arrival order.
 //
 // Identity is implicit: a bound session consumes as user/<task-slug>
-// (its own mail); an unbound/human invocation consumes as user.
+// (its own mail); an unbound/human invocation reads as user. The human's
+// own mail (to `user`, no task) is never popped by anyone — the human
+// lists it and marks it read with `read <id>` from their terminal.
 // Override: --as <assignee> targets a human queue directly — `--as
 // user` is the human's own inbox even inside a bound session (e.g. a
 // dedicated inbox-monitor task); any other assignee serves monitor/
@@ -34,7 +37,8 @@ import (
 // `pop --wait` blocks until a message exists, pops exactly one, and
 // exits 0 — built to be parked on by a Claude session's Monitor tool or
 // a background Bash command, so mail arrival wakes the agent. Exit 1
-// means nothing was popped (empty inbox, or --wait timed out). Pops are
+// means nothing was popped (empty inbox, or --wait timed out); exit 3
+// means the caller's bound task is done/archived — stop listening. Pops are
 // atomic claims: concurrent consumers of one inbox never double-pop.
 // --json emits machine-readable rows for scripting.
 func cmdInbox(args []string) int {
@@ -57,16 +61,19 @@ func cmdInbox(args []string) int {
 
 // consumerFlags registers the shared identity-override flag: --as
 // <assignee> consumes that human queue instead of the ambient identity
-// (`--as self` = the user's own inbox even inside a bound session; any
+// (`--as user` = the user's own inbox even inside a bound session; any
 // other assignee = monitor/transport workers draining their queue).
 func consumerFlags(fs *flag.FlagSet) (as *string) {
-	return fs.String("as", "", "consume this assignee's queue instead of the ambient identity (e.g. --as self)")
+	return fs.String("as", "", "use this assignee's queue instead of the ambient identity (e.g. --as user; self is an alias)")
 }
 
 // resolveConsumer applies the identity override to the ambient identity.
 func resolveConsumer(as string) busSender {
 	if as != "" {
-		return busSender{Assignee: as}
+		as = canonicalAssignee(as)
+		// Keep the real session id so a consumption is still traceable
+		// to the session that ran it.
+		return busSender{Assignee: as, SessionID: currentSessionID()}
 	}
 	return currentBusSender()
 }
@@ -77,6 +84,15 @@ func pendingForIdentity(db *sql.DB, s busSender) ([]*flowdb.BusMessage, error) {
 		return flowdb.PendingForTask(db, s.TaskSlug)
 	}
 	return flowdb.PendingForHuman(db, s.Assignee)
+}
+
+// unreadForIdentity returns what an `inbox` listing calls unread: pending
+// task mail, or the human queue's unread rows (flowdb.UnreadForHuman).
+func unreadForIdentity(db *sql.DB, s busSender) ([]*flowdb.BusMessage, error) {
+	if s.TaskSlug != "" {
+		return flowdb.PendingForTask(db, s.TaskSlug)
+	}
+	return flowdb.UnreadForHuman(db, s.Assignee)
 }
 
 // busMsgJSON is the stable machine-readable rendering of a message.
@@ -92,6 +108,13 @@ type busMsgJSON struct {
 	Mail      string   `json:"mail"` // mail-model label: "unread" | "read"
 	WaitedS   float64  `json:"waited_s,omitempty"`
 	ReplyTo   string   `json:"reply_to,omitempty"`
+	// ConsumedBy is who last claimed/acked/saw the row (omitted if nobody).
+	ConsumedBy *consumerJSON `json:"consumed_by,omitempty"`
+}
+
+type consumerJSON struct {
+	Identity string `json:"identity"`
+	Session  string `json:"session,omitempty"`
 }
 
 type addrJSON struct {
@@ -106,14 +129,41 @@ func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
 		To:   addrJSON{Assignee: m.ToAssignee, TaskSlug: m.ToTaskSlug},
 		Body: m.Body, Urgent: m.Urgent, Status: m.Status, Mail: mailLabel(m),
 		WaitedS: m.WaitedS, ReplyTo: m.ReplyTo,
+		ConsumedBy: consumedByJSON(m),
 	}
 }
 
-// mailLabel maps the internal status to the mail-model nomenclature the
-// bus presents to humans: pending = "unread", everything consumed
-// (delivered/acked) = "read".
+func consumedByJSON(m *flowdb.BusMessage) *consumerJSON {
+	if m.ConsumedByIdentity == "" && m.ConsumedBySession == "" {
+		return nil
+	}
+	return &consumerJSON{Identity: m.ConsumedByIdentity, Session: m.ConsumedBySession}
+}
+
+// consumedByLabel renders "  by <identity> (<session-prefix>)" for the
+// --all listing ("" when nobody has consumed the row).
+func consumedByLabel(m *flowdb.BusMessage) string {
+	if m.ConsumedByIdentity == "" && m.ConsumedBySession == "" {
+		return ""
+	}
+	who := m.ConsumedByIdentity
+	if who == "" {
+		who = "?"
+	}
+	if sid := m.ConsumedBySession; sid != "" {
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		return fmt.Sprintf("  by %s (%s)", who, sid)
+	}
+	return "  by " + who
+}
+
+// mailLabel maps a row to the mail-model nomenclature: "unread" or
+// "read", by the same predicate the listing and counts use (human mail is
+// unread until a human has seen it; other mail while pending).
 func mailLabel(m *flowdb.BusMessage) string {
-	if m.Status == "pending" {
+	if m.IsUnread() {
 		return "unread"
 	}
 	return "read"
@@ -172,14 +222,18 @@ func inboxList(args []string) int {
 		}
 		extra := ""
 		if *all {
-			extra = "  " + mailLabel(m)
+			extra = "  " + mailLabel(m) + consumedByLabel(m)
 		}
 		fmt.Printf("%s [%s] %s%s  %s: %s\n", mark, m.ID, busAge(m.CreatedAt, now), extra, busFrom(m), m.Body)
 	}
 	if *all {
 		fmt.Printf("\nread one by id: flow inbox read <id>\n")
 	} else {
-		fmt.Printf("\nconsume one at a time: flow inbox pop\n")
+		if s.TaskSlug == "" && s.Assignee == busUser {
+			fmt.Printf("\nmark one read: flow inbox read <id>\n")
+		} else {
+			fmt.Printf("\nconsume one at a time: flow inbox pop\n")
+		}
 	}
 	return 0
 }
@@ -188,7 +242,7 @@ func inboxList(args []string) int {
 // unread (pending) by default, or the whole retained queue when all=true.
 func listForIdentity(db *sql.DB, s busSender, all bool) ([]*flowdb.BusMessage, error) {
 	if !all {
-		return pendingForIdentity(db, s)
+		return unreadForIdentity(db, s)
 	}
 	if s.TaskSlug != "" {
 		return flowdb.AllForTask(db, s.TaskSlug)
@@ -206,23 +260,38 @@ func listForIdentity(db *sql.DB, s busSender, all bool) ([]*flowdb.BusMessage, e
 // human-directed message stays unanswered/unread in the mail model, so
 // a forwarder can wake on it and pass it along without consuming the
 // user's answer. The whole point of `pop --wait --keep-unread`.
+//
+// Human mail (rows to `user` with no task — messages AND broadcasts) is
+// never popped, in any mode: pop is the agent consumption verb, and an
+// agent claiming the human's queue (an unbound Monitor loop runs as
+// `user`) silently swallowed every ask. Such rows are skipped with no
+// state change; the human lists them with `flow inbox --as user`.
 func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error) {
+	if s.TaskSlug == "" && s.Assignee == busUser {
+		return nil, nil // the human queue holds only human mail
+	}
 	rows, err := pendingForIdentity(db, s)
 	if err != nil {
 		return nil, err
 	}
 	for _, m := range rows {
+		if isHumanMail(m) {
+			continue
+		}
 		var claimed bool
 		switch {
 		case keepUnread:
-			claimed, err = flowdb.ClaimDelivered(db, m.ID)
+			claimed, err = flowdb.ClaimDelivered(db, m.ID, s.consumer("pop"))
 			if claimed {
 				m.Status = "delivered"
 			}
 		case m.Kind == "message" && m.ToTaskSlug == "":
-			claimed, err = flowdb.ClaimAcked(db, m, "pop")
+			claimed, err = flowdb.ClaimAcked(db, m, s.consumer("pop"))
 		default:
-			claimed, err = flowdb.ClaimDelivered(db, m.ID)
+			claimed, err = flowdb.ClaimDelivered(db, m.ID, s.consumer("pop"))
+			if claimed {
+				m.Status = "delivered"
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -232,6 +301,36 @@ func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error
 		}
 	}
 	return nil, nil
+}
+
+// isHumanMail reports whether a row is addressed to the local human's
+// own queue (to `user`, no task) — directed messages and broadcasts.
+func isHumanMail(m *flowdb.BusMessage) bool {
+	return m.ToTaskSlug == "" && m.ToAssignee == busUser
+}
+
+// isRecipient reports whether identity s is the row's addressee: the
+// bound session of its task, or (unbound) the human queue it targets.
+func isRecipient(s busSender, m *flowdb.BusMessage) bool {
+	if m.ToTaskSlug != "" {
+		return s.TaskSlug == m.ToTaskSlug
+	}
+	return s.TaskSlug == "" && s.Assignee == m.ToAssignee
+}
+
+func recipientAddr(m *flowdb.BusMessage) string {
+	if m.ToTaskSlug != "" {
+		return m.ToAssignee + "/" + m.ToTaskSlug
+	}
+	return m.ToAssignee
+}
+
+// agentInvocation reports whether this flow invocation runs inside an
+// agent harness (a harness session id is present, or a headless auto
+// run) rather than from the human's own terminal. Only a human
+// invocation may mark human mail read.
+func agentInvocation() bool {
+	return currentSessionID() != "" || os.Getenv(autoRunEnvVar) != ""
 }
 
 func printBusMessage(db *sql.DB, m *flowdb.BusMessage) {
@@ -268,6 +367,10 @@ func busSnippet(body string) string {
 	return body
 }
 
+// popExitTaskClosed is pop's exit code when the caller's bound task is
+// done or archived: the listener loop breaks on it.
+const popExitTaskClosed = 3
+
 func inboxPop(args []string) int {
 	fs := flagSet("inbox pop")
 	wait := fs.Bool("wait", false, "block until a message arrives, then pop it")
@@ -285,6 +388,27 @@ func inboxPop(args []string) int {
 	}
 	defer db.Close()
 	s := resolveConsumer(*as)
+	// closed: exit 3 tells the Monitor loop to stop — the caller's bound
+	// task is done/archived, so its inbox will never get mail again.
+	closed := func() bool {
+		if s.TaskSlug == "" {
+			return false
+		}
+		t, err := flowdb.GetTask(db, s.TaskSlug)
+		if err != nil || t == nil {
+			return false
+		}
+		if t.Status == "done" || t.ArchivedAt.Valid {
+			if !*asJSON {
+				fmt.Printf("task %s is closed — stop listening (exit 3)\n", s.TaskSlug)
+			}
+			return true
+		}
+		return false
+	}
+	if closed() {
+		return popExitTaskClosed
+	}
 
 	emit := func(m *flowdb.BusMessage) int {
 		if *asJSON {
@@ -309,6 +433,9 @@ func inboxPop(args []string) int {
 		if m == nil {
 			if !*asJSON {
 				fmt.Printf("inbox empty (%s)\n", s.identity())
+				if s.TaskSlug == "" && s.Assignee == busUser {
+					fmt.Println("note: pop never consumes the human's mail — list it with `flow inbox --as user`")
+				}
 			}
 			return 1
 		}
@@ -327,6 +454,9 @@ func inboxPop(args []string) int {
 		}
 		if m != nil {
 			return emit(m)
+		}
+		if closed() {
+			return popExitTaskClosed
 		}
 		if time.Now().After(deadline) {
 			if !*asJSON {
@@ -351,10 +481,16 @@ func inboxPop(args []string) int {
 func inboxRead(args []string) int {
 	fs := flagSet("inbox read")
 	asJSON := fs.Bool("json", false, "emit the message as JSON")
+	as := consumerFlags(fs)
+	// Accept the id before or after flags (`read <id> --json`).
+	var ids []string
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		ids, args = append(ids, args[0]), args[1:]
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	rest := fs.Args()
+	rest := append(ids, fs.Args()...)
 	if len(rest) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: flow inbox read <id>")
 		return 2
@@ -365,7 +501,21 @@ func inboxRead(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	m, newly, err := flowdb.ReadMessageByID(db, rest[0], "read")
+	var (
+		m     *flowdb.BusMessage
+		newly bool
+	)
+	s := resolveConsumer(*as)
+	m, err = flowdb.GetBusMessageByID(db, rest[0])
+	mayConsume := false
+	if err == nil && m != nil {
+		mayConsume = isRecipient(s, m) && !(isHumanMail(m) && agentInvocation())
+		if mayConsume {
+			// Only the recipient changes state; an agent may DISPLAY
+			// human mail but never consume it.
+			m, newly, err = flowdb.ReadMessageByID(db, rest[0], s.consumer("read"))
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -382,6 +532,12 @@ func inboxRead(args []string) int {
 	printBusMessage(db, m)
 	if newly {
 		fmt.Println("marked read")
+	} else if !mayConsume && m.IsUnread() {
+		if isHumanMail(m) && isRecipient(s, m) {
+			fmt.Println("(display only — human mail is marked read only by the human)")
+		} else {
+			fmt.Printf("(display only — addressed to %s, not %s)\n", recipientAddr(m), s.identity())
+		}
 	} else {
 		fmt.Println("(already read)")
 	}

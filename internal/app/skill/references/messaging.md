@@ -22,16 +22,24 @@ flow message user "coinswitch-gcp-migration: prod release plan ready, needs your
 flow message user "blocked on your GCP login — state bucket perms broken" --urgent
 ```
 
-- `user` (the reserved local human) stays **unread** until answered — it
-  never expires while unread.
+- `user` (the reserved local human) stays **unread** until a human has
+  seen it, whatever any reader did with it — it never expires while
+  unread. Hook notices to the human split it as "N ask(s) await you · M
+  FYI" (FYI = broadcasts) and show the top items by id; items a hook showed
+  in an interactive session are marked seen on the human's next typed
+  prompt there.
 - Use ONLY for the three cases above. NOT for routine progress, and not
   when the user is clearly active in this session (they'll see it live).
 - ONE message per wait — NEVER re-send.
 - Body ≤500 chars, lead with the ask, name the task slug for context.
-- Ack is automatic when the user replies in THIS session (a hook injects
+- Ack is automatic when the user replies in THIS session — a prompt they
+  actually type; `--with` injections, auto runs, owner ticks, /loop and
+  wakeup firings never count (a hook injects
   "answered after <duration>" — factor the elapsed time in; re-verify
-  stale state after a long wait). They can also answer via `flow inbox
-  pop --as user` or `flow inbox read <id>`.
+  stale state after a long wait). The human can also mark it read from
+  their own terminal with `flow inbox read <id>`. Agents never consume
+  the human's mail: `pop` skips it in every mode, and an agent's
+  `inbox read <id>` on it is display-only.
 - `--urgent` is a data flag for the user's own tooling; flow attaches no
   behavior to it.
 - Command form: the body is positional (`flow message user "..."`) or
@@ -40,11 +48,18 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
   OTHER `--flag` is rejected with an error, never silently stored as the
   body.
 
-**Headless auto-mode exception.** A `flow do --auto` agent runs with no
-human watching, so a silent run looks stuck. Post regular progress updates
-as milestones land — `flow message user` for a checkpoint, or
-`flow broadcast` to watchers — not only when you need a decision. This is
-the one case where routine progress on the bus is expected.
+**Headless auto mode — one reporting rule.** A `flow do --auto` agent runs
+with no human watching. Its prompt carries the rule:
+
+- **Parent live** → `flow message user/<parent>` at milestones, when done,
+  and when blocked (the parent auto-watches it; no Stop broadcast nudge
+  fires in auto runs, so progress never arrives twice).
+- **Parent done/archived** (flow rejects the message) → still write the
+  update note, then send the done/blocked report to the human as an FYI:
+  `flow message user "FYI: <slug> done — see <update file>"`. A child
+  that dies is reported the same way by flow itself.
+- **No parent** → result in an update note; message the human ONLY when
+  done or blocked, naming the note. Never routine progress.
 
 ### 2. Collaborate with peers
 
@@ -57,8 +72,7 @@ flow message user/tekion-hub-network "answered: use us-east-1" --reply-to 80a7ae
 flow broadcast "imports done, 3 drifts left"     # FYI to watchers
 ```
 
-- `<assignee>/<task-slug>` (a bare task slug is sugar for `user/<slug>`)
-  delivers into that session's context — no interruption. Say what the
+- `<assignee>/<task-slug>` delivers into that session's context — no interruption. Say what the
   peer should DO with it.
 - `--reply-to <id>` stamps the parent message id so a routed reply carries
   lineage — the receiver sees which message it answers (the bus doesn't
@@ -78,8 +92,11 @@ flow broadcast "imports done, 3 drifts left"     # FYI to watchers
 - `<name>` (e.g. `shashwat`) — another assignee. No cross-machine
   transport yet: it queues locally with a warning; delivery lands with
   flow-workspace.
-- `<assignee>/<task-slug>` — the SESSION bound to that task.
-- A bare task slug is sugar for `user/<slug>`.
+- `<assignee>/<task-slug>` — the SESSION bound to that task. Sessions are
+  addressed ONLY this way: a bare token is always an assignee (a person),
+  never a task slug.
+- `self` is a legacy alias for `user`. `user` and `self` are reserved and
+  can never be task slugs.
 - You can NEVER message your own address — a session cannot mail its own
   inbox, and the human cannot mail their own queue (flow rejects both).
   Done/archived tasks are also rejected (undeliverable).
@@ -115,29 +132,36 @@ flow inbox read <id>          # show ONE message by id (any status) and mark it 
 flow inbox pop                # consume the oldest unread, exit 1 if empty
 flow inbox pop --wait --timeout 300
 flow inbox pop --wait --keep-unread   # wake on mail WITHOUT acking it (reader/relay)
-flow inbox pop --as user      # drain the human queue from a monitor/transport session
+flow inbox --as user          # list the HUMAN's unread mail (never pop it)
 ```
 
 Identity is implicit: a bound session consumes its own task's mail; an
 unbound/human invocation consumes the user's. `--as <assignee>` targets a
-human queue directly. Pops are atomic claims, so concurrent consumers of
+human queue directly (pop on `user` returns nothing: human mail — messages
+and broadcasts to `user` — is never popped, in any mode). Pops are atomic claims, so concurrent consumers of
 one queue never double-pop. `--json` on inbox/pop/read emits
 machine-readable rows.
 
-- `pop` on an unread human message ACKS it (popping IS answering) → **read**.
+- `pop` on an unread message to another assignee's queue (a transport
+  worker draining `--as <name>`) ACKS it → **read**. The local human's
+  own queue is never popped.
 - `pop --keep-unread` returns the message but leaves it un-acked — it's
   been handed to a reader, still awaiting the human's answer, so it stays
   immortal until actually read. This is the primitive a forwarder/relay
   needs: be woken by mail it must pass along WITHOUT consuming the answer.
 - `read <id>` targets a specific message out of arrival order (pop is
-  oldest-first only) — display an already-read one, or ack the exact
-  message the human just answered.
+  oldest-first only). Only the message's RECIPIENT changes its state (the
+  bound session of its task, or `--as <assignee>` for a person's queue);
+  anyone else gets a read-only display.
 
 ## Listener discipline — two recipes, pick by role
 
-Arm exactly ONE listener at session start so mail WAKES you instead of
-waiting for your next tool call. Which recipe depends on what you do with
-each message.
+Only in a BOUND session (one bound to a flow task) arm exactly ONE
+listener at session start so mail WAKES you instead of waiting for your
+next tool call. An unbound (dispatch) session never arms one: it runs as
+the human's identity, so a loop there would sit on the human's own queue.
+The SessionStart hook prints the recipe only in bound sessions. Which
+recipe depends on what you do with each message.
 
 Claude Code's Monitor tool may be a deferred tool: load its schema first
 with ToolSearch `select:Monitor`. It has NO `persistent` parameter, and
@@ -150,7 +174,7 @@ it). This is the default for a normal task session. `pop` acks as it goes:
     Monitor(
       description: "flow inbox",
       timeout_ms: 1800000,
-      command: "while true; do flow inbox pop --wait --timeout 300 --json || true; done")
+      command: "while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done")
 
 **Reader / relay** — you forward or merely observe, and must NOT ack (the
 message is answered elsewhere — e.g. you relay it to the user and they
@@ -160,10 +184,13 @@ consumes someone else's mail:
     Monitor(
       description: "flow inbox relay (read without acking)",
       timeout_ms: 1800000,
-      command: "while true; do flow inbox pop --wait --keep-unread --timeout 300 --json || true; done")
+      command: "while true; do flow inbox pop --wait --timeout 300 --keep-unread --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done")
 
 Each popped message is one JSON event that wakes you; `--json` is silent
-on timeouts (zero noise). When the Monitor expires (timeout_ms reached)
+on timeouts (zero noise). The loop sleeps 5s after any failed pop (no hot
+respawn loop if flow is mid-upgrade or the DB is locked) and exits when
+pop returns 3: this session's task is done or archived, so its inbox is
+closed for good. When the Monitor expires (timeout_ms reached)
 you get a notice: re-arm it immediately with the same call. After a
 compaction the SessionStart hook re-fires and repeats this recipe.
 FALLBACK when Monitor is unavailable (non-Claude harnesses): a background
@@ -186,7 +213,7 @@ flow never notifies. Poll your queue from cron, a launchd job, a shell
 loop, or a dedicated monitor task, and pipe into any notifier:
 
     flow inbox --as user --json            # non-destructive peek (unread)
-    flow inbox pop --wait --as user --json # blocking consumer
+    flow inbox read <id>                   # mark one read (from your terminal)
 
 `flow inbox stats` reports answered/pending counts and wait times.
 Reminder cadence and dedup are your script's business — flow keeps only

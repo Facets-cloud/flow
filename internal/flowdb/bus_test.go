@@ -37,7 +37,7 @@ func TestBusMessageLifecycle(t *testing.T) {
 		t.Errorf("row roundtrip mismatch: %+v", pending[0])
 	}
 
-	acked, err := AckHumanMessagesFromSession(db, "sid-1", "user", "prompt")
+	acked, err := AckHumanMessagesFromSession(db, "sid-1", "user", Consumer{By: "prompt"})
 	if err != nil || len(acked) != 1 {
 		t.Fatalf("AckHumanMessagesFromSession = %v, %v; want 1", acked, err)
 	}
@@ -63,12 +63,12 @@ func TestBusTaskInboxDeliver(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("PendingForTask = %v, %v; want 1", rows, err)
 	}
-	claimed, err := ClaimDelivered(db, "bbbb0001")
+	claimed, err := ClaimDelivered(db, "bbbb0001", Consumer{})
 	if err != nil || !claimed {
 		t.Fatalf("claim deliver = %v, %v", claimed, err)
 	}
 	// A second claim must lose: exactly-once consumption.
-	if claimed, _ := ClaimDelivered(db, "bbbb0001"); claimed {
+	if claimed, _ := ClaimDelivered(db, "bbbb0001", Consumer{}); claimed {
 		t.Errorf("double claim succeeded")
 	}
 	if rows, _ = PendingForTask(db, "task-b"); len(rows) != 0 {
@@ -214,12 +214,12 @@ func TestReadMessageByID(t *testing.T) {
 	// Human-directed unread → read/acked, wait recorded.
 	_ = InsertBusMessage(db, &BusMessage{ID: "hum00001", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "user", FromTaskSlug: "task-a", ToAssignee: "user", Body: "approve?"})
-	m, newly, err := ReadMessageByID(db, "hum00001", "read")
+	m, newly, err := ReadMessageByID(db, "hum00001", Consumer{By: "read"})
 	if err != nil || m == nil || !newly || m.Status != "acked" {
 		t.Fatalf("read unread human msg: %+v newly=%v err=%v", m, newly, err)
 	}
 	// Reading again is a display-only no-op.
-	if _, newly2, _ := ReadMessageByID(db, "hum00001", "read"); newly2 {
+	if _, newly2, _ := ReadMessageByID(db, "hum00001", Consumer{By: "read"}); newly2 {
 		t.Errorf("second read of an acked message reported newly-read")
 	}
 	if s, _ := GetBusStats(db, "user"); s.Acked != 1 {
@@ -230,10 +230,10 @@ func TestReadMessageByID(t *testing.T) {
 	// leaves it) is still readable → acked.
 	_ = InsertBusMessage(db, &BusMessage{ID: "hum00002", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "user", ToAssignee: "user", Body: "forwarded then answered"})
-	if ok, _ := ClaimDelivered(db, "hum00002"); !ok {
+	if ok, _ := ClaimDelivered(db, "hum00002", Consumer{}); !ok {
 		t.Fatal("claim delivered")
 	}
-	m, newly, err = ReadMessageByID(db, "hum00002", "read")
+	m, newly, err = ReadMessageByID(db, "hum00002", Consumer{By: "read"})
 	if err != nil || !newly || m.Status != "acked" {
 		t.Fatalf("read delivered human msg: %+v newly=%v err=%v", m, newly, err)
 	}
@@ -242,11 +242,11 @@ func TestReadMessageByID(t *testing.T) {
 	_ = InsertBusMessage(db, &BusMessage{ID: "tsk00001", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "user", FromTaskSlug: "task-a", ToAssignee: "user", ToTaskSlug: "task-b",
 		Body: "re-read state"})
-	m, newly, err = ReadMessageByID(db, "tsk00001", "read")
+	m, newly, err = ReadMessageByID(db, "tsk00001", Consumer{By: "read"})
 	if err != nil || !newly || m.Status != "delivered" {
 		t.Fatalf("read task msg: %+v newly=%v err=%v", m, newly, err)
 	}
-	if miss, _, _ := ReadMessageByID(db, "ghost", "read"); miss != nil {
+	if miss, _, _ := ReadMessageByID(db, "ghost", Consumer{By: "read"}); miss != nil {
 		t.Errorf("ReadMessageByID returned a row for a missing id")
 	}
 }
@@ -257,7 +257,7 @@ func TestAllForHumanIncludesReadAndUnread(t *testing.T) {
 		FromAssignee: "user", ToAssignee: "user", Body: "unread one"})
 	_ = InsertBusMessage(db, &BusMessage{ID: "all00002", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "user", ToAssignee: "user", Body: "will be read"})
-	if _, err := ClaimAcked(db, &BusMessage{ID: "all00002", CreatedAt: NowISO()}, "read"); err != nil {
+	if _, err := ClaimAcked(db, &BusMessage{ID: "all00002", CreatedAt: NowISO()}, Consumer{By: "read"}); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := PendingForHuman(db, "user")
@@ -276,7 +276,7 @@ func TestDeliveredHumanMessageIsImmortal(t *testing.T) {
 	// unanswered question — it must survive the rolling sweep like pending.
 	_ = InsertBusMessage(db, &BusMessage{ID: "imm00001", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "user", ToAssignee: "user", Body: "forwarded, awaiting answer"})
-	if ok, _ := ClaimDelivered(db, "imm00001"); !ok {
+	if ok, _ := ClaimDelivered(db, "imm00001", Consumer{}); !ok {
 		t.Fatal("claim delivered")
 	}
 	// Pile on rollable rows and shrink the window hard.
@@ -301,7 +301,7 @@ func TestAckScopedToRepliersOwnQueue(t *testing.T) {
 		ID: "cccc0001", CreatedAt: NowISO(), Kind: "message",
 		FromAssignee: "user", SenderSessionID: "sid-x",
 		ToAssignee: "shashwat", Body: "queued for someone else"})
-	acked, err := AckHumanMessagesFromSession(db, "sid-x", "user", "prompt")
+	acked, err := AckHumanMessagesFromSession(db, "sid-x", "user", Consumer{By: "prompt"})
 	if err != nil || len(acked) != 0 {
 		t.Fatalf("self reply acked another assignee's message: %v, %v", acked, err)
 	}

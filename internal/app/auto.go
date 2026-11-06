@@ -354,10 +354,13 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 			playbookSlug,
 		)
 	}
-	parentRule := ""
+	// One reporting rule (authorized even if the brief is silent):
+	// parent live → its inbox; parent closed → update note + an FYI to
+	// the human; no parent → the human only at done/blocked.
+	parentRule := "- No parent task: write your result as an update note on YOUR OWN task (tasks/<your-slug>/updates/YYYY-MM-DD-<kebab>.md). Message the human ONLY when you are done or blocked: flow message user \"<slug>: done|blocked — see <update file>\" (<=200 chars). Never message the human for routine progress.\n"
 	if parentSlug != "" {
 		parentRule = fmt.Sprintf(
-			"- Your parent task %[1]s spawned you and is listening. Report to it (this is authorized even if the brief does not mention it): run flow message user/%[1]s \"<one line, <=200 chars>\" at each milestone, when you are done, and when you are blocked. Do not wait for a reply; if flow rejects it because the parent is closed, carry on. Messaging the parent does not replace flow done.\n",
+			"- Your parent task %[1]s spawned you and is listening. Report to it (this is authorized even if the brief does not mention it): run flow message user/%[1]s \"<one line, <=200 chars>\" at each milestone, when you are done, and when you are blocked. Do not wait for a reply. If flow rejects it because the parent is closed (done/archived), still write your update note, and send your done/blocked report to the human instead as an FYI: flow message user \"FYI: <slug> done|blocked (parent %[1]s closed) — see <update file>\". Messaging does not replace flow done.\n",
 			parentSlug,
 		) + autoResultContract(parentSlug)
 	}
@@ -372,7 +375,7 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 			"Operating rules for autonomous mode:\n"+
 			"- Do NOT use AskUserQuestion and do NOT wait for user input — there is no one to answer. Where the interactive workflow would ask, decide using best engineering judgment and proceed. Resolve any deferred/unclear brief sections yourself rather than stopping.\n"+
 			"- Follow the repo's conventions (build/test commands, TDD if the repo expects it). Verify your work by running the tests before considering the task complete.\n"+
-			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
+			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone beyond the reporting rule below unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
 			parentRule+
 			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and CLAUDE.md, search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
 			"Closing out:\n"+
