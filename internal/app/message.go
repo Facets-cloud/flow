@@ -23,7 +23,7 @@ import (
 //
 // A bare assignee (`user` = the local human) addresses a person: the
 // message stays pending until answered (their next reply in the sending
-// session acks it, or they `flow inbox pop`). `<assignee>/<task-slug>`
+// session acks it, or they `flow inbox read <id>` from their terminal). `<assignee>/<task-slug>`
 // addresses the session bound to that task. A sender can never message
 // its own address.
 //
@@ -153,7 +153,7 @@ func cmdMessage(args []string) int {
 		if toAssignee != busUser {
 			fmt.Printf("note: no cross-user transport yet — %q will see this only on this machine\n", toAssignee)
 		}
-		fmt.Printf("messaged %s [%s] — pending until answered (their reply in this session, or `flow inbox pop`)\n",
+		fmt.Printf("messaged %s [%s] — pending until answered (their reply in this session, or `flow inbox read <id>`)\n",
 			toAssignee, m.ID)
 	} else {
 		fmt.Printf("messaged session %s/%s [%s] — delivered on its next activity or pop\n",

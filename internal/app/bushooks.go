@@ -167,7 +167,7 @@ func humanPendingNotice(db *sql.DB) string {
 	}
 	return fmt.Sprintf(
 		" flow-bus: %d pending message(s)/broadcast(s) await the USER — tell them at the "+
-			"start of your reply; they consume via `flow inbox pop` (never consume these yourself).", n)
+			"start of your reply; they read them with `flow inbox --as user` (never consume these yourself).", n)
 }
 
 // busHumanPendingNotice is the standalone variant for the unbound

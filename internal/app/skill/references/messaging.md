@@ -30,8 +30,10 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
 - Body ≤500 chars, lead with the ask, name the task slug for context.
 - Ack is automatic when the user replies in THIS session (a hook injects
   "answered after <duration>" — factor the elapsed time in; re-verify
-  stale state after a long wait). They can also answer via `flow inbox
-  pop --as user` or `flow inbox read <id>`.
+  stale state after a long wait). The human can also mark it read from
+  their own terminal with `flow inbox read <id>`. Agents never consume
+  the human's mail: `pop` skips it in every mode, and an agent's
+  `inbox read <id>` on it is display-only.
 - `--urgent` is a data flag for the user's own tooling; flow attaches no
   behavior to it.
 - Command form: the body is positional (`flow message user "..."`) or
@@ -115,16 +117,19 @@ flow inbox read <id>          # show ONE message by id (any status) and mark it 
 flow inbox pop                # consume the oldest unread, exit 1 if empty
 flow inbox pop --wait --timeout 300
 flow inbox pop --wait --keep-unread   # wake on mail WITHOUT acking it (reader/relay)
-flow inbox pop --as user      # drain the human queue from a monitor/transport session
+flow inbox --as user          # list the HUMAN's unread mail (never pop it)
 ```
 
 Identity is implicit: a bound session consumes its own task's mail; an
 unbound/human invocation consumes the user's. `--as <assignee>` targets a
-human queue directly. Pops are atomic claims, so concurrent consumers of
+human queue directly (pop on `user` returns nothing: human mail — messages
+and broadcasts to `user` — is never popped, in any mode). Pops are atomic claims, so concurrent consumers of
 one queue never double-pop. `--json` on inbox/pop/read emits
 machine-readable rows.
 
-- `pop` on an unread human message ACKS it (popping IS answering) → **read**.
+- `pop` on an unread message to another assignee's queue (a transport
+  worker draining `--as <name>`) ACKS it → **read**. The local human's
+  own queue is never popped.
 - `pop --keep-unread` returns the message but leaves it un-acked — it's
   been handed to a reader, still awaiting the human's answer, so it stays
   immortal until actually read. This is the primitive a forwarder/relay
@@ -189,7 +194,7 @@ flow never notifies. Poll your queue from cron, a launchd job, a shell
 loop, or a dedicated monitor task, and pipe into any notifier:
 
     flow inbox --as user --json            # non-destructive peek (unread)
-    flow inbox pop --wait --as user --json # blocking consumer
+    flow inbox read <id>                   # mark one read (from your terminal)
 
 `flow inbox stats` reports answered/pending counts and wait times.
 Reminder cadence and dedup are your script's business — flow keeps only

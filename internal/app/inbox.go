@@ -24,7 +24,9 @@ import (
 // targets and acks a specific message out of arrival order.
 //
 // Identity is implicit: a bound session consumes as user/<task-slug>
-// (its own mail); an unbound/human invocation consumes as user.
+// (its own mail); an unbound/human invocation reads as user. The human's
+// own mail (to `user`, no task) is never popped by anyone — the human
+// lists it and marks it read with `read <id>` from their terminal.
 // Override: --as <assignee> targets a human queue directly — `--as
 // user` is the human's own inbox even inside a bound session (e.g. a
 // dedicated inbox-monitor task); any other assignee serves monitor/
@@ -179,7 +181,11 @@ func inboxList(args []string) int {
 	if *all {
 		fmt.Printf("\nread one by id: flow inbox read <id>\n")
 	} else {
-		fmt.Printf("\nconsume one at a time: flow inbox pop\n")
+		if s.TaskSlug == "" && s.Assignee == busUser {
+			fmt.Printf("\nmark one read: flow inbox read <id>\n")
+		} else {
+			fmt.Printf("\nconsume one at a time: flow inbox pop\n")
+		}
 	}
 	return 0
 }
@@ -206,12 +212,24 @@ func listForIdentity(db *sql.DB, s busSender, all bool) ([]*flowdb.BusMessage, e
 // human-directed message stays unanswered/unread in the mail model, so
 // a forwarder can wake on it and pass it along without consuming the
 // user's answer. The whole point of `pop --wait --keep-unread`.
+//
+// Human mail (rows to `user` with no task — messages AND broadcasts) is
+// never popped, in any mode: pop is the agent consumption verb, and an
+// agent claiming the human's queue (an unbound Monitor loop runs as
+// `user`) silently swallowed every ask. Such rows are skipped with no
+// state change; the human lists them with `flow inbox --as user`.
 func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error) {
+	if s.TaskSlug == "" && s.Assignee == busUser {
+		return nil, nil // the human queue holds only human mail
+	}
 	rows, err := pendingForIdentity(db, s)
 	if err != nil {
 		return nil, err
 	}
 	for _, m := range rows {
+		if isHumanMail(m) {
+			continue
+		}
 		var claimed bool
 		switch {
 		case keepUnread:
@@ -232,6 +250,20 @@ func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error
 		}
 	}
 	return nil, nil
+}
+
+// isHumanMail reports whether a row is addressed to the local human's
+// own queue (to `user`, no task) — directed messages and broadcasts.
+func isHumanMail(m *flowdb.BusMessage) bool {
+	return m.ToTaskSlug == "" && m.ToAssignee == busUser
+}
+
+// agentInvocation reports whether this flow invocation runs inside an
+// agent harness (a harness session id is present, or a headless auto
+// run) rather than from the human's own terminal. Only a human
+// invocation may mark human mail read.
+func agentInvocation() bool {
+	return currentSessionID() != "" || os.Getenv(autoRunEnvVar) != ""
 }
 
 func printBusMessage(db *sql.DB, m *flowdb.BusMessage) {
@@ -309,6 +341,9 @@ func inboxPop(args []string) int {
 		if m == nil {
 			if !*asJSON {
 				fmt.Printf("inbox empty (%s)\n", s.identity())
+				if s.TaskSlug == "" && s.Assignee == busUser {
+					fmt.Println("note: pop never consumes the human's mail — list it with `flow inbox --as user`")
+				}
 			}
 			return 1
 		}
@@ -365,7 +400,15 @@ func inboxRead(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	m, newly, err := flowdb.ReadMessageByID(db, rest[0], "read")
+	var (
+		m     *flowdb.BusMessage
+		newly bool
+	)
+	m, err = flowdb.GetBusMessageByID(db, rest[0])
+	if err == nil && m != nil && !(isHumanMail(m) && agentInvocation()) {
+		// An agent may DISPLAY human mail but never consume it.
+		m, newly, err = flowdb.ReadMessageByID(db, rest[0], "read")
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -382,6 +425,8 @@ func inboxRead(args []string) int {
 	printBusMessage(db, m)
 	if newly {
 		fmt.Println("marked read")
+	} else if isHumanMail(m) && agentInvocation() && m.Status != "acked" {
+		fmt.Println("(display only — human mail is marked read only by the human)")
 	} else {
 		fmt.Println("(already read)")
 	}

@@ -794,7 +794,7 @@ Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
 **Consuming.** `flow inbox` lists unread; `--all` lists everything
 retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
-the oldest. `--as user` drains the human queue. Only a BOUND
+the oldest. Never touch the human's mail (pop skips it). Only a BOUND
 session arms ONE inbox **Monitor** at start (never unbound: it'd sit on
 the human's queue). Load via ToolSearch `select:Monitor`; no
 `persistent` param; `timeout_ms` REQUIRED (max 1800000):

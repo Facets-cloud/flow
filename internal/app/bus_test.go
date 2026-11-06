@@ -78,36 +78,38 @@ func TestInboxPopConsumesOneAtATime(t *testing.T) {
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-p", "sid-p")
 
+	// Another assignee's queue (a transport worker drains it with --as);
+	// the local human's own queue is never popped (F2).
 	captureStdout(t, func() {
-		if rc := cmdMessage([]string{"user", "first"}); rc != 0 {
+		if rc := cmdMessage([]string{"shashwat", "first"}); rc != 0 {
 			t.Fatal("msg1")
 		}
-		if rc := cmdMessage([]string{"user", "second"}); rc != 0 {
+		if rc := cmdMessage([]string{"shashwat", "second"}); rc != 0 {
 			t.Fatal("msg2")
 		}
 	})
 
 	out := captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--as", "shashwat"}); rc != 0 {
 			t.Fatalf("pop rc != 0")
 		}
 	})
 	if !strings.Contains(out, "first") || strings.Contains(out, "second") {
 		t.Errorf("pop should consume exactly the oldest: %s", out)
 	}
-	// Popping a human-directed message ACKS it.
-	s, _ := flowdb.GetBusStats(db, "user")
+	// Popping a directed message to a person's queue ACKS it.
+	s, _ := flowdb.GetBusStats(db, "shashwat")
 	if s.Acked != 1 || s.Pending != 1 {
 		t.Errorf("after one pop: %+v", s)
 	}
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--as", "shashwat"}); rc != 0 {
 			t.Fatalf("pop2 rc != 0")
 		}
 	})
 	// Empty inbox: exit 1 (script/Monitor friendly).
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 1 {
+		if rc := cmdInbox([]string{"pop", "--as", "shashwat"}); rc != 1 {
 			t.Errorf("empty pop should exit 1")
 		}
 	})
@@ -127,10 +129,14 @@ func TestInboxAllListsReadAndUnread(t *testing.T) {
 			t.Fatal("msg2")
 		}
 	})
-	// Consume the oldest (acks it).
+	// The human reads the oldest from their own terminal (acks it).
+	var first string
+	_ = db.QueryRow(`SELECT id FROM bus_messages WHERE body='first msg'`).Scan(&first)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("FLOW_AUTO_RUN", "")
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
-			t.Fatal("pop")
+		if rc := cmdInbox([]string{"read", first}); rc != 0 {
+			t.Fatal("read")
 		}
 	})
 	// Default inbox shows only the remaining unread one.
@@ -187,7 +193,9 @@ func TestInboxReadByID(t *testing.T) {
 	}
 	id := rows[0].ID
 
-	// read <id> marks it read out of pop order.
+	// read <id> from the human's own terminal marks it read out of pop order.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("FLOW_AUTO_RUN", "")
 	out = captureStdout(t, func() {
 		if rc := cmdInbox([]string{"read", id}); rc != 0 {
 			t.Fatal("read rc != 0")
@@ -223,13 +231,13 @@ func TestInboxPopKeepUnread(t *testing.T) {
 	mkBusTask(t, db, "task-ku", "sid-ku")
 
 	captureStdout(t, func() {
-		if rc := cmdMessage([]string{"user", "forward me"}); rc != 0 {
+		if rc := cmdMessage([]string{"shashwat", "forward me"}); rc != 0 {
 			t.Fatal("msg")
 		}
 	})
 	// pop --keep-unread returns the message WITHOUT acking it.
 	out := captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "shashwat"}); rc != 0 {
 			t.Fatal("keep-unread pop rc != 0")
 		}
 	})
@@ -237,18 +245,18 @@ func TestInboxPopKeepUnread(t *testing.T) {
 		t.Errorf("keep-unread output: %s", out)
 	}
 	// It must NOT be acked (not answered): a reader only forwarded it.
-	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 0 {
+	if s, _ := flowdb.GetBusStats(db, "shashwat"); s.Acked != 0 {
 		t.Errorf("keep-unread acked the message: %+v", s)
 	}
 	// It's now delivered → a second keep-unread pop won't re-return it (no
 	// hot loop for the relay), and plain inbox no longer lists it as unread.
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 1 {
+		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "shashwat"}); rc != 1 {
 			t.Errorf("delivered message was re-returned by keep-unread")
 		}
 	})
 	// But it survives in --all and can still be answered by id.
-	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--as", "user", "--json"}) })
+	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--as", "shashwat", "--json"}) })
 	var all []busMsgJSON
 	if err := json.Unmarshal([]byte(out), &all); err != nil || len(all) != 1 {
 		t.Fatalf("--all after keep-unread: %v %v", all, err)
@@ -256,7 +264,7 @@ func TestInboxPopKeepUnread(t *testing.T) {
 	if _, _, err := flowdb.ReadMessageByID(db, all[0].ID, "read"); err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 1 {
+	if s, _ := flowdb.GetBusStats(db, "shashwat"); s.Acked != 1 {
 		t.Errorf("forwarded message could not be answered by id: %+v", s)
 	}
 }
