@@ -43,8 +43,11 @@ func TestPluginJSBridgesEveryHook(t *testing.T) {
 		{"inbox pop json", `"--json"`},
 		{"inbox ack", `["inbox", "read", id, "--json"]`},
 		{"session env var", `env.OPENCODE_SESSION_ID = sessionID`},
-		{"steer delivery", `delivery: "steer"`},
-		{"queue delivery", `delivery: "queue"`},
+		{"inject cli", `"session.prompt"`},
+		{"inject param", `"--param"`},
+		{"inject helper", `injectPrompt`},
+		{"steer delivery", `injectPrompt(sessionID, "[flow inbox] " + out, "steer")`},
+		{"queue delivery", `injectPrompt(sessionID, "[flow] " + context, "queue")`},
 	}
 	for _, tc := range want {
 		if !strings.Contains(src, tc.frag) {
@@ -97,6 +100,31 @@ func TestPluginJSInboxContract(t *testing.T) {
 		if !strings.Contains(src, frag) {
 			t.Errorf("plugin is missing %q", frag)
 		}
+	}
+}
+
+// TestPluginJSInjectsViaCLI guards the delivery path: plugin-side
+// `ctx.session.prompt` resolves without queueing anything on opencode 2.0.32,
+// so every injection must go through `opencode api session.prompt`, and no
+// plugin call may fall back to the silent no-op.
+func TestPluginJSInjectsViaCLI(t *testing.T) {
+	src := pluginSource(t)
+
+	for _, frag := range []string{
+		`"session.prompt"`,
+		`"--param"`,
+		`injectPrompt`,
+		`async function injectPrompt(sessionID, text, delivery)`,
+		`opencodeBin`,
+		`JSON.stringify({ text, delivery })`,
+		`data?.id`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("plugin is missing %q", frag)
+		}
+	}
+	if strings.Contains(src, "ctx.session.prompt(") {
+		t.Error("plugin still calls ctx.session.prompt, a silent no-op on opencode 2.0.32")
 	}
 }
 

@@ -11,6 +11,9 @@
 // flow binary) to ~/.config/opencode/plugins/flow/index.js. Do not edit
 // it here: `flow` rewrites it whenever the installed copy differs.
 //
+// Plugin-side `ctx.session.prompt` is a silent no-op on opencode 2.0.32, so
+// every delivery goes through `opencode api session.prompt` instead.
+//
 // Event -> flow call mapping:
 //
 //   session.execution.started    -> `flow hook session-start` (first per session)
@@ -39,6 +42,8 @@ const LISTENER_TIMEOUT_MS = 330_000;
 const PS_TIMEOUT_MS = 5_000;
 const STOP_DEDUPE_MS = 3_000; // window that collapses duplicated succeeded events
 const SCAN_INTERVAL_MS = 15_000; // attachment scan period (resumed sessions, reloads)
+const INJECT_TIMEOUT_MS = 30_000; // `opencode api session.prompt` budget
+const INJECT_RETRY_MS = 10_000; // pause before re-popping an inject that failed
 
 // One instance is loaded per directory and every instance sees every server
 // event, so state lives on globalThis and is deduped per session.
@@ -97,6 +102,49 @@ async function spawnCollect(argv, options, timeoutMs) {
     return await Promise.race([read, timedOut]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// opencodeBin is the argv0 of the inject CLI: the server's own binary when it
+// runs as the compiled opencode executable, otherwise `opencode` from PATH.
+function opencodeBin() {
+  const base = (process.execPath || "").split("/").pop();
+  return base === "opencode" ? process.execPath : "opencode";
+}
+
+// injectPrompt delivers text into a live session via the opencode CLI.
+// Plugin-side `ctx.session.prompt` resolves without queueing anything on
+// opencode 2.0.32, so the CLI is the only path that actually runs the turn.
+// It returns true only when the CLI exited 0 and printed the queued message
+// (`{ data: { id: "msg_…" } }`); it logs and returns false otherwise, so the
+// caller can leave the mail unread. It never throws.
+async function injectPrompt(sessionID, text, delivery) {
+  try {
+    const argv = [
+      opencodeBin(),
+      "api",
+      "session.prompt",
+      "--param",
+      "sessionID=" + sessionID,
+      "-d",
+      JSON.stringify({ text, delivery }),
+    ];
+    const options = { env: { ...process.env }, stdin: "ignore", stdout: "pipe", stderr: "ignore" };
+    const res = await spawnCollect(argv, options, INJECT_TIMEOUT_MS);
+    if (res.code !== 0) {
+      log("inject failed:", sessionID, "exit", res.code, (res.stdout || "").trim());
+      return false;
+    }
+    let id = "";
+    try { id = JSON.parse(res.stdout)?.data?.id || ""; } catch { /* not JSON */ }
+    if (typeof id !== "string" || id === "") {
+      log("inject failed:", sessionID, "unexpected output", (res.stdout || "").trim());
+      return false;
+    }
+    return true;
+  } catch (err) {
+    log("inject failed:", sessionID, err);
+    return false;
   }
 }
 
@@ -205,7 +253,7 @@ async function attachedSessions() {
 // ensureListener starts the per-session inbox relay once: mail is steered
 // into the conversation while a client is live, then acked; with no live
 // client it stays unread for the next session.
-function ensureListener(ctx, meta, sessionID, stopping) {
+function ensureListener(meta, sessionID, stopping) {
   if (state.listeners.has(sessionID)) return;
   const delivered = new Set(); // injected but not acked yet
   const loop = (async () => {
@@ -224,7 +272,12 @@ function ensureListener(ctx, meta, sessionID, stopping) {
         if (!id) continue;
         if (delivered.has(id)) { await sleep(2_000); continue; } // ack failed earlier
         if (!(await clientLive(sessionID))) return; // leave the mail unread
-        await ctx.session.prompt({ sessionID, text: "[flow inbox] " + out, delivery: "steer" });
+        const ok = await injectPrompt(sessionID, "[flow inbox] " + out, "steer");
+        if (!ok) {
+          // Delivery failed, so the mail stays unread: pause, then re-pop it.
+          await sleep(INJECT_RETRY_MS);
+          continue;
+        }
         delivered.add(id);
         await runFlow(meta, sessionID, ["inbox", "read", id, "--json"]);
       }
@@ -241,7 +294,7 @@ async function onExecutionStarted(ctx, sessionID, stopping) {
   const meta = await flowMeta(ctx, sessionID);
   if (!meta) return;
   void sessionStartContext(ctx, meta, sessionID);
-  ensureListener(ctx, meta, sessionID, stopping);
+  ensureListener(meta, sessionID, stopping);
 }
 
 async function onPrompt(ctx, event) {
@@ -278,8 +331,9 @@ async function onExecutionSucceeded(ctx, sessionID) {
   const stopped = await runFlow(meta, sessionID, ["hook", "stop"], payload);
   const context = hookContext(stopped.stdout);
   if (!context) return;
+  const ok = await injectPrompt(sessionID, "[flow] " + context, "queue");
+  if (!ok) return; // not delivered — keep the session unmarked so the next stop retries
   state.nudged.add(sessionID);
-  await ctx.session.prompt({ sessionID, text: "[flow] " + context, delivery: "queue" });
 }
 
 function eventSessionID(e) {
@@ -364,7 +418,7 @@ export default {
           const meta = await flowMeta(ctx, id);
           if (!meta) continue;
           void sessionStartContext(ctx, meta, id);
-          ensureListener(ctx, meta, id, stopping);
+          ensureListener(meta, id, stopping);
         }
       } catch (err) {
         log("attachment scan failed:", err);
