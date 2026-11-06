@@ -22,7 +22,7 @@ opencode (DeepSeek through the opencode Go subscription) does the bulk work.
 | TUI has no `--model`. A session created with a `model` keeps it. | Model is set at session creation (API), and with `-m` for `run`. |
 | `--auto` (client flag) auto-approves anything **not explicitly denied**. Config `deny` rules still apply. `OPENCODE_CONFIG_CONTENT` is ignored on the shared server. | `--dangerously-skip-permissions` → `--auto`. Nothing weakens a project `opencode.json`. |
 | `opencode api <operationId> --param k=v -d <json>` authenticates to the running server by itself. `session.create` is idempotent for an existing id; `session.update` takes `metadata`. | flow prepares sessions with `opencode api`, no HTTP client or credentials in Go. |
-| v2 server plugins: `~/.config/opencode/plugins/<name>/index.js`, `export default { id, setup(ctx) }`. Hooks: `ctx.event.subscribe()` (`session.execution.started/succeeded`, whole-server), `ctx.session.hook("prompt")`, `ctx.session.hook("context", (e) => e.system.push({type:"text",text}))` (runs before every model call of the agent loop; changes are not persisted; `e.sessionID` identifies the session; may be async), `ctx.session.prompt({sessionID,text,delivery:"steer"|"queue"})`. New plugin dirs load without restart. | flow ships one embedded JS plugin that bridges opencode events to the existing `flow hook …` commands. |
+| v2 server plugins: `~/.config/opencode/plugins/<name>/index.js`, `export default { id, setup(ctx) }`. Hooks: `ctx.event.subscribe()` (`session.execution.started/succeeded`, whole-server), `ctx.session.hook("prompt")`, `ctx.session.hook("context", (e) => e.system.push({type:"text",text}))` (runs before every model call of the agent loop; changes are not persisted; `e.sessionID` identifies the session; may be async). **Not usable on 2.0.32** (though documented): `ctx.session.instructions` does not exist and a plugin-side `ctx.session.prompt` resolves without queueing anything. `opencode api session.prompt --param sessionID=<id> -d {"text","delivery":"steer"\|"queue"}` from a child process does work, and does not replace the TUI's forwarded env. New or rewritten plugin files load without restart, but the old module's cleanup is **not** called. | flow ships one embedded JS plugin that bridges opencode events to the existing `flow hook …` commands. |
 | `opencode session export <id>` prints `{info, messages[]}`; messages are `user` (`text`), `assistant` (`content[]` of `text`/`reasoning`/`tool`), `idle`, `synthetic`… | `flow transcript` renders from the export. |
 | opencode loads skills from `~/.config/opencode/skills/<name>/SKILL.md` (and `~/.claude/skills`). It has a native `skill` tool. | flow installs the skill to `~/.config/opencode/skills/flow/`. |
 
@@ -81,6 +81,9 @@ One file, `internal/harness/opencode/plugin/index.js`, embedded with
 `//go:embed`. It runs in the opencode server. State lives on `globalThis`
 because the server loads one plugin instance per directory and every
 instance sees every server event; the global map dedupes per session.
+Each module evaluation stamps a generation on that state; listeners, scans
+and hooks from an older generation retire themselves, since opencode
+re-evaluates a rewritten plugin without calling the old cleanup.
 
 Session gating: the plugin acts only on sessions whose
 `metadata.flow.taskSlug` is set (`ctx.session.get`). Every other opencode
@@ -94,9 +97,9 @@ session (for example ad-hoc DeepSeek runs) gets zero flow calls.
 |---|---|---|
 | SessionStart (`flow hook session-start`) | on the first `session.execution.started` per session per server lifetime: run the hook with stdin `{"session_id","source":"startup"}`, cache `additionalContext` as a promise per session (`sessionCtx`), and push it as `<flow-session>…</flow-session>` into `e.system` in `session.hook("context")` | works |
 | UserPromptSubmit (`flow hook user-prompt-submit`) | `session.hook("prompt")`: run the hook with `{"session_id","prompt"}`; store the output per session (`turnCtx`, deleted when empty) and push it as `<flow-turn>…</flow-turn>` into `e.system` in `session.hook("context")`, which fires before every model call | works |
-| Inbox delivery (Claude: Monitor loop) | per flow session a listener loop: `flow inbox pop --wait --timeout 300 --keep-unread --json` → if a client for the session is live (ps: `opencode … -s <id>`) inject with `session.prompt({delivery:"steer", text:"[flow inbox] …"})`, then ack with `flow inbox read <id>`; if no client is live, stop the loop and leave the mail unread. Exit 3 (task closed) stops it. Restarted on the next `execution.started`. | works |
+| Inbox delivery (Claude: Monitor loop) | per flow session a listener loop: `flow inbox pop --wait --timeout 300 --keep-unread --json` → if a client for the session is live (ps: `opencode … -s <id>`) inject with `opencode api session.prompt` (`delivery:"steer"`, text `[flow inbox] <message json>`), then ack with `flow inbox read <id>` only if the server returned the new message id; if no client is live, stop the loop and leave the mail unread. Exit 3 (task closed) stops it. Started on `execution.started` and by a 15 s scan for attached `opencode -s <id>` clients (so a resumed, idle session gets one too). | works |
 | PreToolUse mid-turn notice | covered by `steer` delivery (lands at the next tool-step boundary) | covered |
-| Stop broadcast nudge (`flow hook stop`) | on `session.execution.succeeded`: run the hook with `{"session_id","stop_hook_active"}`; a non-empty context is queued as a prompt `[flow] …`. `stop_hook_active` is true on the turn that a nudge itself started, so a nudge never re-fires on its own continuation. flow's 30 min backoff still applies. | works |
+| Stop broadcast nudge (`flow hook stop`) | on `session.execution.succeeded`: run the hook with `{"session_id","stop_hook_active"}`; a non-empty context is queued as a prompt `[flow] …` via `opencode api session.prompt` (`delivery:"queue"`). `stop_hook_active` is true on the turn that a nudge itself started, so a nudge never re-fires on its own continuation. flow's 30 min backoff still applies. | works |
 | `flow do --here` bind from inside opencode | `OPENCODE_SESSION_ID` in tool shells | works; plugin gets metadata on the next `flow do` |
 
 Flow-side changes needed for parity:
@@ -122,6 +125,15 @@ Flow-side changes needed for parity:
   by the plugin into a session with no client attached would block on an
   `ask` rule, which is why the inbox listener only injects while a client is
   live.
+
+## Terminal spawn: long commands (kitty)
+
+kitty's backend types the command into the new tab with `kitty @ send-text`,
+which can land before the shell's line editor is up, in the tty canonical
+buffer that macOS caps at 1024 bytes. A bootstrap line longer than that was
+cut mid-quote (found in e2e). Lines over 900 bytes are now written to a
+self-deleting script and only ` bash '<path>'` is typed; shorter commands
+are sent exactly as before.
 
 ## Live guard and focus
 
