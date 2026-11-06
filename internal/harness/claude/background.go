@@ -57,24 +57,25 @@ func runBGCommand(workDir string, args []string) ([]byte, error) {
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // bannerShortIDRe matches the 8-char lowercase-hex short id following the
-// "backgrounded" marker on the banner's first line.
-var bannerShortIDRe = regexp.MustCompile(`backgrounded\s*·?\s*([0-9a-f]{8})\b`)
+// "backgrounded" marker on the banner line. Anchored to line start so a
+// help line that merely mentions the short id can never match.
+var bannerShortIDRe = regexp.MustCompile(`^\s*backgrounded\s*·?\s*([0-9a-f]{8})\b`)
 
 // parseBackgroundBanner extracts the short id from `claude --bg`'s banner
-// (`backgrounded · <shortId> · <name>`). Reads only the first line — the
-// help lines beneath it also mention the short id. Returns an error if no
+// (`backgrounded · <shortId> · <name>`). Older CLIs print the banner as
+// the first line; newer ones print a "Starting background service…"
+// preamble first, so every line is scanned and the first one that starts
+// with the "backgrounded" marker wins. The help lines beneath it also
+// mention the short id but never carry the marker. Returns an error if no
 // banner line is present (e.g. the spawn failed before registering).
 func parseBackgroundBanner(out string) (string, error) {
 	clean := ansiRe.ReplaceAllString(out, "")
-	firstLine := clean
-	if i := strings.IndexByte(clean, '\n'); i >= 0 {
-		firstLine = clean[:i]
+	for _, line := range strings.Split(clean, "\n") {
+		if m := bannerShortIDRe.FindStringSubmatch(line); m != nil {
+			return m[1], nil
+		}
 	}
-	m := bannerShortIDRe.FindStringSubmatch(firstLine)
-	if m == nil {
-		return "", fmt.Errorf("no background banner in output: %q", strings.TrimSpace(clean))
-	}
-	return m[1], nil
+	return "", fmt.Errorf("no background banner in output: %q", strings.TrimSpace(clean))
 }
 
 // bgAgentJSON mirrors one element of `claude agents --json`.
