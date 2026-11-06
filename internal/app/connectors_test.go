@@ -2,11 +2,13 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"flow/internal/connector"
 	"flow/internal/flowdb"
@@ -412,5 +414,144 @@ func TestB6ConnectorSecretFileFallback(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "secrets", "desk")); !os.IsNotExist(err) {
 		t.Errorf("secret file survived remove")
+	}
+}
+
+// withSecret stores a secret for an installed fake connector.
+func withSecret(t *testing.T, name string) string {
+	t.Helper()
+	store, err := secretStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "secret-" + name
+	if _, err := store.Put(name, secret); err != nil {
+		t.Fatal(err)
+	}
+	return secret
+}
+
+func readDispatchLog(t *testing.T) string {
+	t.Helper()
+	root, _ := connectorsRoot()
+	b, _ := os.ReadFile(filepath.Join(root, "dispatch.log"))
+	return string(b)
+}
+
+// B4: dispatch runs `send` on every installed connector whose events match,
+// in parallel with a per-connector timeout, then stamps notified_at.
+func TestB4DispatchSendsToMatchingConnectors(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-asker")
+	stubDispatchLauncher(t, nil)
+	orig := connectorTimeout
+	connectorTimeout = 3 * time.Second // macOS can take a while to first-exec a fresh script
+	t.Cleanup(func() { connectorTimeout = orig })
+
+	got := filepath.Join(t.TempDir(), "got")
+	urgentSeen := filepath.Join(t.TempDir(), "urgent")
+	installFakeConnector(t, "good", `"ask","urgent"`, `echo "$1|$FLOW_CONNECTOR_TOKEN|$FLOW_BIN|$FLOW_ROOT|$CLAUDE_CODE_SESSION_ID" > `+got+`; cat >> `+got)
+	installFakeConnector(t, "hang", `"ask"`, "sleep 30")
+	installFakeConnector(t, "bad", `"ask"`, "echo kaput >&2; exit 1")
+	installFakeConnector(t, "pager", `"urgent"`, "touch "+urgentSeen)
+	goodSecret := withSecret(t, "good")
+	for _, n := range []string{"hang", "bad", "pager"} {
+		withSecret(t, n)
+	}
+	origBin := flowBinPath
+	flowBinPath = func() string { return "/opt/flow/bin/flow" }
+	t.Cleanup(func() { flowBinPath = origBin })
+
+	if rc := msgRC(t, "user", "deploy now?", "--options", "Yes|No"); rc != 0 {
+		t.Fatalf("send rc=%d", rc)
+	}
+	ask := rowByBody(t, db, "deploy now?")
+
+	start := time.Now()
+	var rc int
+	captureStdout(t, func() { rc = cmdConnector([]string{"dispatch", ask.ID}) })
+	if rc != 0 {
+		t.Fatalf("dispatch rc=%d", rc)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("dispatch took %v — a hanging connector blocked it", d)
+	}
+
+	raw, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("good connector not invoked: %v\n%s", err, readDispatchLog(t))
+	}
+	head, body, _ := strings.Cut(string(raw), "\n")
+	root, _ := flowRoot()
+	if head != "send|"+goodSecret+"|/opt/flow/bin/flow|"+root+"|" {
+		t.Errorf("verb/env = %q (session id must be stripped)", head)
+	}
+	var p map[string]any
+	if err := json.Unmarshal([]byte(body), &p); err != nil {
+		t.Fatalf("stdin not JSON: %v %q", err, body)
+	}
+	if p["id"] != ask.ID || p["from_task"] != "asker" || p["body"] != "deploy now?" ||
+		p["kind"] != "ask" || p["urgent"] != false || p["created_at"] != ask.CreatedAt {
+		t.Errorf("payload = %v", p)
+	}
+	if opts, _ := p["options"].([]any); len(opts) != 2 || opts[0] != "Yes" {
+		t.Errorf("options = %v", p["options"])
+	}
+	if hint, _ := p["reply_hint"].(string); !strings.Contains(hint, "human reply "+ask.ID) {
+		t.Errorf("reply_hint = %q", hint)
+	}
+	if _, err := os.Stat(urgentSeen); !os.IsNotExist(err) {
+		t.Errorf("urgent-only connector got a normal ask")
+	}
+	if m, _ := flowdb.GetBusMessageByID(db, ask.ID); m.NotifiedAt == "" {
+		t.Errorf("notified_at not set after a successful send")
+	}
+	log := readDispatchLog(t)
+	for _, want := range []string{ask.ID + " good ok", ask.ID + " hang fail", "timed out", ask.ID + " bad fail", "kaput"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("dispatch.log lacks %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "pager") {
+		t.Errorf("non-matching connector logged:\n%s", log)
+	}
+
+	// An urgent ask reaches the urgent subscriber.
+	if rc := msgRC(t, "user", "prod down", "--urgent"); rc != 0 {
+		t.Fatal(rc)
+	}
+	u := rowByBody(t, db, "prod down")
+	captureStdout(t, func() { rc = cmdConnector([]string{"dispatch", u.ID}) })
+	if _, err := os.Stat(urgentSeen); err != nil {
+		t.Errorf("urgent connector not invoked: %v", err)
+	}
+
+	if rc := func() int {
+		var r int
+		captureStdout(t, func() { r = cmdConnector([]string{"dispatch", "nope"}) })
+		return r
+	}(); rc != 1 {
+		t.Errorf("unknown id rc=%d", rc)
+	}
+}
+
+// B4: when every connector fails, notified_at stays unset.
+func TestB4DispatchAllFailLeavesUnnotified(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-asker")
+	stubDispatchLauncher(t, nil)
+	installFakeConnector(t, "bad", `"ask"`, "exit 1")
+	withSecret(t, "bad")
+	if rc := msgRC(t, "user", "q"); rc != 0 {
+		t.Fatal(rc)
+	}
+	m := rowByBody(t, db, "q")
+	captureStdout(t, func() { _ = cmdConnector([]string{"dispatch", m.ID}) })
+	if m2, _ := flowdb.GetBusMessageByID(db, m.ID); m2.NotifiedAt != "" {
+		t.Errorf("notified_at set though every connector failed")
 	}
 }

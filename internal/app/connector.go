@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -363,10 +364,78 @@ func cmdConnectorTest(args []string) int {
 	return rc
 }
 
-// cmdConnectorDispatch is filled in by the dispatch behavior.
+// cmdConnectorDispatch is the hidden detached worker spawned after a
+// pinging send: `flow connector dispatch <id>`. It runs `send` on every
+// installed connector subscribed to the row's event (ask | urgent), all in
+// parallel so one hanging connector never delays the others, logs one
+// line per connector to connectors/dispatch.log, and stamps notified_at
+// when at least one succeeded.
 func cmdConnectorDispatch(args []string) int {
-	fmt.Fprintln(os.Stderr, "error: dispatch not implemented")
-	return 1
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: flow connector dispatch <message-id>")
+		return 2
+	}
+	db, err := openBusDB()
+	if err != nil {
+		logDispatch("%s error %v", args[0], err)
+		return 1
+	}
+	defer db.Close()
+	m, err := flowdb.GetBusMessageByID(db, args[0])
+	if err != nil || m == nil {
+		logDispatch("%s error no such message", args[0])
+		fmt.Fprintf(os.Stderr, "error: no message %q\n", args[0])
+		return 1
+	}
+	if m.Kind != "message" || m.ToTaskSlug != "" {
+		logDispatch("%s error not a human ask", m.ID)
+		fmt.Fprintf(os.Stderr, "error: %s is not a human ask\n", m.ID)
+		return 1
+	}
+	if m.SeenAt != "" {
+		logDispatch("%s skip already seen", m.ID)
+		return 0
+	}
+	event := connector.EventAsk
+	if m.Urgent {
+		event = connector.EventUrgent
+	}
+	var targets []*connector.Manifest
+	for _, c := range installedConnectors() {
+		if c.Wants(event) {
+			targets = append(targets, c)
+		}
+	}
+	p := connector.Payload{
+		ID: m.ID, FromTask: m.FromTaskSlug, Body: m.Body, Options: m.Options,
+		Urgent: m.Urgent, Kind: "ask", CreatedAt: m.CreatedAt,
+		ReplyHint: fmt.Sprintf(`"$FLOW_BIN" human reply %s "<answer>"  (or: "$FLOW_BIN" human seen %s)`, m.ID, m.ID),
+	}
+	errs := make([]error, len(targets))
+	var wg sync.WaitGroup
+	for i, c := range targets {
+		wg.Add(1)
+		go func(i int, c *connector.Manifest) {
+			defer wg.Done()
+			errs[i] = invokeConnector(c, connector.VerbSend, p)
+		}(i, c)
+	}
+	wg.Wait()
+	ok := false
+	for i, c := range targets {
+		if errs[i] != nil {
+			logDispatch("%s %s fail %v", m.ID, c.Name, errs[i])
+			continue
+		}
+		ok = true
+		logDispatch("%s %s ok", m.ID, c.Name)
+	}
+	if ok {
+		if err := flowdb.MarkNotified(db, m.ID); err != nil {
+			logDispatch("%s error mark notified: %v", m.ID, err)
+		}
+	}
+	return 0
 }
 
 // copyTree copies a connector folder (regular files and directories,

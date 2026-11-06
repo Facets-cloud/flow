@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     consumed_by_session  TEXT,
     options            TEXT,
     fyi                INTEGER NOT NULL DEFAULT 0,
-    ping               INTEGER NOT NULL DEFAULT 0
+    ping               INTEGER NOT NULL DEFAULT 0,
+    notified_at        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
     ON bus_messages(to_assignee, to_task_slug, status);
@@ -113,6 +114,8 @@ type BusMessage struct {
 	// Ping is the send-time decision to notify the human through the
 	// installed connectors (see InsertBusMessage).
 	Ping bool
+	// NotifiedAt is when at least one connector accepted the ping.
+	NotifiedAt string
 }
 
 // Consumer identifies who changes a row's state: By is the verb recorded
@@ -152,7 +155,7 @@ const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
     urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,''),
     COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,''),
-    COALESCE(options,''), fyi, ping`
+    COALESCE(options,''), fyi, ping, COALESCE(notified_at,'')`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -171,7 +174,7 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
 			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt,
-			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping); err != nil {
+			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping, &m.NotifiedAt); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
@@ -237,6 +240,12 @@ func optionsJSON(opts []string) (any, error) {
 		return nil, err
 	}
 	return string(b), nil
+}
+
+// MarkNotified stamps notified_at once a connector accepted the ping.
+func MarkNotified(db *sql.DB, id string) error {
+	_, err := db.Exec(`UPDATE bus_messages SET notified_at=COALESCE(notified_at, ?) WHERE id=?`, NowISO(), id)
+	return err
 }
 
 // PendingForHuman returns pending rows addressed to the human
