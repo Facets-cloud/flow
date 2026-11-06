@@ -1,0 +1,59 @@
+# macOS dialog connector
+
+An opt-in [flow human connector](../../../internal/app/skill/references/connectors.md)
+(contract v1). When an agent asks you something with
+
+```bash
+flow message user "Deploy v2 to prod?" --options "Yes|No"
+```
+
+flow pings you through this connector: a native macOS dialog pops up. Your
+answer goes back to the asking task's inbox as a reply (`reply_to=<id>`),
+and the agent picks it up there. The agent never blocks waiting on you.
+
+```
+agent ── flow message user "q" --options "A|B" ──► flow (row stored, ping decided)
+                                                    │ detached dispatch
+                                                    ▼
+                                     run send  ──► dialog (forked, never auto-dismisses)
+                                                    │ you click "A" + optional note
+                                                    ▼
+             "$FLOW_BIN" human reply <id> "A — note" ──► user/<task> inbox (reply_to=<id>)
+```
+
+## Install
+
+```bash
+flow connector add examples/connectors/macos   # copies it, stores a secret, shows a test dialog
+flow connector list
+flow connector test macos                      # another test dialog
+flow connector remove macos                    # uninstall (folder + secret)
+```
+
+Requirements: stock macOS only (bash + `osascript`). No Homebrew, jq or
+Python is needed. The dialog uses a plain `display dialog` (not `tell
+application "System Events"`), so you don't grant any Automation
+permission.
+
+## What you see
+
+| The ask has | Dialog |
+|---|---|
+| no options | your message, a text field, and the buttons **Later** and **Reply**. The reply is your text. Replying with an empty field marks the ask seen. |
+| 1–2 options | your message, a text field (an optional note), **Later**, and one button per option. The reply is `<option> — <note>`, or just `<option>`. |
+| 3+ options | a pick list, then a note dialog with **Later** and **Send**. |
+
+- The dialog title is `flow · <task>`. Urgent asks get the prefix `URGENT:`.
+- **Later** (or closing the dialog) does nothing, and the mail stays unread
+  in `flow inbox`. If one of the options is itself "Later", the dismiss
+  button reads **Not now** instead.
+- Dialogs never auto-dismiss. flow sends one ping per task until you've
+  seen it, so dialogs don't pile up from a chatty agent. Nothing is ever
+  re-popped.
+
+## Files
+
+- `connector.json` is the manifest (`events: ["ask","urgent"]`).
+- `run` implements `send` and `test`. It parses the JSON with JXA and then
+  forks the dialog, so it returns to flow within about a second. Dialog
+  errors go to `state/dialog.log` inside the installed folder.
