@@ -2,6 +2,8 @@ package kitty
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -149,6 +151,167 @@ func TestSpawnTabFlattensEmbeddedNewlines(t *testing.T) {
 	}
 	if got := strings.Count(captured, "\n"); got != 1 {
 		t.Errorf("send-text payload contains %d newlines; want exactly 1", got)
+	}
+}
+
+// TestSpawnTabShortCommandDoesNotWriteScript — the short-command path
+// must stay byte-for-byte identical to the pre-script behaviour and
+// never touch the filesystem.
+func TestSpawnTabShortCommandDoesNotWriteScript(t *testing.T) {
+	stubRunnerOutput(t, func(args []string) ([]byte, error) {
+		return []byte("42\n"), nil
+	})
+	oldWrite := WriteScript
+	WriteScript = func(body string) (string, error) {
+		t.Fatalf("WriteScript should not be called for a short command; body = %q", body)
+		return "", nil
+	}
+	t.Cleanup(func() { WriteScript = oldWrite })
+
+	var captured string
+	old := Runner
+	Runner = func(args []string) error {
+		captured = args[3]
+		return nil
+	}
+	t.Cleanup(func() { Runner = old })
+
+	if err := SpawnTab("t", "/tmp", "echo hi", map[string]string{"A": "b"}); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+	if want := " A='b' echo hi\n"; captured != want {
+		t.Errorf("send-text payload = %q; want %q", captured, want)
+	}
+}
+
+// TestSpawnTabLongCommandUsesScript — a line that would overflow the
+// tty's canonical input buffer (MAX_CANON, 1024 bytes on macOS) is
+// written to a self-deleting script, and only ` bash '<path>'` is
+// typed. The script keeps the command RAW (newlines and quotes
+// intact) and carries env vars via `exec env`.
+func TestSpawnTabLongCommandUsesScript(t *testing.T) {
+	stubRunnerOutput(t, func(args []string) ([]byte, error) {
+		return []byte("42\n"), nil
+	})
+
+	const scriptPath = "/tmp/flow-kitty-0123456789abcdef0123456789abcdef.sh"
+	var bodies []string
+	oldWrite := WriteScript
+	WriteScript = func(body string) (string, error) {
+		bodies = append(bodies, body)
+		return scriptPath, nil
+	}
+	t.Cleanup(func() { WriteScript = oldWrite })
+
+	var captured string
+	old := Runner
+	Runner = func(args []string) error {
+		captured = args[3]
+		return nil
+	}
+	t.Cleanup(func() { Runner = old })
+
+	prompt := "it's a long prompt\n" + strings.Repeat("x", 2000)
+	command := "claude " + ShellQuote(prompt)
+	envVars := map[string]string{"FLOW_ROOT": "/very/long/root"}
+
+	if err := SpawnTab("t", "/tmp", command, envVars); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+
+	if len(bodies) != 1 {
+		t.Fatalf("WriteScript called %d times; want 1", len(bodies))
+	}
+	body := bodies[0]
+	if wantPrefix := "#!/bin/bash\nrm -- \"$0\"\n"; !strings.HasPrefix(body, wantPrefix) {
+		t.Errorf("script body prefix = %q; want %q", body, wantPrefix)
+	}
+	if !strings.Contains(body, "exec env FLOW_ROOT=") {
+		t.Errorf("script body missing `exec env FLOW_ROOT=`; got:\n%s", body)
+	}
+	if !strings.Contains(body, command) {
+		t.Errorf("script body does not contain the raw command; got:\n%s", body)
+	}
+	if !strings.Contains(body, `'\''`) {
+		t.Errorf("script body should preserve the command's single quote (shell-escaped); got:\n%s", body)
+	}
+	// Three prefix/exec line terminators plus the raw newline kept
+	// inside the quoted argument.
+	if got := strings.Count(body, "\n"); got != 4 {
+		t.Errorf("script body has %d newlines; want 4 (raw command newline preserved)", got)
+	}
+	if want := " bash " + ShellQuote(scriptPath) + "\n"; captured != want {
+		t.Errorf("send-text payload = %q; want %q", captured, want)
+	}
+}
+
+// TestSpawnTabLongCommandLaunchErrorRemovesScript — if `kitty @ launch`
+// fails after the script was written, the orphaned temp file must be
+// removed and send-text must not run.
+func TestSpawnTabLongCommandLaunchErrorRemovesScript(t *testing.T) {
+	stubRunnerOutput(t, func(args []string) ([]byte, error) {
+		return nil, errors.New("exit status 1: remote control is not enabled")
+	})
+
+	const scriptPath = "/tmp/flow-kitty-0123456789abcdef0123456789abcdef.sh"
+	oldWrite := WriteScript
+	WriteScript = func(body string) (string, error) { return scriptPath, nil }
+	t.Cleanup(func() { WriteScript = oldWrite })
+
+	var removed []string
+	oldRemove := removeScript
+	removeScript = func(path string) error {
+		removed = append(removed, path)
+		return nil
+	}
+	t.Cleanup(func() { removeScript = oldRemove })
+
+	runnerCalled := false
+	old := Runner
+	Runner = func(args []string) error {
+		runnerCalled = true
+		return nil
+	}
+	t.Cleanup(func() { Runner = old })
+
+	long := "echo " + ShellQuote(strings.Repeat("y", 2000))
+	if err := SpawnTab("t", "/tmp", long, nil); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if runnerCalled {
+		t.Error("Runner (send-text) should not be called when launch fails")
+	}
+	if !slices.Equal(removed, []string{scriptPath}) {
+		t.Errorf("removeScript calls = %v; want [%q]", removed, scriptPath)
+	}
+}
+
+// TestWriteScriptDefaultPathAndPermissions pins the temp-file contract:
+// flow-kitty-<32 hex>.sh under os.TempDir(), mode 0700.
+func TestWriteScriptDefaultPathAndPermissions(t *testing.T) {
+	path, err := WriteScript("#!/bin/bash\nexit 0\n")
+	if err != nil {
+		t.Fatalf("WriteScript: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+
+	if dir := filepath.Dir(path); dir != filepath.Clean(os.TempDir()) {
+		t.Errorf("script dir = %q; want %q", dir, filepath.Clean(os.TempDir()))
+	}
+	base := filepath.Base(path)
+	const prefix, suffix = "flow-kitty-", ".sh"
+	if !strings.HasPrefix(base, prefix) || !strings.HasSuffix(base, suffix) {
+		t.Errorf("script name = %q; want %s<32 hex>%s", base, prefix, suffix)
+	}
+	if hexLen := len(base) - len(prefix) - len(suffix); hexLen != 32 {
+		t.Errorf("hex id length = %d; want 32 (name %q)", hexLen, base)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat script: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("script mode = %o; want 700", perm)
 	}
 }
 
