@@ -19,7 +19,7 @@ func pluginSource(t *testing.T) string {
 
 // TestPluginJSBridgesEveryHook pins the plugin's hook parity contract: the
 // id, the opencode v2 event names it subscribes to, the flow commands it
-// runs, and the instruction/prompt calls it uses to deliver context.
+// runs, and the hook calls it uses to deliver context.
 func TestPluginJSBridgesEveryHook(t *testing.T) {
 	src := pluginSource(t)
 
@@ -31,8 +31,9 @@ func TestPluginJSBridgesEveryHook(t *testing.T) {
 		{"started event", `"session.execution.started"`},
 		{"succeeded event", `"session.execution.succeeded"`},
 		{"prompt hook", `session.hook("prompt"`},
-		{"instruction put", `instructions.entry.put`},
-		{"instruction remove", `instructions.entry.remove`},
+		{"context hook", `session.hook("context"`},
+		{"context push", `e.system.push`},
+		{"context guard", `Array.isArray(e?.system)`},
 		{"session start hook", `["hook", "session-start"]`},
 		{"user prompt hook", `["hook", "user-prompt-submit"]`},
 		{"stop hook", `["hook", "stop"]`},
@@ -49,6 +50,34 @@ func TestPluginJSBridgesEveryHook(t *testing.T) {
 		if !strings.Contains(src, tc.frag) {
 			t.Errorf("plugin is missing %s (%q)", tc.what, tc.frag)
 		}
+	}
+}
+
+// TestPluginJSContextDelivery pins how flow context reaches the model: the
+// session-start and turn context are cached per session and pushed into the
+// context hook's system blocks. opencode v2 has no `session.instructions`,
+// so any use of `instructions.entry` is a silent no-op.
+func TestPluginJSContextDelivery(t *testing.T) {
+	src := pluginSource(t)
+
+	for _, frag := range []string{
+		`<flow-session>`,
+		`<flow-turn>`,
+		`sessionCtx: new Map()`,
+		`turnCtx: new Map()`,
+		`state.sessionCtx ??= new Map()`,
+		`state.turnCtx ??= new Map()`,
+		`state.sessionCtx.has(sessionID)`,
+		`state.sessionCtx.set(sessionID, started)`,
+		`state.turnCtx.set(sessionID, context)`,
+		`state.turnCtx.delete(sessionID)`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("plugin is missing %q", frag)
+		}
+	}
+	if strings.Contains(src, "instructions.entry") {
+		t.Error("plugin still uses instructions.entry, which opencode v2 does not expose")
 	}
 }
 
@@ -94,7 +123,7 @@ func TestPluginJSStopDedupeIsSynchronous(t *testing.T) {
 		}
 	}
 	// The backfill keeps an older globalThis state object (no stopSeen) usable.
-	for _, field := range []string{"meta", "started", "listeners", "nudged", "stopSeen"} {
+	for _, field := range []string{"meta", "started", "sessionCtx", "turnCtx", "listeners", "nudged", "stopSeen"} {
 		if !strings.Contains(src, "state."+field+" ??=") {
 			t.Errorf("state.%s is not backfilled for older state objects", field)
 		}

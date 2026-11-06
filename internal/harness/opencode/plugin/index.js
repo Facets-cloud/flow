@@ -16,14 +16,19 @@
 //   session.execution.started    -> `flow hook session-start` (first per session)
 //                                -> `flow inbox pop --wait --timeout 300 --keep-unread --json`
 //   session.hook("prompt")       -> `flow hook user-prompt-submit`
+//   session.hook("context")      -> pushes the cached session-start and turn
+//                                   context into every model call
 //   session.execution.succeeded  -> `flow hook stop`
 //   inbox message popped         -> a `[flow inbox]` steer prompt, then `flow inbox read <id> --json`
 //
 // One plugin instance is loaded per directory, so each event reaches every
-// instance. Both per-turn entry points therefore dedupe synchronously on
+// instance. The per-turn entry points therefore dedupe synchronously on
 // shared globalThis state before doing any work: started events via
-// `started`/`listeners`, succeeded events via `stopSeen` (a short window),
+// `sessionCtx`/`listeners`, succeeded events via `stopSeen` (a short window),
 // so one turn end runs `flow hook stop` and queues at most one `[flow]` nudge.
+// `session.hook("context")` only fires in the instance for the session's
+// directory, so it pushes unconditionally (context is not persisted between
+// model calls).
 
 const HOOK_TIMEOUT_MS = 20_000;
 const LISTENER_TIMEOUT_MS = 330_000;
@@ -34,7 +39,8 @@ const STOP_DEDUPE_MS = 3_000; // window that collapses duplicated succeeded even
 // event, so state lives on globalThis and is deduped per session.
 const state = (globalThis.__flowOpencode ??= {
   meta: new Map(), // sessionID -> flow meta | null (cached)
-  started: new Set(), // session-start hook already ran
+  sessionCtx: new Map(), // sessionID -> Promise<string> of the session-start context
+  turnCtx: new Map(), // sessionID -> user-prompt-submit context for the current turn
   listeners: new Map(), // sessionID -> inbox listener promise
   nudged: new Set(), // last turn came from a stop nudge
   stopSeen: new Map(), // sessionID -> Date.now() of the last handled succeeded event
@@ -44,6 +50,8 @@ const state = (globalThis.__flowOpencode ??= {
 // the newer fields, so backfill every one before anything reads it.
 state.meta ??= new Map();
 state.started ??= new Set();
+state.sessionCtx ??= new Map();
+state.turnCtx ??= new Map();
 state.listeners ??= new Map();
 state.nudged ??= new Set();
 state.stopSeen ??= new Map();
@@ -125,14 +133,24 @@ function hookContext(stdout) {
   } catch { return ""; }
 }
 
-// setInstruction writes a context block, or clears it for an empty value.
-async function setInstruction(ctx, sessionID, key, value) {
-  try {
-    if (value) await ctx.session.instructions.entry.put({ sessionID, key, value });
-    else await ctx.session.instructions.entry.remove({ sessionID, key });
-  } catch (err) {
-    if (value) log("instructions put failed:", sessionID, key, err);
-  }
+// sessionStartContext runs `flow hook session-start` once per session and
+// caches the promise so concurrent callers share one run. The promise is
+// stored synchronously, before the first await, so sibling plugin instances
+// cannot start a second run. It never rejects: failures resolve to "".
+function sessionStartContext(ctx, meta, sessionID) {
+  if (state.sessionCtx.has(sessionID)) return state.sessionCtx.get(sessionID);
+  const started = (async () => {
+    try {
+      const payload = { session_id: sessionID, source: "startup" };
+      const out = await runFlow(meta, sessionID, ["hook", "session-start"], payload);
+      return hookContext(out.stdout);
+    } catch (err) {
+      log("session-start hook failed:", sessionID, err);
+      return "";
+    }
+  })();
+  state.sessionCtx.set(sessionID, started);
+  return started;
 }
 
 // clientLive is flow's live-guard ps check: is an opencode client attached?
@@ -185,12 +203,7 @@ function ensureListener(ctx, meta, sessionID, stopping) {
 async function onExecutionStarted(ctx, sessionID, stopping) {
   const meta = await flowMeta(ctx, sessionID);
   if (!meta) return;
-  if (!state.started.has(sessionID)) {
-    state.started.add(sessionID);
-    const payload = { session_id: sessionID, source: "startup" };
-    const started = await runFlow(meta, sessionID, ["hook", "session-start"], payload);
-    await setInstruction(ctx, sessionID, "flow-session", hookContext(started.stdout));
-  }
+  void sessionStartContext(ctx, meta, sessionID);
   ensureListener(ctx, meta, sessionID, stopping);
 }
 
@@ -201,7 +214,9 @@ async function onPrompt(ctx, event) {
   if (!meta) return;
   const payload = { session_id: sessionID, prompt: event?.prompt?.text ?? "" };
   const submitted = await runFlow(meta, sessionID, ["hook", "user-prompt-submit"], payload);
-  await setInstruction(ctx, sessionID, "flow-turn", hookContext(submitted.stdout));
+  const context = hookContext(submitted.stdout);
+  if (context) state.turnCtx.set(sessionID, context);
+  else state.turnCtx.delete(sessionID);
 }
 
 // onExecutionSucceeded is the Stop hook: a nudge it produces is queued as
@@ -250,6 +265,26 @@ export default {
       });
     } catch (err) {
       log("prompt hook registration failed:", err);
+    }
+
+    // The context hook runs before every model call of the agent loop. The
+    // pushed text is not persisted between calls, so push on every fire.
+    try {
+      await ctx.session.hook("context", async (e) => {
+        try {
+          const sid = e?.sessionID;
+          if (!sid) return;
+          const meta = await flowMeta(ctx, sid);
+          if (!meta) return;
+          if (!Array.isArray(e?.system)) return;
+          const start = await sessionStartContext(ctx, meta, sid);
+          if (start) e.system.push({ type: "text", text: "<flow-session>\n" + start + "\n</flow-session>" });
+          const turn = state.turnCtx.get(sid);
+          if (turn) e.system.push({ type: "text", text: "<flow-turn>\n" + turn + "\n</flow-turn>" });
+        } catch (err) { log("context hook failed:", err); }
+      });
+    } catch (err) {
+      log("context hook registration failed:", err);
     }
 
     // Subscribe in the background so setup returns promptly.
