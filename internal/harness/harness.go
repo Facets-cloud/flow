@@ -33,8 +33,9 @@ import (
 type Name string
 
 const (
-	NameClaude Name = "claude"
-	NameCodex  Name = "codex"
+	NameClaude   Name = "claude"
+	NameCodex    Name = "codex"
+	NameOpencode Name = "opencode"
 )
 
 // InjectionMarker prefixes any first-user-message text injected via
@@ -120,6 +121,23 @@ type BackgroundLauncher interface {
 	// not currently running (its process exited) but is still
 	// recoverable by attaching in the Agent View.
 	BackgroundAgents() ([]BackgroundAgent, error)
+}
+
+// SessionMeta is the flow-side metadata attached to a prepared session.
+// Persisted by the harness (opencode stores it under metadata.flow so a
+// later `flow do` / resumed session can recover the task binding).
+type SessionMeta struct {
+	TaskSlug string `json:"taskSlug"`
+	FlowRoot string `json:"flowRoot,omitempty"`
+	FlowBin  string `json:"flowBin,omitempty"`
+	Auto     bool   `json:"auto,omitempty"`
+}
+
+// SessionPreparer is an OPTIONAL capability: setup that must run before a
+// session is launched or resumed (opencode: create the session server-side
+// with model + flow metadata). Called on bootstrap and resume.
+type SessionPreparer interface {
+	PrepareSession(workDir, sessionID string, meta SessionMeta) error
 }
 
 // Harness is the contract every agent-CLI adapter implements.

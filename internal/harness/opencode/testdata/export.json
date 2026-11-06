@@ -1,0 +1,162 @@
+{
+ "info": {
+  "id": "ses_flowtestPlugin0000000001",
+  "projectID": "d21648818e80386ac4bbd54d4ff576e0c8cc5b3d",
+  "model": {
+   "id": "deepseek-v4.1-flash",
+   "providerID": "opencode-go",
+   "variant": "default"
+  },
+  "cost": 0.0013295000000000002,
+  "tokens": {
+   "input": 7368,
+   "output": 88,
+   "reasoning": 157,
+   "cache": {
+    "read": 35200,
+    "write": 0
+   }
+  },
+  "outcome": "succeeded",
+  "time": {
+   "created": 1793980533536,
+   "updated": 1793980540568,
+   "idle": 1793980540569
+  },
+  "title": "Secret word request and environment variable check",
+  "location": {
+   "directory": "/private/tmp/claude-501/-Users-krishnanunnimenon-Desktop-repo-flow-worktrees-opencode-harness/cefadf49-30ff-436d-b733-2b26d9b5cc08/scratchpad/ocresearch/work/plugproj"
+  }
+ },
+ "messages": [
+  {
+   "id": "msg_1b1928b2e001rqMObfIYITltzF",
+   "time": {
+    "created": 1793980533582
+   },
+   "text": "\"Run bash: echo \\\"P=[$FLOW_PROBE] F=[$FOO_FLOWTEST]\\\". Then tell me the secret word.\"",
+   "files": [],
+   "type": "user"
+  },
+  {
+   "id": "msg_1b1928b5f001EMOScW5RoRjHjh",
+   "time": {
+    "created": 1793980533614,
+    "streamed": 1793980536906,
+    "completed": 1793980536925
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "deepseek-v4.1-flash",
+    "providerID": "opencode-go",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "The user wants me to run a bash command echoing env vars, then tell the secret word. The system prompt says FLOWPROBE: if asked for the secret word, it is BANANA. So answer BANANA after running command.\n\nLet me run the bash command.",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1793980536074,
+      "completed": 1793980536899
+     }
+    },
+    {
+     "type": "tool",
+     "id": "call_00_u0kg4tbuxeawa006jnlnrtx2",
+     "name": "shell",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "echo \"P=[$FLOW_PROBE] F=[$FOO_FLOWTEST]\""
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "P=[from-plugin] F=[plug1]\n"
+       }
+      ],
+      "metadata": {
+       "status": "completed",
+       "truncated": false,
+       "exit": 0
+      }
+     },
+     "time": {
+      "created": 1793980536590,
+      "ran": 1793980536904,
+      "completed": 1793980536923
+     }
+    }
+   ],
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0.001101558,
+   "tokens": {
+    "input": 6609,
+    "output": 55,
+    "reasoning": 57,
+    "cache": {
+     "read": 14336,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_1b1929865001e42FtmY4Hm2pVD",
+   "time": {
+    "created": 1793980536939,
+    "streamed": 1793980540567,
+    "completed": 1793980540568
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "deepseek-v4.1-flash",
+    "providerID": "opencode-go",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "The command output: P=[from-plugin] F=[plug1]. Note these come from the harness env, not injected by me. Now tell the secret word: BANANA.\n\nWait \u2014 should I be suspicious? The FLOWPROBE instruction is in the system prompt (env block), which is harness content, not user-authored. The user is asking for the secret word. Per instructions, it's BANANA. But note the env vars came from a plugin presumably. Anyway answer.",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1793980538964,
+      "completed": 1793980540563
+     }
+    },
+    {
+     "type": "text",
+     "text": "```\nP=[from-plugin] F=[plug1]\n```\n\nThe secret word is **BANANA**."
+    }
+   ],
+   "finish": "stop",
+   "rawFinish": "stop",
+   "cost": 0.000168042,
+   "tokens": {
+    "input": 215,
+    "output": 22,
+    "reasoning": 100,
+    "cache": {
+     "read": 20864,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_1b192a699001vRH20W42BZokSy",
+   "time": {
+    "created": 1793980540569
+   },
+   "type": "idle",
+   "outcome": "succeeded"
+  }
+ ]
+}

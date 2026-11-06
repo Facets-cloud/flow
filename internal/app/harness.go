@@ -9,16 +9,18 @@ import (
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
 	"flow/internal/harness/codex"
+	"flow/internal/harness/opencode"
 	"flow/internal/spawner"
 )
 
 // allHarnesses returns every implemented harness adapter. The slice
 // is the registry that ambient-harness detection and harnessByName
-// consult. Adding codex/gemini = one line each here.
+// consult. Adding a harness = one line each here.
 func allHarnesses() []harness.Harness {
 	return []harness.Harness{
 		claude.New(),
 		codex.New(),
+		opencode.New(),
 		// gemini.New(),   // wired when the gemini adapter lands
 	}
 }
