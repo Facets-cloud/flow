@@ -308,7 +308,7 @@ func cmdDo(args []string) int {
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
 	if needsBootstrap {
-		id, err := h.NewSessionID()
+		id, err := h.NewSessionID(task.WorkDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
 			return 1

@@ -83,7 +83,7 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 	if err != nil {
 		return err
 	}
-	sid, err := h.NewSessionID()
+	sid, err := h.NewSessionID(o.WorkDir)
 	if err != nil {
 		return fmt.Errorf("new session id: %w", err)
 	}

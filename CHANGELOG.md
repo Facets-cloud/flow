@@ -7,6 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex harness.** The live-session guard now sees Codex auto runs
+  (`codex exec resume <flags> <id>`), so `flow do` no longer opens a second
+  writer on a thread a headless run is driving. `flow transcript` honours
+  `$CODEX_HOME`. The thread-minting probe runs in the task's work_dir instead
+  of the caller's cwd.
+
+### Added
+
+- Codex auto runs write the session's final message (`codex exec -o`) to
+  `auto-runs/<run>.last.txt` next to the run log; `flow show task` lists it
+  as `auto_run_last:` once it exists.
+
 ## [0.1.0-alpha.34] — 2026-11-06
 
 ### Added

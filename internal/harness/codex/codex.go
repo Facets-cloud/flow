@@ -36,8 +36,10 @@ func (c *codex) SessionIDEnvVar() string { return "CODEX_THREAD_ID" }
 // threads, while older saved threads may use other RFC-4122 versions.
 var sessionIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-func (c *codex) NewSessionID() (string, error) {
-	out, err := ProbeRunner()
+// The probe runs in workDir (the task's work_dir): codex exec records its
+// cwd in the thread rollout, and the resumed session should agree with it.
+func (c *codex) NewSessionID(workDir string) (string, error) {
+	out, err := ProbeRunner(workDir)
 	if err != nil {
 		return "", fmt.Errorf("mint Codex session: %w", err)
 	}
@@ -92,16 +94,21 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	if opts.SkipPermissions {
 		argv = append(argv, "--dangerously-bypass-approvals-and-sandbox")
 	}
+	if opts.LastMessagePath != "" {
+		argv = append(argv, "-o", opts.LastMessagePath)
+	}
 	return append(argv, sessionID, prompt)
 }
 
-func runProbe() ([]byte, error) {
+func runProbe(workDir string) ([]byte, error) {
 	// This probe intentionally persists its thread: the interactive `codex
 	// resume` started immediately afterwards must resume this exact id.
-	return exec.Command(
+	cmd := exec.Command(
 		"codex", "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
 		"Reply exactly with OK. Do not make any changes.",
-	).Output()
+	)
+	cmd.Dir = workDir // "" keeps the caller's cwd
+	return cmd.Output()
 }
 
 func parseThreadID(out []byte) (string, error) {
@@ -128,7 +135,9 @@ func parseThreadID(out []byte) (string, error) {
 	return "", fmt.Errorf("Codex probe output did not include a thread.started event")
 }
 
-var runningSessionRe = regexp.MustCompile(`\bresume\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b`)
+// Flags may sit between `resume` and the id: AutoRunArgv emits
+// `codex exec resume --dangerously-bypass-approvals-and-sandbox -o <file> <id> ...`.
+var runningSessionRe = regexp.MustCompile(`\bresume(?:\s+--?[A-Za-z][\w-]*(?:\s+[^-\s]\S*)?)*?\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b`)
 
 func (c *codex) LiveSessionIDs() (map[string]int, error) {
 	out, err := PSRunner()

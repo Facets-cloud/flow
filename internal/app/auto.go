@@ -76,14 +76,7 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 	}
 	defer logF.Close()
 
-	exArgs := []string{"__auto-exec", slug}
-	if injection != "" {
-		// Forward the one-off instruction to the supervisor, which appends
-		// it (behind withMarker) to the autonomous prompt. Passed as a
-		// distinct arg — no shell parsing — so any characters are safe.
-		exArgs = append(exArgs, "--with", injection)
-	}
-	cmd := exec.Command(self, exArgs...)
+	cmd := exec.Command(self, autoExecArgs(slug, logPath, injection)...)
 	cmd.Dir = workDir
 	cmd.Env = env
 	cmd.Stdin = nil
@@ -100,6 +93,24 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 	// so it can be reparented to init when it exits.
 	_ = cmd.Process.Release()
 	return pid, nil
+}
+
+// autoExecArgs builds the `flow __auto-exec` argv for the supervisor.
+func autoExecArgs(slug, logPath, injection string) []string {
+	exArgs := []string{"__auto-exec", slug, "--last-message", autoRunLastMessagePath(logPath)}
+	if injection != "" {
+		// Forward the one-off instruction to the supervisor, which appends
+		// it (behind withMarker) to the autonomous prompt. Passed as a
+		// distinct arg — no shell parsing — so any characters are safe.
+		exArgs = append(exArgs, "--with", injection)
+	}
+	return exArgs
+}
+
+// autoRunLastMessagePath is where a headless run's final message lands:
+// next to its log, same basename, `.last.txt`.
+func autoRunLastMessagePath(logPath string) string {
+	return strings.TrimSuffix(logPath, filepath.Ext(logPath)) + ".last.txt"
 }
 
 // processAlive reports whether a process with the given pid is currently
@@ -250,6 +261,7 @@ func cmdAutoExec(args []string) int {
 	slug := args[0]
 	fs := flagSet("__auto-exec")
 	withInstr := fs.String("with", "", "one-off instruction to append to the autonomous prompt")
+	lastMsg := fs.String("last-message", "", "file the harness writes the run's final message to")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -297,7 +309,7 @@ func cmdAutoExec(args []string) int {
 		_ = finalizeAutoRun(db, slug, "dead")
 		return 1
 	}
-	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr}
+	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
 	// A re-run on a session that already ran must resume it.
 	opts.Resume = h.ValidateSession(task.WorkDir, task.SessionID.String) == nil
 

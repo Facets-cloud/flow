@@ -748,14 +748,12 @@ func TestB10DocsCoverConnectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, unreleased, _ := strings.Cut(string(changelog), "## [Unreleased]")
-	if i := strings.Index(unreleased, "\n## ["); i > 0 {
-		unreleased = unreleased[:i]
-	}
+	// Checked across the whole CHANGELOG: a release cut moves the entry out
+	// of [Unreleased] into its version section.
 	for _, want := range []string{"### Added", "connector", "--options", "--fyi", "flow human reply",
 		"flow connector add macos", "--available"} {
-		if !strings.Contains(unreleased, want) {
-			t.Errorf("CHANGELOG [Unreleased] lacks %q", want)
+		if !strings.Contains(string(changelog), want) {
+			t.Errorf("CHANGELOG lacks %q", want)
 		}
 	}
 }

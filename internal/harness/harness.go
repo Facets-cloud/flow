@@ -60,6 +60,11 @@ type LaunchOpts struct {
 	// (claude: --resume instead of --session-id, which it rejects for an
 	// existing session as "already in use").
 	Resume bool
+
+	// LastMessagePath, when set on a headless run, asks the harness to
+	// write the session's final message to this file (codex: -o). Impls
+	// without an equivalent ignore it.
+	LastMessagePath string
 }
 
 // BackgroundAgent is one entry from a harness's background-agent
@@ -147,7 +152,8 @@ type Harness interface {
 	// synthesizes a v4 UUID) or probe the harness (codex/gemini exec
 	// a one-shot to mint and capture an id). Always returns a real
 	// id on success — flow's caller has a single uniform spawn path.
-	NewSessionID() (string, error)
+	// workDir is the task's work_dir; probing impls run there.
+	NewSessionID(workDir string) (string, error)
 
 	// ValidateSessionID rejects strings that can't be a session id for
 	// this harness. Used by `flow do --here` to gate the env-var-
