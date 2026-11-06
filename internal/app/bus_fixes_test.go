@@ -235,3 +235,129 @@ func TestF3MigrationStampsLegacyHumanMailSeen(t *testing.T) {
 		t.Errorf("legacy mail still announced: %q", notice)
 	}
 }
+
+// hookRun runs one hook with a JSON stdin payload and returns its
+// additionalContext. It clears the hook-scoped session id afterwards so
+// later non-hook calls in the test see only the env var.
+func hookRun(t *testing.T, payload string, fn func(args []string) int) string {
+	t.Helper()
+	var out string
+	withHookStdin(t, payload, func() {
+		out = captureStdout(t, func() { _ = fn(nil) })
+	})
+	hookSessionID, hookPrompt, hookPromptKnown = "", "", false
+	return busHookContext(t, out)
+}
+
+func seenAt(t *testing.T, db *sql.DB, id string) string {
+	t.Helper()
+	var s string
+	_ = db.QueryRow(`SELECT COALESCE(seen_at,'') FROM bus_messages WHERE id=?`, id).Scan(&s)
+	return s
+}
+
+func upsPayload(sid, prompt string) string {
+	b, _ := json.Marshal(map[string]string{"session_id": sid, "prompt": prompt})
+	return string(b)
+}
+
+// F4: human mail a hook surfaced in an INTERACTIVE session is marked seen
+// on the NEXT human-typed prompt there — never on the surfacing call
+// itself, and never on an injected/automated prompt.
+func TestF4SurfacedHumanMailSeenOnNextHumanPrompt(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	mkBusTask(t, db, "desk", "sid-desk")
+	ask := sendHumanAsk(t, db, "sid-asker", "ship it tonight?")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+
+	// SessionStart in the human's interactive session surfaces the ask.
+	ctx := hookRun(t, `{"session_id":"sid-desk"}`, cmdHookSessionStart)
+	if !strings.Contains(ctx, ask) {
+		t.Fatalf("SessionStart did not surface the ask by id: %q", ctx)
+	}
+	if seenAt(t, db, ask) != "" {
+		t.Fatal("the surfacing invocation itself marked the mail seen")
+	}
+
+	for name, prompt := range map[string]string{
+		"--with injection":  "do the thing\n\n[via flow do --with]\nalso this",
+		"/loop firing":      "/loop check the deploy",
+		"wakeup sentinel":   "<<autonomous-loop-dynamic>>",
+		"flow bootstrap":    buildTaskBootstrapPrompt("desk"),
+		"auto bootstrap":    buildAutoBootstrapPrompt("desk", "regular", "", ""),
+		"owner tick":        buildOwnerTickPrompt("o", "/tmp/o"),
+		"task-notification": "<task-notification>agent finished</task-notification>",
+	} {
+		hookRun(t, upsPayload("sid-desk", prompt), cmdHookUserPromptSubmit)
+		if seenAt(t, db, ask) != "" {
+			t.Fatalf("%s prompt marked human mail seen", name)
+		}
+	}
+	// A headless auto run never marks seen, even on plain text.
+	t.Setenv("FLOW_AUTO_RUN", "desk")
+	hookRun(t, upsPayload("sid-desk", "looks good"), cmdHookUserPromptSubmit)
+	if seenAt(t, db, ask) != "" {
+		t.Fatal("prompt under FLOW_AUTO_RUN marked human mail seen")
+	}
+	t.Setenv("FLOW_AUTO_RUN", "")
+	// A different session's human prompt doesn't see what desk surfaced.
+	hookRun(t, upsPayload("sid-other", "hello"), cmdHookUserPromptSubmit)
+	if seenAt(t, db, ask) != "" {
+		t.Fatal("another session's prompt marked desk's surfaced mail seen")
+	}
+	// The human typing in desk marks it seen.
+	hookRun(t, upsPayload("sid-desk", "yes, ship it"), cmdHookUserPromptSubmit)
+	if seenAt(t, db, ask) == "" {
+		t.Fatal("next human-typed prompt did not mark surfaced mail seen")
+	}
+}
+
+// F4: SessionStart inside a headless auto run doesn't record a surface.
+func TestF4AutoRunSurfaceNotRecorded(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	mkBusTask(t, db, "kid", "sid-kid")
+	ask := sendHumanAsk(t, db, "sid-asker", "need a key")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("FLOW_AUTO_RUN", "kid")
+	hookRun(t, `{"session_id":"sid-kid"}`, cmdHookSessionStart)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	hookRun(t, upsPayload("sid-kid", "ok"), cmdHookUserPromptSubmit)
+	if seenAt(t, db, ask) != "" {
+		t.Fatal("mail surfaced in an auto run was later marked seen")
+	}
+}
+
+// F4: the sender-session "reply acks its own outbound ask" path only
+// fires on a human-typed prompt.
+func TestF4SenderAckOnlyOnHumanPrompt(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	ask := sendHumanAsk(t, db, "sid-asker", "which bucket?")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+
+	ctx := hookRun(t, upsPayload("sid-asker", "go\n\n[via flow do --with]\nresume"), cmdHookUserPromptSubmit)
+	if st, _ := busRow(t, db, ask); st != "pending" || strings.Contains(ctx, "answered after") {
+		t.Fatalf("injected prompt acked the ask: %s %q", st, ctx)
+	}
+	t.Setenv("FLOW_AUTO_RUN", "asker")
+	hookRun(t, upsPayload("sid-asker", "the blue one"), cmdHookUserPromptSubmit)
+	if st, _ := busRow(t, db, ask); st != "pending" {
+		t.Fatal("auto-run prompt acked the ask")
+	}
+	t.Setenv("FLOW_AUTO_RUN", "")
+	ctx = hookRun(t, upsPayload("sid-asker", "the blue one"), cmdHookUserPromptSubmit)
+	if st, _ := busRow(t, db, ask); st != "acked" || !strings.Contains(ctx, "answered after") {
+		t.Fatalf("human prompt did not ack: %s %q", st, ctx)
+	}
+	if seenAt(t, db, ask) == "" {
+		t.Error("ack did not stamp seen_at")
+	}
+}

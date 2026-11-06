@@ -19,11 +19,12 @@ import (
 //	SessionStart      busSessionStartContext(): pending-count notices +
 //	                  the listener discipline (arm an inbox Monitor loop,
 //	                  re-arm on expiry; watch what you depend on).
-//	UserPromptSubmit  busPromptSubmitContext(): the human replying in a
-//	                  session ACKS that session's own outbound
+//	UserPromptSubmit  busPromptSubmitContext(): a HUMAN-TYPED prompt
+//	                  (isHumanPrompt) ACKS that session's own outbound
 //	                  human-directed messages (that is the answering
-//	                  mechanism, not inbox consumption) + a pending
-//	                  count notice for the task's inbox.
+//	                  mechanism, not inbox consumption) and marks the
+//	                  human mail SessionStart surfaced there seen; plus a
+//	                  pending count notice for the task's inbox.
 //	PreToolUse        busPreToolUseContext(): delta-gated surface of any
 //	                  just-arrived unread item (directed message OR
 //	                  broadcast) right before a tool runs, so a mid-turn
@@ -50,7 +51,7 @@ func busSessionStartContext() string {
 	s := currentBusSender()
 
 	var b strings.Builder
-	b.WriteString(humanPendingNotice(db))
+	b.WriteString(surfaceHumanMail(db, s.SessionID))
 	if s.TaskSlug != "" {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
 		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
@@ -79,7 +80,14 @@ func busPromptSubmitContext() string {
 	s := currentBusSender()
 
 	var b strings.Builder
-	if s.SessionID != "" {
+	// Only a prompt the human actually typed counts: it marks the human
+	// mail a hook previously surfaced in this session seen, and answers
+	// this session's own outbound asks. Injected prompts (--with, auto
+	// runs, owner ticks, /loop, wakeups, flow bootstraps) do neither.
+	if s.SessionID != "" && currentPromptIsHuman() {
+		if ids, err := flowdb.TakeHumanSurfaced(db, s.SessionID); err == nil {
+			_, _ = flowdb.MarkSeen(db, ids)
+		}
 		acked, _ := flowdb.AckHumanMessagesFromSession(db, s.SessionID, busUser, "prompt")
 		for _, m := range acked {
 			b.WriteString(fmt.Sprintf(
@@ -158,16 +166,49 @@ func busPreToolUseContext() string {
 		subject, urgentNote, lead.ID, busSnippet(lead.Body))
 }
 
+// humanSurfaceMax caps how many human-mail items a notice shows inline.
+const humanSurfaceMax = 3
+
 // humanPendingNotice renders the inform-only "the USER has mail" line
-// ("" when their queue is empty).
+// ("" when their queue is empty), plus the ids it showed inline.
 func humanPendingNotice(db *sql.DB) string {
+	n, _ := humanMailNotice(db)
+	return n
+}
+
+func humanMailNotice(db *sql.DB) (string, []string) {
 	asks, fyi, err := flowdb.HumanUnreadCounts(db, busUser)
 	if err != nil || asks+fyi == 0 {
-		return ""
+		return "", nil
+	}
+	rows, _ := flowdb.UnreadForHuman(db, busUser)
+	sort.SliceStable(rows, func(i, j int) bool { // asks before FYI
+		return rows[i].Kind == "message" && rows[j].Kind != "message"
+	})
+	var items, ids []string
+	for _, m := range rows {
+		if len(items) == humanSurfaceMax {
+			break
+		}
+		items = append(items, fmt.Sprintf("[%s] from %s: %s", m.ID, busFrom(m), busSnippet(m.Body)))
+		ids = append(ids, m.ID)
 	}
 	return fmt.Sprintf(
 		" flow-bus: unread mail for the USER: %d ask(s) await you · %d FYI — tell them at the "+
-			"start of your reply; they read them with `flow inbox --as user` (never consume these yourself).", asks, fyi)
+			"start of your reply: %s. They read them with `flow inbox --as user` (never consume these yourself).",
+		asks, fyi, strings.Join(items, "; ")), ids
+}
+
+// surfaceHumanMail renders the human-mail notice for a SessionStart and,
+// in an interactive session, records the ids it showed so the NEXT
+// human-typed prompt in that session marks them seen. Recording (not
+// marking) here keeps the surfacing invocation itself from counting.
+func surfaceHumanMail(db *sql.DB, sessionID string) string {
+	notice, ids := humanMailNotice(db)
+	if interactiveSession() {
+		_ = flowdb.RecordHumanSurfaced(db, sessionID, ids)
+	}
+	return notice
 }
 
 // busHumanPendingNotice is the standalone variant for the unbound
@@ -178,7 +219,7 @@ func busHumanPendingNotice() string {
 		return ""
 	}
 	defer db.Close()
-	return humanPendingNotice(db)
+	return surfaceHumanMail(db, currentSessionID())
 }
 
 // pendingTaskNotice renders an inform-only pending-count line for a

@@ -56,11 +56,20 @@ func cmdHook(args []string) int {
 // ("" outside a hook). currentSessionID prefers it over the env var.
 var hookSessionID string
 
+// hookPrompt is the prompt text from a UserPromptSubmit payload;
+// hookPromptKnown is true only when a payload was actually decoded.
+// isHumanPrompt reads them.
+var (
+	hookPrompt      string
+	hookPromptKnown bool
+)
+
 // hookPayload is the subset of the JSON that Claude Code and Codex write to
 // a hook's stdin that flow reads.
 type hookPayload struct {
 	SessionID      string `json:"session_id"`
 	StopHookActive bool   `json:"stop_hook_active"`
+	Prompt         string `json:"prompt"`
 }
 
 // readHookPayload decodes the hook's stdin payload and records its
@@ -69,7 +78,7 @@ type hookPayload struct {
 // saw an unbound session. ok=false when stdin is a terminal or holds no
 // JSON object; hookSessionID is then "" and the env var applies.
 func readHookPayload() (p hookPayload, ok bool) {
-	hookSessionID = ""
+	hookSessionID, hookPrompt, hookPromptKnown = "", "", false
 	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice != 0 {
 		return p, false
 	}
@@ -77,6 +86,7 @@ func readHookPayload() (p hookPayload, ok bool) {
 		return p, false
 	}
 	hookSessionID = p.SessionID
+	hookPrompt, hookPromptKnown = p.Prompt, true
 	return p, true
 }
 

@@ -25,12 +25,16 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
 - `user` (the reserved local human) stays **unread** until a human has
   seen it, whatever any reader did with it — it never expires while
   unread. Hook notices to the human split it as "N ask(s) await you · M
-  FYI" (FYI = broadcasts).
+  FYI" (FYI = broadcasts) and show the top items by id; items a hook showed
+  in an interactive session are marked seen on the human's next typed
+  prompt there.
 - Use ONLY for the three cases above. NOT for routine progress, and not
   when the user is clearly active in this session (they'll see it live).
 - ONE message per wait — NEVER re-send.
 - Body ≤500 chars, lead with the ask, name the task slug for context.
-- Ack is automatic when the user replies in THIS session (a hook injects
+- Ack is automatic when the user replies in THIS session — a prompt they
+  actually type; `--with` injections, auto runs, owner ticks, /loop and
+  wakeup firings never count (a hook injects
   "answered after <duration>" — factor the elapsed time in; re-verify
   stale state after a long wait). The human can also mark it read from
   their own terminal with `flow inbox read <id>`. Agents never consume

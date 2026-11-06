@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS bus_nudges (
     attempts   INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS bus_human_surfaced (
+    session_id  TEXT NOT NULL,
+    message_id  TEXT NOT NULL,
+    surfaced_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS bus_surfaced (
     task_slug   TEXT NOT NULL,
     message_id  TEXT NOT NULL,
@@ -478,6 +485,47 @@ func MarkSurfaced(db *sql.DB, slug string, ids []string) error {
 	return tx.Commit()
 }
 
+// RecordHumanSurfaced notes that a hook showed these human-mail ids in an
+// interactive session, so the NEXT human-typed prompt there can mark them
+// seen (TakeHumanSurfaced). Idempotent.
+func RecordHumanSurfaced(db *sql.DB, sessionID string, ids []string) error {
+	if sessionID == "" || len(ids) == 0 {
+		return nil
+	}
+	now := NowISO()
+	for _, id := range ids {
+		if _, err := db.Exec(`INSERT OR IGNORE INTO bus_human_surfaced (session_id, message_id, surfaced_at)
+            VALUES (?,?,?)`, sessionID, id, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TakeHumanSurfaced returns and forgets the human-mail ids previously
+// surfaced in a session.
+func TakeHumanSurfaced(db *sql.DB, sessionID string) ([]string, error) {
+	rows, err := db.Query(`SELECT message_id FROM bus_human_surfaced WHERE session_id=? ORDER BY surfaced_at`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_, err = db.Exec(`DELETE FROM bus_human_surfaced WHERE session_id=?`, sessionID)
+	return ids, err
+}
+
 // AddWatch subscribes `watcher` (address form: "user" for the human,
 // "user/<task-slug>" for a session) to `watched` (task slug, project
 // slug, or assignee).
@@ -638,6 +686,10 @@ func SweepBus(db *sql.DB, now time.Time) error {
 	if _, err := db.Exec(
 		`DELETE FROM bus_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
 		return fmt.Errorf("sweep surfaced: %w", err)
+	}
+	if _, err := db.Exec(
+		`DELETE FROM bus_human_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
+		return fmt.Errorf("sweep human surfaced: %w", err)
 	}
 	return nil
 }

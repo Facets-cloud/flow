@@ -55,12 +55,17 @@ func TestMessageHumanLifecycle(t *testing.T) {
 		t.Errorf("send output: %s", out)
 	}
 
-	// The user replying in the sender session acks + reports the wait.
-	out = captureStdout(t, func() {
-		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
-			t.Fatalf("ups hook rc != 0")
-		}
+	// The user replying (a human-typed prompt) in the sender session acks
+	// + reports the wait.
+	t.Setenv("FLOW_AUTO_RUN", "")
+	withHookStdin(t, `{"session_id":"sid-msg-1","prompt":"approved"}`, func() {
+		out = captureStdout(t, func() {
+			if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
+				t.Fatalf("ups hook rc != 0")
+			}
+		})
 	})
+	hookSessionID, hookPrompt, hookPromptKnown = "", "", false
 	ctx := busHookContext(t, out)
 	if !strings.Contains(ctx, "answered after") || !strings.Contains(ctx, "need release approval") {
 		t.Errorf("ack context: %s", ctx)
