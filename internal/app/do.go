@@ -811,10 +811,10 @@ func buildBootstrapPromptForKindV2(slug, kind, playbookSlug string, isFirstRun b
 func buildTaskBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
 		"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
+			"1. "+flowSkillStep()+". This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
 			"2. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files listed under other: are sidecar references — load on demand when relevant, not eagerly.\n"+
 			"3. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief AND every file under updates:. Files under other: are on-demand references.\n"+
-			"4. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
+			"4. Read "+repoInstructionFiles+" in your work_dir and any nested ones under subdirectories you will modify. These override any assumption from the brief.\n"+
 			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
 	)
@@ -828,11 +828,11 @@ func buildTaskBootstrapPrompt(slug string) string {
 func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string, isFirstRun bool) string {
 	base := fmt.Sprintf(
 		"You are running playbook `%s` as run `%s`. Do ALL of the following in order before executing anything:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works.\n"+
+			"1. "+flowSkillStep()+". This loads the operating manual that governs how this session works.\n"+
 			"2. Run: flow show playbook %s. This shows the playbook's definition and recent runs — context only, not your instructions. Note any files listed under other: — they're sidecar references you can Read on demand if relevant; do not eagerly load them.\n"+
 			"3. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files under other: are references for THIS run; load on demand when relevant. The brief is your authoritative instructions for this run — it was snapshotted from the playbook at the moment this run started. Execute against this, not the live playbook brief.\n"+
 			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief and every file under updates:. Files under other: are on-demand references.\n"+
-			"5. Read CLAUDE.md in your work_dir.\n"+
+			"5. Read "+repoInstructionFiles+" in your work_dir.\n"+
 			"6. Only then begin executing your brief.\n"+
 			"\n"+
 			"While executing: if the user adjusts the playbook's procedure during this run (e.g. 'let's always do X', 'change the approach for...', 'this step should also...'), pause and ask via AskUserQuestion whether to persist the change to the playbook's live brief.md so future runs benefit. Options: 'Persist to playbook' (Edit playbooks/%s/brief.md), 'Just this run' (no change to live playbook), 'Both — persist + log a note in playbooks/%s/updates/'. The run's own brief.md is a frozen snapshot — never edit it to change future behavior; that's what the live playbook brief is for. See flow skill §4.13 for the full pattern.",

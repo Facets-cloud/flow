@@ -166,9 +166,9 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 		"You are running an automated close-out sweep for completed flow task %q.\n\n"+
 			"%s"+
 			"## Steps\n\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
+			"1. "+flowSkillStep()+". This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
 			"2. Run: flow transcript %s\n"+
-			"   This prints the conversation transcript from the task's Claude session. Read it carefully end to end.\n\n"+
+			"   This prints the conversation transcript from the task's agent session. Read it carefully end to end.\n\n"+
 			"3. KB sweep — strict bar, distill the essence.\n\n"+
 			"   For each of these five files, ask: across the WHOLE transcript, is there a durable fact about the user, their org, products, processes, or business that belongs there per §4.10's bucket table AND meets ALL three bars below?\n"+
 			"     - %s/kb/user.md\n"+
@@ -179,7 +179,7 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 			"   The three bars (ALL must be met):\n"+
 			"     a. **Durable** — still true / still relevant in three months. Not 'today I felt X', not 'we tried approach Y for this one PR'.\n"+
 			"     b. **Surprising or non-obvious** — not derivable from the code, the README, or what a sibling task would already know.\n"+
-			"     c. **Future-relevant** — a future Claude session would change a decision because of it. If you can't picture that, skip.\n\n"+
+			"     c. **Future-relevant** — a future agent session would change a decision because of it. If you can't picture that, skip.\n\n"+
 			"   Most task transcripts contribute nothing to the KB. Mechanical work, narrow bug fixes, local refactors, routine debugging — these almost never produce KB entries. The expected answer for most files on most tasks is 'no'. Don't reach.\n\n"+
 			"4. Writing KB entries — INTERPRET the essence; do not transcribe.\n\n"+
 			"   This is the close-out mode of §4.10 and is DIFFERENT from real-time scoop. In real-time scoop you capture what the user just said, mostly verbatim, because it's a single fresh fact. Here you've read the whole conversation — your job is to SYNTHESIZE: pull out the durable insight in compact paraphrase, in your own words, capturing the essence and (where helpful) the why. Avoid quote dumps. One concise dated bullet per insight.\n\n"+
