@@ -68,7 +68,9 @@ func consumerFlags(fs *flag.FlagSet) (as *string) {
 // resolveConsumer applies the identity override to the ambient identity.
 func resolveConsumer(as string) busSender {
 	if as != "" {
-		return busSender{Assignee: as}
+		// Keep the real session id so a consumption is still traceable
+		// to the session that ran it.
+		return busSender{Assignee: as, SessionID: currentSessionID()}
 	}
 	return currentBusSender()
 }
@@ -103,6 +105,13 @@ type busMsgJSON struct {
 	Mail      string   `json:"mail"` // mail-model label: "unread" | "read"
 	WaitedS   float64  `json:"waited_s,omitempty"`
 	ReplyTo   string   `json:"reply_to,omitempty"`
+	// ConsumedBy is who last claimed/acked/saw the row (omitted if nobody).
+	ConsumedBy *consumerJSON `json:"consumed_by,omitempty"`
+}
+
+type consumerJSON struct {
+	Identity string `json:"identity"`
+	Session  string `json:"session,omitempty"`
 }
 
 type addrJSON struct {
@@ -117,7 +126,34 @@ func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
 		To:   addrJSON{Assignee: m.ToAssignee, TaskSlug: m.ToTaskSlug},
 		Body: m.Body, Urgent: m.Urgent, Status: m.Status, Mail: mailLabel(m),
 		WaitedS: m.WaitedS, ReplyTo: m.ReplyTo,
+		ConsumedBy: consumedByJSON(m),
 	}
+}
+
+func consumedByJSON(m *flowdb.BusMessage) *consumerJSON {
+	if m.ConsumedByIdentity == "" && m.ConsumedBySession == "" {
+		return nil
+	}
+	return &consumerJSON{Identity: m.ConsumedByIdentity, Session: m.ConsumedBySession}
+}
+
+// consumedByLabel renders "  by <identity> (<session-prefix>)" for the
+// --all listing ("" when nobody has consumed the row).
+func consumedByLabel(m *flowdb.BusMessage) string {
+	if m.ConsumedByIdentity == "" && m.ConsumedBySession == "" {
+		return ""
+	}
+	who := m.ConsumedByIdentity
+	if who == "" {
+		who = "?"
+	}
+	if sid := m.ConsumedBySession; sid != "" {
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		return fmt.Sprintf("  by %s (%s)", who, sid)
+	}
+	return "  by " + who
 }
 
 // mailLabel maps a row to the mail-model nomenclature: "unread" or
@@ -183,7 +219,7 @@ func inboxList(args []string) int {
 		}
 		extra := ""
 		if *all {
-			extra = "  " + mailLabel(m)
+			extra = "  " + mailLabel(m) + consumedByLabel(m)
 		}
 		fmt.Printf("%s [%s] %s%s  %s: %s\n", mark, m.ID, busAge(m.CreatedAt, now), extra, busFrom(m), m.Body)
 	}
@@ -242,14 +278,14 @@ func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error
 		var claimed bool
 		switch {
 		case keepUnread:
-			claimed, err = flowdb.ClaimDelivered(db, m.ID)
+			claimed, err = flowdb.ClaimDelivered(db, m.ID, s.consumer("pop"))
 			if claimed {
 				m.Status = "delivered"
 			}
 		case m.Kind == "message" && m.ToTaskSlug == "":
-			claimed, err = flowdb.ClaimAcked(db, m, "pop")
+			claimed, err = flowdb.ClaimAcked(db, m, s.consumer("pop"))
 		default:
-			claimed, err = flowdb.ClaimDelivered(db, m.ID)
+			claimed, err = flowdb.ClaimDelivered(db, m.ID, s.consumer("pop"))
 		}
 		if err != nil {
 			return nil, err
@@ -416,7 +452,7 @@ func inboxRead(args []string) int {
 	m, err = flowdb.GetBusMessageByID(db, rest[0])
 	if err == nil && m != nil && !(isHumanMail(m) && agentInvocation()) {
 		// An agent may DISPLAY human mail but never consume it.
-		m, newly, err = flowdb.ReadMessageByID(db, rest[0], "read")
+		m, newly, err = flowdb.ReadMessageByID(db, rest[0], currentBusSender().consumer("read"))
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

@@ -266,7 +266,7 @@ func TestInboxPopKeepUnread(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &all); err != nil || len(all) != 1 {
 		t.Fatalf("--all after keep-unread: %v %v", all, err)
 	}
-	if _, _, err := flowdb.ReadMessageByID(db, all[0].ID, "read"); err != nil {
+	if _, _, err := flowdb.ReadMessageByID(db, all[0].ID, flowdb.Consumer{By: "read"}); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := flowdb.GetBusStats(db, "shashwat"); s.Acked != 1 {

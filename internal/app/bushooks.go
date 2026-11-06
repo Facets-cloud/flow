@@ -86,9 +86,9 @@ func busPromptSubmitContext() string {
 	// runs, owner ticks, /loop, wakeups, flow bootstraps) do neither.
 	if s.SessionID != "" && currentPromptIsHuman() {
 		if ids, err := flowdb.TakeHumanSurfaced(db, s.SessionID); err == nil {
-			_, _ = flowdb.MarkSeen(db, ids)
+			_, _ = flowdb.MarkSeen(db, ids, s.consumer("prompt"))
 		}
-		acked, _ := flowdb.AckHumanMessagesFromSession(db, s.SessionID, busUser, "prompt")
+		acked, _ := flowdb.AckHumanMessagesFromSession(db, s.SessionID, busUser, s.consumer("prompt"))
 		for _, m := range acked {
 			b.WriteString(fmt.Sprintf(
 				" flow-bus: the user has just returned — your message [%s] (%q) was answered after %s. "+

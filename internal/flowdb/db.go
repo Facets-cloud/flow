@@ -284,6 +284,16 @@ func OpenDB(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("migrate bus_messages.reply_to: %w", err)
 		}
 	}
+	// bus_messages.consumed_by_{identity,session} record who consumed a
+	// row; nullable, no backfill (old consumers are unknowable).
+	for _, col := range []string{"consumed_by_identity", "consumed_by_session"} {
+		if has, err := columnExists(db, "bus_messages", col); err == nil && !has {
+			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate bus_messages.%s: %w", col, err)
+			}
+		}
+	}
 	// bus_messages.seen_at arrived with the human-mail fixes: human mail is
 	// unread until a human has seen it. On first add, stamp every existing
 	// human row seen — the old mail is left behind rather than resurfaced

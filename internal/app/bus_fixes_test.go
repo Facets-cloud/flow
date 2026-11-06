@@ -361,3 +361,68 @@ func TestF4SenderAckOnlyOnHumanPrompt(t *testing.T) {
 		t.Error("ack did not stamp seen_at")
 	}
 }
+
+func consumedBy(t *testing.T, db *sql.DB, id string) (identity, session string) {
+	t.Helper()
+	if err := db.QueryRow(`SELECT COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,'')
+        FROM bus_messages WHERE id=?`, id).Scan(&identity, &session); err != nil {
+		t.Fatalf("consumed_by %s: %v", id, err)
+	}
+	return
+}
+
+// F5: every claim/ack/seen records WHO consumed the row (identity +
+// session id), and `flow inbox --all` shows it.
+func TestF5RecordsConsumerIdentity(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	mkBusTask(t, db, "peer", "sid-peer")
+
+	// Task mail popped by its own bound session.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-asker")
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user/peer", "rebase please"}); rc != 0 {
+			t.Fatal("msg peer")
+		}
+	})
+	var peerMsg string
+	_ = db.QueryRow(`SELECT id FROM bus_messages WHERE body='rebase please'`).Scan(&peerMsg)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-peer")
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop"}); rc != 0 {
+			t.Fatal("peer pop")
+		}
+	})
+	if id, sess := consumedBy(t, db, peerMsg); id != "user/peer" || sess != "sid-peer" {
+		t.Errorf("pop consumer = %q/%q, want user/peer/sid-peer", id, sess)
+	}
+
+	// Human ask answered by a human-typed prompt in the sender session.
+	ask := sendHumanAsk(t, db, "sid-asker", "go/no-go?")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	hookRun(t, upsPayload("sid-asker", "go"), cmdHookUserPromptSubmit)
+	if id, sess := consumedBy(t, db, ask); id != "user/asker" || sess != "sid-asker" {
+		t.Errorf("prompt-ack consumer = %q/%q", id, sess)
+	}
+
+	// Human ask read from the human's terminal.
+	ask2 := sendHumanAsk(t, db, "sid-asker", "second ask")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	captureStdout(t, func() { _ = cmdInbox([]string{"read", ask2}) })
+	if id, sess := consumedBy(t, db, ask2); id != "user" || sess != "" {
+		t.Errorf("terminal read consumer = %q/%q", id, sess)
+	}
+
+	// --all shows who consumed each row.
+	out := captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--as", "user"}) })
+	if !strings.Contains(out, "by user/asker (sid-aske") {
+		t.Errorf("--all does not show the consumer:\n%s", out)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-peer")
+	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--json"}) })
+	if !strings.Contains(out, `"consumed_by":{"identity":"user/peer","session":"sid-peer"}`) {
+		t.Errorf("--all --json lacks consumed_by:\n%s", out)
+	}
+}

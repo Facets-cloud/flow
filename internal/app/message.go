@@ -203,6 +203,11 @@ func currentBusSender() busSender {
 	}
 }
 
+// consumer is the flowdb.Consumer record for a state change by s.
+func (s busSender) consumer(by string) flowdb.Consumer {
+	return flowdb.Consumer{By: by, Identity: s.identity(), Session: s.SessionID}
+}
+
 // busIdentity is the address the current invocation consumes as:
 // "self/<task-slug>" in a bound session, else "self" (the human).
 func (s busSender) identity() string {

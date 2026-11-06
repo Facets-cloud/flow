@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     waited_s           REAL,
     acked_by           TEXT,
     reply_to           TEXT,
-    seen_at            TEXT
+    seen_at            TEXT,
+    consumed_by_identity TEXT,
+    consumed_by_session  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
     ON bus_messages(to_assignee, to_task_slug, status);
@@ -95,6 +97,19 @@ type BusMessage struct {
 	WaitedS         float64
 	ReplyTo         string // parent message id (`--reply-to`), "" if none
 	SeenAt          string // when a HUMAN saw it (human mail only), "" if unseen
+	// ConsumedByIdentity / ConsumedBySession record who last claimed,
+	// acked or saw the row (bus address + harness session id).
+	ConsumedByIdentity string
+	ConsumedBySession  string
+}
+
+// Consumer identifies who changes a row's state: By is the verb recorded
+// in acked_by ('pop', 'prompt', 'read'); Identity is the consumer's bus
+// address (user, user/<slug>); Session its harness session id ("" from a
+// plain terminal). Every claim/ack/seen records Identity + Session so a
+// swallowed message can always be traced to its consumer.
+type Consumer struct {
+	By, Identity, Session string
 }
 
 // BusUser is the reserved assignee for the local human. "Human mail" is
@@ -123,7 +138,8 @@ func (m *BusMessage) IsUnread() bool {
 
 const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug,''),
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
-    urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,'')`
+    urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,''),
+    COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,'')`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -140,7 +156,8 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		var urgent int
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
-			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt); err != nil {
+			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt,
+			&m.ConsumedByIdentity, &m.ConsumedBySession); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
@@ -195,11 +212,12 @@ func HumanUnreadCounts(db *sql.DB, assignee string) (asks, fyi int, err error) {
 
 // MarkSeen stamps seen_at on rows that are still unseen and returns the
 // ids it newly stamped. A human seeing human mail is what makes it read.
-func MarkSeen(db *sql.DB, ids []string) ([]string, error) {
+func MarkSeen(db *sql.DB, ids []string, c Consumer) ([]string, error) {
 	var out []string
 	now := NowISO()
 	for _, id := range ids {
-		res, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE id=? AND seen_at IS NULL`, now, id)
+		res, err := db.Exec(`UPDATE bus_messages SET seen_at=?, consumed_by_identity=?, consumed_by_session=?
+            WHERE id=? AND seen_at IS NULL`, now, NullIfEmpty(c.Identity), NullIfEmpty(c.Session), id)
 		if err != nil {
 			return out, err
 		}
@@ -241,7 +259,7 @@ func GetBusMessageByID(db *sql.DB, id string) (*BusMessage, error) {
 // transitions pending→delivered. `newly` is false when the row was
 // already read (the caller still gets the row to display) or was claimed
 // concurrently.
-func ReadMessageByID(db *sql.DB, id, by string) (m *BusMessage, newly bool, err error) {
+func ReadMessageByID(db *sql.DB, id string, c Consumer) (m *BusMessage, newly bool, err error) {
 	m, err = GetBusMessageByID(db, id)
 	if err != nil || m == nil {
 		return nil, false, err
@@ -249,7 +267,7 @@ func ReadMessageByID(db *sql.DB, id, by string) (m *BusMessage, newly bool, err 
 	toHuman := m.ToTaskSlug == "" && m.Kind == "message"
 	if m.ToTaskSlug == "" && m.ToAssignee == BusUser && m.Kind == "broadcast" {
 		// A broadcast to the human is read once seen; no ack semantics.
-		ids, err := MarkSeen(db, []string{m.ID})
+		ids, err := MarkSeen(db, []string{m.ID}, c)
 		if len(ids) > 0 {
 			m.SeenAt = NowISO()
 		}
@@ -257,10 +275,10 @@ func ReadMessageByID(db *sql.DB, id, by string) (m *BusMessage, newly bool, err 
 	}
 	switch {
 	case toHuman && (m.Status == "pending" || m.Status == "delivered"):
-		claimed, err := claimAckedAnyState(db, m, by)
+		claimed, err := claimAckedAnyState(db, m, c)
 		return m, claimed, err
 	case !toHuman && m.Status == "pending":
-		claimed, err := ClaimDelivered(db, m.ID)
+		claimed, err := ClaimDelivered(db, m.ID, c)
 		if claimed {
 			m.Status = "delivered"
 		}
@@ -274,13 +292,13 @@ func ReadMessageByID(db *sql.DB, id, by string) (m *BusMessage, newly bool, err 
 // delivered (a `--keep-unread` reader left it delivered-but-unanswered).
 // ClaimAcked itself only fires on pending, so delivered rows need this
 // widened guard. Atomic: exactly one caller wins.
-func claimAckedAnyState(db *sql.DB, m *BusMessage, by string) (bool, error) {
+func claimAckedAnyState(db *sql.DB, m *BusMessage, c Consumer) (bool, error) {
 	m.WaitedS = waitedSeconds(m.CreatedAt, time.Now())
 	res, err := db.Exec(
 		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=?,
-             seen_at=COALESCE(seen_at, ?)
+             seen_at=COALESCE(seen_at, ?), consumed_by_identity=?, consumed_by_session=?
          WHERE id=? AND status IN ('pending','delivered')`,
-		NowISO(), m.WaitedS, by, NowISO(), m.ID)
+		NowISO(), m.WaitedS, c.By, NowISO(), NullIfEmpty(c.Identity), NullIfEmpty(c.Session), m.ID)
 	if err != nil {
 		return false, err
 	}
@@ -296,10 +314,11 @@ func claimAckedAnyState(db *sql.DB, m *BusMessage, by string) (bool, error) {
 // should move on to the next row. This is what makes concurrent `pop`
 // consumers of one inbox (e.g. the user's terminal and a monitor task)
 // safe: exactly one pops each message.
-func ClaimDelivered(db *sql.DB, id string) (bool, error) {
+func ClaimDelivered(db *sql.DB, id string, c Consumer) (bool, error) {
 	res, err := db.Exec(
-		`UPDATE bus_messages SET status='delivered', delivered_at=? WHERE id=? AND status='pending'`,
-		NowISO(), id)
+		`UPDATE bus_messages SET status='delivered', delivered_at=?,
+             consumed_by_identity=?, consumed_by_session=? WHERE id=? AND status='pending'`,
+		NowISO(), NullIfEmpty(c.Identity), NullIfEmpty(c.Session), id)
 	if err != nil {
 		return false, err
 	}
@@ -311,7 +330,7 @@ func ClaimDelivered(db *sql.DB, id string) (bool, error) {
 // sent to the human `toAssignee`, recording the wait. Scoped to that
 // one queue: a reply from the local user must never ack mail addressed
 // to a DIFFERENT assignee (they haven't seen it). Returns acked rows.
-func AckHumanMessagesFromSession(db *sql.DB, sessionID, toAssignee, by string) ([]*BusMessage, error) {
+func AckHumanMessagesFromSession(db *sql.DB, sessionID, toAssignee string, c Consumer) ([]*BusMessage, error) {
 	rows, err := queryBusMsgs(db,
 		`kind='message' AND status='pending' AND to_task_slug IS NULL
          AND sender_session_id=? AND to_assignee=?`, sessionID, toAssignee)
@@ -320,7 +339,7 @@ func AckHumanMessagesFromSession(db *sql.DB, sessionID, toAssignee, by string) (
 	}
 	acked := rows[:0]
 	for _, m := range rows {
-		claimed, err := ClaimAcked(db, m, by)
+		claimed, err := ClaimAcked(db, m, c)
 		if err != nil {
 			return nil, err
 		}
@@ -335,12 +354,13 @@ func AckHumanMessagesFromSession(db *sql.DB, sessionID, toAssignee, by string) (
 // recording the wait. Returns false when another consumer claimed it
 // first. Together with ClaimDelivered this makes concurrent consumers
 // of one inbox safe: exactly one pops each message.
-func ClaimAcked(db *sql.DB, m *BusMessage, by string) (bool, error) {
+func ClaimAcked(db *sql.DB, m *BusMessage, c Consumer) (bool, error) {
 	m.WaitedS = waitedSeconds(m.CreatedAt, time.Now())
 	res, err := db.Exec(
 		`UPDATE bus_messages SET status='acked', acked_at=?, waited_s=?, acked_by=?,
-             seen_at=COALESCE(seen_at, ?) WHERE id=? AND status='pending'`,
-		NowISO(), m.WaitedS, by, NowISO(), m.ID)
+             seen_at=COALESCE(seen_at, ?), consumed_by_identity=?, consumed_by_session=?
+         WHERE id=? AND status='pending'`,
+		NowISO(), m.WaitedS, c.By, NowISO(), NullIfEmpty(c.Identity), NullIfEmpty(c.Session), m.ID)
 	if err != nil {
 		return false, err
 	}
