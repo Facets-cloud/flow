@@ -772,11 +772,10 @@ consumed, then **read**. Two purposes — pick the verb by intent:
 1. **Reach out to the user / get instructions.** `flow message user
    "<ask>"` when the user is AFK and you need a decision, a permission
    only they can grant, or a long task they're waiting on is done. Stays
-   unread until answered (never expires); `--urgent` for truly blocking.
-   NOT for routine progress, and not when they're clearly active here.
-   ONE per wait — NEVER re-send. Their reply in this session acks it (a
-   hook injects how long you waited — re-verify stale state after a long
-   wait).
+   unread until answered; `--urgent` for truly blocking. A decision →
+   `--options "A|B"`: the answer lands in your inbox (`reply_to`) — never
+   block on it. Progress → `--fyi` (never pings). ONE per wait — NEVER
+   re-send. Opt-in pings: references/connectors.md.
 2. **Collaborate with peers.** `flow message <assignee>/<task-slug> "<what
    to DO>"` hands context to that task's session (no interruption). Add
    `--reply-to <id>` so a routed reply carries lineage (the bus doesn't
@@ -787,7 +786,7 @@ consumed, then **read**. Two purposes — pick the verb by intent:
 
 **Auto mode, one rule:** a parented child reports to `user/<parent>`
 (milestones, done, blocked); parent closed → update note + `flow message
-user "FYI: …"`; no parent → the human only at done/blocked. Result goes
+user "FYI: …" --fyi`; no parent → the human only at done/blocked. Result goes
 in an update note it names; no children (§4.4a).
 
 Bodies ≤500 chars, lead with the ask, name a task slug for context.

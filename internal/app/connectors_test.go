@@ -660,3 +660,61 @@ func TestB7HumanReplyAndSeen(t *testing.T) {
 		}
 	}
 }
+
+// B9: the skill (source of truth) teaches asking with --options and --fyi
+// for progress, and documents contract v1 in a reachable reference.
+func TestB9SkillTeachesConnectors(t *testing.T) {
+	core := strings.Join(strings.Fields(readSkillFile(t, "SKILL.md")), " ")
+	for _, want := range []string{`--options "A|B"`, "--fyi", "reply_to", "references/connectors.md"} {
+		if !strings.Contains(core, want) {
+			t.Errorf("SKILL.md lacks %q", want)
+		}
+	}
+	msg := strings.Join(strings.Fields(readSkillFile(t, "references/messaging.md")), " ")
+	for _, want := range []string{
+		`flow message user "<q>" --options "A|B"`, "reply_to", "never block",
+		"no connector is installed", "--fyi", "references/connectors.md",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("references/messaging.md lacks %q", want)
+		}
+	}
+	ref := strings.Join(strings.Fields(readSkillFile(t, "references/connectors.md")), " ")
+	for _, want := range []string{
+		"connector.json", `"contract": 1`, "FLOW_CONNECTOR_TOKEN", "FLOW_BIN", "FLOW_ROOT",
+		"run send", "run test", `"reply_hint"`, `"options"`, "human reply <id>", "human seen <id>",
+		"flow connector add", "30s", "exit 0", "dispatch.log", "examples/connectors/macos",
+	} {
+		if !strings.Contains(ref, want) {
+			t.Errorf("references/connectors.md lacks %q", want)
+		}
+	}
+}
+
+// B9: flow's own FYI mail to the human is real --fyi mail, so it never
+// pings a connector.
+func TestB9FlowFYIsNeverPing(t *testing.T) {
+	withParent := buildAutoBootstrapPrompt("kid", "regular", "", "papa")
+	if !strings.Contains(withParent, `--fyi`) {
+		t.Errorf("parented auto prompt's closed-parent FYI must use --fyi")
+	}
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "papa", "sid-papa")
+	mkBusTask(t, db, "kid", "")
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='papa' WHERE slug='kid'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status='done' WHERE slug='papa'`); err != nil {
+		t.Fatal(err)
+	}
+	kid, _ := flowdb.GetTask(db, "kid")
+	notifyParentOfDeadChild(db, kid)
+	var fyi, ping int
+	if err := db.QueryRow(`SELECT fyi, ping FROM bus_messages WHERE to_task_slug IS NULL`).Scan(&fyi, &ping); err != nil {
+		t.Fatal(err)
+	}
+	if fyi != 1 || ping != 0 {
+		t.Errorf("dead-child notice to the human: fyi=%d ping=%d, want 1/0", fyi, ping)
+	}
+}
