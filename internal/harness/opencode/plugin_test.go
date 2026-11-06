@@ -38,10 +38,8 @@ func TestPluginJSBridgesEveryHook(t *testing.T) {
 		{"user prompt hook", `["hook", "user-prompt-submit"]`},
 		{"stop hook", `["hook", "stop"]`},
 		{"stop_hook_active", `stop_hook_active`},
-		{"inbox pop wait", `"--wait"`},
-		{"inbox pop keep-unread", `"--keep-unread"`},
-		{"inbox pop json", `"--json"`},
-		{"inbox ack", `["inbox", "read", id, "--json"]`},
+		{"inbox list", `["inbox", "--json"]`},
+		{"inbox pop", `["inbox", "pop", "--json"]`},
 		{"session env var", `env.OPENCODE_SESSION_ID = sessionID`},
 		{"inject cli", `"session.prompt"`},
 		{"inject param", `"--param"`},
@@ -85,20 +83,35 @@ func TestPluginJSContextDelivery(t *testing.T) {
 }
 
 // TestPluginJSInboxContract pins the inbox relay's user-visible strings and
-// the global state key the multi-instance dedupe relies on.
+// the global state key the multi-instance dedupe relies on. The relay must
+// poll the non-claiming unread list and claim with a plain pop only right
+// before injecting: a pop is a permanent claim with no un-claim, so the
+// previous `--wait --keep-unread` loop lost mail that was claimed by a
+// generation which then retired (or a client that went away).
 func TestPluginJSInboxContract(t *testing.T) {
 	src := pluginSource(t)
 	for _, frag := range []string{
 		`"[flow inbox] " + out`,
 		`"[flow] " + context`,
 		"globalThis.__flowOpencode",
-		`["inbox", "pop", "--wait", "--timeout", "300", "--keep-unread", "--json"]`,
+		`["inbox", "--json"]`,
+		`["inbox", "pop", "--json"]`,
 		`stop_hook_active: active`,
 		`stopSeen: new Map()`,
 		`state.stopSeen ??= new Map()`,
 	} {
 		if !strings.Contains(src, frag) {
 			t.Errorf("plugin is missing %q", frag)
+		}
+	}
+	for _, frag := range []string{
+		`--keep-unread`,
+		`"--wait"`,
+		`["inbox", "read"`,
+		`const delivered = new Set()`,
+	} {
+		if strings.Contains(src, frag) {
+			t.Errorf("plugin still contains the retired claim-early path %q", frag)
 		}
 	}
 }
@@ -182,7 +195,8 @@ func TestPluginJSAttachedClientScan(t *testing.T) {
 // previous instance's cleanup: the old inbox loop, event subscription and hooks
 // keep running. Each evaluation must therefore claim a new generation, retire
 // other generations' listeners, and gate every entry point on it — an old loop
-// that reaches inject/ack would otherwise steal a message through stale code.
+// that reaches the claim or the inject would otherwise steal a message through
+// stale code.
 func TestPluginJSReloadGeneration(t *testing.T) {
 	src := pluginSource(t)
 
@@ -208,20 +222,19 @@ func TestPluginJSReloadGeneration(t *testing.T) {
 		}
 	}
 
-	// The old listener must bail at the top of the iteration, right after the
-	// pop, and before the inject. Once delivered, a message is always acked
-	// (an unacked delivery would be delivered again by the new generation).
+	// The old listener must bail before claiming: being superseded while it
+	// polls the unread list or pops must not claim a message the current
+	// generation would then never see. Once a pop has claimed a message there
+	// is no un-claim, so delivery is attempted even when superseded.
 	for _, frag := range []string{
 		"while (alive()) {",
-		"if (!alive()) return; // superseded mid-pop: leave the mail unread",
-		"if (!alive()) return; // superseded: do not deliver or ack",
+		"if (!alive()) return; // superseded: no claim was made",
+		"if (!(await clientLive(sessionID)) || !alive()) return;",
+		`log("inbox message claimed but not delivered:", sessionID, id)`,
 	} {
 		if !strings.Contains(src, frag) {
 			t.Errorf("listener loop is missing reload check %q", frag)
 		}
-	}
-	if strings.Contains(src, "superseded after delivery") {
-		t.Error("listener must ack a delivered message even when superseded")
 	}
 
 	// Cleanup must not evict the entry a newer generation already installed.

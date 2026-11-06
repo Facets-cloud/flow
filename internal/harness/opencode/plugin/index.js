@@ -17,14 +17,18 @@
 // Event -> flow call mapping:
 //
 //   session.execution.started    -> `flow hook session-start` (first per session)
-//                                -> `flow inbox pop --wait --timeout 300 --keep-unread --json`
-//   attached client (ps scan, 15 s) -> `flow inbox pop …` (covers resumed sessions
-//                                   and plugin reloads, where no turn ever starts)
+//                                -> starts the per-session inbox listener
+//   attached client (ps scan, 15 s) -> starts the inbox listener (covers resumed
+//                                   sessions and plugin reloads, where no turn
+//                                   ever starts)
 //   session.hook("prompt")       -> `flow hook user-prompt-submit`
 //   session.hook("context")      -> pushes the cached session-start and turn
 //                                   context into every model call
 //   session.execution.succeeded  -> `flow hook stop`
-//   inbox message popped         -> a `[flow inbox]` steer prompt, then `flow inbox read <id> --json`
+//   inbox listener               -> polls `flow inbox --json` every 3 s while a
+//                                   client is attached, then claims the oldest
+//                                   with `flow inbox pop --json` only right
+//                                   before injecting a `[flow inbox]` steer prompt
 //
 // One plugin instance is loaded per directory, so each event reaches every
 // instance. The per-turn entry points therefore dedupe synchronously on
@@ -41,17 +45,18 @@
 // module without ever calling the old instance's cleanup. Each evaluation gets
 // a fresh `GEN`; anything an older generation started (inbox loops, the event
 // subscription, the scan timer, registered hooks) sees `state.gen !== GEN` and
-// exits without acking, leaving the mail for the current generation's listener.
+// exits before claiming a message, leaving the mail pending for the current
+// generation's listener.
 // Session-scoped caches are dropped on load because the hook output format may
 // have changed with the code.
 
 const HOOK_TIMEOUT_MS = 20_000;
-const LISTENER_TIMEOUT_MS = 330_000;
 const PS_TIMEOUT_MS = 5_000;
 const STOP_DEDUPE_MS = 3_000; // window that collapses duplicated succeeded events
 const SCAN_INTERVAL_MS = 15_000; // attachment scan period (resumed sessions, reloads)
+const POLL_MS = 3_000; // inbox listener poll period while a client is attached
 const INJECT_TIMEOUT_MS = 30_000; // `opencode api session.prompt` budget
-const INJECT_RETRY_MS = 10_000; // pause before re-popping an inject that failed
+const INJECT_RETRY_MS = 3_000; // pause between delivery attempts of a claimed message
 
 // One instance is loaded per directory and every instance sees every server
 // event, so state lives on globalThis and is deduped per session.
@@ -275,46 +280,47 @@ async function attachedSessions() {
   return ids;
 }
 
-// ensureListener starts the per-session inbox relay once: mail is steered
-// into the conversation while a client is live, then acked; with no live
-// client it stays unread for the next session. An entry left by another
-// generation is not "started" — its loop is already exiting without acking —
-// so the current generation replaces it.
+// ensureListener starts the per-session inbox relay once. It polls the
+// NON-claiming unread list (`flow inbox --json`) while a client is attached
+// and claims a message with `flow inbox pop` only at the last moment, right
+// before injecting it: a pop is a permanent claim (pending -> delivered, no
+// un-claim), so claiming any earlier loses the mail if this loop is
+// superseded by a reload or the client goes away. An entry left by another
+// generation is not "started" — its loop is already exiting without
+// claiming — so the current generation replaces it.
 function ensureListener(meta, sessionID, stopping) {
   const existing = state.listeners.get(sessionID);
   if (existing && existing.gen === GEN) return;
-  const delivered = new Set(); // injected but not acked yet
   // alive() gates every point where this generation could still act on the
-  // world: after a reload the loop must exit without acking, so the mail stays
-  // unread for the generation that now owns the session.
+  // world: after a reload the loop must exit before claiming, so the mail
+  // stays pending for the generation that now owns the session.
   const alive = () => !stopping.value && state.gen === GEN;
   const loop = (async () => {
     try {
       while (alive()) {
-        if (!(await clientLive(sessionID))) return;
-        const popArgs = ["inbox", "pop", "--wait", "--timeout", "300", "--keep-unread", "--json"];
-        const popped = await runFlow(meta, sessionID, popArgs, undefined, LISTENER_TIMEOUT_MS);
-        if (!alive()) return; // superseded mid-pop: leave the mail unread
-        if (popped.code === 3) return; // task closed
-        if (popped.code !== 0) { await sleep(5_000); continue; }
+        if (!(await clientLive(sessionID))) return; // no client: mail stays pending
+        const listed = await runFlow(meta, sessionID, ["inbox", "--json"]);
+        if (!alive()) return; // superseded: no claim was made
+        if (listed.code !== 0) { await sleep(5_000); continue; }
+        let pending = [];
+        try { pending = JSON.parse(listed.stdout || "[]"); } catch { /* not JSON */ }
+        if (!Array.isArray(pending) || pending.length === 0) { await sleep(POLL_MS); continue; }
+        if (!(await clientLive(sessionID)) || !alive()) return;
+        // Claim the oldest message. From the next line on the message is
+        // claimed, so it must always be delivered — even if superseded.
+        const popped = await runFlow(meta, sessionID, ["inbox", "pop", "--json"]);
+        if (popped.code === 3) return; // task closed: stop listening
+        if (popped.code !== 0) { await sleep(POLL_MS); continue; } // raced / empty
         const out = (popped.stdout || "").trim();
-        if (!out) continue; // wait timed out, re-arm
         let id = "";
         try { id = JSON.parse(out)?.id || ""; } catch { /* not JSON — no message */ }
-        if (!id) continue;
-        if (delivered.has(id)) { await sleep(2_000); continue; } // ack failed earlier
-        if (!(await clientLive(sessionID))) return; // leave the mail unread
-        if (!alive()) return; // superseded: do not deliver or ack
-        const ok = await injectPrompt(sessionID, "[flow inbox] " + out, "steer");
-        if (!ok) {
-          // Delivery failed, so the mail stays unread: pause, then re-pop it.
+        if (!id) { await sleep(POLL_MS); continue; }
+        let ok = await injectPrompt(sessionID, "[flow inbox] " + out, "steer");
+        for (let i = 0; !ok && i < 5; i++) {
           await sleep(INJECT_RETRY_MS);
-          continue;
+          ok = await injectPrompt(sessionID, "[flow inbox] " + out, "steer");
         }
-        delivered.add(id);
-        // Always ack what was delivered, even if superseded meanwhile:
-        // leaving it unread would make the new generation deliver it twice.
-        await runFlow(meta, sessionID, ["inbox", "read", id, "--json"]);
+        if (!ok) log("inbox message claimed but not delivered:", sessionID, id);
       }
     } catch (err) {
       log("inbox listener stopped:", sessionID, err);
