@@ -73,7 +73,7 @@ type SessionPreparer interface {
 ```
 
 opencode's impl, with a 30 s timeout per call:
-1. `opencode api session.create -d {"id","location":{"directory":workDir},"title":slug,"model"?,"metadata":{"flow":meta}}` — idempotent, also avoids the observed first-`run`-in-a-new-dir hang.
+1. `opencode api session.create -d {"id","location":{"directory":workDir},"title":slug,"model"?,"metadata":{"flow":meta}}` — idempotent. (`opencode run` blocks forever if stdin is an open non-TTY; flow's headless paths run with stdin at `/dev/null`.)
 2. `opencode api session.update --param sessionID=<id> -d {"metadata":{…existing,"flow":meta}}` so resumed and `--here`-bound sessions get metadata too.
 
 `cmdDo` calls it right after the status-flip commit, on bootstrap AND resume,
@@ -90,9 +90,10 @@ One file, `internal/harness/opencode/plugin/index.js`, embedded with
 installed separately). It runs in the opencode server. State lives on
 `globalThis` because the server loads one plugin instance per directory and every
 instance sees every server event; the global map dedupes per session.
-Each module evaluation stamps a generation on that state; listeners, scans
-and hooks from an older generation retire themselves, since opencode
-re-evaluates a rewritten plugin without calling the old cleanup.
+opencode evaluates the module once per directory instance and re-evaluates a
+rewritten file without calling the old cleanup, so the generation stamped on
+that state is a hash of the plugin source: instances running the same code
+coexist, and only a real code change retires older listeners, scans and hooks.
 
 Session gating: the plugin acts only on sessions whose
 `metadata.flow.taskSlug` is set (`ctx.session.get`). Every other opencode

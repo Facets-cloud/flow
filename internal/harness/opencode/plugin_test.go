@@ -200,8 +200,17 @@ func TestPluginJSAttachedClientScan(t *testing.T) {
 func TestPluginJSReloadGeneration(t *testing.T) {
 	src := pluginSource(t)
 
+	// opencode evaluates the module once per directory instance, so a
+	// per-evaluation generation would make each newly booted directory retire
+	// every other directory's context and prompt hooks.
+	if strings.Contains(src, "Math.random") {
+		t.Error("generation must identify the code, not the module evaluation")
+	}
+
 	for _, frag := range []string{
-		`const GEN = Date.now() + ":" + Math.random().toString(36).slice(2)`,
+		`const GEN = sourceGeneration()`,
+		`createHash("sha256")`,
+		`if (state.gen !== GEN) {`, // only changed code retires other instances
 		`state.gen = GEN`,
 		`if (state.gen !== GEN) return`,
 		`if (state.gen !== GEN) break`,

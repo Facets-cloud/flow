@@ -41,18 +41,23 @@
 // session's directory, so it pushes unconditionally (context is not persisted
 // between model calls).
 //
-// Reloads: `flow` rewrites this file in place, so opencode re-evaluates the
-// module without ever calling the old instance's cleanup. Each evaluation gets
-// a fresh `GEN`; anything an older generation started (inbox loops, the event
-// subscription, the scan timer, registered hooks) sees `state.gen !== GEN` and
-// exits before claiming a message, leaving the mail pending for the current
-// generation's listener.
-// Session-scoped caches are dropped on load because the hook output format may
-// have changed with the code.
+// Reloads: opencode evaluates this module once PER DIRECTORY instance, and
+// when `flow` rewrites the file it re-evaluates without ever calling the old
+// instance's cleanup. `GEN` is therefore a hash of this file's source, not a
+// per-evaluation value: instances running the same code share a generation and
+// coexist (a session's context and prompt hooks fire only in its own
+// directory's instance), and only a real code change retires the old ones.
+// Anything a retired generation started (inbox loops, the event subscription,
+// the scan timer, registered hooks) sees `state.gen !== GEN` and exits before
+// claiming a message, leaving the mail pending for the current generation.
+// Session-scoped caches are dropped on a code change because the hook output
+// format may have changed with it.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HOOK_TIMEOUT_MS = 20_000;
 const PS_TIMEOUT_MS = 5_000;
@@ -90,21 +95,34 @@ state.stopSeen ??= new Map();
 state.lastScan ??= 0;
 state.gen ??= "";
 
-// Every evaluation of this module (initial load, in-place rewrite) gets a new
-// generation. opencode re-evaluates without calling the previous cleanup, so
-// the load itself is the only place an old generation can be retired: drop its
-// listeners (their loops exit on their next alive() check), its per-session
-// caches (the hook output format may have changed), and the scan timestamp so
-// this generation repairs the listeners immediately instead of in 15 s.
-const GEN = Date.now() + ":" + Math.random().toString(36).slice(2);
-state.gen = GEN;
-for (const [sessionID, entry] of state.listeners) {
-  if (entry?.gen !== GEN) state.listeners.delete(sessionID);
+// The generation identifies the CODE, so a newly booted directory instance
+// (same source) must not disturb the others. A failed read falls back to a
+// constant, which behaves like "same code" and never retires anything.
+function sourceGeneration() {
+  try {
+    const source = fs.readFileSync(fileURLToPath(new URL(import.meta.url)));
+    return createHash("sha256").update(source).digest("hex");
+  } catch {
+    return "unversioned";
+  }
 }
-state.sessionCtx.clear();
-state.meta.clear();
-state.metaMissAt.clear();
-state.lastScan = 0;
+
+// opencode never calls the previous cleanup, so loading changed code is the
+// only place an old generation can be retired: drop its listeners (their loops
+// exit on their next alive() check), its per-session caches, and the scan
+// timestamp so this generation repairs the listeners at once instead of in 15 s.
+const GEN = sourceGeneration();
+if (state.gen !== GEN) {
+  state.gen = GEN;
+  for (const [sessionID, entry] of state.listeners) {
+    if (entry?.gen !== GEN) state.listeners.delete(sessionID);
+  }
+  state.sessionCtx.clear();
+  state.turnCtx.clear();
+  state.meta.clear();
+  state.metaMissAt.clear();
+  state.lastScan = 0;
+}
 
 function log(...args) {
   try { console.error("[flow-plugin]", ...args); } catch { /* never throw out of logging */ }
