@@ -143,8 +143,9 @@ machine-readable rows.
   immortal until actually read. This is the primitive a forwarder/relay
   needs: be woken by mail it must pass along WITHOUT consuming the answer.
 - `read <id>` targets a specific message out of arrival order (pop is
-  oldest-first only) — display an already-read one, or ack the exact
-  message the human just answered.
+  oldest-first only). Only the message's RECIPIENT changes its state (the
+  bound session of its task, or `--as <assignee>` for a person's queue);
+  anyone else gets a read-only display.
 
 ## Listener discipline — two recipes, pick by role
 

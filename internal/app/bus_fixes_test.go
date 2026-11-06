@@ -518,3 +518,59 @@ func TestF6SkillDropsBareSlugSugar(t *testing.T) {
 		t.Error("skill still says a bare task slug is sugar for user/<slug>")
 	}
 }
+
+// F7: `flow inbox read <id>` changes state only for the row's recipient;
+// anyone else gets a read-only display.
+func TestF7ReadByIDOnlyRecipientChangesState(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "a", "sid-a")
+	mkBusTask(t, db, "b", "sid-b")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"user/b", "for b only"}); rc != 0 {
+			t.Fatal("msg b")
+		}
+		if rc := cmdMessage([]string{"shashwat", "for shashwat"}); rc != 0 {
+			t.Fatal("msg shashwat")
+		}
+	})
+	var toB, toS string
+	_ = db.QueryRow(`SELECT id FROM bus_messages WHERE body='for b only'`).Scan(&toB)
+	_ = db.QueryRow(`SELECT id FROM bus_messages WHERE body='for shashwat'`).Scan(&toS)
+
+	// A (not the recipient) reads B's mail: display only.
+	out := captureStdout(t, func() {
+		if rc := cmdInbox([]string{"read", toB}); rc != 0 {
+			t.Fatalf("read rc != 0")
+		}
+	})
+	if !strings.Contains(out, "for b only") || !strings.Contains(out, "display only") {
+		t.Errorf("non-recipient read output: %s", out)
+	}
+	if st, _ := busRow(t, db, toB); st != "pending" {
+		t.Fatalf("non-recipient read changed state: %s", st)
+	}
+	// The unbound human isn't B either.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	captureStdout(t, func() { _ = cmdInbox([]string{"read", toB}) })
+	if st, _ := busRow(t, db, toB); st != "pending" {
+		t.Fatalf("human read of task mail changed state: %s", st)
+	}
+	// Nor is the human shashwat — unless reading as that queue.
+	captureStdout(t, func() { _ = cmdInbox([]string{"read", toS}) })
+	if st, _ := busRow(t, db, toS); st != "pending" {
+		t.Fatalf("read of another assignee's mail changed state: %s", st)
+	}
+	captureStdout(t, func() { _ = cmdInbox([]string{"read", toS, "--as", "shashwat"}) })
+	if st, _ := busRow(t, db, toS); st != "acked" {
+		t.Errorf("read --as shashwat did not ack: %s", st)
+	}
+	// B itself reads it: delivered.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-b")
+	out = captureStdout(t, func() { _ = cmdInbox([]string{"read", toB}) })
+	if st, _ := busRow(t, db, toB); st != "delivered" || !strings.Contains(out, "marked read") {
+		t.Errorf("recipient read: status=%s out=%s", st, out)
+	}
+}

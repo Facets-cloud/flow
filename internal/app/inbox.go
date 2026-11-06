@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"flow/internal/flowdb"
@@ -304,6 +305,22 @@ func isHumanMail(m *flowdb.BusMessage) bool {
 	return m.ToTaskSlug == "" && m.ToAssignee == busUser
 }
 
+// isRecipient reports whether identity s is the row's addressee: the
+// bound session of its task, or (unbound) the human queue it targets.
+func isRecipient(s busSender, m *flowdb.BusMessage) bool {
+	if m.ToTaskSlug != "" {
+		return s.TaskSlug == m.ToTaskSlug
+	}
+	return s.TaskSlug == "" && s.Assignee == m.ToAssignee
+}
+
+func recipientAddr(m *flowdb.BusMessage) string {
+	if m.ToTaskSlug != "" {
+		return m.ToAssignee + "/" + m.ToTaskSlug
+	}
+	return m.ToAssignee
+}
+
 // agentInvocation reports whether this flow invocation runs inside an
 // agent harness (a harness session id is present, or a headless auto
 // run) rather than from the human's own terminal. Only a human
@@ -432,10 +449,16 @@ func inboxPop(args []string) int {
 func inboxRead(args []string) int {
 	fs := flagSet("inbox read")
 	asJSON := fs.Bool("json", false, "emit the message as JSON")
+	as := consumerFlags(fs)
+	// Accept the id before or after flags (`read <id> --json`).
+	var ids []string
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		ids, args = append(ids, args[0]), args[1:]
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	rest := fs.Args()
+	rest := append(ids, fs.Args()...)
 	if len(rest) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: flow inbox read <id>")
 		return 2
@@ -450,10 +473,16 @@ func inboxRead(args []string) int {
 		m     *flowdb.BusMessage
 		newly bool
 	)
+	s := resolveConsumer(*as)
 	m, err = flowdb.GetBusMessageByID(db, rest[0])
-	if err == nil && m != nil && !(isHumanMail(m) && agentInvocation()) {
-		// An agent may DISPLAY human mail but never consume it.
-		m, newly, err = flowdb.ReadMessageByID(db, rest[0], currentBusSender().consumer("read"))
+	mayConsume := false
+	if err == nil && m != nil {
+		mayConsume = isRecipient(s, m) && !(isHumanMail(m) && agentInvocation())
+		if mayConsume {
+			// Only the recipient changes state; an agent may DISPLAY
+			// human mail but never consume it.
+			m, newly, err = flowdb.ReadMessageByID(db, rest[0], s.consumer("read"))
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -471,8 +500,12 @@ func inboxRead(args []string) int {
 	printBusMessage(db, m)
 	if newly {
 		fmt.Println("marked read")
-	} else if isHumanMail(m) && agentInvocation() && m.Status != "acked" {
-		fmt.Println("(display only — human mail is marked read only by the human)")
+	} else if !mayConsume && m.IsUnread() {
+		if isHumanMail(m) && isRecipient(s, m) {
+			fmt.Println("(display only — human mail is marked read only by the human)")
+		} else {
+			fmt.Printf("(display only — addressed to %s, not %s)\n", recipientAddr(m), s.identity())
+		}
 	} else {
 		fmt.Println("(already read)")
 	}
