@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- `flow init` now installs the PreToolUse hook too. It used to install
+  only three of the four hooks that `flow skill install` installs.
 - **Codex harness.** The live-session guard now sees Codex auto runs
   (`codex exec resume <flags> <id>`), so `flow do` no longer opens a second
   writer on a thread a headless run is driving. `flow transcript` honours
@@ -41,6 +43,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Install for every present harness.** `flow init`, `flow skill
+  install` and `flow skill update` now install the skill and all four
+  hooks (SessionStart, UserPromptSubmit, PreToolUse, Stop) for every
+  harness on the machine, not just the ambient one. A harness is present
+  when its binary is on `PATH` or its config home exists (`~/.claude`;
+  `$CODEX_HOME`, else `~/.codex`); with none found, Claude is the
+  fallback. `flow skill uninstall` removes the skill from every harness
+  that has it. All four take `--harness claude|codex` to act on one
+  harness; an unknown name is a usage error that lists the valid names,
+  and a named harness that isn't detected is installed anyway. Output is
+  prefixed per harness (`claude: …`, `codex: …`).
+- The post-upgrade skill refresh now checks every harness, each against
+  its own `VERSION` sidecar, and refreshes only harnesses that already
+  have the skill, so a harness you removed it from stays opted out.
 - Codex auto runs write the session's final message (`codex exec -o`) to
   `auto-runs/<run>.last.txt` next to the run log; `flow show task` lists it
   as `auto_run_last:` once it exists.

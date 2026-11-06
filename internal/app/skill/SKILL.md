@@ -128,7 +128,7 @@ flags.
 ```
 Setup
   flow init                                 create ~/.flow/, init DB, install skill
-  flow skill install [--force]              (re)install the skill file
+  flow skill install [--force]              (re)install skill+hooks, all harnesses
   flow skill uninstall                      remove the skill
   flow skill update                         install --force after upgrading the binary
 

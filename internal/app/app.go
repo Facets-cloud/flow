@@ -104,10 +104,11 @@ func printUsage() {
 	fmt.Println(`flow — personal task and agent-session manager
 
 Setup:
-  flow init
-  flow skill install [--force]
-  flow skill uninstall
-  flow skill update
+  flow init [--harness claude|codex]
+  flow skill install [--force] [--harness claude|codex]
+  flow skill uninstall [--harness claude|codex]
+  flow skill update [--harness claude|codex]
+  (default: every present harness — binary on PATH or config home exists)
 
 Create:
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
