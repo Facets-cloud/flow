@@ -57,7 +57,7 @@ func TestCommands(t *testing.T) {
 		t.Errorf("ResumeCmd missing injection: %q", got)
 	}
 	argv := h.AutoRunArgv(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true})
-	want := []string{"codex", "exec", "resume", "--dangerously-bypass-approvals-and-sandbox", testThreadID, "work"}
+	want := []string{"codex", "exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", testThreadID, "work"}
 	if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("AutoRunArgv=%q, want %q", argv, want)
 	}
@@ -203,7 +203,7 @@ func TestNewSessionIDProbesInWorkDir(t *testing.T) {
 func TestAutoRunArgvLastMessagePath(t *testing.T) {
 	h := New()
 	argv := h.AutoRunArgv(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true, LastMessagePath: "/runs/x.last.txt"})
-	want := []string{"codex", "exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "-o", "/runs/x.last.txt", testThreadID, "work"}
+	want := []string{"codex", "exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "-o", "/runs/x.last.txt", testThreadID, "work"}
 	if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("AutoRunArgv=%q, want %q", argv, want)
 	}

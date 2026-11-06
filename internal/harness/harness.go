@@ -328,9 +328,13 @@ type Harness interface {
 // CloseoutDeferrer is an optional capability. A harness that implements it
 // with DefersCloseoutInAutoRun() == true cannot host the close-out sweep
 // (a second headless run) while its own auto run is still alive. Codex is
-// the case: a nested `codex exec` started from inside `codex exec resume`
-// makes the outer process fail to record rollout items ("thread <id> not
-// found"). For such harnesses an auto run's own `flow done` skips the
+// the case: its shell tool yields a long command to a background session
+// after ~10s, so the agent sees `flow done` "return" mid-sweep, ends its
+// turn, and the exiting `codex exec resume` kills the still-running sweep;
+// the orphaned command's late output then hits the closed thread ("failed
+// to record rollout items: thread <id> not found"). Isolating the nested
+// run (--ephemeral etc.) doesn't help — it's a lifecycle problem, not
+// shared state. For such harnesses an auto run's own `flow done` skips the
 // inline sweep and the `flow __auto-exec` supervisor runs it after the
 // harness process exits.
 type CloseoutDeferrer interface {
