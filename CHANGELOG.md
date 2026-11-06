@@ -7,6 +7,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Human connectors (opt-in).** An agent asks with `flow message user
+  "<q>" --options "A|B"` and returns at once. If a connector is
+  installed, flow pings the human through it, and the answer comes back
+  to the asking task's inbox as a reply (`reply_to=<id>`). Nothing pings
+  unless a connector is installed.
+  - `flow message user` gains `--options "A|B|C"` (stored and shown in
+    `flow inbox`) and `--fyi` (stored and listed, never pinged). Both are
+    only for mail to the human. Broadcasts never ping.
+  - The ping decision is made at send time: one ping per sender task
+    while a pinged ask is still unseen, `--urgent` always pings, and a
+    detached `flow connector dispatch` runs each matching connector's
+    `send` (30s timeout each, in parallel, logged to
+    `connectors/dispatch.log`, `notified_at` stamped).
+  - `flow connector add|list|remove|test`. Each connector gets a random
+    secret in the macOS keychain (`flow-connector-<name>`), or a 0600
+    file under `$FLOW_ROOT/secrets/` where there is no keychain.
+  - `flow human reply <id> "<text>"` / `flow human seen <id>` work only
+    with a connector's `FLOW_CONNECTOR_TOKEN`, so agents can't answer for
+    the human. A reply records `answered_at` and delivers the text to the
+    asking task. Repeats are idempotent.
+  - Contract v1 is documented in the skill's `references/connectors.md`.
+    `examples/connectors/macos` is a stock-macOS dialog connector.
+  - flow's own FYIs to the human (the closed-parent report in the auto
+    prompt, the dead-child notice) are sent as `--fyi`.
+
 ## [0.1.0-alpha.33] — 2026-11-06
 
 ### Fixed

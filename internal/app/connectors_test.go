@@ -718,3 +718,36 @@ func TestB9FlowFYIsNeverPing(t *testing.T) {
 		t.Errorf("dead-child notice to the human: fyi=%d ping=%d, want 1/0", fyi, ping)
 	}
 }
+
+// B10: the CLI usage, README and CHANGELOG document the connectors MVP.
+func TestB10DocsCoverConnectors(t *testing.T) {
+	usage := captureStdout(t, printUsage)
+	for _, want := range []string{"--options", "--fyi", "flow connector add <dir>", "flow connector list",
+		"flow connector remove <name>", "flow connector test [<name>]", "flow human reply <id>", "flow human seen <id>"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage lacks %q", want)
+		}
+	}
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"### Human connectors", `--options "Yes|No"`, "flow connector add examples/connectors/macos", "--fyi"} {
+		if !strings.Contains(string(readme), want) {
+			t.Errorf("README lacks %q", want)
+		}
+	}
+	changelog, err := os.ReadFile("../../CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unreleased, _ := strings.Cut(string(changelog), "## [Unreleased]")
+	if i := strings.Index(unreleased, "\n## ["); i > 0 {
+		unreleased = unreleased[:i]
+	}
+	for _, want := range []string{"### Added", "connector", "--options", "--fyi", "flow human reply"} {
+		if !strings.Contains(unreleased, want) {
+			t.Errorf("CHANGELOG [Unreleased] lacks %q", want)
+		}
+	}
+}
