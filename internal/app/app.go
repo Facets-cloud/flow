@@ -81,6 +81,8 @@ func Run(args []string) int {
 		return cmdHook(rest)
 	case "message", "msg":
 		return cmdMessage(rest)
+	case "connector":
+		return cmdConnector(rest)
 	case "inbox":
 		return cmdInbox(rest)
 	case "broadcast", "post":

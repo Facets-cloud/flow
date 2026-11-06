@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"flow/internal/connector"
 	"flow/internal/flowdb"
 )
 
@@ -239,5 +240,177 @@ func TestB3SendSpawnsDispatchOnlyWithConnectors(t *testing.T) {
 	log, _ := os.ReadFile(filepath.Join(root, "dispatch.log"))
 	if !strings.Contains(string(log), "fork exploded") {
 		t.Errorf("dispatch.log lacks the spawn error: %q", log)
+	}
+}
+
+// Safety net: no app test may ever reach the real macOS keychain. Unless a
+// test installs its own fake, the keychain is "unavailable" and secrets fall
+// back to 0600 files under the temp FLOW_ROOT.
+func init() {
+	unavailable := errors.New("keychain disabled in tests")
+	connector.KeychainSet = func(string, string) error { return unavailable }
+	connector.KeychainGet = func(string) (string, error) { return "", unavailable }
+	connector.KeychainDelete = func(string) error { return unavailable }
+}
+
+// fakeAppKeychain installs an in-memory keychain for one test.
+func fakeAppKeychain(t *testing.T) map[string]string {
+	t.Helper()
+	kc := map[string]string{}
+	set, get, del := connector.KeychainSet, connector.KeychainGet, connector.KeychainDelete
+	t.Cleanup(func() { connector.KeychainSet, connector.KeychainGet, connector.KeychainDelete = set, get, del })
+	connector.KeychainSet = func(s, v string) error { kc[s] = v; return nil }
+	connector.KeychainGet = func(s string) (string, error) {
+		if v, ok := kc[s]; ok {
+			return v, nil
+		}
+		return "", connector.ErrNoSecret
+	}
+	connector.KeychainDelete = func(s string) error { delete(kc, s); return nil }
+	return kc
+}
+
+// srcConnector writes an uninstalled connector folder (outside FLOW_ROOT)
+// whose run appends "<verb> <token-len> <stdin>" lines to <dir>/calls.
+func srcConnector(t *testing.T, name, runBody string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"` + name + `","contract":1,"exec":"./run","capabilities":["send"],"events":["ask","urgent"]}`
+	if err := os.WriteFile(filepath.Join(dir, "connector.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lib", "helper.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "run"), []byte("#!/bin/sh\n"+runBody+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func connectorRC(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	var rc int
+	out := captureStdout(t, func() { rc = cmdConnector(args) })
+	return rc, out
+}
+
+// B6: flow connector add | list | remove | test.
+func TestB6ConnectorAddListRemoveTest(t *testing.T) {
+	root := setupFlowRoot(t)
+	kc := fakeAppKeychain(t)
+	calls := filepath.Join(t.TempDir(), "calls")
+	src := srcConnector(t, "desk", `echo "$1 token=${#FLOW_CONNECTOR_TOKEN} bin=$FLOW_BIN root=$FLOW_ROOT $(cat)" >> `+calls)
+
+	if rc, out := connectorRC(t, "add", src); rc != 0 {
+		t.Fatalf("add rc=%d out=%s", rc, out)
+	}
+	inst := filepath.Join(root, "connectors", "desk")
+	if _, err := os.Stat(filepath.Join(inst, "lib", "helper.txt")); err != nil {
+		t.Errorf("folder not copied: %v", err)
+	}
+	if fi, err := os.Stat(filepath.Join(inst, "run")); err != nil || fi.Mode().Perm()&0o111 == 0 {
+		t.Errorf("exec bit lost: %v", err)
+	}
+	secret := kc[connector.KeychainService("desk")]
+	if len(secret) < 32 {
+		t.Fatalf("no keychain secret: %v", kc)
+	}
+	// add ran `test` with the test payload, the secret, FLOW_BIN and FLOW_ROOT.
+	got, _ := os.ReadFile(calls)
+	line := string(got)
+	if !strings.HasPrefix(line, "test token=64 ") || !strings.Contains(line, `"id":"test"`) ||
+		!strings.Contains(line, "root="+root) || !strings.Contains(line, "bin=/") {
+		t.Errorf("test invocation = %q", line)
+	}
+	// No secret in the connector folder or flow.db.
+	for _, p := range []string{inst, filepath.Join(root, "flow.db")} {
+		filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				if b, _ := os.ReadFile(path); strings.Contains(string(b), secret) {
+					t.Errorf("secret leaked into %s", path)
+				}
+			}
+			return nil
+		})
+	}
+
+	// Re-adding the same name is refused.
+	if rc, _ := connectorRC(t, "add", src); rc != 1 {
+		t.Errorf("duplicate add rc=%d, want 1", rc)
+	}
+	// An invalid manifest is refused without installing anything.
+	bad := srcConnector(t, "bad", "exit 0")
+	os.WriteFile(filepath.Join(bad, "connector.json"), []byte(`{"name":"bad","contract":9}`), 0o644)
+	if rc, _ := connectorRC(t, "add", bad); rc != 1 {
+		t.Errorf("invalid add rc=%d", rc)
+	}
+	// A connector whose test fails is rolled back (folder + secret).
+	failing := srcConnector(t, "flaky", "echo broken >&2; exit 1")
+	if rc, _ := connectorRC(t, "add", failing); rc != 1 {
+		t.Errorf("failing-test add rc=%d", rc)
+	}
+	if _, err := os.Stat(filepath.Join(root, "connectors", "flaky")); !os.IsNotExist(err) {
+		t.Errorf("failed add left a folder")
+	}
+	if _, ok := kc[connector.KeychainService("flaky")]; ok {
+		t.Errorf("failed add left a secret")
+	}
+
+	rc, out := connectorRC(t, "list")
+	if rc != 0 || !strings.Contains(out, "desk") || !strings.Contains(out, "keychain") || !strings.Contains(out, "ask,urgent") {
+		t.Errorf("list rc=%d out=%s", rc, out)
+	}
+
+	os.Remove(calls)
+	if rc, out := connectorRC(t, "test", "desk"); rc != 0 || !strings.Contains(out, "ok") {
+		t.Errorf("test rc=%d out=%s", rc, out)
+	}
+	if got, _ := os.ReadFile(calls); !strings.HasPrefix(string(got), "test ") {
+		t.Errorf("test verb not run: %q", got)
+	}
+	if rc, _ := connectorRC(t, "test", "nope"); rc != 1 {
+		t.Errorf("test unknown rc=%d", rc)
+	}
+
+	if rc, _ := connectorRC(t, "remove", "desk"); rc != 0 {
+		t.Fatalf("remove rc=%d", rc)
+	}
+	if _, err := os.Stat(inst); !os.IsNotExist(err) {
+		t.Errorf("remove left the folder")
+	}
+	if len(kc) != 0 {
+		t.Errorf("remove left the secret: %v", kc)
+	}
+	if rc, _ := connectorRC(t, "remove", "desk"); rc != 1 {
+		t.Errorf("second remove rc=%d", rc)
+	}
+	if rc, _ := connectorRC(t); rc != 2 {
+		t.Errorf("bare connector rc=%d", rc)
+	}
+	if rc, _ := connectorRC(t, "add"); rc != 2 {
+		t.Errorf("add without dir rc=%d", rc)
+	}
+}
+
+// B6: without a keychain the secret falls back to a 0600 file.
+func TestB6ConnectorSecretFileFallback(t *testing.T) {
+	root := setupFlowRoot(t)
+	src := srcConnector(t, "desk", "cat >/dev/null")
+	if rc, out := connectorRC(t, "add", src); rc != 0 {
+		t.Fatalf("add rc=%d %s", rc, out)
+	}
+	fi, err := os.Stat(filepath.Join(root, "secrets", "desk"))
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("secret file: %v %v", fi, err)
+	}
+	if rc, _ := connectorRC(t, "remove", "desk"); rc != 0 {
+		t.Fatal("remove")
+	}
+	if _, err := os.Stat(filepath.Join(root, "secrets", "desk")); !os.IsNotExist(err) {
+		t.Errorf("secret file survived remove")
 	}
 }

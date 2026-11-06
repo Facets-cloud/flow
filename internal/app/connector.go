@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -105,4 +106,294 @@ var dispatchLauncher = func(id string) error {
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+// flowBinPath is the absolute path of the running flow binary, handed to
+// connectors as FLOW_BIN so they call back the same build. Overridable in
+// tests.
+var flowBinPath = func() string {
+	p, err := os.Executable()
+	if err != nil {
+		return "flow"
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
+// connectorTimeout bounds one connector invocation. Overridable in tests.
+var connectorTimeout = connector.Timeout
+
+func secretStore() (connector.SecretStore, error) {
+	root, err := flowRoot()
+	if err != nil {
+		return connector.SecretStore{}, err
+	}
+	return connector.SecretStore{FileDir: filepath.Join(root, "secrets")}, nil
+}
+
+// invokeConnector runs one verb of an installed connector with its secret,
+// FLOW_BIN and FLOW_ROOT in the environment.
+func invokeConnector(m *connector.Manifest, verb string, p connector.Payload) error {
+	store, err := secretStore()
+	if err != nil {
+		return err
+	}
+	secret, err := store.Get(m.Name)
+	if err != nil {
+		return fmt.Errorf("%s: %w (re-add the connector)", m.Name, err)
+	}
+	root, err := flowRoot()
+	if err != nil {
+		return err
+	}
+	if p.Options == nil {
+		p.Options = []string{}
+	}
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	env := append(connectorEnv(),
+		"FLOW_CONNECTOR_TOKEN="+secret, "FLOW_BIN="+flowBinPath(), "FLOW_ROOT="+root)
+	return connector.Run(m, verb, payload, env, connectorTimeout)
+}
+
+// testPayload is what `run test` receives: the send shape with id "test".
+func testPayload() connector.Payload {
+	return connector.Payload{
+		ID: "test", FromTask: "flow", Body: "flow connector test", Kind: "test",
+		CreatedAt: flowdb.NowISO(), ReplyHint: "test notifications take no reply",
+	}
+}
+
+const connectorUsage = `usage: flow connector <add|list|remove|test> ...
+  flow connector add <dir>        validate, install, store a secret, run its test
+  flow connector list             installed connectors
+  flow connector remove <name>    delete the connector and its secret
+  flow connector test [<name>]    send a test notification (all if no name)`
+
+// cmdConnector implements `flow connector ...` (opt-in human pings).
+func cmdConnector(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, connectorUsage)
+		return 2
+	}
+	switch args[0] {
+	case "add":
+		return cmdConnectorAdd(args[1:])
+	case "list", "ls":
+		return cmdConnectorList(args[1:])
+	case "remove", "rm":
+		return cmdConnectorRemove(args[1:])
+	case "test":
+		return cmdConnectorTest(args[1:])
+	case "dispatch":
+		return cmdConnectorDispatch(args[1:])
+	case "-h", "--help", "help":
+		fmt.Println(connectorUsage)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "error: unknown connector subcommand %q\n%s\n", args[0], connectorUsage)
+		return 2
+	}
+}
+
+func cmdConnectorAdd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: flow connector add <dir>")
+		return 2
+	}
+	src, err := filepath.Abs(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	m, err := connector.Load(src)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: not a valid connector: %v\n", err)
+		return 1
+	}
+	root, err := connectorsRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	dest := filepath.Join(root, m.Name)
+	if _, err := os.Stat(dest); err == nil {
+		fmt.Fprintf(os.Stderr, "error: connector %q is already installed — remove it first (flow connector remove %s)\n", m.Name, m.Name)
+		return 1
+	}
+	store, err := secretStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	rollback := func() {
+		_ = os.RemoveAll(dest)
+		_ = store.Delete(m.Name)
+	}
+	if err := copyTree(src, dest); err != nil {
+		rollback()
+		fmt.Fprintf(os.Stderr, "error: copy connector: %v\n", err)
+		return 1
+	}
+	where, err := store.Put(m.Name, connector.NewSecret())
+	if err != nil {
+		rollback()
+		fmt.Fprintf(os.Stderr, "error: store secret: %v\n", err)
+		return 1
+	}
+	installed, err := connector.Load(dest)
+	if err == nil {
+		err = invokeConnector(installed, connector.VerbTest, testPayload())
+	}
+	if err != nil {
+		rollback()
+		fmt.Fprintf(os.Stderr, "error: connector test failed, not installed: %v\n", err)
+		return 1
+	}
+	fmt.Printf("installed connector %s → %s (secret in %s); test notification sent\n", m.Name, dest, where)
+	return 0
+}
+
+func cmdConnectorList(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: flow connector list")
+		return 2
+	}
+	root, err := connectorsRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	ms, errs := connector.List(root)
+	if len(ms) == 0 && len(errs) == 0 {
+		fmt.Println("no connectors installed — human mail just waits in the inbox (add one: flow connector add <dir>)")
+		return 0
+	}
+	store, err := secretStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	for _, m := range ms {
+		where := store.Where(m.Name)
+		if where == "" {
+			where = "MISSING secret"
+		}
+		fmt.Printf("%-16s events=%s  secret=%s  %s\n", m.Name, strings.Join(m.Events, ","), where, m.Dir)
+	}
+	for _, e := range errs {
+		fmt.Printf("invalid: %v\n", e)
+	}
+	return 0
+}
+
+func cmdConnectorRemove(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: flow connector remove <name>")
+		return 2
+	}
+	name := args[0]
+	root, err := connectorsRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	dir := filepath.Join(root, name)
+	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+		fmt.Fprintf(os.Stderr, "error: bad connector name %q\n", name)
+		return 2
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		fmt.Fprintf(os.Stderr, "error: no connector %q installed\n", name)
+		return 1
+	}
+	store, err := secretStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if err := store.Delete(name); err != nil {
+		fmt.Fprintf(os.Stderr, "error: remove secret: %v\n", err)
+		return 1
+	}
+	fmt.Printf("removed connector %s (folder and secret)\n", name)
+	return 0
+}
+
+func cmdConnectorTest(args []string) int {
+	if len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "usage: flow connector test [<name>]")
+		return 2
+	}
+	ms := installedConnectors()
+	if len(args) == 1 {
+		var pick []*connector.Manifest
+		for _, m := range ms {
+			if m.Name == args[0] {
+				pick = append(pick, m)
+			}
+		}
+		if len(pick) == 0 {
+			fmt.Fprintf(os.Stderr, "error: no connector %q installed\n", args[0])
+			return 1
+		}
+		ms = pick
+	}
+	if len(ms) == 0 {
+		fmt.Fprintln(os.Stderr, "error: no connectors installed (add one: flow connector add <dir>)")
+		return 1
+	}
+	rc := 0
+	for _, m := range ms {
+		if err := invokeConnector(m, connector.VerbTest, testPayload()); err != nil {
+			fmt.Printf("%s: FAIL %v\n", m.Name, err)
+			rc = 1
+			continue
+		}
+		fmt.Printf("%s: ok — test notification sent\n", m.Name)
+	}
+	return rc
+}
+
+// cmdConnectorDispatch is filled in by the dispatch behavior.
+func cmdConnectorDispatch(args []string) int {
+	fmt.Fprintln(os.Stderr, "error: dispatch not implemented")
+	return 1
+}
+
+// copyTree copies a connector folder (regular files and directories,
+// permissions kept). Symlinks are refused so an install cannot point
+// outside the copied folder.
+func copyTree(src, dest string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, rel)
+		switch {
+		case info.IsDir():
+			return os.MkdirAll(target, info.Mode().Perm()|0o700)
+		case info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("%s is a symlink — connectors must be plain files", rel)
+		case !info.Mode().IsRegular():
+			return fmt.Errorf("%s is not a regular file", rel)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }
