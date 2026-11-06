@@ -36,6 +36,14 @@
 // listener. `session.hook("context")` only fires in the instance for the
 // session's directory, so it pushes unconditionally (context is not persisted
 // between model calls).
+//
+// Reloads: `flow` rewrites this file in place, so opencode re-evaluates the
+// module without ever calling the old instance's cleanup. Each evaluation gets
+// a fresh `GEN`; anything an older generation started (inbox loops, the event
+// subscription, the scan timer, registered hooks) sees `state.gen !== GEN` and
+// exits without acking, leaving the mail for the current generation's listener.
+// Session-scoped caches are dropped on load because the hook output format may
+// have changed with the code.
 
 const HOOK_TIMEOUT_MS = 20_000;
 const LISTENER_TIMEOUT_MS = 330_000;
@@ -51,10 +59,11 @@ const state = (globalThis.__flowOpencode ??= {
   meta: new Map(), // sessionID -> flow meta | null (cached)
   sessionCtx: new Map(), // sessionID -> Promise<string> of the session-start context
   turnCtx: new Map(), // sessionID -> user-prompt-submit context for the current turn
-  listeners: new Map(), // sessionID -> inbox listener promise
+  listeners: new Map(), // sessionID -> { gen, loop } inbox listener
   nudged: new Set(), // last turn came from a stop nudge
   stopSeen: new Map(), // sessionID -> Date.now() of the last handled succeeded event
   lastScan: 0, // Date.now() of the last attachment scan (cross-instance dedupe)
+  gen: "", // generation of the module evaluation that owns this state
 });
 
 // An older plugin version may already have published a state object without
@@ -67,6 +76,22 @@ state.listeners ??= new Map();
 state.nudged ??= new Set();
 state.stopSeen ??= new Map();
 state.lastScan ??= 0;
+state.gen ??= "";
+
+// Every evaluation of this module (initial load, in-place rewrite) gets a new
+// generation. opencode re-evaluates without calling the previous cleanup, so
+// the load itself is the only place an old generation can be retired: drop its
+// listeners (their loops exit on their next alive() check), its per-session
+// caches (the hook output format may have changed), and the scan timestamp so
+// this generation repairs the listeners immediately instead of in 15 s.
+const GEN = Date.now() + ":" + Math.random().toString(36).slice(2);
+state.gen = GEN;
+for (const [sessionID, entry] of state.listeners) {
+  if (entry?.gen !== GEN) state.listeners.delete(sessionID);
+}
+state.sessionCtx.clear();
+state.meta.clear();
+state.lastScan = 0;
 
 function log(...args) {
   try { console.error("[flow-plugin]", ...args); } catch { /* never throw out of logging */ }
@@ -252,17 +277,24 @@ async function attachedSessions() {
 
 // ensureListener starts the per-session inbox relay once: mail is steered
 // into the conversation while a client is live, then acked; with no live
-// client it stays unread for the next session.
+// client it stays unread for the next session. An entry left by another
+// generation is not "started" — its loop is already exiting without acking —
+// so the current generation replaces it.
 function ensureListener(meta, sessionID, stopping) {
-  if (state.listeners.has(sessionID)) return;
+  const existing = state.listeners.get(sessionID);
+  if (existing && existing.gen === GEN) return;
   const delivered = new Set(); // injected but not acked yet
+  // alive() gates every point where this generation could still act on the
+  // world: after a reload the loop must exit without acking, so the mail stays
+  // unread for the generation that now owns the session.
+  const alive = () => !stopping.value && state.gen === GEN;
   const loop = (async () => {
     try {
-      while (!stopping.value) {
+      while (alive()) {
         if (!(await clientLive(sessionID))) return;
         const popArgs = ["inbox", "pop", "--wait", "--timeout", "300", "--keep-unread", "--json"];
         const popped = await runFlow(meta, sessionID, popArgs, undefined, LISTENER_TIMEOUT_MS);
-        if (stopping.value) return;
+        if (!alive()) return; // superseded mid-pop: leave the mail unread
         if (popped.code === 3) return; // task closed
         if (popped.code !== 0) { await sleep(5_000); continue; }
         const out = (popped.stdout || "").trim();
@@ -272,6 +304,7 @@ function ensureListener(meta, sessionID, stopping) {
         if (!id) continue;
         if (delivered.has(id)) { await sleep(2_000); continue; } // ack failed earlier
         if (!(await clientLive(sessionID))) return; // leave the mail unread
+        if (!alive()) return; // superseded: do not deliver or ack
         const ok = await injectPrompt(sessionID, "[flow inbox] " + out, "steer");
         if (!ok) {
           // Delivery failed, so the mail stays unread: pause, then re-pop it.
@@ -279,20 +312,24 @@ function ensureListener(meta, sessionID, stopping) {
           continue;
         }
         delivered.add(id);
+        // Always ack what was delivered, even if superseded meanwhile:
+        // leaving it unread would make the new generation deliver it twice.
         await runFlow(meta, sessionID, ["inbox", "read", id, "--json"]);
       }
     } catch (err) {
       log("inbox listener stopped:", sessionID, err);
     } finally {
-      state.listeners.delete(sessionID);
+      // Only retire our own entry: a newer generation may already own the slot.
+      if (state.listeners.get(sessionID)?.gen === GEN) state.listeners.delete(sessionID);
     }
   })();
-  state.listeners.set(sessionID, loop);
+  state.listeners.set(sessionID, { gen: GEN, loop });
 }
 
 async function onExecutionStarted(ctx, sessionID, stopping) {
   const meta = await flowMeta(ctx, sessionID);
   if (!meta) return;
+  if (state.gen !== GEN) return; // a reload landed while session.get was in flight
   void sessionStartContext(ctx, meta, sessionID);
   ensureListener(meta, sessionID, stopping);
 }
@@ -354,6 +391,7 @@ export default {
 
     try {
       await ctx.session.hook("prompt", async (event) => {
+        if (state.gen !== GEN) return; // a newer generation owns the session
         try { await onPrompt(ctx, event); } catch (err) { log("prompt hook failed:", err); }
       });
     } catch (err) {
@@ -364,6 +402,7 @@ export default {
     // pushed text is not persisted between calls, so push on every fire.
     try {
       await ctx.session.hook("context", async (e) => {
+        if (state.gen !== GEN) return; // a reload replaced this hook's code
         try {
           const sid = e?.sessionID;
           if (!sid) return;
@@ -380,10 +419,13 @@ export default {
       log("context hook registration failed:", err);
     }
 
-    // Subscribe in the background so setup returns promptly.
+    // Subscribe in the background so setup returns promptly. The loop also
+    // exits on its own when a reload supersedes this generation, because
+    // opencode never calls the previous instance's cleanup.
     void (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: subscription.signal })) {
+          if (state.gen !== GEN) break; // superseded by a newer module evaluation
           try {
             const sessionID = eventSessionID(event);
             if (!sessionID) continue;
@@ -405,14 +447,15 @@ export default {
     // `lastScan` check must stay ahead of the first await so sibling plugin
     // instances share one ps scan per interval.
     const scan = async () => {
+      if (state.gen !== GEN) { clearInterval(scanTimer); return; } // retired by a reload
       try {
         const now = Date.now();
         if (now - (state.lastScan || 0) < SCAN_INTERVAL_MS - 1_000) return;
         state.lastScan = now;
         const ids = await attachedSessions();
         for (const id of ids) {
-          if (stopping.value) return;
-          if (state.listeners.has(id)) continue;
+          if (state.gen !== GEN) return; // superseded mid-scan
+          if (state.listeners.get(id)?.gen === GEN) continue;
           // flowMeta caches null for non-flow sessions, so unrelated
           // opencode sessions cost one session.get each, once.
           const meta = await flowMeta(ctx, id);

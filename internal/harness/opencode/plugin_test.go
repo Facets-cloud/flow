@@ -177,6 +177,63 @@ func TestPluginJSAttachedClientScan(t *testing.T) {
 	}
 }
 
+// TestPluginJSReloadGeneration guards hot-reload safety. `flow` rewrites the
+// plugin file in place, so opencode re-evaluates the module but never calls the
+// previous instance's cleanup: the old inbox loop, event subscription and hooks
+// keep running. Each evaluation must therefore claim a new generation, retire
+// other generations' listeners, and gate every entry point on it — an old loop
+// that reaches inject/ack would otherwise steal a message through stale code.
+func TestPluginJSReloadGeneration(t *testing.T) {
+	src := pluginSource(t)
+
+	for _, frag := range []string{
+		`const GEN = Date.now() + ":" + Math.random().toString(36).slice(2)`,
+		`state.gen = GEN`,
+		`if (state.gen !== GEN) return`,
+		`if (state.gen !== GEN) break`,
+		`state.gen !== GEN`,    // also guards the event loop body and the scan
+		`entry?.gen !== GEN`,   // load-time retirement of other generations' listeners
+		`existing.gen === GEN`, // ensureListener treats a foreign entry as absent
+		`const alive = () => !stopping.value && state.gen === GEN`,
+		`alive()`,
+		`state.listeners.get(sessionID)?.gen === GEN`,
+		`state.listeners.get(id)?.gen === GEN`,
+		`state.listeners.set(sessionID, { gen: GEN, loop })`,
+		`state.sessionCtx.clear()`,
+		`state.meta.clear()`,
+		`state.lastScan = 0`,
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("plugin is missing reload guard %q", frag)
+		}
+	}
+
+	// The old listener must bail at the top of the iteration, right after the
+	// pop, and before the inject. Once delivered, a message is always acked
+	// (an unacked delivery would be delivered again by the new generation).
+	for _, frag := range []string{
+		"while (alive()) {",
+		"if (!alive()) return; // superseded mid-pop: leave the mail unread",
+		"if (!alive()) return; // superseded: do not deliver or ack",
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("listener loop is missing reload check %q", frag)
+		}
+	}
+	if strings.Contains(src, "superseded after delivery") {
+		t.Error("listener must ack a delivered message even when superseded")
+	}
+
+	// Cleanup must not evict the entry a newer generation already installed.
+	at := strings.Index(src, "} finally {")
+	if at < 0 {
+		t.Fatal("listener has no finally block")
+	}
+	if !strings.Contains(src[at:], `if (state.listeners.get(sessionID)?.gen === GEN) state.listeners.delete(sessionID);`) {
+		t.Error("listener finally deletes the map entry without checking the generation")
+	}
+}
+
 // TestPluginJSNeverThrows is a coarse guard on the never-crash-the-server
 // rule: every hook entry point is wrapped, and setup returns a cleanup.
 func TestPluginJSNeverThrows(t *testing.T) {
