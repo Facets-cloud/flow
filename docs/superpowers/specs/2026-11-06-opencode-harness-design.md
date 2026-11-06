@@ -156,4 +156,3 @@ the existing "running elsewhere — pass --force" error.
   pending mail is still surfaced by the session-start context.
 - The skill text is Claude-flavoured (AskUserQuestion, Monitor). opencode
   maps the skill tool natively; question/monitor wording is advisory.
-- Owners (`flow owner tick`) are not wired for opencode.

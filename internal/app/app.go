@@ -187,7 +187,7 @@ Playbooks:
   flow list playbooks [--project <slug>] [--include-archived]
 
 Owners (autonomous, self-prompting controllers — see flow skill §4.17):
-  flow add owner     "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--mkdir]
+  flow add owner     "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--harness <name>] [--mkdir]
   flow owner list                              (alias: flow list owners)
   flow owner show    <slug>                     (alias: flow show owner <slug>)
   flow owner start|pause <slug>                 (start reactivates a paused OR retired owner)

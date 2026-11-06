@@ -265,6 +265,9 @@ of the work.
 `opencode-go/deepseek-v4.1-flash`. flow pins it on the session when the
 session is created; unset means opencode's own default.
 
+Owners can run on opencode with `flow add owner ... --harness opencode`
+(the first tick installs the plugin and creates the session with that model).
+
 **Permissions.** flow never writes `opencode.json` and never sets
 session-level permission rules. `--auto` does not override an explicit
 `deny`, so a project `opencode.json` deny-list keeps working. opencode's

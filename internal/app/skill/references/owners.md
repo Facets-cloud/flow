@@ -20,8 +20,10 @@ manual). Ask one at a time: (1) **what it owns** (one sentence); (2) **where**
 prod health) and do when off-target, bootstrapping from CLAUDE.md / KB /
 workdir registry / `gh`, asking only the gaps; (4) **when to ask vs. act**;
 (5) **fallback interval** `--every` (optional, default 24h) — NOT a fixed
-schedule, just the heartbeat floor (ticks self-pace). Then `flow add owner
-"<name>" --work-dir <p> [--every <dur>] [--project <s>] [--slug <s>]`, write
+schedule, just the heartbeat floor (ticks self-pace). Add `--harness <name>`
+to run the owner's ticks on a non-claude harness (e.g. `--harness opencode`;
+default claude). Then `flow add owner
+"<name>" --work-dir <p> [--every <dur>] [--project <s>] [--slug <s>] [--harness <h>]`, write
 the manual into `charter.md` (Read stub once, then Write), and offer to `flow
 owner start <slug>`.
 

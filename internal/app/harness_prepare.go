@@ -18,6 +18,20 @@ import (
 // session server-side with flow metadata before a tab or auto run
 // attaches to it — on bootstrap AND resume.
 func prepareHarnessSession(h harness.Harness, task *flowdb.Task, sessionID string, auto bool) error {
+	return prepareHarnessSessionFor(h, task.WorkDir, sessionID, harness.SessionMeta{
+		TaskSlug: task.Slug,
+		FlowRoot: os.Getenv("FLOW_ROOT"),
+		FlowBin:  flowBinaryPath(),
+		Auto:     auto,
+	})
+}
+
+// prepareHarnessSessionFor is the task-independent core of
+// prepareHarnessSession: it runs the optional SessionPreparer capability
+// for any caller that owns a session id but not necessarily a task (e.g.
+// an owner's hand-triggered interactive tick). Harnesses without the
+// capability are a no-op.
+func prepareHarnessSessionFor(h harness.Harness, workDir, sessionID string, meta harness.SessionMeta) error {
 	p, ok := h.(harness.SessionPreparer)
 	if !ok {
 		return nil
@@ -25,13 +39,7 @@ func prepareHarnessSession(h harness.Harness, task *flowdb.Task, sessionID strin
 	if err := ensureHarnessInstalled(h); err != nil {
 		return err
 	}
-	meta := harness.SessionMeta{
-		TaskSlug: task.Slug,
-		FlowRoot: os.Getenv("FLOW_ROOT"),
-		FlowBin:  flowBinaryPath(),
-		Auto:     auto,
-	}
-	return p.PrepareSession(task.WorkDir, sessionID, meta)
+	return p.PrepareSession(workDir, sessionID, meta)
 }
 
 // ensureHarnessInstalled keeps the harness's flow install current: the

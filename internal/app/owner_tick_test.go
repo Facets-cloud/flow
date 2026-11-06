@@ -816,6 +816,69 @@ func TestBuildOwnerTickPromptReadsAndWritesJournal(t *testing.T) {
 	}
 }
 
+// An opencode owner's hand-triggered interactive tick must ensure the
+// harness install and create the session server-side (with the configured
+// model) before the tab attaches, then spawn `opencode -s ses_…`.
+func TestOwnerInteractiveLauncherOpencodePreparesSession(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_OPENCODE_MODEL", "opencode-go/deepseek-v4.1-flash")
+	calls := stubOpencodeAPI(t, false)
+	_, script := stubITerm(t)
+
+	o := &flowdb.Owner{
+		Slug: "oc-owner", Name: "O", WorkDir: t.TempDir(), Every: "30m",
+		Harness: sql.NullString{String: "opencode", Valid: true},
+	}
+	if err := ownerInteractiveLauncher(o, "run one tick"); err != nil {
+		t.Fatalf("ownerInteractiveLauncher: %v", err)
+	}
+
+	if n := countOpencodeCalls(calls, "session.create"); n != 1 {
+		t.Fatalf("session.create calls = %d, want 1; calls=%v", n, *calls)
+	}
+	payload := lastOpencodeCreatePayload(t, calls)
+	if payload == nil {
+		t.Fatal("no session.create payload recorded")
+	}
+	model, _ := payload["model"].(map[string]any)
+	if model["providerID"] != "opencode-go" || model["id"] != "deepseek-v4.1-flash" {
+		t.Errorf("session.create model = %v, want the configured FLOW_OPENCODE_MODEL", model)
+	}
+	meta, _ := payload["metadata"].(map[string]any)
+	flow, _ := meta["flow"].(map[string]any)
+	if slug, ok := flow["taskSlug"]; ok && slug != "" {
+		t.Errorf("owner tick is not a task: metadata.flow.taskSlug = %v, want empty", slug)
+	}
+
+	cmd := opencodeLaunchFromAppleScript(script())
+	if !strings.HasPrefix(cmd, "opencode -s ses_") {
+		t.Errorf("spawn command = %q, want it to start with `opencode -s ses_`", cmd)
+	}
+}
+
+// A claude owner's interactive tick (the historical default, harness NULL)
+// must not touch the opencode API — its spawn path is unchanged.
+func TestOwnerInteractiveLauncherClaudeDoesNotPrepare(t *testing.T) {
+	setupFlowRoot(t)
+	calls := stubOpencodeAPI(t, false)
+	spawns, script := stubITerm(t)
+
+	o := &flowdb.Owner{Slug: "c-owner", Name: "O", WorkDir: t.TempDir(), Every: "30m"}
+	if err := ownerInteractiveLauncher(o, "run one tick"); err != nil {
+		t.Fatalf("ownerInteractiveLauncher: %v", err)
+	}
+
+	if len(*calls) != 0 {
+		t.Errorf("claude owner must not call the opencode API, got %v", *calls)
+	}
+	if *spawns != 1 {
+		t.Errorf("iterm spawn count = %d, want 1", *spawns)
+	}
+	if !strings.Contains(script(), "claude --session-id ") {
+		t.Errorf("claude owner should spawn a claude tab; script:\n%s", script())
+	}
+}
+
 var errTickBoom = &tickTestErr{}
 
 type tickTestErr struct{}

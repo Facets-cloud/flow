@@ -117,6 +117,9 @@ func ownerShow(args []string) int {
 	fmt.Printf("name:         %s\n", o.Name)
 	fmt.Printf("status:       %s\n", o.Status)
 	fmt.Printf("every:        %s\n", o.Every)
+	if o.Harness.Valid && o.Harness.String != "" {
+		fmt.Printf("harness:      %s\n", o.Harness.String)
+	}
 	if o.ProjectSlug.Valid && o.ProjectSlug.String != "" {
 		fmt.Printf("project:      %s\n", o.ProjectSlug.String)
 	}
@@ -477,9 +480,20 @@ func addOwner(args []string) int {
 	workDir := fs.String("work-dir", "", "absolute path to the owner's work directory (required)")
 	project := fs.String("project", "", "parent project slug (optional)")
 	every := fs.String("every", "", "fallback/max tick interval (heartbeat floor), e.g. 1h, 24h; default 24h — ticks self-pace via `flow owner next`")
+	harnessFlag := fs.String("harness", "", "harness for owner ticks (default: claude; registered: "+registeredHarnessNames()+")")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
+	}
+
+	var harnessVal sql.NullString
+	if *harnessFlag != "" {
+		if _, err := harnessByName(*harnessFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "error: --harness %q isn't supported by this flow binary (registered: %s)\n",
+				*harnessFlag, registeredHarnessNames())
+			return 2
+		}
+		harnessVal = sql.NullString{String: *harnessFlag, Valid: true}
 	}
 
 	if *workDir == "" {
@@ -560,6 +574,7 @@ func addOwner(args []string) int {
 		WorkDir:     abs,
 		ProjectSlug: projectSlug,
 		Every:       everyVal,
+		Harness:     harnessVal,
 	}
 	if err := flowdb.CreateOwner(db, o); err != nil {
 		fmt.Fprintf(os.Stderr, "error: create owner: %v\n", err)

@@ -138,7 +138,7 @@ Create
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
                            [--tag <t> ...]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
+  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--harness <h>] [--mkdir]
 
 Sessions
   flow do               <ref> [--harness <h>] [--fresh] [--dangerously-skip-permissions] [--force]

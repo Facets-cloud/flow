@@ -87,6 +87,20 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 	if err != nil {
 		return fmt.Errorf("new session id: %w", err)
 	}
+	// Harnesses with the SessionPreparer capability (opencode) need the
+	// skill/plugin install and a server-side session created with the
+	// configured model before the tab attaches. An owner tick is not a
+	// task, so TaskSlug stays empty — the opencode plugin correctly ignores
+	// sessions without one.
+	if _, ok := h.(harness.SessionPreparer); ok {
+		meta := harness.SessionMeta{
+			FlowRoot: os.Getenv("FLOW_ROOT"),
+			FlowBin:  flowBinaryPath(),
+		}
+		if err := prepareHarnessSessionFor(h, o.WorkDir, sid, meta); err != nil {
+			return fmt.Errorf("prepare harness session: %w", err)
+		}
+	}
 	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{})
 	var spawnEnv map[string]string
 	if root := os.Getenv("FLOW_ROOT"); root != "" {

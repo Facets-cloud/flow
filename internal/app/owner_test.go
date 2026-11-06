@@ -249,6 +249,59 @@ func TestCmdAddOwnerEveryOptionalWithDefault(t *testing.T) {
 	}
 }
 
+// --harness is stored on owners.harness; omitting it keeps the historical
+// NULL → claude default.
+func TestCmdAddOwnerHarnessFlag(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+
+	if rc := cmdAdd([]string{"owner", "opencode owner", "--work-dir", wd, "--slug", "oc-owner", "--harness", "opencode"}); rc != 0 {
+		t.Fatalf("--harness opencode rc=%d, want 0", rc)
+	}
+	if rc := cmdAdd([]string{"owner", "default owner", "--work-dir", wd, "--slug", "default-owner"}); rc != 0 {
+		t.Fatalf("no --harness rc=%d, want 0", rc)
+	}
+
+	db := openFlowDB(t)
+	oc, err := flowdb.GetOwner(db, "oc-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !oc.Harness.Valid || oc.Harness.String != "opencode" {
+		t.Errorf("harness = %+v, want opencode", oc.Harness)
+	}
+	def, err := flowdb.GetOwner(db, "default-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Harness.Valid {
+		t.Errorf("omitted --harness should stay NULL (claude default), got %q", def.Harness.String)
+	}
+}
+
+// An unknown --harness is a usage error (exit 2) naming the registered
+// harnesses, and creates no owner.
+func TestCmdAddOwnerUnknownHarnessUsageError(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+
+	read := captureStderr(t)
+	rc := cmdAdd([]string{"owner", "bad harness", "--work-dir", wd, "--slug", "bad-harness", "--harness", "nope"})
+	stderr := read()
+	if rc != 2 {
+		t.Fatalf("unknown --harness rc=%d, want 2", rc)
+	}
+	for _, want := range []string{"nope", "registered:", "claude", "opencode"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q; got:\n%s", want, stderr)
+		}
+	}
+	db := openFlowDB(t)
+	if _, err := flowdb.GetOwner(db, "bad-harness"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("unknown harness must not create an owner, got err=%v", err)
+	}
+}
+
 func TestCmdOwnerListShowsNextTick(t *testing.T) {
 	setupFlowRoot(t)
 	db := openFlowDB(t)
@@ -384,6 +437,40 @@ func TestCmdOwnerStartUnknownErrors(t *testing.T) {
 	setupFlowRoot(t)
 	if rc := cmdOwner([]string{"start", "nope"}); rc != 1 {
 		t.Errorf("start unknown owner: rc=%d, want 1", rc)
+	}
+}
+
+// `flow owner show` surfaces the configured harness; an owner with none
+// (the claude default) keeps the pre-existing output shape.
+func TestCmdOwnerShowShowsHarness(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "oc", Name: "O", WorkDir: "/x", Every: "30m",
+		Harness: sql.NullString{String: "opencode", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "def", Name: "D", WorkDir: "/y", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := cmdOwner([]string{"show", "oc"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "harness:") || !strings.Contains(out, "opencode") {
+		t.Errorf("show output missing harness line; got:\n%s", out)
+	}
+
+	out = captureStdout(t, func() {
+		if rc := cmdOwner([]string{"show", "def"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if strings.Contains(out, "harness:") {
+		t.Errorf("owner with no harness should not render a harness line; got:\n%s", out)
 	}
 }
 
