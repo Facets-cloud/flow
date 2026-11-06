@@ -794,10 +794,10 @@ Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
 **Consuming.** `flow inbox` lists unread; `--all` lists everything
 retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
-the oldest. `--as user` drains the human queue. At
-session start arm ONE inbox **Monitor** (a deferred tool: load it with
-ToolSearch `select:Monitor` first). It has no `persistent` param;
-`timeout_ms` is REQUIRED (max 1800000):
+the oldest. `--as user` drains the human queue. Only a BOUND
+session arms ONE inbox **Monitor** at start (never unbound: it'd sit on
+the human's queue). Load via ToolSearch `select:Monitor`; no
+`persistent` param; `timeout_ms` REQUIRED (max 1800000):
 
 - **Consumer** (default; `pop` acks as it goes): `Monitor(description:
   "flow inbox", timeout_ms: 1800000, command: 'while true; do flow inbox
@@ -808,8 +808,7 @@ ToolSearch `select:Monitor` first). It has no `persistent` param;
 Each message wakes you as an event. On expiry you get a notice: re-arm it
 immediately. No Monitor: background Bash `flow inbox pop --wait`, re-arm
 per wake. `flow watch <task|project|assignee>` subscribes you; tasks you
-create from a bound session are auto-watched. No notification UI; hooks
-NEVER consume.
+create from a bound session are auto-watched. Hooks NEVER consume.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 

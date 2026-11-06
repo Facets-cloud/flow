@@ -135,9 +135,12 @@ machine-readable rows.
 
 ## Listener discipline — two recipes, pick by role
 
-Arm exactly ONE listener at session start so mail WAKES you instead of
-waiting for your next tool call. Which recipe depends on what you do with
-each message.
+Only in a BOUND session (one bound to a flow task) arm exactly ONE
+listener at session start so mail WAKES you instead of waiting for your
+next tool call. An unbound (dispatch) session never arms one: it runs as
+the human's identity, so a loop there would sit on the human's own queue.
+The SessionStart hook prints the recipe only in bound sessions. Which
+recipe depends on what you do with each message.
 
 Claude Code's Monitor tool may be a deferred tool: load its schema first
 with ToolSearch `select:Monitor`. It has NO `persistent` parameter, and
