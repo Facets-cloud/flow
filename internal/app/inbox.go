@@ -289,6 +289,9 @@ func popOne(db *sql.DB, s busSender, keepUnread bool) (*flowdb.BusMessage, error
 			claimed, err = flowdb.ClaimAcked(db, m, s.consumer("pop"))
 		default:
 			claimed, err = flowdb.ClaimDelivered(db, m.ID, s.consumer("pop"))
+			if claimed {
+				m.Status = "delivered"
+			}
 		}
 		if err != nil {
 			return nil, err

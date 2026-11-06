@@ -365,6 +365,15 @@ func ClaimAcked(db *sql.DB, m *BusMessage, c Consumer) (bool, error) {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	if n > 0 {
+		// Reflect the claim on the caller's copy so renderings (pop
+		// --json) report the real post-claim state.
+		m.Status = "acked"
+		m.ConsumedByIdentity, m.ConsumedBySession = c.Identity, c.Session
+		if m.SeenAt == "" {
+			m.SeenAt = NowISO()
+		}
+	}
 	return n > 0, nil
 }
 

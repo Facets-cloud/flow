@@ -720,3 +720,37 @@ func TestF9LoopRecipeEverywhere(t *testing.T) {
 		}
 	}
 }
+
+// F10: pop's JSON reports the row's real post-claim status.
+func TestF10PopJSONShowsRealStatus(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "a", "sid-a")
+	mkBusTask(t, db, "b", "sid-b")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
+	captureStdout(t, func() {
+		_ = cmdMessage([]string{"shashwat", "to a person"})
+		_ = cmdMessage([]string{"user/b", "to a session"})
+	})
+	popJSON := func(args ...string) busMsgJSON {
+		out := captureStdout(t, func() {
+			if rc := cmdInbox(append([]string{"pop", "--json"}, args...)); rc != 0 {
+				t.Fatalf("pop %v rc != 0", args)
+			}
+		})
+		var m busMsgJSON
+		if err := json.Unmarshal([]byte(out), &m); err != nil {
+			t.Fatalf("parse: %v\n%s", err, out)
+		}
+		return m
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if m := popJSON("--as", "shashwat"); m.Status != "acked" || m.Mail != "read" {
+		t.Errorf("acked pop JSON: status=%q mail=%q", m.Status, m.Mail)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-b")
+	if m := popJSON(); m.Status != "delivered" || m.Mail != "read" {
+		t.Errorf("delivered pop JSON: status=%q mail=%q", m.Status, m.Mail)
+	}
+}

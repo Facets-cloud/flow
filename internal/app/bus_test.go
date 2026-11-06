@@ -426,8 +426,8 @@ func TestInboxAsAssigneeAndJSON(t *testing.T) {
 	if m.To.Assignee != "shashwat" || m.Kind != "message" || m.Body == "" {
 		t.Errorf("json roundtrip: %+v", m)
 	}
-	if m.Status != "pending" { // rendered row is pre-claim snapshot
-		t.Logf("status field: %s", m.Status)
+	if m.Status != "acked" { // pop renders the real post-claim status (F10)
+		t.Errorf("status field: %s, want acked", m.Status)
 	}
 
 	// list --as --json for a fresh message to shashwat.
