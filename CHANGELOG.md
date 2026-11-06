@@ -31,6 +31,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   sweep and owner-tick prompts no longer assume Claude. They say to use the
   Skill tool if the harness has one, or else read the flow `SKILL.md` (the
   real Codex path is spelled out), and they name `CLAUDE.md / AGENTS.md`.
+- **`FLOW_TERM=bg` spawns no longer fail on newer `claude --bg` output.**
+  Newer Claude Code prints a `Starting background service…` line before
+  the `backgrounded · <id> · <name>` banner. flow only read the first
+  line, so it failed with "no background banner in output" even though
+  the session had started. flow now checks every line for the banner,
+  with or without ANSI color, and still reports a clear error when no
+  banner line appears.
 
 ### Added
 

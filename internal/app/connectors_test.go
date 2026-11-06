@@ -748,8 +748,8 @@ func TestB10DocsCoverConnectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Checked across the whole CHANGELOG: a release cut moves the entry out
-	// of [Unreleased] into its version section.
+	// Check the whole changelog: a release cut moves these notes out of
+	// [Unreleased] into a versioned section, and that must not fail CI.
 	for _, want := range []string{"### Added", "connector", "--options", "--fyi", "flow human reply",
 		"flow connector add macos", "--available"} {
 		if !strings.Contains(string(changelog), want) {
