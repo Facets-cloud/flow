@@ -15,7 +15,8 @@ flow do --here <slug>
 ```
 
 Flow detects the active harness automatically: Claude Code exposes
-`$CLAUDE_CODE_SESSION_ID`; Codex exposes `$CODEX_THREAD_ID`. It validates the
+`$CLAUDE_CODE_SESSION_ID`; Codex exposes `$CODEX_THREAD_ID`; opencode exposes
+`$OPENCODE_SESSION_ID` to its tool shells. It validates the
 identifier, writes it to `tasks.session_id`, pins `tasks.harness`, and moves
 the task to `in-progress`. No terminal tab is spawned.
 

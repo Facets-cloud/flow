@@ -7,6 +7,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **opencode harness.** `flow do <task> --harness opencode` runs a task in
+  opencode v2 with the same lifecycle as Claude: bootstrap from the brief,
+  resume, `--fresh`, `--with`/`--with-file`, `--auto` headless runs that
+  finish with `flow done`, the live-session guard (and kitty tab focus),
+  `flow transcript`, and the close-out sweep. flow allocates the `ses_…`
+  id and creates the session first, so the model set in
+  `FLOW_OPENCODE_MODEL` (e.g. `opencode-go/deepseek-v4.1-flash`) is pinned
+  on it. `--dangerously-skip-permissions` maps to opencode `--auto`, which
+  never overrides an explicit `deny` in `opencode.json`. A flow plugin in
+  `~/.config/opencode/plugins/flow/` replaces Claude's hooks: it adds the
+  session-start and per-prompt context, sends the turn-end broadcast nudge,
+  and delivers `flow message` mail into the live session as
+  `[flow inbox] …` prompts.
+
 ### Fixed
 
 - **`FLOW_TERM=bg` spawns no longer fail on newer `claude --bg` output.**

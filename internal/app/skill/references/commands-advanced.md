@@ -35,7 +35,7 @@ find the follow-ups a task fanned out.
 ### `flow auto`: one-shot auto child
 
 `flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l]
-[--work-dir <p>] [--mkdir] [--harness claude|codex]` is `flow add task`
+[--work-dir <p>] [--mkdir] [--harness claude|codex|opencode]` is `flow add task`
 (same parent link, project inheritance and auto-watch from a bound
 session) + writing the given text as the child's `brief.md` + `flow do
 --auto`. `--brief -` reads stdin. It refuses with exit 2 when the brief is
