@@ -7,8 +7,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **opencode harness.** `flow do <task> --harness opencode` runs a task in
+  opencode v2 with the same lifecycle as Claude: bootstrap from the brief,
+  resume, `--fresh`, `--with`/`--with-file`, `--auto` headless runs that
+  finish with `flow done`, the live-session guard (and kitty tab focus),
+  `flow transcript`, and the close-out sweep. flow allocates the `ses_…`
+  id and creates the session first, so the model set in
+  `FLOW_OPENCODE_MODEL` (e.g. `opencode-go/deepseek-v4.1-flash`) is pinned
+  on it. `--dangerously-skip-permissions` maps to opencode `--auto`, which
+  never overrides an explicit `deny` in `opencode.json`. A flow plugin in
+  `~/.config/opencode/plugins/flow/` replaces Claude's hooks: it adds the
+  session-start and per-prompt context, sends the turn-end broadcast nudge,
+  and delivers `flow message` mail into the live session as
+  `[flow inbox] …` prompts. A small TUI plugin (`~/.config/opencode/flow-tui`,
+  listed in `cli.json`) makes liveness follow the session on screen. `flow do
+  --here` works from inside opencode, an installed opencode plugin and skill
+  refresh on flow upgrades, and owners can run on opencode with `flow add owner
+  --harness opencode`.
+
 ### Fixed
 
+- **kitty no longer truncates long spawn commands.** flow types the
+  command into the new kitty tab, and when it arrives before the shell is
+  ready macOS cuts it at 1024 bytes, leaving the shell on an unterminated
+  quote. Commands over 900 bytes now run from a self-deleting temp script;
+  shorter ones are typed as before.
 - **`FLOW_TERM=bg` spawns no longer fail on newer `claude --bg` output.**
   Newer Claude Code prints a `Starting background service…` line before
   the `backgrounded · <id> · <name>` banner. flow only read the first

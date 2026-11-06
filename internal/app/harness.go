@@ -9,16 +9,18 @@ import (
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
 	"flow/internal/harness/codex"
+	"flow/internal/harness/opencode"
 	"flow/internal/spawner"
 )
 
 // allHarnesses returns every implemented harness adapter. The slice
 // is the registry that ambient-harness detection and harnessByName
-// consult. Adding codex/gemini = one line each here.
+// consult. Adding a harness = one line each here.
 func allHarnesses() []harness.Harness {
 	return []harness.Harness{
 		claude.New(),
 		codex.New(),
+		opencode.New(),
 		// gemini.New(),   // wired when the gemini adapter lands
 	}
 }
@@ -187,6 +189,18 @@ func liveSessionsForTasks(tasks []*flowdb.Task) map[string]int {
 		}
 	}
 	return merged
+}
+
+// liveCountFor returns the live-process count for sessionID from a
+// LiveSessionIDs map. Case-insensitive harnesses (claude, codex) key
+// their maps by lowercased UUID; opencode keys `ses_…` ids exactly
+// (base62 is case-sensitive). Try the exact id first, then fall back to
+// the historical lowercase form so both shapes resolve.
+func liveCountFor(live map[string]int, sessionID string) int {
+	if n, ok := live[sessionID]; ok {
+		return n
+	}
+	return live[strings.ToLower(sessionID)]
 }
 
 // bgAgentStatus returns the live background-agent entry for a task's bound

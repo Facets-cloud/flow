@@ -9,8 +9,8 @@ A task's harness is pinned by its **first** session: `flow do --harness`
 is a first-session choice only, and once `tasks.session_id` is set the
 binary rejects `--harness` (even with `--fresh`) to protect the
 transcript and resume path. So "move this task from Claude to Codex"
-(or the reverse) has no single CLI command. This recipe is the reliable
-manual transfer. Triggers: "move X to codex", "switch X to claude",
+(or to/from opencode) has no single CLI command. This recipe is the reliable
+manual transfer. Triggers: "move X to codex", "switch X to claude", "move X to opencode",
 "transfer this task to the other harness", "reopen X in codex" when X
 already has a session.
 
@@ -53,7 +53,7 @@ unreachable through flow afterwards, and step 3 is a direct DB edit.
 4. **Respawn in the target harness with the context injected:**
 
    ```
-   flow do <slug> --harness <claude|codex> --with-file ~/.flow/tasks/<slug>/handoff-YYYY-MM-DD.md
+   flow do <slug> --harness <claude|codex|opencode> --with-file ~/.flow/tasks/<slug>/handoff-YYYY-MM-DD.md
    ```
 
    The new session bootstraps normally (brief + updates), then gets

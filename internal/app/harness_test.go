@@ -56,6 +56,25 @@ func TestHarnessForSpawnPrefersCodexAmbient(t *testing.T) {
 	}
 }
 
+// TestOpenCodeHarnessRegistered pins that the opencode adapter is in the
+// registry: `--harness opencode` must resolve, and the registered-name
+// list (shown in error messages / flag help) must mention it.
+func TestOpenCodeHarnessRegistered(t *testing.T) {
+	if got := registeredHarnessNames(); !strings.Contains(got, string(harness.NameOpencode)) {
+		t.Errorf("registeredHarnessNames()=%q, want it to include opencode", got)
+	}
+	h, err := harnessByName("opencode")
+	if err != nil {
+		t.Fatalf("harnessByName(opencode): %v", err)
+	}
+	if h.Name() != harness.NameOpencode {
+		t.Errorf("harnessByName(opencode)=%q, want opencode", h.Name())
+	}
+	if h.Binary() != "opencode" {
+		t.Errorf("Binary()=%q, want opencode", h.Binary())
+	}
+}
+
 func TestCmdDoHereBindsCodexSession(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "codex-here")
@@ -92,6 +111,7 @@ func TestHarnessForTask(t *testing.T) {
 		{"null column → claude", sql.NullString{}, harness.NameClaude, false},
 		{"empty string → claude", sql.NullString{Valid: true, String: ""}, harness.NameClaude, false},
 		{"claude pin", sql.NullString{Valid: true, String: "claude"}, harness.NameClaude, false},
+		{"opencode pin", sql.NullString{Valid: true, String: "opencode"}, harness.NameOpencode, false},
 		{"unknown name → error", sql.NullString{Valid: true, String: "future"}, "", true},
 	}
 	for _, tc := range cases {

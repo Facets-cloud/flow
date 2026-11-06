@@ -233,7 +233,8 @@ named in `$FLOW_TERM` (when set), or Warp / iTerm2 / stock
 Terminal.app (auto-detected from `$TERM_PROGRAM`) — chosen in that
 priority order, with iTerm as the historical fallback. Claude sessions use
 an allocated UUID; Codex sessions mint a real thread with `codex exec --json`
-before flow opens `codex resume <thread-id>`. Future `flow do` calls resume
+before flow opens `codex resume <thread-id>`; opencode sessions use a
+flow-allocated `ses_…` id (`opencode -s <id>`). Future `flow do` calls resume
 the recorded conversation. A SessionStart hook re-injects the task brief,
 updates, and repository context on every resume.
 
@@ -242,6 +243,49 @@ explicitly: `flow do <task> --harness codex` (or `--harness claude`). This
 only selects the first session. Once a task has a session, its harness remains
 pinned so flow can safely resume the same transcript instead of transferring
 an in-progress task.
+
+### opencode
+
+`flow do <task> --harness opencode` runs the task in
+[opencode](https://opencode.ai) **v2** (tested with 2.0.32). The common
+setup is Claude for plans and reviews, with an opencode model doing the bulk
+of the work.
+
+| flow | opencode |
+|---|---|
+| bootstrap | `opencode -s <ses_id> --prompt '<bootstrap prompt>'` (flow allocates the id and creates the session first with `opencode api session.create`) |
+| resume / `--with` | `opencode -s <ses_id> [--prompt '<injected text>']` |
+| `--dangerously-skip-permissions` | `--auto` (auto-approves anything that is not explicitly denied) |
+| `--auto` (headless) | `opencode run -s <ses_id> --auto [-m <model>] '<prompt>'`, finishing with `flow done` |
+| `flow done` close-out sweep | `opencode run --auto [-m <model>] '<sweep prompt>'` |
+| `flow transcript` | rendered from `opencode session export <ses_id>` |
+| in-session task lookup | `$OPENCODE_SESSION_ID` (exported to opencode's tool shells) |
+
+**Model.** Set `FLOW_OPENCODE_MODEL=provider/model`, for example
+`opencode-go/deepseek-v4.1-flash`. flow pins it on the session when the
+session is created; unset means opencode's own default.
+
+Owners can run on opencode with `flow add owner ... --harness opencode`
+(the first tick installs the plugin and creates the session with that model).
+
+**Permissions.** flow never writes `opencode.json` and never sets
+session-level permission rules. `--auto` does not override an explicit
+`deny`, so a project `opencode.json` deny-list keeps working. opencode's
+config precedence, lowest to highest: global `~/.config/opencode/opencode.json`,
+project `opencode.json` files (farthest to nearest), `.opencode/opencode.json`,
+then system and managed settings.
+
+**Hooks.** opencode has no hook config, so flow installs a small plugin to
+`~/.config/opencode/plugins/flow/` (and the skill to
+`~/.config/opencode/skills/flow/`) the first time it opens an opencode task,
+and refreshes both on upgrade. flow also registers a small TUI plugin
+(`~/.config/opencode/flow-tui`, listed in `~/.config/opencode/cli.json`) so
+liveness follows the session on screen, even after switching sessions inside
+the TUI. The plugin is active only for sessions flow
+created. It provides the SessionStart context, the per-prompt anchor, the
+turn-end broadcast nudge, and inbox delivery: a `flow message` to the task
+arrives in the live session as a `[flow inbox] …` prompt, without a Monitor
+loop. Mail stays unread while no opencode client has the session open.
 
 When `flow do <task>` is run for a task whose session is already
 live in another tab, flow focuses that tab instead of spawning a
@@ -436,7 +480,7 @@ and reinstall the skill + hook.
 
 Today flow runs on **macOS (iTerm2, Warp, stock Terminal.app, kitty,
 Rex, zellij, or Claude Code background agents via `FLOW_TERM=bg`) + Claude
-Code and Codex**. The background-agent backend is
+Code, Codex, and opencode**. The background-agent backend is
 platform-agnostic (no terminal, no AppleScript) but Claude-only. zellij
 and kitty work on Linux too as a side effect — both are
 cross-platform and flow's zellij / kitty backends don't depend on

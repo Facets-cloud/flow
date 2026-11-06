@@ -138,10 +138,10 @@ Create
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
                            [--tag <t> ...]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
+  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--harness <h>] [--mkdir]
 
 Sessions
-  flow do               <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]
+  flow do               <ref> [--harness <h>] [--fresh] [--dangerously-skip-permissions] [--force]
                               [--with "<instruction>" | --with-file <path>]
   flow do --here        <ref> [--force]   (bind THIS harness session to the task — no new tab)
   flow do --auto        <ref> [--with "<instruction>" | --with-file <path>]
@@ -886,11 +886,11 @@ Y?", stop and use the tool.
 ## 9. The execution-session bootstrap contract
 
 When `flow do <task>` spawns a session, it selects the task's pinned harness,
-the explicit first-session `--harness <claude|codex>` choice, or the active
-harness (`CODEX_THREAD_ID` → Codex; otherwise Claude Code by default).
-`--harness` is rejected once a task already has a session. Claude Code accepts
-a flow-minted UUID. Codex first mints a real
-thread with `codex exec --json`, then flow opens `codex resume <thread-id>`.
+the explicit first-session `--harness <claude|codex|opencode>` choice, or the
+active harness (by its session env var; default Claude Code).
+`--harness` is rejected once a task already has a session. Claude Code and opencode
+accept a flow-minted id. Codex mints a thread with `codex exec --json`, then
+flow opens `codex resume <id>`.
 The chosen harness and session id are stored before the interactive tab opens,
 so there is no self-registration step. Subsequent `flow do <same-task>` calls
 resume the recorded conversation with that same harness.
@@ -995,7 +995,8 @@ is owned by `flow do` / `flow do --here`.
 ## 10. How "what task am I on?" gets answered
 
 `tasks.session_id` is the single source of truth. Claude Code exposes
-`$CLAUDE_CODE_SESSION_ID`; Codex exposes `$CODEX_THREAD_ID`. Flow detects the
+`$CLAUDE_CODE_SESSION_ID`, Codex `$CODEX_THREAD_ID`, opencode
+`$OPENCODE_SESSION_ID`. Flow detects the
 one active harness and reverse-looks up its value against `tasks.session_id`
 to find the bound task. Two implications:
 

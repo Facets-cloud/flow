@@ -28,7 +28,8 @@ via `AskUserQuestion`.
    `which flow` if unsure).
 4. Run `flow skill update` to refresh the embedded skill on disk and
    re-wire the supported hooks in the active harness configuration
-   (`~/.claude/settings.json` or `~/.codex/hooks.json`). (The auto-upgrade path runs the same
+   (`~/.claude/settings.json`, `~/.codex/hooks.json`, or the opencode plugin at
+   `~/.config/opencode/plugins/flow/`). (The auto-upgrade path runs the same
    refresh on the next `flow` invocation, but explicit is better and
    surfaces any errors immediately.)
 5. Run `flow --version` again and confirm the version changed. If it

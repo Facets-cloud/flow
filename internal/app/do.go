@@ -90,6 +90,26 @@ func openConcurrentDB(path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// rollbackBootstrap undoes a fresh bootstrap's pre-allocated session and
+// status flip after a failure between the status-flip commit and the
+// session actually starting (auto-launch failure, spawn failure, prepare
+// failure). The session-id invariant (in-progress requires session_id)
+// makes "preserve status, drop session_id" illegal — rolling status back
+// to backlog is the only consistent recovery, so the next `flow do`
+// retries bootstrap fresh. The WHERE clause guards against a concurrent
+// `flow do` having mutated session_id between commit and now: only roll
+// back if we still own the session.
+func rollbackBootstrap(db *sql.DB, slug, sessionID string) {
+	if _, undoErr := db.Exec(
+		`UPDATE tasks SET session_id=NULL, session_started=NULL,
+			status='backlog', status_changed_at=NULL, updated_at=?
+		 WHERE slug=? AND session_id=?`,
+		flowdb.NowISO(), slug, sessionID,
+	); undoErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+	}
+}
+
 // cmdDo flips a task to in-progress, bootstraps a Claude session if
 // needed (race-free via atomic UPDATE ... WHERE session_id IS ?), and
 // spawns an iTerm tab to resume it. See spec §6 for the full protocol.
@@ -226,7 +246,7 @@ func cmdDo(args []string) int {
 	// below, so skip this block entirely when *auto.
 	if !*force && !*auto && task.SessionID.Valid && task.SessionID.String != "" {
 		if live, err := h.LiveSessionIDs(); err == nil {
-			if n := live[strings.ToLower(task.SessionID.String)]; n > 0 {
+			if n := liveCountFor(live, task.SessionID.String); n > 0 {
 				if n > 1 {
 					fmt.Fprintf(os.Stderr,
 						"warning: %d %s processes are running session %s — both write to the same transcript and may race; close duplicates if unintended\n",
@@ -382,6 +402,19 @@ func cmdDo(args []string) int {
 		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
 	}
 
+	// Optional SessionPreparer step (opencode): ensure the harness install
+	// (skill + plugin) and create/label the session server-side BEFORE any
+	// tab or detached supervisor launches. Covers bootstrap and resume.
+	// Failure on a fresh bootstrap rolls the session back exactly like a
+	// spawn failure, so the next `flow do` retries cleanly.
+	if err := prepareHarnessSession(h, task, sessionID, *auto); err != nil {
+		if needsBootstrap {
+			rollbackBootstrap(db, task.Slug, sessionID)
+		}
+		fmt.Fprintf(os.Stderr, "error: prepare %s session: %v\n", h.Name(), err)
+		return 1
+	}
+
 	// --auto: instead of spawning an interactive tab, launch a detached
 	// headless supervisor that runs claude to completion in the
 	// background. The status flip above already committed (in-progress +
@@ -403,14 +436,7 @@ func cmdDo(args []string) int {
 			// spawn-failure recovery: undo a fresh bootstrap's pre-allocated
 			// session + status flip so the next attempt retries cleanly.
 			if needsBootstrap {
-				if _, undoErr := db.Exec(
-					`UPDATE tasks SET session_id=NULL, session_started=NULL,
-						status='backlog', status_changed_at=NULL, updated_at=?
-					 WHERE slug=? AND session_id=?`,
-					flowdb.NowISO(), task.Slug, sessionID,
-				); undoErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: rollback after auto-launch failure: %v\n", undoErr)
-				}
+				rollbackBootstrap(db, task.Slug, sessionID)
 			}
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -512,18 +538,7 @@ func cmdDo(args []string) int {
 			// The WHERE clause guards against a concurrent `flow do`
 			// having mutated session_id between commit and now —
 			// only roll back if we still own the session.
-			if _, undoErr := db.Exec(
-				`UPDATE tasks SET
-					session_id        = NULL,
-					session_started   = NULL,
-					status            = 'backlog',
-					status_changed_at = NULL,
-					updated_at        = ?
-				 WHERE slug=? AND session_id=?`,
-				flowdb.NowISO(), task.Slug, sessionID,
-			); undoErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
-			}
+			rollbackBootstrap(db, task.Slug, sessionID)
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -1064,6 +1079,17 @@ func cmdDoHere(query string, force bool) int {
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	// A session created before flow knew about the task carries no flow
+	// metadata, so a harness that gates on it (opencode's plugin) would
+	// ignore this session forever. Harnesses with the SessionPreparer
+	// capability get the metadata written server-side now. The bind is
+	// already committed, so a prepare failure is a warning, not a
+	// rollback — the user can still work in the bound session.
+	if _, ok := h.(harness.SessionPreparer); ok {
+		if err := prepareHarnessSession(h, task, sid, false); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: prepare %s session: %v\n", h.Name(), err)
+		}
+	}
 	// A session bound mid-flight missed SessionStart, so hand it the
 	// role block now (driver or light delegation).
 	if blk := roleBlockFor(db, task); blk != "" {

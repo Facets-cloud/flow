@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"flow/internal/harness"
 )
 
 // embeddedSkillFS holds the entire skill directory — SKILL.md (the lean
@@ -94,12 +96,20 @@ func writeSkillVersion(v string) error {
 // SessionStart hook. Designed to run on every flow invocation so the
 // user gets a self-healing upgrade flow after replacing the binary.
 //
-// The check is intentionally conservative — it does nothing when:
+// The default (ambient) harness check is intentionally conservative —
+// it does nothing when:
 //   - The binary is a "dev" build (Version == "dev"). Local devs use
 //     `make install` and shouldn't fight an auto-installer.
 //   - The skill isn't installed at all (sentinel: SKILL.md missing).
 //     Treat this as an explicit user opt-out; never re-install.
 //   - The recorded version already matches Version. The common path.
+//
+// Every OTHER registered harness with the SessionPreparer capability
+// (today: opencode) is refreshed too, but only when its own VERSION
+// sidecar already exists: a missing sidecar means the user never opted
+// into that harness's flow install. Dev builds skip all of this (it runs
+// on every invocation, hooks included); a dev opencode install is still
+// refreshed by each opencode `flow do` via ensureHarnessInstalled.
 //
 // All errors are silent — auto-upgrade is best-effort plumbing, not a
 // command. A user-visible failure here would be far more annoying
@@ -109,6 +119,13 @@ func maybeAutoUpgradeSkill() {
 		return
 	}
 	h := defaultHarness()
+	autoUpgradeDefaultHarness(h)
+	autoUpgradePreparerHarnesses(h)
+}
+
+// autoUpgradeDefaultHarness refreshes the ambient/default harness's
+// skill + hooks when its recorded version differs from Version.
+func autoUpgradeDefaultHarness(h harness.Harness) {
 	skillPath, err := h.SkillInstallPath()
 	if err != nil {
 		return
@@ -131,6 +148,40 @@ func maybeAutoUpgradeSkill() {
 	_, _ = h.InstallPreToolUseHook(preToolUseHookCommand)
 	_, _ = h.UninstallPostToolUseHook(postToolUseHookCommand) // retired
 	fmt.Fprintf(os.Stderr, "flow: upgraded skill to %s\n", Version)
+}
+
+// autoUpgradePreparerHarnesses refreshes the flow install of every
+// registered harness other than the default one, when that harness
+// implements SessionPreparer and already has a VERSION sidecar. The
+// sidecar's presence is the opt-in: a harness the user never installed
+// is left alone.
+func autoUpgradePreparerHarnesses(primary harness.Harness) {
+	for _, h := range allHarnesses() {
+		if h.Name() == primary.Name() {
+			continue
+		}
+		if _, ok := h.(harness.SessionPreparer); !ok {
+			continue
+		}
+		versionPath, err := h.SkillVersionPath()
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile(versionPath)
+		if err != nil {
+			// No sidecar → not installed / user opted out.
+			continue
+		}
+		if strings.TrimSpace(string(b)) == Version {
+			continue
+		}
+		// Version mismatch — refresh the skill, the
+		// sidecar, and the harness's session hook (the opencode plugin).
+		if err := ensureHarnessInstalled(h); err != nil {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "flow: upgraded %s skill to %s\n", h.Name(), Version)
+	}
 }
 
 // cmdSkill dispatches `flow skill install|uninstall|update`.

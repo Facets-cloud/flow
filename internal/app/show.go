@@ -295,7 +295,7 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		sid = t.SessionID.String
 		if h, err := harnessForTask(t); err == nil {
 			if live, err := h.LiveSessionIDs(); err == nil {
-				if live[strings.ToLower(t.SessionID.String)] > 0 {
+				if liveCountFor(live, t.SessionID.String) > 0 {
 					sid += "  [live]"
 				}
 			}

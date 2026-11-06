@@ -10,6 +10,7 @@ import (
 	"flow/internal/flowdb"
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/opencode"
 	"flow/internal/spawner"
 )
 
@@ -32,6 +33,25 @@ func TestMain(m *testing.M) {
 	// stubBGMode (which saves/restores this override).
 	notBG := false
 	spawner.BackgroundOverride = &notBG
+	// The suite must pass when run from inside any harness session (and
+	// from a shell that exports FLOW_OPENCODE_MODEL). Ambient harness
+	// session ids would otherwise perturb ambientHarness()/defaultHarness()
+	// in tests that don't set them explicitly; tests that need one set it
+	// with t.Setenv.
+	for _, k := range []string{
+		"OPENCODE_SESSION_ID",
+		"CODEX_THREAD_ID",
+		"CLAUDE_CODE_SESSION_ID",
+		"FLOW_OPENCODE_MODEL",
+	} {
+		os.Unsetenv(k)
+	}
+	// Never let an app test reach a real opencode server: default the API
+	// runner to a benign stub. Tests that assert API calls override it and
+	// restore in cleanup.
+	opencode.APIRunner = func(args ...string) ([]byte, error) {
+		return []byte("{}"), nil
+	}
 	os.Exit(m.Run())
 }
 

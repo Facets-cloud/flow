@@ -8,6 +8,7 @@
 //  1. kitty @ launch --type=tab --tab-title=<title> --cwd=<cwd>
 //     (prints the new window id to stdout)
 //  2. kitty @ send-text --match=id:<id> " <env-prefix><flat-command>\n"
+//     (or, for long commands, " bash '<script-path>'\n")
 //
 // Step 1 opens a new tab in the current OS window, running the default
 // shell, and returns the kitty window id. Step 2 types the command
@@ -20,6 +21,14 @@
 // PTY, so any embedded `\n` in the command is interpreted by the shell
 // as Enter. Same flattening rule as the zellij backend.
 //
+// Length handling: send-text can arrive before the shell's line editor
+// is ready, in which case the bytes land in the tty's canonical input
+// buffer, capped at MAX_CANON (1024 bytes) on macOS. A longer line is
+// truncated mid-quote and the shell sits on an unterminated string. So
+// any typed line over maxTypedLine is written to a self-deleting temp
+// script and only ` bash '<path>'` is typed — same mechanism as the
+// warp backend.
+//
 // Prereq: `allow_remote_control yes` (or `socket-only`) in kitty.conf.
 // Without it, `kitty @ launch` exits non-zero with an explicit error;
 // SpawnTab surfaces that as a wrapped error so the user knows to enable
@@ -31,13 +40,24 @@
 package kitty
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 )
+
+// maxTypedLine caps the number of bytes typed into the new tab via
+// send-text. The macOS tty canonical input buffer is capped at
+// MAX_CANON = 1024 bytes; anything longer is silently truncated.
+// 900 leaves headroom under that limit for the leading space, env
+// prefix, and trailing newline.
+const maxTypedLine = 900
 
 // Runner is the function used to execute kitty for side-effect calls
 // (send-text). Tests override this to capture argv without invoking
@@ -58,13 +78,60 @@ var RunnerOutput = func(args []string) ([]byte, error) {
 	return exec.Command("kitty", args...).Output()
 }
 
+// WriteScript writes the bootstrap script body to a per-user temp file
+// and returns the absolute path. Tests override this to avoid touching
+// the real filesystem.
+var WriteScript = func(body string) (string, error) {
+	path, err := tempScriptPath()
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		return "", fmt.Errorf("write kitty bootstrap script: %w", err)
+	}
+	return path, nil
+}
+
+// removeScript deletes the temp script on the error path. The happy
+// path leaves cleanup to the script's own `rm -- "$0"` first line.
+// Tests override to observe error-path cleanup.
+var removeScript = func(path string) error {
+	return os.Remove(path)
+}
+
 // SpawnTab opens a new kitty tab in the current OS window, sets its
 // title and cwd, and types `command` into the new window's PTY.
 //
 // envVars are attached as an inline shell prefix to `command` only —
 // they are present in the command's environment but do NOT persist in
 // the tab's shell after the command exits.
+//
+// Commands whose typed line (leading space + env prefix + flattened
+// command + newline) would exceed maxTypedLine are not sent inline.
+// send-text can reach the PTY before the shell's line editor is ready,
+// in which case the bytes sit in the tty's canonical input buffer,
+// capped at MAX_CANON = 1024 bytes on macOS — anything longer is cut
+// at 1024 bytes, often mid-quote, leaving the shell on an unterminated
+// string. Instead the full command (unflattened, env vars via
+// `exec env`) is written to a self-deleting temp script and only
+// ` bash '<path>'` is typed. cwd needs no `cd`: kitty already launched
+// the tab with --cwd. The script is written before `kitty @ launch`;
+// if launch or send-text fails it is removed.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
+	envPrefix := formatEnvPrefix(envVars)
+	flat := strings.ReplaceAll(command, "\n", " ")
+	line := " " + envPrefix + flat + "\n"
+
+	scriptPath := ""
+	if len(line) > maxTypedLine {
+		path, err := WriteScript(buildScript(command, envVars))
+		if err != nil {
+			return err
+		}
+		scriptPath = path
+		line = " bash " + ShellQuote(scriptPath) + "\n"
+	}
+
 	out, err := RunnerOutput([]string{
 		"@", "launch",
 		"--type=tab",
@@ -72,29 +139,88 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 		"--cwd=" + cwd,
 	})
 	if err != nil {
+		if scriptPath != "" {
+			_ = removeScript(scriptPath)
+		}
 		return fmt.Errorf("kitty @ launch: %w (is `allow_remote_control yes` set in kitty.conf?)", err)
 	}
 	windowID := strings.TrimSpace(string(out))
 	if windowID == "" {
+		if scriptPath != "" {
+			_ = removeScript(scriptPath)
+		}
 		return fmt.Errorf("kitty @ launch returned empty window id")
 	}
 
-	envPrefix := ""
-	if len(envVars) > 0 {
-		keys := make([]string, 0, len(envVars))
-		for k := range envVars {
-			keys = append(keys, k)
+	if err := Runner([]string{"@", "send-text", "--match=id:" + windowID, line}); err != nil {
+		if scriptPath != "" {
+			_ = removeScript(scriptPath)
 		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(envVars))
-		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
-		}
-		envPrefix = strings.Join(parts, " ") + " "
+		return err
 	}
-	flat := strings.ReplaceAll(command, "\n", " ")
-	line := " " + envPrefix + flat + "\n"
-	return Runner([]string{"@", "send-text", "--match=id:" + windowID, line})
+	return nil
+}
+
+// formatEnvPrefix renders envVars as a sorted `K='v' ...` shell prefix
+// (with trailing space), or "" when there are none.
+func formatEnvPrefix(envVars map[string]string) string {
+	if len(envVars) == 0 {
+		return ""
+	}
+	parts := envAssignments(envVars)
+	return strings.Join(parts, " ") + " "
+}
+
+// envAssignments returns `K='v'` for each env var, keys sorted
+// alphabetically for stable output.
+func envAssignments(envVars map[string]string) []string {
+	keys := make([]string, 0, len(envVars))
+	for k := range envVars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(envVars))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
+	}
+	return parts
+}
+
+// buildScript produces the bash script body that the typed
+// `bash <path>` line invokes. Shape:
+//
+//	#!/bin/bash
+//	rm -- "$0"
+//	exec env FOO='bar' BAZ='qux' <command>
+//
+// The command is interpolated RAW (not newline-flattened): newlines
+// inside quoted arguments are perfectly legal in a script file. When
+// envVars is empty the last line is `exec <command>` with no `env`
+// wrapper. No `cd` and no title line — kitty's launch already set the
+// cwd and tab title.
+func buildScript(command string, envVars map[string]string) string {
+	var b strings.Builder
+	b.WriteString("#!/bin/bash\n")
+	b.WriteString(`rm -- "$0"`)
+	b.WriteString("\n")
+	if len(envVars) == 0 {
+		fmt.Fprintf(&b, "exec %s\n", command)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "exec env %s %s\n", strings.Join(envAssignments(envVars), " "), command)
+	return b.String()
+}
+
+// tempScriptPath returns os.TempDir()/flow-kitty-<32 hex>.sh. 16
+// crypto/rand bytes hex-encoded — sufficient uniqueness for concurrent
+// spawns. Backend packages deliberately don't import internal/app.
+func tempScriptPath() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("generate kitty script id: %w", err)
+	}
+	name := fmt.Sprintf("flow-kitty-%s.sh", hex.EncodeToString(buf[:]))
+	return filepath.Join(os.TempDir(), name), nil
 }
 
 // FocusSession tries to focus the kitty window currently running
@@ -168,11 +294,19 @@ var sessionUUIDRowRe = regexp.MustCompile(
 	`(?:--session-id|--resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})`,
 )
 
+// sessionOpencodeRowRe matches an opencode invocation carrying a
+// `ses_…` session id via `-s` / `--session` (space or `=` separated).
+// opencode ids are case-sensitive, unlike UUIDs.
+var sessionOpencodeRowRe = regexp.MustCompile(
+	`(?:^|\s)(?:-s|--session)(?:\s+|=)(ses_[0-9A-Za-z]{26})\b`,
+)
+
 // windowIDForHarnessSession parses `kitty @ ls` JSON and returns the
 // kitty window id of the first window whose foreground_processes
 // contain a process matching `binary` and carrying the given session
-// UUID. Returns (0, false, nil) on no match, (0, false, err) only on
-// JSON parse failure.
+// id (a Claude UUID via --session-id/--resume, or an opencode `ses_…`
+// via -s/--session). Returns (0, false, nil) on no match, (0, false,
+// err) only on JSON parse failure.
 func windowIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int, bool, error) {
 	var osWindows []kittyOSWindow
 	if err := json.Unmarshal(jsonBytes, &osWindows); err != nil {
@@ -188,6 +322,14 @@ func windowIDForHarnessSession(jsonBytes []byte, sessionID, binary string) (int,
 					}
 					joined := strings.Join(proc.Cmdline, " ")
 					if !strings.Contains(joined, binary) {
+						continue
+					}
+					// opencode ids compare case-sensitively; UUIDs
+					// keep the historical case-insensitive compare.
+					if matches := sessionOpencodeRowRe.FindStringSubmatch(joined); len(matches) >= 2 {
+						if matches[1] == sessionID {
+							return win.ID, true, nil
+						}
 						continue
 					}
 					matches := sessionUUIDRowRe.FindStringSubmatch(joined)
