@@ -179,3 +179,159 @@ func TestEnsureHarnessInstalledReinstallsSkillForDevBuild(t *testing.T) {
 		t.Error("dev build skipped the skill install although VERSION matched; edits would freeze")
 	}
 }
+
+// clearHarnessSessionEnv unsets every harness's session-id env var so
+// ambientHarness deterministically falls back to claude in app tests.
+func clearHarnessSessionEnv(t *testing.T) {
+	t.Helper()
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+}
+
+// apiPayload returns the decoded `-d` body of the last APIRunner call
+// matching op (optionally filtered to the call carrying param=value).
+func apiPayload(t *testing.T, calls [][]string, op, param, value string) map[string]any {
+	t.Helper()
+	var found map[string]any
+	for _, c := range calls {
+		if len(c) < 3 || c[0] != op {
+			continue
+		}
+		if param != "" {
+			hasParam := false
+			for i := 1; i+1 < len(c); i++ {
+				if c[i] == "--param" && c[i+1] == param+"="+value {
+					hasParam = true
+					break
+				}
+			}
+			if !hasParam {
+				continue
+			}
+		}
+		body := ""
+		for i := 1; i+1 < len(c); i++ {
+			if c[i] == "-d" {
+				body = c[i+1]
+				break
+			}
+		}
+		if body == "" {
+			continue
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+			t.Fatalf("decode %s payload: %v", op, err)
+		}
+		found = decoded
+	}
+	return found
+}
+
+// TestCmdDoHereOpencodePreparesSession pins that binding an opencode
+// session with `--here` immediately writes flow metadata server-side, so
+// the flow plugin activates on this session instead of ignoring it. The
+// metadata must carry the task slug on both session.create and
+// session.update (the latter is what a pre-existing session needs).
+func TestCmdDoHereOpencodePreparesSession(t *testing.T) {
+	setupFlowRoot(t)
+	seedTaskAtCwd(t, "oc-here-task")
+	clearHarnessSessionEnv(t)
+
+	const sid = "ses_0123456789ABCDEFGHIJKLMNOP"
+	t.Setenv("OPENCODE_SESSION_ID", sid)
+	calls := stubOpencodeAPI(t, false)
+
+	if rc := cmdDo([]string{"oc-here-task", "--here"}); rc != 0 {
+		t.Fatalf("--here rc=%d, want 0", rc)
+	}
+
+	create := apiPayload(t, *calls, "session.create", "", "")
+	if create == nil {
+		t.Fatalf("APIRunner never got session.create; calls=%v", *calls)
+	}
+	createMeta, _ := create["metadata"].(map[string]any)
+	flow, _ := createMeta["flow"].(map[string]any)
+	if got := flow["taskSlug"]; got != "oc-here-task" {
+		t.Errorf("session.create metadata.flow.taskSlug = %v, want oc-here-task", got)
+	}
+
+	update := apiPayload(t, *calls, "session.update", "sessionID", sid)
+	if update == nil {
+		t.Fatalf("APIRunner never got session.update for %s; calls=%v", sid, *calls)
+	}
+	updateMeta, _ := update["metadata"].(map[string]any)
+	flow, _ = updateMeta["flow"].(map[string]any)
+	if got := flow["taskSlug"]; got != "oc-here-task" {
+		t.Errorf("session.update metadata.flow.taskSlug = %v, want oc-here-task", got)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "oc-here-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != sid {
+		t.Errorf("session_id = %+v, want %s", task.SessionID, sid)
+	}
+	if !task.Harness.Valid || task.Harness.String != string(harness.NameOpencode) {
+		t.Errorf("task.harness = %+v, want opencode", task.Harness)
+	}
+}
+
+// TestCmdDoHereOpencodePrepareFailureKeepsBind pins the warning-not-rollback
+// rule: the bind is already committed, so a failed session prepare prints a
+// warning and still exits 0 with the binding intact.
+func TestCmdDoHereOpencodePrepareFailureKeepsBind(t *testing.T) {
+	setupFlowRoot(t)
+	seedTaskAtCwd(t, "oc-here-fail")
+	clearHarnessSessionEnv(t)
+
+	const sid = "ses_0123456789ABCDEFGHIJKLMNOP"
+	t.Setenv("OPENCODE_SESSION_ID", sid)
+	stubOpencodeAPI(t, true)
+	drain := captureStderr(t)
+
+	rc := cmdDo([]string{"oc-here-fail", "--here"})
+	stderr := drain()
+	if rc != 0 {
+		t.Errorf("--here rc=%d, want 0 (bind succeeded; prepare failure is a warning)", rc)
+	}
+	if !strings.Contains(stderr, "warning: prepare opencode session:") {
+		t.Errorf("stderr missing prepare warning:\n%s", stderr)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "oc-here-fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != sid {
+		t.Errorf("session_id = %+v, want %s (binding must survive a prepare failure)", task.SessionID, sid)
+	}
+	if task.Status != "in-progress" {
+		t.Errorf("status = %q, want in-progress", task.Status)
+	}
+}
+
+// TestCmdDoHereClaudeMakesNoOpencodeAPICall pins the harness boundary:
+// claude does not implement SessionPreparer, so a claude `--here` bind
+// must never shell out to `opencode api`.
+func TestCmdDoHereClaudeMakesNoOpencodeAPICall(t *testing.T) {
+	setupFlowRoot(t)
+	seedTaskAtCwd(t, "claude-here-task")
+	clearHarnessSessionEnv(t)
+	stubClaudeStatOK(t)
+
+	const sid = "f00ba111-2222-4333-8444-555555555555"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	calls := stubOpencodeAPI(t, false)
+
+	if rc := cmdDo([]string{"claude-here-task", "--here"}); rc != 0 {
+		t.Fatalf("claude --here rc=%d, want 0", rc)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("claude --here called the opencode API: %v", *calls)
+	}
+}

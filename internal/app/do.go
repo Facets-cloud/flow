@@ -1079,6 +1079,17 @@ func cmdDoHere(query string, force bool) int {
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	// A session created before flow knew about the task carries no flow
+	// metadata, so a harness that gates on it (opencode's plugin) would
+	// ignore this session forever. Harnesses with the SessionPreparer
+	// capability get the metadata written server-side now. The bind is
+	// already committed, so a prepare failure is a warning, not a
+	// rollback — the user can still work in the bound session.
+	if _, ok := h.(harness.SessionPreparer); ok {
+		if err := prepareHarnessSession(h, task, sid, false); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: prepare %s session: %v\n", h.Name(), err)
+		}
+	}
 	// A session bound mid-flight missed SessionStart, so hand it the
 	// role block now (driver or light delegation).
 	if blk := roleBlockFor(db, task); blk != "" {

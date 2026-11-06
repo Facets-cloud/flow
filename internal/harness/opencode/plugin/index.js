@@ -57,11 +57,13 @@ const SCAN_INTERVAL_MS = 15_000; // attachment scan period (resumed sessions, re
 const POLL_MS = 3_000; // inbox listener poll period while a client is attached
 const INJECT_TIMEOUT_MS = 30_000; // `opencode api session.prompt` budget
 const INJECT_RETRY_MS = 3_000; // pause between delivery attempts of a claimed message
+const NEGATIVE_TTL_MS = 60_000; // re-check a session that had no flow metadata after this
 
 // One instance is loaded per directory and every instance sees every server
 // event, so state lives on globalThis and is deduped per session.
 const state = (globalThis.__flowOpencode ??= {
   meta: new Map(), // sessionID -> flow meta | null (cached)
+  metaMissAt: new Map(), // sessionID -> Date.now() of the cached "no flow meta" answer
   sessionCtx: new Map(), // sessionID -> Promise<string> of the session-start context
   turnCtx: new Map(), // sessionID -> user-prompt-submit context for the current turn
   listeners: new Map(), // sessionID -> { gen, loop } inbox listener
@@ -74,6 +76,7 @@ const state = (globalThis.__flowOpencode ??= {
 // An older plugin version may already have published a state object without
 // the newer fields, so backfill every one before anything reads it.
 state.meta ??= new Map();
+state.metaMissAt ??= new Map();
 state.started ??= new Set();
 state.sessionCtx ??= new Map();
 state.turnCtx ??= new Map();
@@ -96,6 +99,7 @@ for (const [sessionID, entry] of state.listeners) {
 }
 state.sessionCtx.clear();
 state.meta.clear();
+state.metaMissAt.clear();
 state.lastScan = 0;
 
 function log(...args) {
@@ -191,9 +195,16 @@ async function runFlow(meta, sessionID, args, stdinObj, timeoutMs = HOOK_TIMEOUT
   return spawnCollect([meta.flowBin || "flow", ...args], options, timeoutMs);
 }
 
-// flowMeta reads (and caches) the flow metadata prepared on the session.
+// flowMeta reads the flow metadata prepared on the session. Positive
+// answers stay cached for the plugin's lifetime; a "no flow metadata"
+// answer is cached only for NEGATIVE_TTL_MS, because a session can be bound
+// later (`flow do --here` from inside it) and must then activate the plugin
+// without a server restart. Without the TTL a non-flow session would stay
+// dead for the whole server lifetime.
 async function flowMeta(ctx, sessionID) {
   if (state.meta.has(sessionID)) return state.meta.get(sessionID);
+  const missedAt = state.metaMissAt.get(sessionID);
+  if (missedAt !== undefined && Date.now() - missedAt < NEGATIVE_TTL_MS) return null;
   let flow;
   try {
     const info = await ctx.session.get({ sessionID });
@@ -206,8 +217,13 @@ async function flowMeta(ctx, sessionID) {
   const meta = typeof slug === "string" && slug !== ""
     ? { taskSlug: slug, flowRoot: flow.flowRoot || "", flowBin: flow.flowBin || "", auto: flow.auto === true }
     : null;
-  state.meta.set(sessionID, meta);
-  return meta;
+  if (meta) {
+    state.meta.set(sessionID, meta);
+    state.metaMissAt.delete(sessionID);
+    return meta;
+  }
+  state.metaMissAt.set(sessionID, Date.now());
+  return null;
 }
 
 // hookContext pulls additionalContext out of a `flow hook` JSON response.
@@ -462,8 +478,9 @@ export default {
         for (const id of ids) {
           if (state.gen !== GEN) return; // superseded mid-scan
           if (state.listeners.get(id)?.gen === GEN) continue;
-          // flowMeta caches null for non-flow sessions, so unrelated
-          // opencode sessions cost one session.get each, once.
+          // flowMeta caches a negative answer for NEGATIVE_TTL_MS, so
+          // unrelated opencode sessions cost at most one session.get per
+          // minute and a later `flow do --here` bind is picked up.
           const meta = await flowMeta(ctx, id);
           if (!meta) continue;
           void sessionStartContext(ctx, meta, id);

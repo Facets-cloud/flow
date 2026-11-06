@@ -269,3 +269,28 @@ func TestPluginJSNeverThrows(t *testing.T) {
 		}
 	}
 }
+
+// TestPluginJSNegativeMetaCacheExpires guards the `flow do --here` activation
+// path: a session that had no flow metadata when the plugin first looked can
+// be bound later, so the negative answer must expire instead of being cached
+// for the whole server lifetime.
+func TestPluginJSNegativeMetaCacheExpires(t *testing.T) {
+	src := pluginSource(t)
+	for _, frag := range []string{
+		"NEGATIVE_TTL_MS",
+		"state.metaMissAt",
+		"state.metaMissAt ??= new Map()",
+		"state.metaMissAt.clear()",
+		"Date.now() - missedAt < NEGATIVE_TTL_MS",
+		"state.metaMissAt.set(sessionID, Date.now())",
+		"state.metaMissAt.delete(sessionID)",
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("plugin is missing negative-cache guard %q", frag)
+		}
+	}
+	// A positive result still stays cached unconditionally.
+	if !strings.Contains(src, "if (state.meta.has(sessionID)) return state.meta.get(sessionID);") {
+		t.Error("plugin stopped short-circuiting positive metadata cache hits")
+	}
+}

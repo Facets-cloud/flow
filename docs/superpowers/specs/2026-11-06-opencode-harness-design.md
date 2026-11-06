@@ -50,6 +50,13 @@ Model: `$FLOW_OPENCODE_MODEL` (`provider/model`, e.g.
 `opencode-go/deepseek-v4.1-flash`). Unset → opencode's own default. flow has
 no config file today, so env is the only knob.
 
+Install lifecycle: the first opencode task installs the skill tree, VERSION
+sidecar and plugin. After that, a plain `flow` invocation whose `Version`
+differs from the recorded sidecar refreshes them — `maybeAutoUpgradeSkill`
+covers every registered `SessionPreparer` harness, not just the ambient one.
+A missing sidecar is an opt-out: flow never installs opencode behind a user
+who never used it.
+
 ### New optional capability: `harness.SessionPreparer`
 
 ```go
@@ -100,7 +107,7 @@ session (for example ad-hoc DeepSeek runs) gets zero flow calls.
 | Inbox delivery (Claude: Monitor loop) | per flow session a listener loop: while a client for the session is live (ps: `opencode … -s <id>`), poll the NON-claiming unread list `flow inbox --json` every 3 s; when it is non-empty, claim the oldest with `flow inbox pop --json` (no `--wait`) only at that last moment, then inject it with `opencode api session.prompt` (`delivery:"steer"`, text `[flow inbox] <message json>`), retrying delivery a few times. A pop is a permanent claim (pending → delivered; there is no un-claim), so claiming any earlier loses the mail when the loop is superseded by a plugin reload or the client goes away — the earlier `pop --wait --keep-unread` loop hit exactly that in e2e. Exit 3 (task closed) stops the loop; with no live client it stops and leaves the mail pending. Started on `execution.started` and by a 15 s scan for attached `opencode -s <id>` clients (so a resumed, idle session gets one too). | works |
 | PreToolUse mid-turn notice | covered by `steer` delivery (lands at the next tool-step boundary) | covered |
 | Stop broadcast nudge (`flow hook stop`) | on `session.execution.succeeded`: run the hook with `{"session_id","stop_hook_active"}`; a non-empty context is queued as a prompt `[flow] …` via `opencode api session.prompt` (`delivery:"queue"`). `stop_hook_active` is true on the turn that a nudge itself started, so a nudge never re-fires on its own continuation. flow's 30 min backoff still applies. | works |
-| `flow do --here` bind from inside opencode | `OPENCODE_SESSION_ID` in tool shells | works; plugin gets metadata on the next `flow do` |
+| `flow do --here` bind from inside opencode | `OPENCODE_SESSION_ID` in tool shells; the bind prepares the session (same `session.create`/`session.update` metadata write) so the plugin activates on the session's next event | works |
 
 Flow-side changes needed for parity:
 - `busSessionStartContext`: for a task whose harness is `opencode`, replace
