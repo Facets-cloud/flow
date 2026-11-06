@@ -37,6 +37,9 @@ func prepareHarnessSession(h harness.Harness, task *flowdb.Task, sessionID strin
 // ensureHarnessInstalled keeps the harness's flow install current: the
 // skill tree when the version sidecar is missing or stale, then the
 // session-start hook (for opencode that is the embedded plugin file).
+//
+// Dev builds never change their version string, so the sidecar alone
+// would freeze the first install forever — "dev" always reinstalls.
 func ensureHarnessInstalled(h harness.Harness) error {
 	versionPath, err := h.SkillVersionPath()
 	if err != nil {
@@ -46,7 +49,7 @@ func ensureHarnessInstalled(h harness.Harness) error {
 	if b, err := os.ReadFile(versionPath); err == nil {
 		installed = strings.TrimSpace(string(b))
 	}
-	if installed != Version {
+	if installed != Version || Version == "dev" {
 		if err := h.InstallSkill(skillFiles()); err != nil {
 			return fmt.Errorf("install skill: %w", err)
 		}

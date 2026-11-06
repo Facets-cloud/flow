@@ -60,6 +60,10 @@ func TestPrepareHarnessSessionClaudeNoOp(t *testing.T) {
 // carrying the task slug, FLOW_ROOT, and the auto flag.
 func TestPrepareHarnessSessionOpencodeInstallsAndPrepares(t *testing.T) {
 	setupFlowRoot(t)
+	// Pin a real version: a dev build reinstalls on every prepare (see
+	// TestEnsureHarnessInstalledReinstallsSkillForDevBuild), which would
+	// defeat the "matching VERSION skips install" assertion below.
+	withVersion(t, "v9.9.9-test")
 	calls := stubOpencodeAPI(t, false)
 
 	const slug = "oc-task"
@@ -134,5 +138,44 @@ func TestPrepareHarnessSessionNoopForNonPreparer(t *testing.T) {
 	}
 	if _, ok := opencode.New().(harness.SessionPreparer); !ok {
 		t.Fatal("opencode does not implement SessionPreparer")
+	}
+}
+
+// TestEnsureHarnessInstalledReinstallsSkillForDevBuild: a dev build's
+// version string never changes, so the VERSION sidecar always matches
+// after the first install. The skill must still be reinstalled on every
+// prepare — otherwise edits to the embedded skill never reach installs
+// made by a dev binary.
+func TestEnsureHarnessInstalledReinstallsSkillForDevBuild(t *testing.T) {
+	setupFlowRoot(t)
+	withVersion(t, "dev")
+	stubOpencodeAPI(t, false)
+
+	h := opencode.New()
+	if err := ensureHarnessInstalled(h); err != nil {
+		t.Fatalf("first ensureHarnessInstalled = %v", err)
+	}
+	skillPath, err := h.SkillInstallPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sidecar now matches "dev" exactly — the frozen state the dev
+	// reinstall rule exists for.
+	versionPath, err := h.SkillVersionPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(versionPath); err != nil || strings.TrimSpace(string(b)) != "dev" {
+		t.Fatalf("VERSION = %q (err=%v), want dev", string(b), err)
+	}
+	if err := os.WriteFile(skillPath, []byte("sentinel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureHarnessInstalled(h); err != nil {
+		t.Fatalf("second ensureHarnessInstalled = %v", err)
+	}
+	if b, _ := os.ReadFile(skillPath); string(b) == "sentinel" {
+		t.Error("dev build skipped the skill install although VERSION matched; edits would freeze")
 	}
 }

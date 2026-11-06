@@ -1,1 +1,276 @@
-export default { id: "flow", async setup(ctx) {} }
+// flow opencode plugin (v2 server plugin).
+//
+// Bridges opencode server events to the `flow hook …` commands so an
+// opencode session gets the same lifecycle a Claude Code session has:
+// bootstrap context, per-prompt drift anchors, the inbox relay, and the
+// stop-broadcast nudge. Everything is best-effort: failures are logged
+// and swallowed, never thrown into the server; sessions without flow
+// metadata (`metadata.flow.taskSlug`) are never touched.
+//
+// GENERATED FILE — installed by `flow` (from the copy embedded in the
+// flow binary) to ~/.config/opencode/plugins/flow/index.js. Do not edit
+// it here: `flow` rewrites it whenever the installed copy differs.
+//
+// Event -> flow call mapping:
+//
+//   session.execution.started    -> `flow hook session-start` (first per session)
+//                                -> `flow inbox pop --wait --timeout 300 --keep-unread --json`
+//   session.hook("prompt")       -> `flow hook user-prompt-submit`
+//   session.execution.succeeded  -> `flow hook stop`
+//   inbox message popped         -> a `[flow inbox]` steer prompt, then `flow inbox read <id> --json`
+//
+// One plugin instance is loaded per directory, so each event reaches every
+// instance. Both per-turn entry points therefore dedupe synchronously on
+// shared globalThis state before doing any work: started events via
+// `started`/`listeners`, succeeded events via `stopSeen` (a short window),
+// so one turn end runs `flow hook stop` and queues at most one `[flow]` nudge.
+
+const HOOK_TIMEOUT_MS = 20_000;
+const LISTENER_TIMEOUT_MS = 330_000;
+const PS_TIMEOUT_MS = 5_000;
+const STOP_DEDUPE_MS = 3_000; // window that collapses duplicated succeeded events
+
+// One instance is loaded per directory and every instance sees every server
+// event, so state lives on globalThis and is deduped per session.
+const state = (globalThis.__flowOpencode ??= {
+  meta: new Map(), // sessionID -> flow meta | null (cached)
+  started: new Set(), // session-start hook already ran
+  listeners: new Map(), // sessionID -> inbox listener promise
+  nudged: new Set(), // last turn came from a stop nudge
+  stopSeen: new Map(), // sessionID -> Date.now() of the last handled succeeded event
+});
+
+// An older plugin version may already have published a state object without
+// the newer fields, so backfill every one before anything reads it.
+state.meta ??= new Map();
+state.started ??= new Set();
+state.listeners ??= new Map();
+state.nudged ??= new Set();
+state.stopSeen ??= new Map();
+
+function log(...args) {
+  try { console.error("[flow-plugin]", ...args); } catch { /* never throw out of logging */ }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// spawnCollect runs argv and returns { code, stdout } — never throws.
+async function spawnCollect(argv, options, timeoutMs) {
+  const failed = { code: -1, stdout: "" }; // shared failure/timeout result
+  let proc;
+  try {
+    proc = Bun.spawn(argv, options);
+  } catch (err) {
+    log("spawn failed:", argv[0], err);
+    return failed;
+  }
+  const read = (async () => {
+    const stdout = proc.stdout ? await new Response(proc.stdout).text() : "";
+    return { code: await proc.exited, stdout };
+  })().catch((err) => {
+    log("read output failed:", argv[0], err);
+    return failed;
+  });
+  let timer;
+  const timedOut = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      try { proc.kill(); } catch (err) { log("kill failed:", argv[0], err); }
+      resolve(failed);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([read, timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// runFlow runs the flow binary for a session with the flow env contract.
+async function runFlow(meta, sessionID, args, stdinObj, timeoutMs = HOOK_TIMEOUT_MS) {
+  const env = { ...process.env };
+  for (const key of ["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "FLOW_ROOT"]) delete env[key];
+  delete env.FLOW_AUTO_RUN;
+  env.OPENCODE_SESSION_ID = sessionID;
+  if (meta.flowRoot) env.FLOW_ROOT = meta.flowRoot;
+  if (meta.auto) env.FLOW_AUTO_RUN = "1";
+  const options = { env, stdin: "ignore", stdout: "pipe", stderr: "ignore" };
+  if (stdinObj !== undefined) options.stdin = new Blob([JSON.stringify(stdinObj)], { type: "application/json" });
+  return spawnCollect([meta.flowBin || "flow", ...args], options, timeoutMs);
+}
+
+// flowMeta reads (and caches) the flow metadata prepared on the session.
+async function flowMeta(ctx, sessionID) {
+  if (state.meta.has(sessionID)) return state.meta.get(sessionID);
+  let flow;
+  try {
+    const info = await ctx.session.get({ sessionID });
+    flow = info?.metadata?.flow ?? info?.data?.metadata?.flow;
+  } catch (err) {
+    log("session.get failed:", sessionID, err);
+    return null; // transient: do not cache, retry on the next event
+  }
+  const slug = flow?.taskSlug;
+  const meta = typeof slug === "string" && slug !== ""
+    ? { taskSlug: slug, flowRoot: flow.flowRoot || "", flowBin: flow.flowBin || "", auto: flow.auto === true }
+    : null;
+  state.meta.set(sessionID, meta);
+  return meta;
+}
+
+// hookContext pulls additionalContext out of a `flow hook` JSON response.
+function hookContext(stdout) {
+  try {
+    const context = JSON.parse(stdout)?.hookSpecificOutput?.additionalContext;
+    return typeof context === "string" ? context.trim() : "";
+  } catch { return ""; }
+}
+
+// setInstruction writes a context block, or clears it for an empty value.
+async function setInstruction(ctx, sessionID, key, value) {
+  try {
+    if (value) await ctx.session.instructions.entry.put({ sessionID, key, value });
+    else await ctx.session.instructions.entry.remove({ sessionID, key });
+  } catch (err) {
+    if (value) log("instructions put failed:", sessionID, key, err);
+  }
+}
+
+// clientLive is flow's live-guard ps check: is an opencode client attached?
+// Errors fail open, like the rest of flow's live checks.
+async function clientLive(sessionID) {
+  const ps = await spawnCollect(["ps", "-axo", "command"], { stdout: "pipe", stderr: "ignore" }, PS_TIMEOUT_MS);
+  if (ps.code !== 0) return true;
+  const re = new RegExp(`(?:^|\\s)(?:-s|--session)(?:\\s+|=)${sessionID}(?=\\s|$)`);
+  return ps.stdout.split("\n").some((line) => {
+    const argv0 = line.trim().split(/\s+/)[0] || "";
+    return argv0.split("/").pop() === "opencode" && re.test(line);
+  });
+}
+
+// ensureListener starts the per-session inbox relay once: mail is steered
+// into the conversation while a client is live, then acked; with no live
+// client it stays unread for the next session.
+function ensureListener(ctx, meta, sessionID, stopping) {
+  if (state.listeners.has(sessionID)) return;
+  const delivered = new Set(); // injected but not acked yet
+  const loop = (async () => {
+    try {
+      while (!stopping.value) {
+        if (!(await clientLive(sessionID))) return;
+        const popArgs = ["inbox", "pop", "--wait", "--timeout", "300", "--keep-unread", "--json"];
+        const popped = await runFlow(meta, sessionID, popArgs, undefined, LISTENER_TIMEOUT_MS);
+        if (stopping.value) return;
+        if (popped.code === 3) return; // task closed
+        if (popped.code !== 0) { await sleep(5_000); continue; }
+        const out = (popped.stdout || "").trim();
+        if (!out) continue; // wait timed out, re-arm
+        let id = "";
+        try { id = JSON.parse(out)?.id || ""; } catch { /* not JSON — no message */ }
+        if (!id) continue;
+        if (delivered.has(id)) { await sleep(2_000); continue; } // ack failed earlier
+        if (!(await clientLive(sessionID))) return; // leave the mail unread
+        await ctx.session.prompt({ sessionID, text: "[flow inbox] " + out, delivery: "steer" });
+        delivered.add(id);
+        await runFlow(meta, sessionID, ["inbox", "read", id, "--json"]);
+      }
+    } catch (err) {
+      log("inbox listener stopped:", sessionID, err);
+    } finally {
+      state.listeners.delete(sessionID);
+    }
+  })();
+  state.listeners.set(sessionID, loop);
+}
+
+async function onExecutionStarted(ctx, sessionID, stopping) {
+  const meta = await flowMeta(ctx, sessionID);
+  if (!meta) return;
+  if (!state.started.has(sessionID)) {
+    state.started.add(sessionID);
+    const payload = { session_id: sessionID, source: "startup" };
+    const started = await runFlow(meta, sessionID, ["hook", "session-start"], payload);
+    await setInstruction(ctx, sessionID, "flow-session", hookContext(started.stdout));
+  }
+  ensureListener(ctx, meta, sessionID, stopping);
+}
+
+async function onPrompt(ctx, event) {
+  const sessionID = event?.sessionID;
+  if (!sessionID) return;
+  const meta = await flowMeta(ctx, sessionID);
+  if (!meta) return;
+  const payload = { session_id: sessionID, prompt: event?.prompt?.text ?? "" };
+  const submitted = await runFlow(meta, sessionID, ["hook", "user-prompt-submit"], payload);
+  await setInstruction(ctx, sessionID, "flow-turn", hookContext(submitted.stdout));
+}
+
+// onExecutionSucceeded is the Stop hook: a nudge it produces is queued as
+// the next prompt, and the turn that prompt starts is marked so the same
+// nudge cannot fire again on its own continuation.
+//
+// The dedupe must stay ahead of the first `await`: every loaded instance
+// receives the same succeeded event, and an await yields to the sibling
+// instances (which share this global state) before the mark is recorded —
+// that is exactly how N instances end up running `flow hook stop` N times.
+async function onExecutionSucceeded(ctx, sessionID) {
+  const now = Date.now();
+  const seen = state.stopSeen.get(sessionID);
+  if (seen !== undefined && now - seen < STOP_DEDUPE_MS) return;
+  state.stopSeen.set(sessionID, now);
+
+  const meta = await flowMeta(ctx, sessionID);
+  if (!meta) return;
+  const active = state.nudged.has(sessionID);
+  state.nudged.delete(sessionID);
+  const payload = { session_id: sessionID, stop_hook_active: active };
+  const stopped = await runFlow(meta, sessionID, ["hook", "stop"], payload);
+  const context = hookContext(stopped.stdout);
+  if (!context) return;
+  state.nudged.add(sessionID);
+  await ctx.session.prompt({ sessionID, text: "[flow] " + context, delivery: "queue" });
+}
+
+function eventSessionID(e) {
+  return e?.data?.sessionID ?? e?.properties?.sessionID ?? e?.data?.id ?? null;
+}
+
+export default {
+  id: "flow",
+  async setup(ctx) {
+    const stopping = { value: false };
+    const subscription = new AbortController();
+    const cleanup = () => {
+      stopping.value = true;
+      try { subscription.abort(); } catch (err) { log("subscription abort failed:", err); }
+    };
+
+    try {
+      await ctx.session.hook("prompt", async (event) => {
+        try { await onPrompt(ctx, event); } catch (err) { log("prompt hook failed:", err); }
+      });
+    } catch (err) {
+      log("prompt hook registration failed:", err);
+    }
+
+    // Subscribe in the background so setup returns promptly.
+    void (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: subscription.signal })) {
+          try {
+            const sessionID = eventSessionID(event);
+            if (!sessionID) continue;
+            const type = event?.type;
+            if (type === "session.execution.started") await onExecutionStarted(ctx, sessionID, stopping);
+            if (type === "session.execution.succeeded") await onExecutionSucceeded(ctx, sessionID);
+          } catch (err) {
+            log("event failed:", event?.type, err);
+          }
+        }
+      } catch (err) {
+        if (!stopping.value) log("event subscription failed:", err);
+      }
+    })();
+
+    return cleanup;
+  },
+};
