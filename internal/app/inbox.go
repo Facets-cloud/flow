@@ -37,7 +37,8 @@ import (
 // `pop --wait` blocks until a message exists, pops exactly one, and
 // exits 0 — built to be parked on by a Claude session's Monitor tool or
 // a background Bash command, so mail arrival wakes the agent. Exit 1
-// means nothing was popped (empty inbox, or --wait timed out). Pops are
+// means nothing was popped (empty inbox, or --wait timed out); exit 3
+// means the caller's bound task is done/archived — stop listening. Pops are
 // atomic claims: concurrent consumers of one inbox never double-pop.
 // --json emits machine-readable rows for scripting.
 func cmdInbox(args []string) int {
@@ -363,6 +364,10 @@ func busSnippet(body string) string {
 	return body
 }
 
+// popExitTaskClosed is pop's exit code when the caller's bound task is
+// done or archived: the listener loop breaks on it.
+const popExitTaskClosed = 3
+
 func inboxPop(args []string) int {
 	fs := flagSet("inbox pop")
 	wait := fs.Bool("wait", false, "block until a message arrives, then pop it")
@@ -380,6 +385,27 @@ func inboxPop(args []string) int {
 	}
 	defer db.Close()
 	s := resolveConsumer(*as)
+	// closed: exit 3 tells the Monitor loop to stop — the caller's bound
+	// task is done/archived, so its inbox will never get mail again.
+	closed := func() bool {
+		if s.TaskSlug == "" {
+			return false
+		}
+		t, err := flowdb.GetTask(db, s.TaskSlug)
+		if err != nil || t == nil {
+			return false
+		}
+		if t.Status == "done" || t.ArchivedAt.Valid {
+			if !*asJSON {
+				fmt.Printf("task %s is closed — stop listening (exit 3)\n", s.TaskSlug)
+			}
+			return true
+		}
+		return false
+	}
+	if closed() {
+		return popExitTaskClosed
+	}
 
 	emit := func(m *flowdb.BusMessage) int {
 		if *asJSON {
@@ -425,6 +451,9 @@ func inboxPop(args []string) int {
 		}
 		if m != nil {
 			return emit(m)
+		}
+		if closed() {
+			return popExitTaskClosed
 		}
 		if time.Now().After(deadline) {
 			if !*asJSON {

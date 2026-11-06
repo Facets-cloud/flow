@@ -801,13 +801,13 @@ the human's queue). Load via ToolSearch `select:Monitor`; no
 
 - **Consumer** (default; `pop` acks as it goes): `Monitor(description:
   "flow inbox", timeout_ms: 1800000, command: 'while true; do flow inbox
-  pop --wait --timeout 300 --json || true; done')`
+  pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc
+  -ne 0 ] && sleep 5; done')` (3 = task closed)
 - **Reader / relay** (must NOT ack): same call with `pop --wait
-  --keep-unread`; plain `pop` would silently ack mail you only forward.
+  --keep-unread` (plain `pop` acks mail you only forward).
 
-Each message wakes you as an event. On expiry you get a notice: re-arm it
-immediately. No Monitor: background Bash `flow inbox pop --wait`, re-arm
-per wake. `flow watch <task|project|assignee>` subscribes you; tasks you
+Each message wakes you. On expiry, re-arm it immediately. No Monitor:
+background Bash `flow inbox pop --wait`, re-arm per wake. `flow watch <task|project|assignee>` subscribes you; tasks you
 create from a bound session are auto-watched. Hooks NEVER consume.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.

@@ -663,3 +663,60 @@ func TestF8SkillOneReportingRule(t *testing.T) {
 		}
 	}
 }
+
+// F9: the Monitor loop backs off on error and exits once the task is
+// closed — `pop` exits 3 when the caller's bound task is done/archived.
+const f9Loop = "while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done"
+
+func TestF9PopExits3WhenBoundTaskClosed(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "t9", "sid-t9")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t9")
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop"}); rc != 1 {
+			t.Errorf("open task, empty inbox: rc=%d want 1", rc)
+		}
+	})
+	if _, err := db.Exec(`UPDATE tasks SET status='done' WHERE slug='t9'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"pop"}, {"pop", "--wait", "--timeout", "5", "--json"}} {
+		captureStdout(t, func() {
+			if rc := cmdInbox(args); rc != 3 {
+				t.Errorf("%v on a done task: rc=%d want 3", args, rc)
+			}
+		})
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', archived_at=? WHERE slug='t9'`, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if rc := cmdInbox([]string{"pop"}); rc != 3 {
+			t.Errorf("pop on an archived task: rc=%d want 3", rc)
+		}
+	})
+}
+
+func TestF9LoopRecipeEverywhere(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "t9", "sid-t9")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t9")
+	for where, text := range map[string]string{
+		"SessionStart hook": busSessionStartContext(),
+		"do.go":             readRepoFile(t, "do.go"),
+		"SKILL.md":          readSkillFile(t, "SKILL.md"),
+		"messaging.md":      readSkillFile(t, "references/messaging.md"),
+	} {
+		flat := strings.Join(strings.Fields(text), " ")
+		if strings.Contains(flat, "|| true; done") {
+			t.Errorf("%s still has the no-backoff loop", where)
+		}
+		if !strings.Contains(flat, f9Loop) && !strings.Contains(flat, strings.ReplaceAll(f9Loop, "--json", "--keep-unread --json")) &&
+			!strings.Contains(text, "inboxMonitorLoop") {
+			t.Errorf("%s lacks the F9 loop recipe", where)
+		}
+	}
+}

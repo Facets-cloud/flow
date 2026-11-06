@@ -174,7 +174,7 @@ it). This is the default for a normal task session. `pop` acks as it goes:
     Monitor(
       description: "flow inbox",
       timeout_ms: 1800000,
-      command: "while true; do flow inbox pop --wait --timeout 300 --json || true; done")
+      command: "while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done")
 
 **Reader / relay** — you forward or merely observe, and must NOT ack (the
 message is answered elsewhere — e.g. you relay it to the user and they
@@ -184,10 +184,13 @@ consumes someone else's mail:
     Monitor(
       description: "flow inbox relay (read without acking)",
       timeout_ms: 1800000,
-      command: "while true; do flow inbox pop --wait --keep-unread --timeout 300 --json || true; done")
+      command: "while true; do flow inbox pop --wait --timeout 300 --keep-unread --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done")
 
 Each popped message is one JSON event that wakes you; `--json` is silent
-on timeouts (zero noise). When the Monitor expires (timeout_ms reached)
+on timeouts (zero noise). The loop sleeps 5s after any failed pop (no hot
+respawn loop if flow is mid-upgrade or the DB is locked) and exits when
+pop returns 3: this session's task is done or archived, so its inbox is
+closed for good. When the Monitor expires (timeout_ms reached)
 you get a notice: re-arm it immediately with the same call. After a
 compaction the SessionStart hook re-fires and repeats this recipe.
 FALLBACK when Monitor is unavailable (non-Claude harnesses): a background

@@ -42,6 +42,12 @@ import (
 //
 // Hook code must never fail loud — errors degrade to silence.
 
+// inboxMonitorLoop is THE listener recipe: it backs off 5s when pop fails
+// (a binary swap, a locked DB) instead of respawning flow in a hot loop,
+// and exits when pop reports the bound task closed (exit 3).
+const inboxMonitorLoop = "while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; " +
+	"[ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done"
+
 // busSessionStartContext returns extra SessionStart context (may be "").
 func busSessionStartContext() string {
 	db, err := openBusDB()
@@ -58,8 +64,8 @@ func busSessionStartContext() string {
 		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
 			"deferred tool: load it first with ToolSearch \"select:Monitor\"). The loop is " +
 			"required (Monitor streams stdout lines as events): " +
-			"Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: 'while true; " +
-			"do flow inbox pop --wait --timeout 300 --json || true; done'). Every message then " +
+			"Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop +
+			"'). Every message then " +
 			"wakes you as an event (--json is silent on timeouts). timeout_ms is required and " +
 			"capped at 1800000: when the Monitor expires you get a notice, re-arm it immediately " +
 			"with the same call. Only if Monitor is unavailable, fall back to a background Bash " +
