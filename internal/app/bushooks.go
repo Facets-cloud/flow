@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -273,6 +274,12 @@ func cmdHookStop(args []string) int {
 	defer db.Close()
 	slug := lookupBoundTaskSlug()
 	if slug == "" {
+		return 0
+	}
+	// A headless auto run reports through its prompt's one reporting rule
+	// (parent inbox / human at done-blocked); a broadcast nudge on top
+	// would deliver its progress to the parent twice (it auto-watches).
+	if os.Getenv(autoRunEnvVar) != "" {
 		return 0
 	}
 	nudge := stopBroadcastNudge(db, slug)

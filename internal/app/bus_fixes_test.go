@@ -574,3 +574,92 @@ func TestF7ReadByIDOnlyRecipientChangesState(t *testing.T) {
 		t.Errorf("recipient read: status=%s out=%s", st, out)
 	}
 }
+
+// F8: one child-reporting rule. Parent deliverable → user/<parent>;
+// parent closed → update note + an FYI to the human; no parent → the
+// human only at done/blocked.
+func TestF8AutoPromptReportingRule(t *testing.T) {
+	withParent := buildAutoBootstrapPrompt("kid", "regular", "", "papa")
+	for _, want := range []string{
+		"flow message user/papa",
+		`flow message user "FYI:`,
+		"update note",
+	} {
+		if !strings.Contains(withParent, want) {
+			t.Errorf("parented prompt missing %q", want)
+		}
+	}
+	if strings.Contains(withParent, "rejects it because the parent is closed, carry on") {
+		t.Error("parented prompt still drops the report when the parent is closed")
+	}
+	orphan := buildAutoBootstrapPrompt("kid", "regular", "", "")
+	for _, want := range []string{"No parent task", "ONLY when you are done or blocked", "update note"} {
+		if !strings.Contains(orphan, want) {
+			t.Errorf("parentless prompt missing %q", want)
+		}
+	}
+	if strings.Contains(orphan, "milestone") {
+		t.Error("parentless prompt must not ask for milestone messages to the human")
+	}
+}
+
+func TestF8DeadChildNoticeFallsBackToHumanWhenParentClosed(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "papa", "sid-papa")
+	mkBusTask(t, db, "kid", "")
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='papa' WHERE slug='kid'`); err != nil {
+		t.Fatal(err)
+	}
+	kid, _ := flowdb.GetTask(db, "kid")
+	notifyParentOfDeadChild(db, kid)
+	var to string
+	_ = db.QueryRow(`SELECT COALESCE(to_task_slug,'') FROM bus_messages`).Scan(&to)
+	if to != "papa" {
+		t.Fatalf("live parent should get the notice, got to=%q", to)
+	}
+	if _, err := db.Exec(`DELETE FROM bus_messages; UPDATE tasks SET status='done' WHERE slug='papa'`); err != nil {
+		t.Fatal(err)
+	}
+	notifyParentOfDeadChild(db, kid)
+	var toA, toS, body string
+	_ = db.QueryRow(`SELECT to_assignee, COALESCE(to_task_slug,''), body FROM bus_messages`).Scan(&toA, &toS, &body)
+	if toA != "user" || toS != "" || !strings.HasPrefix(body, "FYI:") {
+		t.Errorf("closed parent: notice went to %q/%q body %q, want an FYI to the human", toA, toS, body)
+	}
+}
+
+func TestF8NoStopNudgeInAutoRun(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-kid")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "kid", "sid-kid")
+	if err := flowdb.AddWatch(db, "user/papa", "kid"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLOW_AUTO_RUN", "kid")
+	if out := stopHookOnce(t, false); strings.TrimSpace(out) != "" {
+		t.Errorf("auto run got a Stop broadcast nudge: %s", out)
+	}
+	t.Setenv("FLOW_AUTO_RUN", "")
+	if out := stopHookOnce(t, false); strings.TrimSpace(out) == "" {
+		t.Error("interactive session lost its Stop nudge")
+	}
+}
+
+func TestF8SkillOneReportingRule(t *testing.T) {
+	corpus := skillCorpus(t)
+	if strings.Contains(corpus, "for a checkpoint") {
+		t.Error("messaging.md still tells auto agents to message the human at checkpoints")
+	}
+	for where, text := range map[string]string{
+		"messaging.md":  readSkillFile(t, "references/messaging.md"),
+		"delegation.md": readSkillFile(t, "references/delegation.md"),
+		"SKILL.md 4.18": skillSection(t, "4.18"),
+	} {
+		text = strings.Join(strings.Fields(text), " ")
+		if !strings.Contains(text, "FYI:") {
+			t.Errorf("%s lacks the closed-parent FYI fallback", where)
+		}
+	}
+}

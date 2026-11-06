@@ -785,10 +785,10 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    if someone must act, message them too. You can NEVER message your own
    address (flow rejects it).
 
-**Auto-mode exception:** a `flow do --auto` agent runs unwatched: it posts
-progress via `flow broadcast`, and if its task has a parent its prompt
-says to `flow message user/<parent>` at milestones and when done/blocked,
-put its result in an update note it names, and spawn no children (§4.4a).
+**Auto mode, one rule:** a parented child reports to `user/<parent>`
+(milestones, done, blocked); parent closed → update note + `flow message
+user "FYI: …"`; no parent → the human only at done/blocked. Result goes
+in an update note it names; no children (§4.4a).
 
 Bodies ≤500 chars, lead with the ask, name a task slug for context.
 

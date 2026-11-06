@@ -534,6 +534,7 @@ func stopHookOnce(t *testing.T, active bool) string {
 
 func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "") // auto runs never get the nudge (F8)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-a", "sid-a")

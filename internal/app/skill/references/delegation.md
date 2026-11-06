@@ -10,7 +10,7 @@ user -> flow do <task>              (interactive, unchanged)
         driver session (bound)
         |- design, ascii, decisions, quick answers  -> inline with the user
         |- deterministic subtask                    -> flow auto child, announce it
-        |     child: headless -> flow message driver at milestones
+        |     child: headless -> flow message user/<driver> at milestones
         |            -> writes findings as an update note -> flow done
         |- inbox event wakes the driver -> verify the result -> report
         `- live/prod change: child plans + gates, driver applies with the user
@@ -156,6 +156,15 @@ to prod", "may push a branch and open a PR, do NOT merge">
   If a decision truly needs the user, set waiting_on, message the driver, and exit.
 - When Done when is met: flow done <slug>, then exit.
 ```
+
+## Reporting rule (one rule)
+
+- Parent live: the child messages `user/<parent>` at milestones, done,
+  and blocked. No Stop broadcast nudge in auto runs, so it arrives once.
+- Parent done/archived: the child still writes its update note and sends
+  its done/blocked report to the human as `flow message user "FYI: …"`.
+  flow's own dead-child notice falls back to the human the same way.
+- No parent: update note; the human hears only at done/blocked.
 
 ## Result contract
 

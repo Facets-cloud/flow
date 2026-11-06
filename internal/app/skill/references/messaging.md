@@ -48,11 +48,18 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
   OTHER `--flag` is rejected with an error, never silently stored as the
   body.
 
-**Headless auto-mode exception.** A `flow do --auto` agent runs with no
-human watching, so a silent run looks stuck. Post regular progress updates
-as milestones land — `flow message user` for a checkpoint, or
-`flow broadcast` to watchers — not only when you need a decision. This is
-the one case where routine progress on the bus is expected.
+**Headless auto mode — one reporting rule.** A `flow do --auto` agent runs
+with no human watching. Its prompt carries the rule:
+
+- **Parent live** → `flow message user/<parent>` at milestones, when done,
+  and when blocked (the parent auto-watches it; no Stop broadcast nudge
+  fires in auto runs, so progress never arrives twice).
+- **Parent done/archived** (flow rejects the message) → still write the
+  update note, then send the done/blocked report to the human as an FYI:
+  `flow message user "FYI: <slug> done — see <update file>"`. A child
+  that dies is reported the same way by flow itself.
+- **No parent** → result in an update note; message the human ONLY when
+  done or blocked, naming the note. Never routine progress.
 
 ### 2. Collaborate with peers
 

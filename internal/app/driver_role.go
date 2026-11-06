@@ -76,17 +76,28 @@ func roleBlockFor(db *sql.DB, t *flowdb.Task) string {
 
 // notifyParentOfDeadChild posts to the driver's inbox when a child's auto
 // run ends dead. A child that crashes never sends its own report, so
-// without this the driver would never hear about it.
+// without this the driver would never hear about it. When the parent is
+// no longer deliverable (done, archived, gone) the notice goes to the
+// human as an FYI instead — a row addressed to a closed task is never
+// read (its bus footprint was already cleaned at close-out).
 func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 	if !child.ParentSlug.Valid || child.ParentSlug.String == "" {
 		return
 	}
+	parent := child.ParentSlug.String
+	body := fmt.Sprintf("auto child %s ended dead without closing itself; check `flow show task %s` "+
+		"and its auto-run log, then re-run or take it over", child.Slug, child.Slug)
+	toSlug := parent
+	if p, err := flowdb.GetTask(db, parent); err != nil || p == nil || deliverableTask(p) != nil {
+		toSlug = ""
+		body = fmt.Sprintf("FYI: auto child %s of closed task %s ended dead without closing itself; "+
+			"check `flow show task %s` and its auto-run log", child.Slug, parent, child.Slug)
+	}
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: busUser, FromTaskSlug: child.Slug,
-		ToAssignee: busUser, ToTaskSlug: child.ParentSlug.String,
-		Body: fmt.Sprintf("auto child %s ended dead without closing itself; check `flow show task %s` "+
-			"and its auto-run log, then re-run or take it over", child.Slug, child.Slug),
+		ToAssignee: busUser, ToTaskSlug: toSlug,
+		Body: body,
 	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
 		return
