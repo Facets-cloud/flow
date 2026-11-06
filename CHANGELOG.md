@@ -7,6 +7,48 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agents no longer swallow the human's mail.** `flow inbox pop` never
+  claims, acks or returns mail addressed to `user` (asks and broadcasts),
+  in any mode (`--keep-unread`, `--wait`, `--as user` included), and an
+  agent's `flow inbox read <id>` on it is display-only. Only bound
+  sessions arm an inbox Monitor (the skill said every session should, so
+  dispatch sessions drained the human's queue as `user`).
+- **Human mail stays unread until a human has seen it.** A new
+  `seen_at` drives one unread predicate for `flow inbox --as user`, the
+  counts and the read/unread label, so mail a reader left `delivered` no
+  longer disappears. Notices read "N ask(s) await you · M FYI" and list
+  the top items by id. Existing human mail is marked seen on upgrade.
+- **Only a prompt the human types counts.** Human mail a SessionStart
+  hook surfaced is marked seen on the next human-typed prompt in that
+  session, and an ask is "answered" only by one. `--with` injections,
+  auto runs, owner ticks, `/loop` and wakeup firings, and flow's own
+  bootstrap prompts never count.
+- **Who consumed a message is recorded.** Every claim, ack and seen
+  stores the consumer's bus identity and session id; `flow inbox --all`
+  shows "by <identity> (<session>)" and `--json` a `consumed_by` object.
+- **`user` and `self` are reserved.** `flow add task --slug user|self`
+  exits 2; a bare address is always an assignee (sessions are
+  `user/<slug>` only), so a task slugged after a person can't capture
+  their mail; `self` is an alias for `user` (`--as self` now reads the
+  human's queue). Messages no longer tell agents to `flow message self`.
+- **`flow inbox read <id>` respects the recipient.** Only the message's
+  addressee changes its state; anyone else gets a read-only display
+  (`--as <assignee>` reads as a person's queue).
+- **One child-reporting rule.** A parented auto child reports to
+  `user/<parent>`; if the parent is closed it writes its update note and
+  sends the human an `FYI:` message (the dead-child notice falls back the
+  same way); a parentless child messages the human only when done or
+  blocked. Auto runs get no Stop broadcast nudge (progress no longer
+  reaches the parent twice).
+- **The inbox Monitor loop backs off and stops.** `pop` exits 3 when
+  the caller's bound task is done or archived, and the recipe sleeps 5s
+  after a failed pop and breaks on 3:
+  `while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done`.
+- **`pop --json` reports the real status** (`acked`/`delivered`) of the
+  row it just consumed instead of `pending`/`unread`.
+
 ## [0.1.0-alpha.32] — 2026-11-06
 
 ### Added
