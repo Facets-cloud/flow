@@ -81,6 +81,10 @@ func Run(args []string) int {
 		return cmdHook(rest)
 	case "message", "msg":
 		return cmdMessage(rest)
+	case "connector":
+		return cmdConnector(rest)
+	case "human":
+		return cmdHuman(rest)
 	case "inbox":
 		return cmdInbox(rest)
 	case "broadcast", "post":
@@ -144,11 +148,12 @@ Edit / mutate:
   flow unarchive <ref>
 
 Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
-  flow message <assignee>[/<task-slug>] "<body>" [--urgent]
+  flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--options "A|B"] [--fyi]
                                      (message a human — "user" is the local human — or the
                                       session bound to a task; never your own address; alias: msg.
                                       Flags may come in any order; the body is positional or
-                                      --body "<text>". Only --urgent/--body/--reply-to are flags.)
+                                      --body "<text>". --options = answer choices, --fyi = never
+                                      ping; both only for mail to the human.)
   flow broadcast "<one-liner>"       (fan out to whoever watches this task/project/assignee; alias: post)
   flow inbox [--as <assignee>] [--json]           (what's pending; --as user = the human's queue)
   flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
@@ -156,6 +161,16 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
                                       delivers, clears; loop it freely; --wait blocks until mail)
   flow inbox stats                   (wait-time metrics)
   flow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
+
+Human connectors (opt-in pings for asks to the human — skill references/connectors.md):
+  flow connector add <dir|sample>    (validate, install, store its secret, send a test notification;
+                                      <sample> = a built-in name such as macos — no checkout needed)
+  flow connector list
+  flow connector list --available    (built-in sample connectors)
+  flow connector remove <name>       (delete the connector and its secret)
+  flow connector test [<name>]
+  flow human reply <id> "<text>"     (connectors only, FLOW_CONNECTOR_TOKEN: answer → asking task's inbox)
+  flow human seen <id>               (connectors only: mark seen without answering)
 
 Workdirs:
   flow workdir list

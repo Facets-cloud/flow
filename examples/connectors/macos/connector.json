@@ -1,0 +1,7 @@
+{
+  "name": "macos",
+  "contract": 1,
+  "exec": "./run",
+  "capabilities": ["send"],
+  "events": ["ask", "urgent"]
+}

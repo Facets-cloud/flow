@@ -40,11 +40,12 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
   their own terminal with `flow inbox read <id>`. Agents never consume
   the human's mail: `pop` skips it in every mode, and an agent's
   `inbox read <id>` on it is display-only.
-- `--urgent` is a data flag for the user's own tooling; flow attaches no
-  behavior to it.
+- `--urgent` marks a truly blocking ask: it always pings an installed
+  connector (see below), even when an earlier ask from this task is
+  still unseen.
 - Command form: the body is positional (`flow message user "..."`) or
-  `--body "<text>"`, and flags (`--urgent`, `--body`, `--reply-to`) may
-  come in any order — `flow message --urgent user "..."` works too. Any
+  `--body "<text>"`, and flags (`--urgent`, `--body`, `--reply-to`,
+  `--options`, `--fyi`) may come in any order — `flow message --urgent user "..."` works too. Any
   OTHER `--flag` is rejected with an error, never silently stored as the
   body.
 
@@ -56,10 +57,32 @@ with no human watching. Its prompt carries the rule:
   fires in auto runs, so progress never arrives twice).
 - **Parent done/archived** (flow rejects the message) → still write the
   update note, then send the done/blocked report to the human as an FYI:
-  `flow message user "FYI: <slug> done — see <update file>"`. A child
+  `flow message user "FYI: <slug> done — see <update file>" --fyi`. A child
   that dies is reported the same way by flow itself.
 - **No parent** → result in an update note; message the human ONLY when
   done or blocked, naming the note. Never routine progress.
+
+**Need a decision while the user may be away → ask with choices.**
+
+```
+flow message user "<q>" --options "A|B"
+flow message user "deploy-v2: ship to prod now?" --options "Yes|No|After 6pm"
+```
+
+- The reply arrives in YOUR inbox as a message with `reply_to=<id>` (your
+  inbox Monitor wakes you; it reads `<choice> — <note>`). It comes later — never block
+  waiting for it: carry on with other work or end the turn.
+- If the user installed a connector (for example the macOS dialog in
+  `examples/connectors/macos`), flow pings them. If no connector is
+  installed, it just waits in the user's inbox like any other ask.
+- One ping per task until the human has seen it, so don't re-ask. A second
+  ask is stored but not re-pinged.
+- **Progress / FYI → `--fyi`:** `flow message user "imports 3/5 done" --fyi`
+  is stored and listed but never pings. Use it for anything the human
+  doesn't need to act on.
+- `--options` and `--fyi` are only for mail to the human (exit 2 on a
+  task address), and they don't combine with each other or with `--urgent`.
+- How connectors work, and how to write one → read **references/connectors.md**.
 
 ### 2. Collaborate with peers
 

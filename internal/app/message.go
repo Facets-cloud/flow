@@ -36,9 +36,9 @@ func cmdMessage(args []string) int {
 	// --body constantly). Previously the body was a blind positional, so a
 	// flag written before it became the literal body ("--urgent") and the
 	// real text was silently dropped. Unknown flags now error instead.
-	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>]   (body also accepts --body "<text>")`
-	var urgent, haveBody, rest bool
-	var bodyFlag, replyTo string
+	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>] [--options "A|B"] [--fyi]   (body also accepts --body "<text>")`
+	var urgent, haveBody, rest, fyi, haveOptions bool
+	var bodyFlag, replyTo, optionsFlag string
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -67,8 +67,18 @@ func cmdMessage(args []string) int {
 			replyTo, i = args[i+1], i+1
 		case strings.HasPrefix(a, "--reply-to="):
 			replyTo = a[len("--reply-to="):]
+		case a == "--fyi" || a == "-fyi":
+			fyi = true
+		case a == "--options" || a == "-options":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, `error: --options needs a value, e.g. --options "Yes|No"`)
+				return 2
+			}
+			optionsFlag, haveOptions, i = args[i+1], true, i+1
+		case strings.HasPrefix(a, "--options="):
+			optionsFlag, haveOptions = a[len("--options="):], true
 		case a != "-" && strings.HasPrefix(a, "-"):
-			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent/--body/--reply-to are flags\n%s\n", a, usage)
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent/--body/--reply-to/--options/--fyi are flags\n%s\n", a, usage)
 			return 2
 		default:
 			pos = append(pos, a)
@@ -104,6 +114,22 @@ func cmdMessage(args []string) int {
 		return 2
 	}
 
+	var options []string
+	if haveOptions {
+		if options = parseAskOptions(optionsFlag); len(options) == 0 {
+			fmt.Fprintln(os.Stderr, `error: --options has no choices — use --options "Yes|No"`)
+			return 2
+		}
+	}
+	if fyi && urgent {
+		fmt.Fprintln(os.Stderr, "error: --fyi and --urgent contradict — an FYI is never pinged, an urgent ask always is; pick one")
+		return 2
+	}
+	if fyi && haveOptions {
+		fmt.Fprintln(os.Stderr, "error: --fyi takes no --options — choices make it an ask; drop --fyi to ask")
+		return 2
+	}
+
 	db, err := openBusDB()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -114,6 +140,10 @@ func cmdMessage(args []string) int {
 	toAssignee, toSlug, err := parseBusAddress(db, addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	if toSlug != "" && (fyi || haveOptions) {
+		fmt.Fprintln(os.Stderr, "error: --options/--fyi are for human-addressed mail only (flow message user ...), not a task's session")
 		return 2
 	}
 	s := currentBusSender()
@@ -143,12 +173,13 @@ func cmdMessage(args []string) int {
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: s.Assignee, FromTaskSlug: s.TaskSlug, SenderSessionID: s.SessionID,
 		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: urgent,
-		ReplyTo: replyTo,
+		ReplyTo: replyTo, Options: options, FYI: fyi,
 	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	maybeDispatch(m)
 	if toSlug == "" {
 		if toAssignee != busUser {
 			fmt.Printf("note: no cross-user transport yet — %q will see this only on this machine\n", toAssignee)
@@ -161,6 +192,18 @@ func cmdMessage(args []string) int {
 	}
 	_ = flowdb.SweepBus(db, time.Now())
 	return 0
+}
+
+// parseAskOptions splits `--options "A|B|C"` into trimmed, non-empty
+// choices.
+func parseAskOptions(s string) []string {
+	var out []string
+	for _, o := range strings.Split(s, "|") {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // busUser is the reserved assignee for the local human ("user" — the

@@ -320,6 +320,39 @@ This is the lane scheduled playbooks use to fire instructions at
 existing tasks without manual intervention. `flow run playbook <slug>`
 accepts the same flags for ad-hoc per-run instructions.
 
+### Human connectors (opt-in pings)
+
+When an agent needs your decision and you've stepped away, it asks you on
+the message bus and moves on:
+
+```bash
+flow message user "deploy-v2: ship to prod now?" --options "Yes|No"
+flow message user "imports 3/5 done" --fyi   # progress: stored and listed, never pings
+```
+
+By default an ask just waits in `flow inbox`. Install a **connector** and
+flow pings you through it. flow ships a native macOS dialog connector,
+built into the binary (the source is `examples/connectors/macos`):
+
+```bash
+flow connector add macos                 # no checkout needed; shows a test dialog
+flow connector list --available          # built-in samples
+flow connector add ./my-connector        # or install your own folder
+flow connector list
+flow connector remove macos
+```
+
+You click an option, and can add a note. The answer arrives in the asking
+task's inbox as a reply (`reply_to=<id>`), and the agent picks it up from
+there. flow pings once per task until you've seen it (`--urgent` always
+pings), broadcasts and `--fyi` never ping, and nothing pings unless you
+installed a connector. Connectors are any executable that follows a small
+JSON contract (`run send` / `run test`, answering with `flow human reply`).
+Each one gets its own secret, kept in the macOS keychain (scoped to the
+flow home, so two `FLOW_ROOT`s never share one), so an agent can't
+answer for you. Contract v1, with enough detail to write your own:
+[`internal/app/skill/references/connectors.md`](internal/app/skill/references/connectors.md).
+
 ### `flow stats`
 
 Show usage & ROI analytics derived from your own flow history — how many

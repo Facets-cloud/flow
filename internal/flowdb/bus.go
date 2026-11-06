@@ -2,6 +2,7 @@ package flowdb
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -45,7 +46,12 @@ CREATE TABLE IF NOT EXISTS bus_messages (
     reply_to           TEXT,
     seen_at            TEXT,
     consumed_by_identity TEXT,
-    consumed_by_session  TEXT
+    consumed_by_session  TEXT,
+    options            TEXT,
+    fyi                INTEGER NOT NULL DEFAULT 0,
+    ping               INTEGER NOT NULL DEFAULT 0,
+    notified_at        TEXT,
+    answered_at        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
     ON bus_messages(to_assignee, to_task_slug, status);
@@ -101,6 +107,18 @@ type BusMessage struct {
 	// acked or saw the row (bus address + harness session id).
 	ConsumedByIdentity string
 	ConsumedBySession  string
+	// Options are the answer choices of a human ask (`--options "A|B"`),
+	// stored as a JSON array; nil when none.
+	Options []string
+	// FYI marks human mail that is stored and listed but never pinged.
+	FYI bool
+	// Ping is the send-time decision to notify the human through the
+	// installed connectors (see InsertBusMessage).
+	Ping bool
+	// NotifiedAt is when at least one connector accepted the ping.
+	NotifiedAt string
+	// AnsweredAt is when a connector recorded the human's answer.
+	AnsweredAt string
 }
 
 // Consumer identifies who changes a row's state: By is the verb recorded
@@ -139,7 +157,9 @@ func (m *BusMessage) IsUnread() bool {
 const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug,''),
     COALESCE(sender_session_id,''), to_assignee, COALESCE(to_task_slug,''), body,
     urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,''),
-    COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,'')`
+    COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,''),
+    COALESCE(options,''), fyi, ping, COALESCE(notified_at,''),
+    COALESCE(answered_at,'')`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -153,33 +173,137 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 	var out []*BusMessage
 	for rows.Next() {
 		m := &BusMessage{}
-		var urgent int
+		var urgent, fyi, ping int
+		var options string
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
 			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt,
-			&m.ConsumedByIdentity, &m.ConsumedBySession); err != nil {
+			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping, &m.NotifiedAt, &m.AnsweredAt); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
+		m.FYI = fyi == 1
+		m.Ping = ping == 1
+		if options != "" {
+			_ = json.Unmarshal([]byte(options), &m.Options)
+		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
 }
 
-// InsertBusMessage inserts one message row (always status=pending).
+// InsertBusMessage inserts one message row (always status=pending) and
+// sets m.Ping to the send-time ping decision, made in the same statement
+// so two concurrent asks from one task cannot both ping:
+//
+//   - only a directed message to the local human (no task) can ping;
+//     broadcasts, task mail, other assignees and --fyi never do;
+//   - --urgent always pings, and so does a sender with no task;
+//   - otherwise one ping per sender task until the human has seen it:
+//     no ping while that task has a pinged ask still unseen.
 func InsertBusMessage(db *sql.DB, m *BusMessage) error {
-	urgent := 0
-	if m.Urgent {
-		urgent = 1
+	return insertBusMessage(db, m)
+}
+
+type queryRower interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func insertBusMessage(db queryRower, m *BusMessage) error {
+	options, err := optionsJSON(m.Options)
+	if err != nil {
+		return err
 	}
-	_, err := db.Exec(`INSERT INTO bus_messages
+	candidate := m.Kind == "message" && m.ToTaskSlug == "" && m.ToAssignee == BusUser && !m.FYI
+	forced := candidate && (m.Urgent || m.FromTaskSlug == "")
+	var ping int
+	err = db.QueryRow(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status, reply_to)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?)`,
+         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi, ping)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,
+          CASE WHEN ?=0 THEN 0 WHEN ?=1 THEN 1
+               WHEN EXISTS (SELECT 1 FROM bus_messages
+                            WHERE from_task_slug=? AND kind='message' AND to_task_slug IS NULL
+                              AND to_assignee=? AND ping=1 AND seen_at IS NULL) THEN 0
+               ELSE 1 END)
+        RETURNING ping`,
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
-		m.Body, urgent, NullIfEmpty(m.ReplyTo))
+		m.Body, boolInt(m.Urgent), NullIfEmpty(m.ReplyTo), options, boolInt(m.FYI),
+		boolInt(candidate), boolInt(forced), m.FromTaskSlug, BusUser).Scan(&ping)
+	m.Ping = ping == 1
 	return err
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// optionsJSON encodes ask options for the options column (NULL when none).
+func optionsJSON(opts []string) (any, error) {
+	if len(opts) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(opts)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+// MarkNotified stamps notified_at once a connector accepted the ping.
+func MarkNotified(db *sql.DB, id string) error {
+	_, err := db.Exec(`UPDATE bus_messages SET notified_at=COALESCE(notified_at, ?) WHERE id=?`, NowISO(), id)
+	return err
+}
+
+// AnswerHumanMessage records a connector-relayed human answer to message
+// id, atomically: the row becomes seen, acked and answered (consumer c),
+// and reply — when non-nil — is inserted in the same transaction. newly
+// is false (and nothing is written) when the row was already answered,
+// which makes a repeated reply idempotent.
+func AnswerHumanMessage(db *sql.DB, id string, c Consumer, reply *BusMessage) (newly bool, err error) {
+	m, err := GetBusMessageByID(db, id)
+	if err != nil || m == nil {
+		return false, err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	now := NowISO()
+	res, err := tx.Exec(`UPDATE bus_messages SET answered_at=?, seen_at=COALESCE(seen_at, ?),
+            status='acked', acked_at=COALESCE(acked_at, ?),
+            waited_s=CASE WHEN status='acked' THEN waited_s ELSE ? END,
+            acked_by=CASE WHEN status='acked' THEN acked_by ELSE ? END,
+            consumed_by_identity=?, consumed_by_session=?
+        WHERE id=? AND answered_at IS NULL`,
+		now, now, now, waitedSeconds(m.CreatedAt, time.Now()), c.By,
+		NullIfEmpty(c.Identity), NullIfEmpty(c.Session), id)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		err = tx.Rollback()
+		return false, err
+	}
+	if reply != nil {
+		if err = insertBusMessage(tx, reply); err != nil {
+			return false, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // PendingForHuman returns pending rows addressed to the human
@@ -201,11 +325,11 @@ func UnreadForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {
 }
 
 // HumanUnreadCounts splits a human queue's unread rows into asks
-// (directed messages) and FYI (broadcasts).
+// (directed messages) and FYI (broadcasts and `--fyi` messages).
 func HumanUnreadCounts(db *sql.DB, assignee string) (asks, fyi int, err error) {
 	err = db.QueryRow(`SELECT
-        COALESCE(SUM(CASE WHEN kind='message' THEN 1 ELSE 0 END),0),
-        COALESCE(SUM(CASE WHEN kind='broadcast' THEN 1 ELSE 0 END),0)
+        COALESCE(SUM(CASE WHEN kind='message' AND fyi=0 THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN kind='broadcast' OR fyi=1 THEN 1 ELSE 0 END),0)
         FROM bus_messages WHERE `+humanUnreadWhere(assignee), assignee).Scan(&asks, &fyi)
 	return
 }

@@ -162,7 +162,7 @@ to prod", "may push a branch and open a PR, do NOT merge">
 - Parent live: the child messages `user/<parent>` at milestones, done,
   and blocked. No Stop broadcast nudge in auto runs, so it arrives once.
 - Parent done/archived: the child still writes its update note and sends
-  its done/blocked report to the human as `flow message user "FYI: …"`.
+  its done/blocked report to the human as `flow message user "FYI: …" --fyi`.
   flow's own dead-child notice falls back to the human the same way.
 - No parent: update note; the human hears only at done/blocked.
 

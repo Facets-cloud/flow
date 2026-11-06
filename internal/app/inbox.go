@@ -108,6 +108,8 @@ type busMsgJSON struct {
 	Mail      string   `json:"mail"` // mail-model label: "unread" | "read"
 	WaitedS   float64  `json:"waited_s,omitempty"`
 	ReplyTo   string   `json:"reply_to,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	FYI       bool     `json:"fyi,omitempty"`
 	// ConsumedBy is who last claimed/acked/saw the row (omitted if nobody).
 	ConsumedBy *consumerJSON `json:"consumed_by,omitempty"`
 }
@@ -128,7 +130,7 @@ func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
 		From: addrJSON{Assignee: m.FromAssignee, TaskSlug: m.FromTaskSlug},
 		To:   addrJSON{Assignee: m.ToAssignee, TaskSlug: m.ToTaskSlug},
 		Body: m.Body, Urgent: m.Urgent, Status: m.Status, Mail: mailLabel(m),
-		WaitedS: m.WaitedS, ReplyTo: m.ReplyTo,
+		WaitedS: m.WaitedS, ReplyTo: m.ReplyTo, Options: m.Options, FYI: m.FYI,
 		ConsumedBy: consumedByJSON(m),
 	}
 }
@@ -224,7 +226,10 @@ func inboxList(args []string) int {
 		if *all {
 			extra = "  " + mailLabel(m) + consumedByLabel(m)
 		}
-		fmt.Printf("%s [%s] %s%s  %s: %s\n", mark, m.ID, busAge(m.CreatedAt, now), extra, busFrom(m), m.Body)
+		if m.FYI {
+			extra += "  fyi"
+		}
+		fmt.Printf("%s [%s] %s%s  %s: %s%s\n", mark, m.ID, busAge(m.CreatedAt, now), extra, busFrom(m), m.Body, optionsSuffix(m))
 	}
 	if *all {
 		fmt.Printf("\nread one by id: flow inbox read <id>\n")
@@ -333,9 +338,17 @@ func agentInvocation() bool {
 	return currentSessionID() != "" || os.Getenv(autoRunEnvVar) != ""
 }
 
+// optionsSuffix renders an ask's choices as "  (A | B)" ("" when none).
+func optionsSuffix(m *flowdb.BusMessage) string {
+	if len(m.Options) == 0 {
+		return ""
+	}
+	return "  (" + strings.Join(m.Options, " | ") + ")"
+}
+
 func printBusMessage(db *sql.DB, m *flowdb.BusMessage) {
 	now := time.Now()
-	fmt.Printf("[%s %s] from %s (%s ago): %s\n", m.Kind, m.ID, busFrom(m), busAge(m.CreatedAt, now), m.Body)
+	fmt.Printf("[%s %s] from %s (%s ago): %s%s\n", m.Kind, m.ID, busFrom(m), busAge(m.CreatedAt, now), m.Body, optionsSuffix(m))
 	if line := replyToLine(db, m); line != "" {
 		fmt.Println(line)
 	}

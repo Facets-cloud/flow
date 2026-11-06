@@ -97,7 +97,7 @@ func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: busUser, FromTaskSlug: child.Slug,
 		ToAssignee: busUser, ToTaskSlug: toSlug,
-		Body: body,
+		Body: body, FYI: toSlug == "", // an FYI to the human never pings a connector
 	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
 		return
