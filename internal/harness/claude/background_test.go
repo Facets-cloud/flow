@@ -11,10 +11,23 @@ import (
 // realBanner mirrors the exact stdout `claude --bg --name <n> <prompt>`
 // prints (captured from the live CLI): the short id is wrapped in ANSI
 // color codes, the separator is U+00B7, and help lines follow that also
-// mention the short id (so the parser must read only the first line).
+// mention the short id (so the parser must match only the "backgrounded" line).
 const realBanner = "backgrounded · \x1b[36m48d287d9\x1b[39m · flow/bg-probe\n" +
 	"\x1b[2m  claude agents             list sessions\x1b[22m\n" +
 	"\x1b[2m  claude attach 48d287d9    open in this terminal\x1b[22m\n"
+
+// newBanner mirrors newer `claude --bg` output, which prints a
+// "Starting background service…" preamble BEFORE the backgrounded line.
+const newBanner = "Starting background service…\n" +
+	"backgrounded · d22b6e77 · flow/codex-fixes\n" +
+	"  claude agents  list sessions\n" +
+	"  claude attach d22b6e77  open in this terminal\n"
+
+// newBannerANSI is newBanner as printed to a TTY (colored id, dim help).
+const newBannerANSI = "\x1b[2mStarting background service…\x1b[22m\n" +
+	"backgrounded · \x1b[36md22b6e77\x1b[39m · flow/codex-fixes\n" +
+	"\x1b[2m  claude agents  list sessions\x1b[22m\n" +
+	"\x1b[2m  claude attach d22b6e77  open in this terminal\x1b[22m\n"
 
 // realAgentsJSON mirrors `claude agents --json` (captured live).
 const realAgentsJSON = `[
@@ -36,6 +49,9 @@ func TestParseBackgroundBanner(t *testing.T) {
 		{"ansi+name", realBanner, "48d287d9", false},
 		{"no-ansi", "backgrounded · c10d7528 · some name\n", "c10d7528", false},
 		{"no-name", "backgrounded · \x1b[36m1923df79\x1b[39m\n", "1923df79", false},
+		{"multiline-preamble", newBanner, "d22b6e77", false},
+		{"multiline-preamble-ansi", newBannerANSI, "d22b6e77", false},
+		{"help-lines-only", "\x1b[2m  claude attach 48d287d9    open in this terminal\x1b[22m\n", "", true},
 		{"no-banner", "some unrelated output\n", "", true},
 		{"empty", "", "", true},
 	}
@@ -163,6 +179,24 @@ func TestSpawnBackgroundCapturesSessionID(t *testing.T) {
 	}
 	if contains(cap.args, "--dangerously-skip-permissions") {
 		t.Errorf("spawn argv should NOT skip permissions when opts unset: %v", cap.args)
+	}
+}
+
+// Newer `claude --bg` prints a "Starting background service…" preamble
+// before the banner; spawn must still resolve the full session id
+// end to end (banner → short id → agents registry).
+func TestSpawnBackgroundNewMultilineBanner(t *testing.T) {
+	const agentsJSON = `[{"pid":1,"id":"d22b6e77","cwd":"/w","kind":"background",
+	  "sessionId":"d22b6e77-aaaa-4bbb-8ccc-dddddddddddd","name":"flow/codex-fixes",
+	  "status":"busy","state":"working"}]`
+	stubBG(t, newBannerANSI, agentsJSON)
+	h := New().(harness.BackgroundLauncher)
+	agent, err := h.SpawnBackground("/w", "flow/codex-fixes", "p", harness.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("SpawnBackground: %v", err)
+	}
+	if agent.SessionID != "d22b6e77-aaaa-4bbb-8ccc-dddddddddddd" {
+		t.Errorf("SessionID: got %q, want full UUID", agent.SessionID)
 	}
 }
 
