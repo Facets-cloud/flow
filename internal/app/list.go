@@ -360,6 +360,11 @@ func listTasksCmd(args []string) int {
 		}
 		if tags, ok := tagsByTask[t.Slug]; ok {
 			r.Tags = tags
+			for _, tg := range tags {
+				if tg == driverTag {
+					r.Driver = true
+				}
+			}
 		}
 		rows = append(rows, r)
 	}
@@ -477,6 +482,7 @@ type taskListRow struct {
 	Archived   bool     `json:"archived,omitempty"`
 	Updated    string   `json:"updated,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
+	Driver     bool     `json:"driver,omitempty"`
 }
 
 // autoCell builds the AUTO column in table output: the run status, with
@@ -538,7 +544,13 @@ func notesCell(p listfmt.Painter, r taskListRow, waitMax int) string {
 	if r.Live {
 		parts = append(parts, p.Wrap("[live]", listfmt.Cyan))
 	}
+	if r.Driver {
+		parts = append(parts, p.Wrap("◆driver", listfmt.Bold))
+	}
 	for _, t := range r.Tags {
+		if t == driverTag {
+			continue
+		}
 		parts = append(parts, p.Wrap("#"+t, listfmt.Gray))
 	}
 	if r.Archived {

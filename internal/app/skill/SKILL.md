@@ -298,6 +298,10 @@ section is unclear, ask; if the user says "I don't know yet", write
    "Yes, create it" / "No, I'll fix the path") if the path doesn't exist.
 4. **Priority** — AskUserQuestion "High" / "Medium (Recommended)" / "Low",
    default Medium. Skip if already stated.
+5. **Driver?** — AskUserQuestion "How should this task run?":
+   "Driver (Recommended)" (owns it end to end, spawns `flow auto`
+   children) / "Regular" (this session only). Recommend Driver for
+   multi-part goals; on Driver add `--tag driver`. Never skip.
 
 Also, before saving: **project attachment** — AskUserQuestion with one
 option per existing project (label = slug, desc = name) plus "None
@@ -452,17 +456,17 @@ other harness" — for a task that ALREADY has a session (harness pinned, so
 `--harness` is rejected). Read **references/harness-transfer.md** and follow
 it: progress note → `flow transcript` handoff file → un-pin via the scoped
 sqlite UPDATE → `flow do --harness <h> --with-file <handoff>`.
-### 4.4a Driver delegation (auto children)
+### 4.4a Driver tasks & delegation (auto children)
 
-In a bound, human-driven session (the hook prints `flow driver
-delegation`), carve deterministic subtasks (scan, audit, fact-finding,
-repro debug, bulk/mechanical pass, fix + PR + test) off to headless
-children: `flow auto "<name>" --slug <s> --brief <file|->`. No §4.2
-interview and no §4.4 mode question; announce `spawning auto child:
-<slug>` and keep going. Design, decisions, quick answers and live/prod
-applies stay inline with the user. Auto children never spawn
-grandchildren. Brief template, result contract, examples → read
-**references/delegation.md**. §4.4 launch defaults are unchanged.
+A task tagged `driver` (list `◆driver`, show `role: driver`, anchor
+`[driver]`) owns its outcome end to end: hand ANY self-contained work
+(implementation, research, debug, fix+PR, scans) to `flow auto "<name>"
+--slug <s> --brief <file|->` children, never harness subagents; keep talk,
+decisions, verifying results, live/prod applies inline. Other bound
+sessions delegate lightly. No §4.2/§4.4 asks;
+announce `spawning auto child: <slug>`. Make one mid-session: `flow
+update task <bound> --tag driver` (prints the block). No grandchildren.
+Habits, brief template → **references/delegation.md**.
 
 ### 4.5 Save a progress note
 
@@ -665,10 +669,7 @@ the `<current-slug>` and the one-line drift):
 - **Later** — offer a drift note (AskUserQuestion "Yes, save a drift
   note" / "No, just continue") on the current task, then continue.
 
-This lives in the skill, not the hook, because detection needs
-session state (edits, debug topics) that only exists in the running
-conversation. Note "the bootstrapped task" includes playbook-run tasks —
-same triggers and recipe.
+Note "the bootstrapped task" includes playbook-run tasks.
 
 ### 4.12–4.13 Playbooks (add · run · capture-back)
 

@@ -7,6 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Driver tasks.** Tag a task `driver` (offered as an intake question,
+  or `flow update task <slug> --tag driver` mid-session) and it owns its
+  outcome end to end: its session gets a stronger `flow DRIVER task`
+  block that hands any self-contained work (implementation, research,
+  debugging, fix + PR, scans) to `flow auto` children instead of harness
+  subagents, keeps decisions with the user, never idles, and ends turns
+  with a numbered "Needs from you" list. Regular bound tasks keep the
+  light delegation block. Drivers show as `◆driver` in `flow list`
+  (`"driver": true` in json), `role: driver` in `flow show task`, and
+  `[driver]` in the per-prompt anchor.
+- **`flow do --here` prints the role block**, so a session bound
+  mid-flight (missed SessionStart) gets the driver or delegation context
+  immediately. Tagging/untagging the bound task as driver does the same.
+- **Dead children notify their driver.** When a parented auto run ends
+  `dead`, flow posts a crash notice to the parent's inbox; previously a
+  crashed child went silent.
+
 ## [0.1.0-alpha.31] — 2026-11-02
 
 ### Added
