@@ -59,15 +59,16 @@ func cmdInbox(args []string) int {
 
 // consumerFlags registers the shared identity-override flag: --as
 // <assignee> consumes that human queue instead of the ambient identity
-// (`--as self` = the user's own inbox even inside a bound session; any
+// (`--as user` = the user's own inbox even inside a bound session; any
 // other assignee = monitor/transport workers draining their queue).
 func consumerFlags(fs *flag.FlagSet) (as *string) {
-	return fs.String("as", "", "consume this assignee's queue instead of the ambient identity (e.g. --as self)")
+	return fs.String("as", "", "use this assignee's queue instead of the ambient identity (e.g. --as user; self is an alias)")
 }
 
 // resolveConsumer applies the identity override to the ambient identity.
 func resolveConsumer(as string) busSender {
 	if as != "" {
+		as = canonicalAssignee(as)
 		// Keep the real session id so a consumption is still traceable
 		// to the session that ran it.
 		return busSender{Assignee: as, SessionID: currentSessionID()}

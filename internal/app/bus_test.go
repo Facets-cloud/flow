@@ -295,7 +295,7 @@ func TestMessageReplyToLineage(t *testing.T) {
 
 	// Reply routed to a task session, stamped with the parent id.
 	out := captureStdout(t, func() {
-		if rc := cmdMessage([]string{"task-b", "us-east-1", "--reply-to", parentID}); rc != 0 {
+		if rc := cmdMessage([]string{"user/task-b", "us-east-1", "--reply-to", parentID}); rc != 0 {
 			t.Fatal("reply rc != 0")
 		}
 	})
@@ -318,7 +318,7 @@ func TestMessageReplyToLineage(t *testing.T) {
 
 	// Unknown parent id is rejected at send time.
 	out = captureStdout(t, func() {
-		if rc := cmdMessage([]string{"task-b", "orphan", "--reply-to", "deadbeef"}); rc != 2 {
+		if rc := cmdMessage([]string{"user/task-b", "orphan", "--reply-to", "deadbeef"}); rc != 2 {
 			t.Errorf("reply to missing parent should rc=2")
 		}
 	})
@@ -358,7 +358,7 @@ func TestBroadcastFanoutToWatchers(t *testing.T) {
 
 	// Direct message to a task: bare slug is sugar for self/<slug>.
 	captureStdout(t, func() {
-		if rc := cmdMessage([]string{"task-b", "state file moved"}); rc != 0 {
+		if rc := cmdMessage([]string{"user/task-b", "state file moved"}); rc != 0 {
 			t.Fatalf("message task rc != 0")
 		}
 	})
@@ -831,13 +831,13 @@ func TestMessageParsingToleratesFlagOrderAndBodyFlag(t *testing.T) {
 		return rc
 	}
 
-	if rc := send("tgt", "--urgent", "flag first body"); rc != 0 {
+	if rc := send("user/tgt", "--urgent", "flag first body"); rc != 0 {
 		t.Fatalf("flag-first rc=%d", rc)
 	}
-	if rc := send("tgt", "--body", "named flag body"); rc != 0 {
+	if rc := send("user/tgt", "--body", "named flag body"); rc != 0 {
 		t.Fatalf("--body rc=%d", rc)
 	}
-	if rc := send("tgt", "positional body", "--urgent"); rc != 0 {
+	if rc := send("user/tgt", "positional body", "--urgent"); rc != 0 {
 		t.Fatalf("positional rc=%d", rc)
 	}
 
@@ -861,7 +861,7 @@ func TestMessageParsingToleratesFlagOrderAndBodyFlag(t *testing.T) {
 
 	// unknown flag errors and stores nothing new
 	before, _ := flowdb.PendingForTask(db, "tgt")
-	if rc := send("tgt", "--nope", "x"); rc == 0 {
+	if rc := send("user/tgt", "--nope", "x"); rc == 0 {
 		t.Fatalf("unknown flag should error, not send")
 	}
 	after, _ := flowdb.PendingForTask(db, "tgt")

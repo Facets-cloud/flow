@@ -90,8 +90,8 @@ func cmdBroadcast(args []string) int {
 	return 0
 }
 
-// splitWatcherAddr parses a stored watcher address: "self" (human) or
-// "self/<task-slug>" (session).
+// splitWatcherAddr parses a stored watcher address: "user" (human) or
+// "user/<task-slug>" (session).
 func splitWatcherAddr(w string) (assignee, taskSlug string) {
 	if i := strings.IndexByte(w, '/'); i >= 0 {
 		return w[:i], w[i+1:]
@@ -100,7 +100,7 @@ func splitWatcherAddr(w string) (assignee, taskSlug string) {
 }
 
 // taskTopics returns the broadcast topics a task publishes on: its own
-// slug, its project slug, and its assignee (self when unassigned).
+// slug, its project slug, and its assignee (user when unassigned).
 func taskTopics(t *flowdb.Task) []string {
 	topics := []string{t.Slug}
 	if t.ProjectSlug.Valid && t.ProjectSlug.String != "" {

@@ -13,12 +13,12 @@ import (
 //	flow watch <task-slug|project-slug|assignee>   subscribe
 //	flow watch --list                              your subscriptions
 //	flow watch --rm <target>                       unsubscribe
-//	flow watch <target> --as self                  subscribe as the human even
+//	flow watch <target> --as user                  subscribe as the human even
 //	                                               from inside a bound session
 //
 // The subscriber is the current identity: a bound session watches as
-// "self/<its-task-slug>"; an unbound/human invocation (or --as self) watches
-// as "self". Posts fan out only to watchers subscribed at post time.
+// "user/<its-task-slug>"; an unbound/human invocation (or --as user) watches
+// as "user". Posts fan out only to watchers subscribed at post time.
 // Consume the resulting messages with `flow inbox` / `flow inbox pop`.
 func cmdWatch(args []string) int {
 	target := ""

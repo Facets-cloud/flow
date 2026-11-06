@@ -65,8 +65,7 @@ flow message user/tekion-hub-network "answered: use us-east-1" --reply-to 80a7ae
 flow broadcast "imports done, 3 drifts left"     # FYI to watchers
 ```
 
-- `<assignee>/<task-slug>` (a bare task slug is sugar for `user/<slug>`)
-  delivers into that session's context — no interruption. Say what the
+- `<assignee>/<task-slug>` delivers into that session's context — no interruption. Say what the
   peer should DO with it.
 - `--reply-to <id>` stamps the parent message id so a routed reply carries
   lineage — the receiver sees which message it answers (the bus doesn't
@@ -86,8 +85,11 @@ flow broadcast "imports done, 3 drifts left"     # FYI to watchers
 - `<name>` (e.g. `shashwat`) — another assignee. No cross-machine
   transport yet: it queues locally with a warning; delivery lands with
   flow-workspace.
-- `<assignee>/<task-slug>` — the SESSION bound to that task.
-- A bare task slug is sugar for `user/<slug>`.
+- `<assignee>/<task-slug>` — the SESSION bound to that task. Sessions are
+  addressed ONLY this way: a bare token is always an assignee (a person),
+  never a task slug.
+- `self` is a legacy alias for `user`. `user` and `self` are reserved and
+  can never be task slugs.
 - You can NEVER message your own address — a session cannot mail its own
   inbox, and the human cannot mail their own queue (flow rejects both).
   Done/archived tasks are also rejected (undeliverable).

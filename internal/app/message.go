@@ -166,11 +166,30 @@ func cmdMessage(args []string) int {
 // busUser is the reserved assignee for the local human ("user" — the
 // person driving flow). Tasks with a NULL assignee belong to them;
 // multi-user addressing rides on tasks.assignee. Deliberately not
-// "self": that spelling confused agents into reading `message self` as
-// talking to themselves.
+// "self": agents misread that legacy spelling as talking to themselves
+// (it is still accepted as an alias, see busSelfAlias).
 const busUser = flowdb.BusUser
 
 const busBodyMax = 500
+
+// busSelfAlias is the legacy spelling of busUser. It is accepted wherever
+// an address or --as identity is read, and always means the human.
+const busSelfAlias = "self"
+
+// isReservedBusName reports whether a name is a reserved bus address that
+// must never be a task slug (a task slugged `user` would capture the
+// human's mail).
+func isReservedBusName(s string) bool {
+	return s == busUser || s == busSelfAlias
+}
+
+// canonicalAssignee maps the legacy `self` spelling to `user`.
+func canonicalAssignee(a string) string {
+	if a == busSelfAlias {
+		return busUser
+	}
+	return a
+}
 
 func openBusDB() (*sql.DB, error) {
 	path, err := flowDBPath()
@@ -190,7 +209,7 @@ func newBusID() string {
 
 // busSender describes who/where a bus command runs.
 type busSender struct {
-	Assignee  string // always "self" locally; workspace transport may widen this
+	Assignee  string // always "user" locally; workspace transport may widen this
 	TaskSlug  string // bound flow task, "" if unbound
 	SessionID string
 }
@@ -208,8 +227,8 @@ func (s busSender) consumer(by string) flowdb.Consumer {
 	return flowdb.Consumer{By: by, Identity: s.identity(), Session: s.SessionID}
 }
 
-// busIdentity is the address the current invocation consumes as:
-// "self/<task-slug>" in a bound session, else "self" (the human).
+// identity is the address the current invocation consumes as:
+// "user/<task-slug>" in a bound session, else "user" (the human).
 func (s busSender) identity() string {
 	if s.TaskSlug != "" {
 		return s.Assignee + "/" + s.TaskSlug
@@ -221,7 +240,7 @@ func (s busSender) identity() string {
 // taskSlug == "" means the human.
 func parseBusAddress(db *sql.DB, addr string) (string, string, error) {
 	if i := strings.IndexByte(addr, '/'); i >= 0 {
-		assignee, slug := addr[:i], addr[i+1:]
+		assignee, slug := canonicalAssignee(addr[:i]), addr[i+1:]
 		if assignee == "" || slug == "" {
 			return "", "", fmt.Errorf("bad address %q (want <assignee>[/<task-slug>])", addr)
 		}
@@ -234,14 +253,10 @@ func parseBusAddress(db *sql.DB, addr string) (string, string, error) {
 		}
 		return assignee, slug, nil
 	}
-	// Bare token: a task slug is sugar for self/<slug>; else an assignee.
-	if t, _ := flowdb.GetTask(db, addr); t != nil {
-		if err := deliverableTask(t); err != nil {
-			return "", "", err
-		}
-		return busUser, addr, nil
-	}
-	return addr, "", nil
+	// A bare token is ALWAYS an assignee (a person's queue); sessions are
+	// addressed only as <assignee>/<task-slug>. Treating a bare token as a
+	// task slug first let a task slugged after a person capture their mail.
+	return canonicalAssignee(addr), "", nil
 }
 
 // deliverableTask rejects addressing a session that can never read the
@@ -250,10 +265,10 @@ func parseBusAddress(db *sql.DB, addr string) (string, string, error) {
 // would be pending forever while the sender believes it was delivered.
 func deliverableTask(t *flowdb.Task) error {
 	if t.Status == "done" {
-		return fmt.Errorf("task %q is done — its session will never pop this; message the human instead (flow message self ...)", t.Slug)
+		return fmt.Errorf("task %q is done — its session will never pop this; message the human instead (flow message user ...)", t.Slug)
 	}
 	if t.ArchivedAt.Valid {
-		return fmt.Errorf("task %q is archived — its session will never pop this; message the human instead (flow message self ...)", t.Slug)
+		return fmt.Errorf("task %q is archived — its session will never pop this; message the human instead (flow message user ...)", t.Slug)
 	}
 	return nil
 }

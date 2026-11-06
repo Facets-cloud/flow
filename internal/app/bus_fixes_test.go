@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 
@@ -424,5 +425,96 @@ func TestF5RecordsConsumerIdentity(t *testing.T) {
 	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--json"}) })
 	if !strings.Contains(out, `"consumed_by":{"identity":"user/peer","session":"sid-peer"}`) {
 		t.Errorf("--all --json lacks consumed_by:\n%s", out)
+	}
+}
+
+// F6: `user`/`self` are reserved bus names, never task slugs; a bare
+// address token is always an assignee; `self` is an alias for `user`.
+func TestF6ReservedSlugsAndBareAddresses(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	db := openFlowDB(t)
+	for _, slug := range []string{"user", "self"} {
+		out := captureStdout(t, func() {
+			if rc := cmdAdd([]string{"task", "x", "--slug", slug, "--work-dir", t.TempDir()}); rc != 2 {
+				t.Errorf("--slug %s rc=%d, want 2", slug, rc)
+			}
+		})
+		if !strings.Contains(out, "reserved") {
+			t.Errorf("--slug %s error should say reserved: %s", slug, out)
+		}
+	}
+	// An auto-generated slug never lands on a reserved name either.
+	captureStdout(t, func() {
+		if rc := cmdAdd([]string{"task", "User", "--work-dir", t.TempDir()}); rc != 0 {
+			t.Fatal("add task User")
+		}
+	})
+	if tk, _ := flowdb.GetTask(db, "user"); tk != nil {
+		t.Error("auto slug produced a task named user")
+	}
+
+	// A bare token that happens to be a task slug is still an ASSIGNEE.
+	mkBusTask(t, db, "anshul", "sid-anshul")
+	mkBusTask(t, db, "sender", "sid-sender")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-sender")
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"anshul", "hi person"}); rc != 0 {
+			t.Fatal("message anshul")
+		}
+	})
+	var toA, toS string
+	_ = db.QueryRow(`SELECT to_assignee, COALESCE(to_task_slug,'') FROM bus_messages WHERE body='hi person'`).Scan(&toA, &toS)
+	if toA != "anshul" || toS != "" {
+		t.Errorf("bare token routed to %q/%q, want assignee anshul", toA, toS)
+	}
+
+	// `self` aliases to `user` when addressing and consuming.
+	captureStdout(t, func() {
+		if rc := cmdMessage([]string{"self", "via self"}); rc != 0 {
+			t.Fatal("message self")
+		}
+	})
+	_ = db.QueryRow(`SELECT to_assignee FROM bus_messages WHERE body='via self'`).Scan(&toA)
+	if toA != "user" {
+		t.Errorf("message self went to %q, want user", toA)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	out := captureStdout(t, func() { _ = cmdInbox([]string{"--as", "self", "--json"}) })
+	if !strings.Contains(out, "via self") {
+		t.Errorf("--as self did not read the user's queue: %s", out)
+	}
+
+	// Errors never tell agents to `flow message self`.
+	if _, err := db.Exec(`UPDATE tasks SET status='done' WHERE slug='anshul'`); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() { _ = cmdMessage([]string{"user/anshul", "late"}) })
+	if strings.Contains(out, "message self") || !strings.Contains(out, "flow message user") {
+		t.Errorf("closed-task error should point at `flow message user`: %s", out)
+	}
+	// Help text no longer suggests --as self.
+	for _, f := range []string{"inbox.go", "watch.go", "broadcast.go", "message.go"} {
+		src := readRepoFile(t, f)
+		if strings.Contains(src, "--as self") || strings.Contains(src, "message self") {
+			t.Errorf("%s still advertises the legacy self spelling", f)
+		}
+	}
+}
+
+func readRepoFile(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// F6: messaging.md drops "a bare task slug is sugar".
+func TestF6SkillDropsBareSlugSugar(t *testing.T) {
+	if strings.Contains(skillCorpus(t), "is sugar for") {
+		t.Error("skill still says a bare task slug is sugar for user/<slug>")
 	}
 }
