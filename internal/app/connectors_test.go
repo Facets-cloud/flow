@@ -2,6 +2,9 @@ package app
 
 import (
 	"database/sql"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -150,5 +153,91 @@ func TestB2PingDecisionAtSend(t *testing.T) {
 	}
 	if m, _ := flowdb.GetBusMessageByID(db, "bcast1"); m.Ping || b.Ping {
 		t.Errorf("broadcast pinged")
+	}
+}
+
+// installFakeConnector writes a valid connector folder straight into
+// $FLOW_ROOT/connectors/<name>/ whose run script is `script` (a /bin/sh
+// body). Returns the folder.
+func installFakeConnector(t *testing.T, name, events, script string) string {
+	t.Helper()
+	root, err := connectorsRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"` + name + `","contract":1,"exec":"./run","capabilities":["send"],"events":[` + events + `]}`
+	if err := os.WriteFile(filepath.Join(dir, "connector.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "run"), []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// stubDispatchLauncher records spawned dispatch ids instead of forking.
+func stubDispatchLauncher(t *testing.T, fail error) *[]string {
+	t.Helper()
+	var ids []string
+	orig := dispatchLauncher
+	dispatchLauncher = func(id string) error {
+		ids = append(ids, id)
+		return fail
+	}
+	t.Cleanup(func() { dispatchLauncher = orig })
+	return &ids
+}
+
+// B3: a pinging send spawns a detached dispatch — only when a connector is
+// installed, and a spawn failure never fails the send.
+func TestB3SendSpawnsDispatchOnlyWithConnectors(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "asker", "sid-asker")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-asker")
+	spawned := stubDispatchLauncher(t, nil)
+
+	// No connectors installed: behaves exactly as today.
+	if rc := msgRC(t, "user", "first ask"); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if len(*spawned) != 0 {
+		t.Fatalf("dispatch spawned with no connectors: %v", *spawned)
+	}
+	if m := rowByBody(t, db, "first ask"); !m.Ping {
+		t.Fatalf("first ask should still record ping=1")
+	}
+
+	installFakeConnector(t, "desk", `"ask","urgent"`, "exit 0")
+	if rc := msgRC(t, "user", "urgent ask", "--urgent"); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	u := rowByBody(t, db, "urgent ask")
+	if len(*spawned) != 1 || (*spawned)[0] != u.ID {
+		t.Fatalf("spawned = %v, want [%s]", *spawned, u.ID)
+	}
+	// Non-pinging sends never spawn.
+	for _, args := range [][]string{{"user", "second ask"}, {"user", "a progress note", "--fyi"}} {
+		if rc := msgRC(t, args...); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	}
+	if len(*spawned) != 1 {
+		t.Fatalf("non-pinging sends spawned: %v", *spawned)
+	}
+
+	// Spawn errors are logged, never returned.
+	stubDispatchLauncher(t, errors.New("fork exploded"))
+	if rc := msgRC(t, "user", "boom", "--urgent"); rc != 0 {
+		t.Fatalf("spawn failure leaked into rc=%d", rc)
+	}
+	root, _ := connectorsRoot()
+	log, _ := os.ReadFile(filepath.Join(root, "dispatch.log"))
+	if !strings.Contains(string(log), "fork exploded") {
+		t.Errorf("dispatch.log lacks the spawn error: %q", log)
 	}
 }

@@ -179,6 +179,7 @@ func cmdMessage(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	maybeDispatch(m)
 	if toSlug == "" {
 		if toAssignee != busUser {
 			fmt.Printf("note: no cross-user transport yet — %q will see this only on this machine\n", toAssignee)
