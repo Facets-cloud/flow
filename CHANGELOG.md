@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.32] — 2026-11-06
+
 ### Added
 
 - **Driver tasks.** Tag a task `driver` (offered as an intake question,
