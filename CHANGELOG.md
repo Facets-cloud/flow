@@ -9,6 +9,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- `flow init` now installs the PreToolUse hook too. It used to install
+  only three of the four hooks that `flow skill install` installs.
+- **Codex harness.** The live-session guard now sees Codex auto runs
+  (`codex exec resume <flags> <id>`), so `flow do` no longer opens a second
+  writer on a thread a headless run is driving. `flow transcript` honours
+  `$CODEX_HOME`. The thread-minting probe runs in the task's work_dir instead
+  of the caller's cwd.
+- **Codex auto runs no longer log "failed to record rollout items: thread
+  … not found".** A Codex auto run's own `flow done` now defers the
+  close-out sweep, and the `flow __auto-exec` supervisor runs it once the
+  harness process has exited. Before, the sweep ran as a nested `codex exec`
+  inside the live run. Claude and interactive `flow done` still sweep inline.
+  Root cause, confirmed live: Codex's shell tool backgrounds `flow done`
+  after ~10s, the agent ends its turn, and the exiting run kills the
+  sweep. An inline sweep (plain or `--ephemeral`) cannot survive that.
+- **Codex Stop hook output.** In Codex sessions the watcher broadcast
+  nudge is emitted as `{"decision":"block","reason":…}`. Codex's Stop
+  schema rejects `hookSpecificOutput`.
+- **Codex `$CODEX_HOME`.** The flow skill and `hooks.json` install under
+  `$CODEX_HOME` when it is set (default `~/.codex`), where Codex reads them.
+- **Harness-neutral session prompts.** The bootstrap, auto-run, close-out
+  sweep and owner-tick prompts no longer assume Claude. They say to use the
+  Skill tool if the harness has one, or else read the flow `SKILL.md` (the
+  real Codex path is spelled out), and they name `CLAUDE.md / AGENTS.md`.
 - **`FLOW_TERM=bg` spawns no longer fail on newer `claude --bg` output.**
   Newer Claude Code prints a `Starting background service…` line before
   the `backgrounded · <id> · <name>` banner. flow only read the first
@@ -16,6 +40,34 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   the session had started. flow now checks every line for the banner,
   with or without ANSI color, and still reports a clear error when no
   banner line appears.
+
+### Added
+
+- **Install for every present harness.** `flow init`, `flow skill
+  install` and `flow skill update` now install the skill and all four
+  hooks (SessionStart, UserPromptSubmit, PreToolUse, Stop) for every
+  harness on the machine, not just the ambient one. A harness is present
+  when its binary is on `PATH` or its config home exists (`~/.claude`;
+  `$CODEX_HOME`, else `~/.codex`); with none found, Claude is the
+  fallback. `flow skill uninstall` removes the skill from every harness
+  that has it. All four take `--harness claude|codex` to act on one
+  harness; an unknown name is a usage error that lists the valid names,
+  and a named harness that isn't detected is installed anyway. Output is
+  prefixed per harness (`claude: …`, `codex: …`).
+- The post-upgrade skill refresh now checks every harness, each against
+  its own `VERSION` sidecar, and refreshes only harnesses that already
+  have the skill, so a harness you removed it from stays opted out.
+- Codex auto runs write the session's final message (`codex exec -o`) to
+  `auto-runs/<run>.last.txt` next to the run log; `flow show task` lists it
+  as `auto_run_last:` once it exists.
+- **Codex hooks.** `flow skill install` now installs the UserPromptSubmit,
+  PreToolUse and Stop hooks for Codex too (Codex 0.166 fires them; before,
+  only SessionStart was installed). The entries have no matcher, because
+  Codex tool names differ from Claude's.
+- **Hooks fire in headless Codex runs.** Auto runs, the close-out sweep and
+  owner ticks pass `--dangerously-bypass-hook-trust`, so hooks fire without
+  a one-time interactive trust approval, as they do under Claude. Interactive
+  launches keep Codex's trust prompt.
 
 ## [0.1.0-alpha.34] — 2026-11-06
 

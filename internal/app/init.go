@@ -40,11 +40,17 @@ func flowDBPath() (string, error) {
 // the skill. Idempotent — re-running is safe.
 func cmdInit(args []string) int {
 	fs := flagSet("init")
+	only := harnessFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "error: init takes no positional arguments")
+		return 2
+	}
+
+	targets, ok := resolveTargets(*only, presentHarnesses)
+	if !ok {
 		return 2
 	}
 
@@ -92,47 +98,32 @@ func cmdInit(args []string) int {
 	}
 	db.Close()
 
-	// Install the skill idempotently. Skip if already present; we never
-	// overwrite on init (use `flow skill update` for that).
-	h := defaultHarness()
-	skillPath, err := h.SkillInstallPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		if err := h.InstallSkill(skillFiles()); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	// Install the skill + every hook idempotently for each present
+	// harness (or just --harness). An existing skill is never
+	// overwritten on init (use `flow skill update` for that); hooks are
+	// always (re)ensured — same set as `flow skill install`, so the
+	// auto-upgrade path never has to come back to add missing ones.
+	for _, h := range targets {
+		skillPath, err := h.SkillInstallPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s: %v\n", h.Name(), err)
 			return 1
 		}
-		if err := writeSkillVersion(Version); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not record skill version: %v\n", err)
+		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+			if err := h.InstallSkill(skillFiles()); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %s: %v\n", h.Name(), err)
+				return 1
+			}
+			if err := writeSkillVersion(h, Version); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s: could not record skill version: %v\n", h.Name(), err)
+			}
+			fmt.Printf("%s: installed flow skill to %s\n", h.Name(), skillPath)
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s: stat %s: %v\n", h.Name(), skillPath, err)
+			return 1
 		}
-		fmt.Printf("installed flow skill to %s\n", skillPath)
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "error: stat %s: %v\n", skillPath, err)
-		return 1
+		installHooks(h, false)
 	}
-
-	// Install every hook idempotently — same set as `flow skill
-	// install`; init stamping the current skill version means the
-	// auto-upgrade path will never come back to add missing ones.
-	if added, err := h.InstallSessionStartHook(hookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install SessionStart hook: %v\n", err)
-	} else if added {
-		fmt.Println("installed SessionStart hook")
-	}
-	if added, err := h.InstallUserPromptSubmitHook(userPromptSubmitHookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install UserPromptSubmit hook: %v\n", err)
-	} else if added {
-		fmt.Println("installed UserPromptSubmit hook")
-	}
-	if added, err := h.InstallStopHook(stopHookCommand); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not install Stop hook: %v\n", err)
-	} else if added {
-		fmt.Println("installed Stop hook")
-	}
-	_, _ = h.UninstallPostToolUseHook(postToolUseHookCommand) // retired
 
 	fmt.Printf("flow initialized at %s\n", root)
 	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)

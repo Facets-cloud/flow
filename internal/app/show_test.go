@@ -674,3 +674,29 @@ func captureShowStdout(t *testing.T, fn func()) string {
 	io.Copy(&buf, r)
 	return buf.String()
 }
+
+// When the auto run wrote a last-message file next to its log, show it.
+func TestCmdShowTaskAutoRunLastMessage(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "auto-task", "Auto", "in-progress", "high", filepath.Join(root, "repo"), nil)
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+	last := filepath.Join(dir, "run.last.txt")
+	if err := os.WriteFile(last, []byte("all done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='completed', auto_run_finished=?, auto_run_log=? WHERE slug='auto-task'`,
+		flowdb.NowISO(), logPath,
+	); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if rc := cmdShow([]string{"task", "auto-task"}); rc != 0 {
+			t.Errorf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "auto_run_last:         "+last) {
+		t.Errorf("missing auto_run_last line; out=%q", out)
+	}
+}

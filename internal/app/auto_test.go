@@ -333,3 +333,36 @@ func TestBuildAutoBootstrapPrompt(t *testing.T) {
 		}
 	}
 }
+
+// The supervisor argv carries the last-message path derived from the log,
+// so the headless run's final message lands next to the log.
+func TestAutoExecArgsCarryLastMessagePath(t *testing.T) {
+	got := autoExecArgs("s", "/runs/2026-01-01-000000.log", "")
+	want := []string{"__auto-exec", "s", "--last-message", "/runs/2026-01-01-000000.last.txt"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("autoExecArgs=%q, want %q", got, want)
+	}
+	got = autoExecArgs("s", "/runs/a.log", "do x")
+	want = []string{"__auto-exec", "s", "--last-message", "/runs/a.last.txt", "--with", "do x"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("autoExecArgs=%q, want %q", got, want)
+	}
+}
+
+// __auto-exec threads --last-message into LaunchOpts.LastMessagePath.
+func TestAutoExecPassesLastMessagePath(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "auto-task")
+	seedRunningAuto(t, "auto-task", 4242)
+	var gotOpts harness.LaunchOpts
+	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		gotOpts = opts
+		return nil
+	})
+	if rc := cmdAutoExec([]string{"auto-task", "--last-message", "/runs/a.last.txt"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if gotOpts.LastMessagePath != "/runs/a.last.txt" {
+		t.Errorf("LastMessagePath=%q", gotOpts.LastMessagePath)
+	}
+}

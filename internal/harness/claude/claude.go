@@ -74,7 +74,7 @@ var sessionIDRe = regexp.MustCompile(
 // implement this by probing the harness CLI to mint and capture an
 // id; claude doesn't need that — it accepts an externally-supplied
 // UUID via --session-id.)
-func (c *claude) NewSessionID() (string, error) {
+func (c *claude) NewSessionID(workDir string) (string, error) {
 	return NewUUID()
 }
 

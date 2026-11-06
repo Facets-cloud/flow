@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 )
 
 // Message-bus hook handlers — strictly CLI/context primitives, no UI,
@@ -278,10 +280,11 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 	defer db.Close()
-	slug := lookupBoundTaskSlug()
-	if slug == "" {
+	t := lookupBoundTask()
+	if t == nil {
 		return 0
 	}
+	slug := t.Slug
 	// A headless auto run reports through its prompt's one reporting rule
 	// (parent inbox / human at done-blocked); a broadcast nudge on top
 	// would deliver its progress to the parent twice (it auto-watches).
@@ -292,7 +295,24 @@ func cmdHookStop(args []string) int {
 	if nudge == "" {
 		return 0
 	}
+	if t.Harness.Valid && t.Harness.String == string(harness.NameCodex) {
+		return emitCodexStopBlock(strings.TrimSpace(nudge))
+	}
 	return emitHookContext("Stop", strings.TrimSpace(nudge))
+}
+
+// emitCodexStopBlock is the Codex form of the Stop nudge. Codex's Stop
+// output schema is closed and has no hookSpecificOutput: text reaches
+// the agent only as {"decision":"block","reason":...}, which Codex
+// replays as a continuation prompt (the stop_hook_active guard above
+// keeps that from looping).
+func emitCodexStopBlock(reason string) int {
+	out := map[string]any{"decision": "block", "reason": reason}
+	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode hook json: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // stopBroadcastNudge returns the watcher broadcast-nudge context (""

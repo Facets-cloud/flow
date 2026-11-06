@@ -22,6 +22,9 @@ var (
 	// invoking the CLI.
 	ProbeRunner = runProbe
 	PSRunner    = runPS
+	// SkipPermissionsRunner runs the headless close-out sweep. Tests
+	// replace it to avoid invoking the CLI.
+	SkipPermissionsRunner = runSkipPermissions
 )
 
 func New() harness.Harness { return &codex{} }
@@ -36,8 +39,10 @@ func (c *codex) SessionIDEnvVar() string { return "CODEX_THREAD_ID" }
 // threads, while older saved threads may use other RFC-4122 versions.
 var sessionIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-func (c *codex) NewSessionID() (string, error) {
-	out, err := ProbeRunner()
+// The probe runs in workDir (the task's work_dir): codex exec records its
+// cwd in the thread rollout, and the resumed session should agree with it.
+func (c *codex) NewSessionID(workDir string) (string, error) {
+	out, err := ProbeRunner(workDir)
 	if err != nil {
 		return "", fmt.Errorf("mint Codex session: %w", err)
 	}
@@ -77,8 +82,28 @@ func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	return cmd
 }
 
-func (c *codex) SkipPermissionsRun(prompt string) error {
-	cmd := exec.Command("codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt)
+func (c *codex) SkipPermissionsRun(prompt string) error { return SkipPermissionsRunner(prompt) }
+
+// DefersCloseoutInAutoRun: an inline sweep would be killed when the outer
+// `codex exec resume` exits (its shell tool backgrounds `flow done` after
+// ~10s), so the supervisor sweeps after exit instead (see
+// harness.CloseoutDeferrer).
+func (c *codex) DefersCloseoutInAutoRun() bool { return true }
+
+// hookTrustBypass lets enabled hooks run without Codex's persisted hook
+// trust. Headless runs only (auto runs, the close-out sweep, owner
+// ticks): nobody is there to approve a freshly installed hook, so without
+// it flow's hooks would silently not fire in the background, unlike
+// Claude's. Interactive launches keep the trust prompt — a human approves
+// once at the TUI and the trust persists.
+const hookTrustBypass = "--dangerously-bypass-hook-trust"
+
+func skipPermissionsArgv(prompt string) []string {
+	return []string{"exec", "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass, prompt}
+}
+
+func runSkipPermissions(prompt string) error {
+	cmd := exec.Command("codex", skipPermissionsArgv(prompt)...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()
@@ -90,18 +115,23 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	}
 	argv := []string{"codex", "exec", "resume"}
 	if opts.SkipPermissions {
-		argv = append(argv, "--dangerously-bypass-approvals-and-sandbox")
+		argv = append(argv, "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass)
+	}
+	if opts.LastMessagePath != "" {
+		argv = append(argv, "-o", opts.LastMessagePath)
 	}
 	return append(argv, sessionID, prompt)
 }
 
-func runProbe() ([]byte, error) {
+func runProbe(workDir string) ([]byte, error) {
 	// This probe intentionally persists its thread: the interactive `codex
 	// resume` started immediately afterwards must resume this exact id.
-	return exec.Command(
+	cmd := exec.Command(
 		"codex", "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
 		"Reply exactly with OK. Do not make any changes.",
-	).Output()
+	)
+	cmd.Dir = workDir // "" keeps the caller's cwd
+	return cmd.Output()
 }
 
 func parseThreadID(out []byte) (string, error) {
@@ -128,7 +158,9 @@ func parseThreadID(out []byte) (string, error) {
 	return "", fmt.Errorf("Codex probe output did not include a thread.started event")
 }
 
-var runningSessionRe = regexp.MustCompile(`\bresume\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b`)
+// Flags may sit between `resume` and the id: AutoRunArgv emits
+// `codex exec resume --dangerously-bypass-approvals-and-sandbox -o <file> <id> ...`.
+var runningSessionRe = regexp.MustCompile(`\bresume(?:\s+--?[A-Za-z][\w-]*(?:\s+[^-\s]\S*)?)*?\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b`)
 
 func (c *codex) LiveSessionIDs() (map[string]int, error) {
 	out, err := PSRunner()
@@ -155,11 +187,24 @@ func (c *codex) LiveSessionIDs() (map[string]int, error) {
 func runPS() ([]byte, error) { return exec.Command("ps", "-axo", "pid,command").Output() }
 
 func (c *codex) SkillInstallPath() (string, error) {
+	home, err := codexHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "skills", "flow", "SKILL.md"), nil
+}
+
+// codexHome is Codex's state root: $CODEX_HOME when set, else ~/.codex.
+// Skills, hooks.json and session rollouts all live under it.
+func codexHome() (string, error) {
+	if h := os.Getenv("CODEX_HOME"); h != "" {
+		return h, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home dir: %w", err)
 	}
-	return filepath.Join(home, ".codex", "skills", "flow", "SKILL.md"), nil
+	return filepath.Join(home, ".codex"), nil
 }
 
 func (c *codex) SkillVersionPath() (string, error) {
@@ -214,16 +259,33 @@ func (c *codex) UninstallSessionStartHook(command string) (bool, error) {
 	return uninstallHook("SessionStart", command)
 }
 
-// Codex currently exposes SessionStart but no per-prompt equivalent to
-// Claude's UserPromptSubmit event. Keep the interface operation a no-op.
-func (c *codex) InstallUserPromptSubmitHook(command string) (bool, error)   { return false, nil }
-func (c *codex) UninstallUserPromptSubmitHook(command string) (bool, error) { return false, nil }
-
-// Codex has no PostToolUse / Stop hook equivalents either; the paging
-// bus degrades gracefully (delivery only via listen + session-start).
-func (c *codex) InstallPostToolUseHook(command string) (bool, error)   { return false, nil }
-func (c *codex) UninstallPostToolUseHook(command string) (bool, error) { return false, nil }
-func (c *codex) InstallPreToolUseHook(command string) (bool, error)    { return false, nil }
-func (c *codex) UninstallPreToolUseHook(command string) (bool, error)  { return false, nil }
-func (c *codex) InstallStopHook(command string) (bool, error)          { return false, nil }
-func (c *codex) UninstallStopHook(command string) (bool, error)        { return false, nil }
+// Codex 0.166 fires UserPromptSubmit, PreToolUse, PostToolUse and Stop
+// (plus PermissionRequest, PreCompact, SessionEnd, ... that flow doesn't
+// use). Entries carry no matcher: UserPromptSubmit and Stop take none,
+// and Codex tool names (exec_command, apply_patch, ...) differ from
+// Claude's, so the tool hooks match every tool — the handlers' fast
+// paths exit silently when there's nothing to say.
+func (c *codex) InstallUserPromptSubmitHook(command string) (bool, error) {
+	return installHook("UserPromptSubmit", "", command)
+}
+func (c *codex) UninstallUserPromptSubmitHook(command string) (bool, error) {
+	return uninstallHook("UserPromptSubmit", command)
+}
+func (c *codex) InstallPostToolUseHook(command string) (bool, error) {
+	return installHook("PostToolUse", "", command)
+}
+func (c *codex) UninstallPostToolUseHook(command string) (bool, error) {
+	return uninstallHook("PostToolUse", command)
+}
+func (c *codex) InstallPreToolUseHook(command string) (bool, error) {
+	return installHook("PreToolUse", "", command)
+}
+func (c *codex) UninstallPreToolUseHook(command string) (bool, error) {
+	return uninstallHook("PreToolUse", command)
+}
+func (c *codex) InstallStopHook(command string) (bool, error) {
+	return installHook("Stop", "", command)
+}
+func (c *codex) UninstallStopHook(command string) (bool, error) {
+	return uninstallHook("Stop", command)
+}

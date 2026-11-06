@@ -2,6 +2,7 @@ package app
 
 import (
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"fmt"
 	"os"
 )
@@ -88,26 +89,42 @@ func cmdDone(args []string) int {
 	fmt.Printf("Marked %s as done\n", task.Slug)
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
-		fmt.Print("updating kbs, project updates...")
-		projectSlug := ""
-		if task.ProjectSlug.Valid {
-			projectSlug = task.ProjectSlug.String
-		}
 		h, lookupErr := harnessForTask(task)
 		if lookupErr != nil {
 			// Task pinned to an unsupported harness — skip the
 			// sweep but keep the status flip (the flip is the
 			// contract; the sweep is best-effort).
-			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
-		} else if err := h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
-			fmt.Println()
-			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+		} else if closeoutDeferred(h, task.Slug) {
+			fmt.Println("close-out sweep deferred: the auto-run supervisor runs it after this session exits")
 		} else {
-			fmt.Println(" done")
+			fmt.Print("updating kbs, project updates...")
+			if err := runCloseoutSweep(h, task); err != nil {
+				fmt.Println()
+				fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+			} else {
+				fmt.Println(" done")
+			}
 		}
 	}
 	return 0
+}
+
+// closeoutDeferred reports whether this `flow done` runs inside the auto
+// run of the SAME task on a harness that can't host a nested sweep. Then
+// the __auto-exec supervisor sweeps after the harness exits instead.
+func closeoutDeferred(h harness.Harness, slug string) bool {
+	return os.Getenv(autoRunEnvVar) == slug && harness.DefersCloseoutInAutoRun(h)
+}
+
+// runCloseoutSweep runs the headless close-out sweep for task via h.
+// Shared by the inline `flow done` path and the deferred supervisor path.
+func runCloseoutSweep(h harness.Harness, task *flowdb.Task) error {
+	projectSlug := ""
+	if task.ProjectSlug.Valid {
+		projectSlug = task.ProjectSlug.String
+	}
+	return h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug))
 }
 
 // buildCloseoutSweepPrompt composes the headless prompt that drives
@@ -149,9 +166,9 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 		"You are running an automated close-out sweep for completed flow task %q.\n\n"+
 			"%s"+
 			"## Steps\n\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
+			"1. "+flowSkillStep()+". This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
 			"2. Run: flow transcript %s\n"+
-			"   This prints the conversation transcript from the task's Claude session. Read it carefully end to end.\n\n"+
+			"   This prints the conversation transcript from the task's agent session. Read it carefully end to end.\n\n"+
 			"3. KB sweep — strict bar, distill the essence.\n\n"+
 			"   For each of these five files, ask: across the WHOLE transcript, is there a durable fact about the user, their org, products, processes, or business that belongs there per §4.10's bucket table AND meets ALL three bars below?\n"+
 			"     - %s/kb/user.md\n"+
@@ -162,7 +179,7 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 			"   The three bars (ALL must be met):\n"+
 			"     a. **Durable** — still true / still relevant in three months. Not 'today I felt X', not 'we tried approach Y for this one PR'.\n"+
 			"     b. **Surprising or non-obvious** — not derivable from the code, the README, or what a sibling task would already know.\n"+
-			"     c. **Future-relevant** — a future Claude session would change a decision because of it. If you can't picture that, skip.\n\n"+
+			"     c. **Future-relevant** — a future agent session would change a decision because of it. If you can't picture that, skip.\n\n"+
 			"   Most task transcripts contribute nothing to the KB. Mechanical work, narrow bug fixes, local refactors, routine debugging — these almost never produce KB entries. The expected answer for most files on most tasks is 'no'. Don't reach.\n\n"+
 			"4. Writing KB entries — INTERPRET the essence; do not transcribe.\n\n"+
 			"   This is the close-out mode of §4.10 and is DIFFERENT from real-time scoop. In real-time scoop you capture what the user just said, mostly verbatim, because it's a single fresh fact. Here you've read the whole conversation — your job is to SYNTHESIZE: pull out the durable insight in compact paraphrase, in your own words, capturing the essence and (where helpful) the why. Avoid quote dumps. One concise dated bullet per insight.\n\n"+

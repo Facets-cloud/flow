@@ -76,14 +76,7 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 	}
 	defer logF.Close()
 
-	exArgs := []string{"__auto-exec", slug}
-	if injection != "" {
-		// Forward the one-off instruction to the supervisor, which appends
-		// it (behind withMarker) to the autonomous prompt. Passed as a
-		// distinct arg — no shell parsing — so any characters are safe.
-		exArgs = append(exArgs, "--with", injection)
-	}
-	cmd := exec.Command(self, exArgs...)
+	cmd := exec.Command(self, autoExecArgs(slug, logPath, injection)...)
 	cmd.Dir = workDir
 	cmd.Env = env
 	cmd.Stdin = nil
@@ -100,6 +93,24 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 	// so it can be reparented to init when it exits.
 	_ = cmd.Process.Release()
 	return pid, nil
+}
+
+// autoExecArgs builds the `flow __auto-exec` argv for the supervisor.
+func autoExecArgs(slug, logPath, injection string) []string {
+	exArgs := []string{"__auto-exec", slug, "--last-message", autoRunLastMessagePath(logPath)}
+	if injection != "" {
+		// Forward the one-off instruction to the supervisor, which appends
+		// it (behind withMarker) to the autonomous prompt. Passed as a
+		// distinct arg — no shell parsing — so any characters are safe.
+		exArgs = append(exArgs, "--with", injection)
+	}
+	return exArgs
+}
+
+// autoRunLastMessagePath is where a headless run's final message lands:
+// next to its log, same basename, `.last.txt`.
+func autoRunLastMessagePath(logPath string) string {
+	return strings.TrimSuffix(logPath, filepath.Ext(logPath)) + ".last.txt"
 }
 
 // processAlive reports whether a process with the given pid is currently
@@ -250,6 +261,7 @@ func cmdAutoExec(args []string) int {
 	slug := args[0]
 	fs := flagSet("__auto-exec")
 	withInstr := fs.String("with", "", "one-off instruction to append to the autonomous prompt")
+	lastMsg := fs.String("last-message", "", "file the harness writes the run's final message to")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -297,7 +309,7 @@ func cmdAutoExec(args []string) int {
 		_ = finalizeAutoRun(db, slug, "dead")
 		return 1
 	}
-	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr}
+	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
 	// A re-run on a session that already ran must resume it.
 	opts.Resume = h.ValidateSession(task.WorkDir, task.SessionID.String) == nil
 
@@ -305,10 +317,25 @@ func cmdAutoExec(args []string) int {
 
 	// Re-read status: the session may have called `flow done` on itself.
 	// The self-done is the authoritative success signal.
+	final, gerr := flowdb.GetTask(db, slug)
+	isDone := gerr == nil && final.Status == "done"
 	status := "dead"
-	if runErr == nil {
-		if final, gerr := flowdb.GetTask(db, slug); gerr == nil && final.Status == "done" {
-			status = "completed"
+	if runErr == nil && isDone {
+		status = "completed"
+	}
+	// Deferred close-out sweep (harness.CloseoutDeferrer, i.e. Codex): the
+	// run's own `flow done` skipped the inline sweep because a nested
+	// headless run inside the live harness breaks its rollout. The harness
+	// has exited now, so sweep here. It runs BEFORE finalize: auto_run
+	// stays 'running' (supervisor pid alive) until the sweep is over, so
+	// 'completed' means the whole close-out finished. Best-effort, like
+	// the inline sweep — a failure is logged and never demotes the run.
+	if isDone && harness.DefersCloseoutInAutoRun(h) {
+		fmt.Println("flow: running deferred close-out sweep (kbs, project updates)...")
+		if err := runCloseoutSweep(h, final); err != nil {
+			fmt.Printf("flow: close-out sweep failed: %v\n", err)
+		} else {
+			fmt.Println("flow: close-out sweep done")
 		}
 	}
 	if err := finalizeAutoRun(db, slug, status); err != nil {
@@ -368,16 +395,16 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 	return fmt.Sprintf(
 		"You are an AUTONOMOUS, headless execution session for flow task %s. NO HUMAN IS WATCHING and there is no terminal to prompt. Work end to end on your own and then close yourself out.\n\n"+
 			"Bootstrap (do these in order before any work):\n"+
-			"1. Invoke the flow skill via the Skill tool — it governs workflows, the bootstrap contract, KB discipline, and scope-creep detection.\n"+
+			"1. "+flowSkillStep()+" — it governs workflows, the bootstrap contract, KB discipline, and scope-creep detection.\n"+
 			showStep+"\n"+
 			"3. If a project is listed on the task, run: flow show project <slug> and read its brief + updates.\n"+
-			"4. Read CLAUDE.md in your work_dir and any nested CLAUDE.md under subtrees you will modify — they override the brief.\n\n"+
+			"4. Read "+repoInstructionFiles+" in your work_dir and any nested ones under subtrees you will modify — they override the brief.\n\n"+
 			"Operating rules for autonomous mode:\n"+
 			"- Do NOT use AskUserQuestion and do NOT wait for user input — there is no one to answer. Where the interactive workflow would ask, decide using best engineering judgment and proceed. Resolve any deferred/unclear brief sections yourself rather than stopping.\n"+
 			"- Follow the repo's conventions (build/test commands, TDD if the repo expects it). Verify your work by running the tests before considering the task complete.\n"+
 			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone beyond the reporting rule below unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
 			parentRule+
-			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and CLAUDE.md, search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
+			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
 			"Closing out:\n"+
 			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
 		slug, slug,
