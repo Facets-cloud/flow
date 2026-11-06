@@ -130,6 +130,25 @@ func TestPluginJSStopDedupeIsSynchronous(t *testing.T) {
 	}
 }
 
+// TestPluginJSAttachedClientScan guards the repair path for sessions that were
+// resumed without a prompt or whose listener died with a plugin reload: a
+// periodic ps scan must find attached clients and re-arm their inbox listener,
+// deduped across plugin instances by `lastScan`.
+func TestPluginJSAttachedClientScan(t *testing.T) {
+	src := pluginSource(t)
+	for _, frag := range []string{
+		"attachedSessions",
+		"setInterval",
+		"clearInterval",
+		"lastScan",
+		"SCAN_INTERVAL_MS",
+	} {
+		if !strings.Contains(src, frag) {
+			t.Errorf("plugin is missing %q", frag)
+		}
+	}
+}
+
 // TestPluginJSNeverThrows is a coarse guard on the never-crash-the-server
 // rule: every hook entry point is wrapped, and setup returns a cleanup.
 func TestPluginJSNeverThrows(t *testing.T) {

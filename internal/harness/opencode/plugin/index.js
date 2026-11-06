@@ -15,6 +15,8 @@
 //
 //   session.execution.started    -> `flow hook session-start` (first per session)
 //                                -> `flow inbox pop --wait --timeout 300 --keep-unread --json`
+//   attached client (ps scan, 15 s) -> `flow inbox pop …` (covers resumed sessions
+//                                   and plugin reloads, where no turn ever starts)
 //   session.hook("prompt")       -> `flow hook user-prompt-submit`
 //   session.hook("context")      -> pushes the cached session-start and turn
 //                                   context into every model call
@@ -26,14 +28,17 @@
 // shared globalThis state before doing any work: started events via
 // `sessionCtx`/`listeners`, succeeded events via `stopSeen` (a short window),
 // so one turn end runs `flow hook stop` and queues at most one `[flow]` nudge.
-// `session.hook("context")` only fires in the instance for the session's
-// directory, so it pushes unconditionally (context is not persisted between
-// model calls).
+// The 15 s attachment scan is deduped the same way via `lastScan`, so one
+// instance per interval walks the attached sessions and repairs a missing
+// listener. `session.hook("context")` only fires in the instance for the
+// session's directory, so it pushes unconditionally (context is not persisted
+// between model calls).
 
 const HOOK_TIMEOUT_MS = 20_000;
 const LISTENER_TIMEOUT_MS = 330_000;
 const PS_TIMEOUT_MS = 5_000;
 const STOP_DEDUPE_MS = 3_000; // window that collapses duplicated succeeded events
+const SCAN_INTERVAL_MS = 15_000; // attachment scan period (resumed sessions, reloads)
 
 // One instance is loaded per directory and every instance sees every server
 // event, so state lives on globalThis and is deduped per session.
@@ -44,6 +49,7 @@ const state = (globalThis.__flowOpencode ??= {
   listeners: new Map(), // sessionID -> inbox listener promise
   nudged: new Set(), // last turn came from a stop nudge
   stopSeen: new Map(), // sessionID -> Date.now() of the last handled succeeded event
+  lastScan: 0, // Date.now() of the last attachment scan (cross-instance dedupe)
 });
 
 // An older plugin version may already have published a state object without
@@ -55,6 +61,7 @@ state.turnCtx ??= new Map();
 state.listeners ??= new Map();
 state.nudged ??= new Set();
 state.stopSeen ??= new Map();
+state.lastScan ??= 0;
 
 function log(...args) {
   try { console.error("[flow-plugin]", ...args); } catch { /* never throw out of logging */ }
@@ -153,16 +160,46 @@ function sessionStartContext(ctx, meta, sessionID) {
   return started;
 }
 
+// psCommands runs one `ps -axo command` and returns its output lines, or null
+// when ps itself failed. Callers decide what a failure means: the live guard
+// fails open, the attachment scan fails closed.
+async function psCommands() {
+  const ps = await spawnCollect(["ps", "-axo", "command"], { stdout: "pipe", stderr: "ignore" }, PS_TIMEOUT_MS);
+  if (ps.code !== 0) return null;
+  return ps.stdout.split("\n");
+}
+
+// opencodeClients keeps only the ps lines whose argv0 is the opencode binary,
+// so unrelated processes that happen to carry a session id are ignored.
+function opencodeClients(lines) {
+  return (lines || []).filter((line) => {
+    const argv0 = line.trim().split(/\s+/)[0] || "";
+    return argv0.split("/").pop() === "opencode";
+  });
+}
+
 // clientLive is flow's live-guard ps check: is an opencode client attached?
 // Errors fail open, like the rest of flow's live checks.
 async function clientLive(sessionID) {
-  const ps = await spawnCollect(["ps", "-axo", "command"], { stdout: "pipe", stderr: "ignore" }, PS_TIMEOUT_MS);
-  if (ps.code !== 0) return true;
+  const lines = await psCommands();
+  if (lines === null) return true;
   const re = new RegExp(`(?:^|\\s)(?:-s|--session)(?:\\s+|=)${sessionID}(?=\\s|$)`);
-  return ps.stdout.split("\n").some((line) => {
-    const argv0 = line.trim().split(/\s+/)[0] || "";
-    return argv0.split("/").pop() === "opencode" && re.test(line);
-  });
+  return opencodeClients(lines).some((line) => re.test(line));
+}
+
+// attachedSessions is the set of session ids carried by live opencode clients
+// (`opencode -s ses_…` / `--session ses_…`). It is what keeps the inbox relay
+// alive for a session that was resumed without a prompt, or whose listener
+// died with a plugin reload: no turn starts, so no started event fires.
+// A ps failure yields an empty set — this scan is a repair path, not a gate.
+async function attachedSessions() {
+  const ids = new Set();
+  const lines = await psCommands();
+  const re = /(?:^|\s)(?:-s|--session)(?:\s+|=)(ses_[0-9A-Za-z]{26})(?=\s|$)/g;
+  for (const line of opencodeClients(lines)) {
+    for (const match of line.matchAll(re)) ids.add(match[1]);
+  }
+  return ids;
 }
 
 // ensureListener starts the per-session inbox relay once: mail is steered
@@ -254,9 +291,11 @@ export default {
   async setup(ctx) {
     const stopping = { value: false };
     const subscription = new AbortController();
+    let scanTimer = null;
     const cleanup = () => {
       stopping.value = true;
       try { subscription.abort(); } catch (err) { log("subscription abort failed:", err); }
+      clearInterval(scanTimer);
     };
 
     try {
@@ -305,6 +344,34 @@ export default {
         if (!stopping.value) log("event subscription failed:", err);
       }
     })();
+
+    // Attached-client scan: a resumed session (`opencode -s <id>` with no
+    // prompt) and a plugin reload both leave no listener behind, because no
+    // turn ever starts. The scan repairs that from the process table. The
+    // `lastScan` check must stay ahead of the first await so sibling plugin
+    // instances share one ps scan per interval.
+    const scan = async () => {
+      try {
+        const now = Date.now();
+        if (now - (state.lastScan || 0) < SCAN_INTERVAL_MS - 1_000) return;
+        state.lastScan = now;
+        const ids = await attachedSessions();
+        for (const id of ids) {
+          if (stopping.value) return;
+          if (state.listeners.has(id)) continue;
+          // flowMeta caches null for non-flow sessions, so unrelated
+          // opencode sessions cost one session.get each, once.
+          const meta = await flowMeta(ctx, id);
+          if (!meta) continue;
+          void sessionStartContext(ctx, meta, id);
+          ensureListener(ctx, meta, id, stopping);
+        }
+      } catch (err) {
+        log("attachment scan failed:", err);
+      }
+    };
+    scanTimer = setInterval(() => { void scan(); }, SCAN_INTERVAL_MS);
+    void scan();
 
     return cleanup;
   },
