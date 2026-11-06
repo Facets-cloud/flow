@@ -14,6 +14,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   writer on a thread a headless run is driving. `flow transcript` honours
   `$CODEX_HOME`. The thread-minting probe runs in the task's work_dir instead
   of the caller's cwd.
+- **Codex auto runs no longer log "failed to record rollout items: thread
+  … not found".** A Codex auto run's own `flow done` now defers the
+  close-out sweep, and the `flow __auto-exec` supervisor runs it once the
+  harness process has exited. Before, the sweep ran as a nested `codex exec`
+  inside the live run. Claude and interactive `flow done` still sweep inline.
 
 ### Added
 

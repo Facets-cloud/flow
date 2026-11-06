@@ -324,3 +324,22 @@ type Harness interface {
 	// UninstallStopHook removes any Stop entry matching `command`.
 	UninstallStopHook(command string) (removed bool, err error)
 }
+
+// CloseoutDeferrer is an optional capability. A harness that implements it
+// with DefersCloseoutInAutoRun() == true cannot host the close-out sweep
+// (a second headless run) while its own auto run is still alive. Codex is
+// the case: a nested `codex exec` started from inside `codex exec resume`
+// makes the outer process fail to record rollout items ("thread <id> not
+// found"). For such harnesses an auto run's own `flow done` skips the
+// inline sweep and the `flow __auto-exec` supervisor runs it after the
+// harness process exits.
+type CloseoutDeferrer interface {
+	DefersCloseoutInAutoRun() bool
+}
+
+// DefersCloseoutInAutoRun reports whether h opts into the deferred sweep.
+// Harnesses that don't implement CloseoutDeferrer keep the inline sweep.
+func DefersCloseoutInAutoRun(h Harness) bool {
+	d, ok := h.(CloseoutDeferrer)
+	return ok && d.DefersCloseoutInAutoRun()
+}

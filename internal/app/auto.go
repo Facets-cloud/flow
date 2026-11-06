@@ -317,10 +317,25 @@ func cmdAutoExec(args []string) int {
 
 	// Re-read status: the session may have called `flow done` on itself.
 	// The self-done is the authoritative success signal.
+	final, gerr := flowdb.GetTask(db, slug)
+	isDone := gerr == nil && final.Status == "done"
 	status := "dead"
-	if runErr == nil {
-		if final, gerr := flowdb.GetTask(db, slug); gerr == nil && final.Status == "done" {
-			status = "completed"
+	if runErr == nil && isDone {
+		status = "completed"
+	}
+	// Deferred close-out sweep (harness.CloseoutDeferrer, i.e. Codex): the
+	// run's own `flow done` skipped the inline sweep because a nested
+	// headless run inside the live harness breaks its rollout. The harness
+	// has exited now, so sweep here. It runs BEFORE finalize: auto_run
+	// stays 'running' (supervisor pid alive) until the sweep is over, so
+	// 'completed' means the whole close-out finished. Best-effort, like
+	// the inline sweep — a failure is logged and never demotes the run.
+	if isDone && harness.DefersCloseoutInAutoRun(h) {
+		fmt.Println("flow: running deferred close-out sweep (kbs, project updates)...")
+		if err := runCloseoutSweep(h, final); err != nil {
+			fmt.Printf("flow: close-out sweep failed: %v\n", err)
+		} else {
+			fmt.Println("flow: close-out sweep done")
 		}
 	}
 	if err := finalizeAutoRun(db, slug, status); err != nil {

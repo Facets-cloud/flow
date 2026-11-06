@@ -22,6 +22,9 @@ var (
 	// invoking the CLI.
 	ProbeRunner = runProbe
 	PSRunner    = runPS
+	// SkipPermissionsRunner runs the headless close-out sweep. Tests
+	// replace it to avoid invoking the CLI.
+	SkipPermissionsRunner = runSkipPermissions
 )
 
 func New() harness.Harness { return &codex{} }
@@ -79,7 +82,14 @@ func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	return cmd
 }
 
-func (c *codex) SkipPermissionsRun(prompt string) error {
+func (c *codex) SkipPermissionsRun(prompt string) error { return SkipPermissionsRunner(prompt) }
+
+// DefersCloseoutInAutoRun: a nested `codex exec` sweep inside a live
+// `codex exec resume` breaks the outer rollout, so the supervisor sweeps
+// after exit instead (see harness.CloseoutDeferrer).
+func (c *codex) DefersCloseoutInAutoRun() bool { return true }
+
+func runSkipPermissions(prompt string) error {
 	cmd := exec.Command("codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard

@@ -2,6 +2,7 @@ package app
 
 import (
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"fmt"
 	"os"
 )
@@ -88,26 +89,42 @@ func cmdDone(args []string) int {
 	fmt.Printf("Marked %s as done\n", task.Slug)
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
-		fmt.Print("updating kbs, project updates...")
-		projectSlug := ""
-		if task.ProjectSlug.Valid {
-			projectSlug = task.ProjectSlug.String
-		}
 		h, lookupErr := harnessForTask(task)
 		if lookupErr != nil {
 			// Task pinned to an unsupported harness — skip the
 			// sweep but keep the status flip (the flip is the
 			// contract; the sweep is best-effort).
-			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
-		} else if err := h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
-			fmt.Println()
-			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+		} else if closeoutDeferred(h, task.Slug) {
+			fmt.Println("close-out sweep deferred: the auto-run supervisor runs it after this session exits")
 		} else {
-			fmt.Println(" done")
+			fmt.Print("updating kbs, project updates...")
+			if err := runCloseoutSweep(h, task); err != nil {
+				fmt.Println()
+				fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+			} else {
+				fmt.Println(" done")
+			}
 		}
 	}
 	return 0
+}
+
+// closeoutDeferred reports whether this `flow done` runs inside the auto
+// run of the SAME task on a harness that can't host a nested sweep. Then
+// the __auto-exec supervisor sweeps after the harness exits instead.
+func closeoutDeferred(h harness.Harness, slug string) bool {
+	return os.Getenv(autoRunEnvVar) == slug && harness.DefersCloseoutInAutoRun(h)
+}
+
+// runCloseoutSweep runs the headless close-out sweep for task via h.
+// Shared by the inline `flow done` path and the deferred supervisor path.
+func runCloseoutSweep(h harness.Harness, task *flowdb.Task) error {
+	projectSlug := ""
+	if task.ProjectSlug.Valid {
+		projectSlug = task.ProjectSlug.String
+	}
+	return h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug))
 }
 
 // buildCloseoutSweepPrompt composes the headless prompt that drives
