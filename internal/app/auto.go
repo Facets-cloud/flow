@@ -119,6 +119,10 @@ func autoRunLastMessagePath(logPath string) string {
 // Overridable in tests, where the test process plays the supervisor.
 var supervisorPID = os.Getpid
 
+// afterAutoRunStatusRead is a test seam: it runs right after the
+// supervisor's post-exit status read, where a late `flow done` can land.
+var afterAutoRunStatusRead = func() {}
+
 // processAlive reports whether a process with the given pid is currently
 // running. Used for read-time reconciliation of stale 'running' rows.
 // Overridable in tests.
@@ -237,6 +241,24 @@ func finalizeAutoRun(db *sql.DB, slug, status string) (owned bool, err error) {
 	return n > 0, err
 }
 
+// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, "dead") gated on
+// the task still not being done, in the same statement. owned=false means
+// either a newer run owns the row or a `flow done` landed first; the caller
+// re-reads the task to tell which.
+func finalizeAutoRunUnlessDone(db *sql.DB, slug string) (owned bool, err error) {
+	now := flowdb.NowISO()
+	res, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='dead', auto_run_finished=?, auto_run_pid=NULL, updated_at=?
+		 WHERE slug=? AND status != 'done' AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
+		now, now, slug, supervisorPID(),
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // reconcileAutoRun settles a stale 'running' row whose supervisor pid is
 // no longer alive (crash, kill -9, reboot — anything that prevented
 // finalizeAutoRun from running). A task that is already done finished its
@@ -337,9 +359,30 @@ func cmdAutoExec(args []string) int {
 	// The self-done is the authoritative success signal.
 	final, gerr := flowdb.GetTask(db, slug)
 	isDone := gerr == nil && final.Status == "done"
+	afterAutoRunStatusRead()
+	// Not done at the read? Finalize 'dead' atomically — only while the
+	// task is STILL not done. A `flow done` can land after the read while
+	// this pid is alive, and it defers its sweep to us (closeoutDeferred);
+	// SQLite serializes the two writes, so either the flip came first (this
+	// finalize is a no-op and we re-read and take the done path below), or
+	// the finalize came first (done then sees a finalized row and sweeps
+	// inline). No window where a done is neither swept nor counted.
+	status := "dead"
+	var owned bool
+	var ferr error
+	finalized := false
+	if !isDone {
+		owned, ferr = finalizeAutoRunUnlessDone(db, slug)
+		if ferr != nil || owned {
+			finalized = true
+		} else if late, lerr := flowdb.GetTask(db, slug); lerr == nil && late.Status == "done" {
+			final, isDone = late, true // a late done won the race
+		} else {
+			finalized = true // a newer run (flow do --auto --force) owns the row
+		}
+	}
 	// A done task is a completed run even if the harness then exited
 	// non-zero: the child finished its work, so it is never reported dead.
-	status := "dead"
 	if isDone {
 		status = "completed"
 	}
@@ -360,7 +403,9 @@ func cmdAutoExec(args []string) int {
 			fmt.Println("flow: close-out sweep done")
 		}
 	}
-	owned, ferr := finalizeAutoRun(db, slug, status)
+	if !finalized {
+		owned, ferr = finalizeAutoRun(db, slug, status)
+	}
 	if ferr != nil {
 		fmt.Fprintf(os.Stderr, "warning: finalize auto run %q: %v\n", slug, ferr)
 	} else if !owned {

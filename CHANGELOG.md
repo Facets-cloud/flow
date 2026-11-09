@@ -7,6 +7,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `flow done` that lands while an auto run is winding down is no
+  longer lost.** The auto-run supervisor read the task status once after
+  the harness exited, but `flow done` keeps deferring its close-out sweep
+  to the supervisor for as long as that pid is alive. A done that landed
+  after the read (a human closing the task, or a late backgrounded `flow
+  done`) was neither swept nor counted: the run finalized `dead` and the
+  parent got a dead-child notice for a finished task. The supervisor now
+  finalizes `dead` only while the task is still not done (one conditional
+  UPDATE) and otherwise takes the done path (sweep, `completed`); `flow
+  done` decides whether to defer from the row as it was at the status
+  flip (`UPDATE … RETURNING`), not from the copy it loaded earlier, so a
+  supervisor that already finalized makes it sweep inline. (#120
+  follow-up.)
+
 ## [0.1.0-alpha.35] — 2026-11-09
 
 ### Added
