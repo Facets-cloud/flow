@@ -1,12 +1,17 @@
-// Package connector implements the human-connector contract v1: an
-// opt-in folder (connector.json + an executable) that flow invokes to
-// ping the human about mail addressed to them. See the skill reference
-// references/connectors.md for the public contract.
+// Package connector implements the connector contract: an opt-in folder
+// (connector.json + an executable) that flow invokes to ping the human
+// about mail addressed to them (role "human") or to carry a message to
+// another flow hub (role "peer"). See the skill references
+// references/connectors.md and references/peers.md for the public
+// contract.
 //
 //	$FLOW_ROOT/connectors/<name>/
-//	  connector.json  {"name","contract":1,"exec":"./run",
-//	                   "capabilities":["send"],"events":["ask","urgent"]}
+//	  connector.json  {"name","contract":2,"roles":["human"|"peer",...],
+//	                   "exec":"./run","capabilities":["send"],
+//	                   "events":["ask","urgent"]}   (events: human role)
 //	  run             any executable: `run send` / `run test`, JSON on stdin
+//
+// Contract 1 manifests (no roles) keep working and mean roles ["human"].
 package connector
 
 import (
@@ -22,8 +27,15 @@ import (
 // ManifestFile is the manifest's file name inside a connector folder.
 const ManifestFile = "connector.json"
 
-// Contract is the only contract version this flow speaks.
-const Contract = 1
+// Contract is the newest contract version this flow speaks; contract 1
+// manifests are still accepted (as role "human").
+const Contract = 2
+
+// Roles a contract-2 connector may take.
+const (
+	RoleHuman = "human" // pings the local human about their mail
+	RolePeer  = "peer"  // carries messages to other flow hubs
+)
 
 // Events a connector may subscribe to.
 const (
@@ -37,6 +49,7 @@ var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 type Manifest struct {
 	Name         string   `json:"name"`
 	Contract     int      `json:"contract"`
+	Roles        []string `json:"roles,omitempty"`
 	Exec         string   `json:"exec"`
 	Capabilities []string `json:"capabilities"`
 	Events       []string `json:"events"`
@@ -53,6 +66,25 @@ func (m *Manifest) ExecPath() string {
 func (m *Manifest) Wants(event string) bool {
 	for _, e := range m.Events {
 		if e == event {
+			return true
+		}
+	}
+	return false
+}
+
+// EffectiveRoles is the connector's roles; a contract-1 manifest (no
+// roles) is ["human"].
+func (m *Manifest) EffectiveRoles() []string {
+	if len(m.Roles) == 0 {
+		return []string{RoleHuman}
+	}
+	return m.Roles
+}
+
+// HasRole reports whether the connector takes role r.
+func (m *Manifest) HasRole(r string) bool {
+	for _, x := range m.EffectiveRoles() {
+		if x == r {
 			return true
 		}
 	}
@@ -80,8 +112,22 @@ func (m *Manifest) validate() error {
 	if !nameRe.MatchString(m.Name) {
 		return fmt.Errorf("name %q must be lowercase letters, digits, '-' or '_'", m.Name)
 	}
-	if m.Contract != Contract {
-		return fmt.Errorf("contract %d unsupported (this flow speaks contract %d)", m.Contract, Contract)
+	switch m.Contract {
+	case 1:
+		if len(m.Roles) != 0 {
+			return fmt.Errorf(`roles need "contract": 2 (contract 1 is role human only)`)
+		}
+	case 2:
+		if len(m.Roles) == 0 {
+			return fmt.Errorf(`contract 2 needs "roles": ["human"], ["peer"] or ["human","peer"]`)
+		}
+		for _, r := range m.Roles {
+			if r != RoleHuman && r != RolePeer {
+				return fmt.Errorf("unknown role %q (contract 2 knows %q and %q)", r, RoleHuman, RolePeer)
+			}
+		}
+	default:
+		return fmt.Errorf("contract %d unsupported (this flow speaks contracts 1 and %d)", m.Contract, Contract)
 	}
 	if m.Exec == "" {
 		return fmt.Errorf(`exec is required (e.g. "./run")`)
@@ -108,12 +154,12 @@ func (m *Manifest) validate() error {
 	if !hasSend {
 		return fmt.Errorf(`capabilities must include "send"`)
 	}
-	if len(m.Events) == 0 {
+	if m.HasRole(RoleHuman) && len(m.Events) == 0 {
 		return fmt.Errorf(`events must list at least one of "ask", "urgent"`)
 	}
 	for _, e := range m.Events {
 		if e != EventAsk && e != EventUrgent {
-			return fmt.Errorf("unknown event %q (contract 1 knows %q and %q)", e, EventAsk, EventUrgent)
+			return fmt.Errorf("unknown event %q (the contract knows %q and %q)", e, EventAsk, EventUrgent)
 		}
 	}
 	return nil

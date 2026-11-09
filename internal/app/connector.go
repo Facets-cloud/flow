@@ -132,6 +132,18 @@ func installedConnectors() []*connector.Manifest {
 	return ms
 }
 
+// humanConnectors lists the installed connectors with role "human" —
+// the only ones human-ping dispatch (tiers, escalation) ever invokes.
+func humanConnectors() []*connector.Manifest {
+	var out []*connector.Manifest
+	for _, m := range installedConnectors() {
+		if m.HasRole(connector.RoleHuman) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // logDispatch appends one line to $FLOW_ROOT/connectors/dispatch.log.
 // Best-effort: logging must never fail the caller.
 func logDispatch(format string, a ...any) {
@@ -154,7 +166,7 @@ func logDispatch(format string, a ...any) {
 // row when it was marked to ping and a connector is installed. The
 // sender never waits on it and never sees its errors.
 func maybeDispatch(m *flowdb.BusMessage) {
-	if !m.Ping || len(installedConnectors()) == 0 {
+	if !m.Ping || len(humanConnectors()) == 0 {
 		return
 	}
 	if err := dispatchLauncher(m.ID); err != nil {
@@ -421,7 +433,8 @@ func cmdConnectorList(args []string) int {
 		if n, ok := cfg.Priority[m.Name]; ok {
 			prio = fmt.Sprint(n)
 		}
-		fmt.Printf("%-16s priority=%s  events=%s  secret=%s  %s\n", m.Name, prio, strings.Join(m.Events, ","), where, m.Dir)
+		fmt.Printf("%-16s roles=%s  priority=%s  events=%s  secret=%s  %s\n", m.Name,
+			strings.Join(m.EffectiveRoles(), ","), prio, strings.Join(m.Events, ","), where, m.Dir)
 	}
 	for _, e := range errs {
 		fmt.Printf("invalid: %v\n", e)
@@ -430,13 +443,22 @@ func cmdConnectorList(args []string) int {
 		fmt.Printf("invalid: %v (dispatch ignores it and pings all connectors at once)\n", cfgErr)
 		return 0
 	}
+	var human []*connector.Manifest
+	for _, m := range ms {
+		if m.HasRole(connector.RoleHuman) {
+			human = append(human, m)
+		}
+	}
 	var order []string
-	for _, tier := range connector.Tiers(ms, cfg.Priority) {
+	for _, tier := range connector.Tiers(human, cfg.Priority) {
 		var ns []string
 		for _, m := range tier {
 			ns = append(ns, m.Name)
 		}
 		order = append(order, strings.Join(ns, "+"))
+	}
+	if len(order) == 0 {
+		order = []string{"(no human connectors)"}
 	}
 	fmt.Printf("order: %s (urgent asks go to all at once)\n", strings.Join(order, " → "))
 	esc := cfg.EscalateAfter
@@ -670,7 +692,7 @@ func cmdConnectorDispatch(args []string) int {
 		event = connector.EventUrgent
 	}
 	var targets []*connector.Manifest
-	for _, c := range installedConnectors() {
+	for _, c := range humanConnectors() {
 		if c.Wants(event) {
 			targets = append(targets, c)
 		}
