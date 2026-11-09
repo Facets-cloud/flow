@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"flow/internal/connector"
 	"flow/internal/flowdb"
@@ -394,8 +396,180 @@ func peerSend(db *sql.DB, m *flowdb.BusMessage) int {
 	return 0
 }
 
-// cmdPeerDeliver is the connector-only inbound door (next behavior).
+// logInbound appends one line to $FLOW_ROOT/connectors/inbound.log —
+// rejected inbound deliveries (unknown endpoint, blocked peer).
+// Best-effort: logging must never fail the caller.
+func logInbound(format string, a ...any) {
+	root, err := connectorsRoot()
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(root, "inbound.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, a...))
+}
+
+const deliverUsage = `usage: flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>]
+                         [--kind ask|fyi] [--options "A|B"] "<body>"   (connectors only)`
+
+// cmdPeerDeliver is the only inbound door from another hub, callable only
+// by an installed connector (FLOW_CONNECTOR_TOKEN):
+//
+//	token → connector C ── none/invalid ──► exit 1, nothing stored
+//	(C, at) → peer P ───── unknown ──► exit 1 + connectors/inbound.log
+//	                       blocked ──► exit 1 "rejected"
+//	(P, ref) seen before ──────────► exit 0, no-op (dedupe)
+//	--reply-to-ref = our outbound row to P, its task still open
+//	                 ──► user/<that task>, reply_to=<our-id>
+//	otherwise ──► the human's mail (from=P; pinged unless --kind fyi;
+//	              an answer whose task closed is labelled "answer to <id>")
+//	P.last_seen_at = now
 func cmdPeerDeliver(args []string) int {
-	fmt.Fprintln(os.Stderr, "error: flow peer deliver is not implemented yet")
-	return 1
+	var at, ref, replyToRef, kind, optionsFlag string
+	var haveOptions bool
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--at", "--ref", "--reply-to-ref", "--kind", "--options":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "error: %s needs a value\n%s\n", a, deliverUsage)
+				return 2
+			}
+			v := args[i+1]
+			i++
+			switch a {
+			case "--at":
+				at = v
+			case "--ref":
+				ref = v
+			case "--reply-to-ref":
+				replyToRef = v
+			case "--kind":
+				kind = v
+			case "--options":
+				optionsFlag, haveOptions = v, true
+			}
+		case "--":
+			pos = append(pos, args[i+1:]...)
+			i = len(args)
+		default:
+			if strings.HasPrefix(a, "-") && a != "-" {
+				fmt.Fprintf(os.Stderr, "error: unknown flag %q\n%s\n", a, deliverUsage)
+				return 2
+			}
+			pos = append(pos, a)
+		}
+	}
+	if at == "" || ref == "" || len(pos) != 1 || strings.TrimSpace(pos[0]) == "" {
+		fmt.Fprintln(os.Stderr, deliverUsage)
+		return 2
+	}
+	body := strings.TrimSpace(pos[0])
+	if len(body) > humanReplyMax {
+		fmt.Fprintf(os.Stderr, "error: body is %d chars (max %d)\n", len(body), humanReplyMax)
+		return 2
+	}
+	// "reply" is accepted as an alias of ask: the payload kind a sender's
+	// connector may pass straight through; --reply-to-ref decides routing.
+	fyi := false
+	switch kind {
+	case "", "ask", "reply":
+	case "fyi":
+		fyi = true
+	default:
+		fmt.Fprintf(os.Stderr, "error: --kind %q (want ask or fyi)\n", kind)
+		return 2
+	}
+	var options []string
+	if haveOptions {
+		if options = parseAskOptions(optionsFlag); len(options) == 0 {
+			fmt.Fprintln(os.Stderr, `error: --options has no choices`)
+			return 2
+		}
+		if fyi {
+			fmt.Fprintln(os.Stderr, "error: --kind fyi takes no --options")
+			return 2
+		}
+	}
+
+	conn := callingConnector()
+	if conn == "" {
+		fmt.Fprintln(os.Stderr, "error: not a connector — flow peer deliver needs FLOW_CONNECTOR_TOKEN from an installed connector")
+		return 1
+	}
+	db, err := openBusDB()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	p, err := flowdb.GetPeerByEndpoint(db, conn, at)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if p == nil {
+		logInbound("%s unknown at=%q ref=%s (not a peer — flow peer add <name> --via %s --at <endpoint>)", conn, at, ref, conn)
+		fmt.Fprintf(os.Stderr, "error: no peer at %s endpoint %q\n", conn, at)
+		return 1
+	}
+	if p.Blocked {
+		logInbound("%s blocked peer=%s ref=%s", conn, p.Name, ref)
+		fmt.Fprintf(os.Stderr, "error: rejected — peer %s is blocked\n", p.Name)
+		return 1
+	}
+	if dup, err := flowdb.InboundByRef(db, p.Name, ref); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	} else if dup != nil {
+		fmt.Printf("duplicate %s from %s — already delivered [%s]\n", ref, p.Name, dup.ID)
+		return 0
+	}
+
+	m := &flowdb.BusMessage{
+		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: p.Name, ToAssignee: busUser, Body: body, Options: options, FYI: fyi,
+		Peer: p.Name, OriginRef: ref,
+	}
+	if replyToRef != "" {
+		if ours, _ := flowdb.GetBusMessageByID(db, replyToRef); ours != nil &&
+			ours.IsPeerOutbound() && ours.Peer == p.Name {
+			m.ReplyTo = ours.ID
+			if openTask(db, ours.FromTaskSlug) {
+				m.ToTaskSlug = ours.FromTaskSlug
+				m.Options, m.FYI = nil, false
+			} else {
+				m.Body = fmt.Sprintf("[answer to %s] %s", ours.ID, body)
+			}
+		}
+	}
+	if err := flowdb.InsertBusMessage(db, m); err != nil {
+		if flowdb.IsUniqueViolation(err) {
+			fmt.Printf("duplicate %s from %s — already delivered\n", ref, p.Name)
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	_ = flowdb.TouchPeerSeen(db, p.Name)
+	maybeDispatch(m)
+	fmt.Printf("delivered %s from %s → %s [%s]\n", ref, p.Name, recipientAddr(m), m.ID)
+	return 0
+}
+
+// openTask reports whether slug names a task whose session can still
+// read mail (exists, not done, not archived).
+func openTask(db *sql.DB, slug string) bool {
+	if slug == "" {
+		return false
+	}
+	t, err := flowdb.GetTask(db, slug)
+	return err == nil && t != nil && deliverableTask(t) == nil
 }

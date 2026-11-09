@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -268,5 +269,188 @@ func TestMessagePeerTaskAddressRejected(t *testing.T) {
 	out := captureStdout(t, func() { rc = cmdMessage([]string{"bob/x", "hi"}) })
 	if rc != 2 || !strings.Contains(out, "peer") {
 		t.Errorf("bob/x rc=%d out=%q", rc, out)
+	}
+}
+
+// deliverRC runs `flow peer deliver` with the given connector token.
+func deliverRC(t *testing.T, token string, args ...string) (int, string) {
+	t.Helper()
+	t.Setenv("FLOW_CONNECTOR_TOKEN", token)
+	defer t.Setenv("FLOW_CONNECTOR_TOKEN", "")
+	return peerRC(t, append([]string{"deliver"}, args...)...)
+}
+
+func countRows(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// P5: flow peer deliver — the only inbound door.
+func TestPeerDeliverToHumanMail(t *testing.T) {
+	peerHub(t, "0")
+	db := openFlowDB(t)
+	spawned := stubDispatchLauncher(t, nil)
+	installFakeConnector(t, "desk", `"ask","urgent"`, "exit 0") // human pinger
+	withSecret(t, "desk")
+	tok := "secret-pl"
+
+	rc, out := deliverRC(t, tok, "--at", "/homes/b", "--ref", "b-1", "--options", "Yes|No", "ship?")
+	if rc != 0 {
+		t.Fatalf("deliver rc=%d %s", rc, out)
+	}
+	m := rowByBody(t, db, "ship?")
+	if m.ToAssignee != "user" || m.ToTaskSlug != "" || m.FromAssignee != "bob" || m.FromTaskSlug != "" ||
+		m.Peer != "bob" || m.OriginRef != "b-1" || !m.Ping || m.FYI || len(m.Options) != 2 || m.Options[1] != "No" {
+		t.Fatalf("inbound row = %+v", m)
+	}
+	if len(*spawned) != 1 || (*spawned)[0] != m.ID {
+		t.Errorf("human ping not dispatched: %v", *spawned)
+	}
+	if p, _ := flowdb.GetPeer(db, "bob"); p.LastSeenAt == "" {
+		t.Errorf("last_seen_at not stamped")
+	}
+
+	// Duplicate delivery of the same ref: exit 0, no new row, no ping.
+	n := countRows(t, db)
+	if rc, out := deliverRC(t, tok, "--at", "/homes/b", "--ref", "b-1", "ship?"); rc != 0 {
+		t.Errorf("dup rc=%d %s", rc, out)
+	}
+	if countRows(t, db) != n || len(*spawned) != 1 {
+		t.Errorf("duplicate delivery stored or pinged")
+	}
+
+	// --kind fyi: stored, never pinged.
+	if rc, out := deliverRC(t, tok, "--at", "/homes/b", "--ref", "b-2", "--kind", "fyi", "deployed v2"); rc != 0 {
+		t.Fatalf("fyi rc=%d %s", rc, out)
+	}
+	if f := rowByBody(t, db, "deployed v2"); !f.FYI || f.Ping {
+		t.Errorf("fyi row = %+v", f)
+	}
+	if len(*spawned) != 1 {
+		t.Errorf("fyi pinged")
+	}
+}
+
+func TestPeerDeliverRejections(t *testing.T) {
+	peerHub(t, "0")
+	db := openFlowDB(t)
+	stubDispatchLauncher(t, nil)
+	installFakeConnector(t, "desk", `"ask"`, "exit 0")
+	desk := withSecret(t, "desk")
+	installRoleConnector(t, "pl2", `"peer"`, ``, "exit 0")
+
+	for name, tok := range map[string]string{"no token": "", "bad token": "nope"} {
+		if rc, _ := deliverRC(t, tok, "--at", "/homes/b", "--ref", "x1", "hi"); rc != 1 {
+			t.Errorf("%s: rc=%d, want 1", name, rc)
+		}
+	}
+	// A valid token of another connector: (that connector, at) is unknown.
+	if rc, _ := deliverRC(t, "secret-pl2", "--at", "/homes/b", "--ref", "x2", "hi"); rc != 1 {
+		t.Errorf("other connector's endpoint accepted")
+	}
+	if rc, _ := deliverRC(t, desk, "--at", "/homes/b", "--ref", "x3", "hi"); rc != 1 {
+		t.Errorf("human connector token accepted for bob's endpoint")
+	}
+	if rc, _ := deliverRC(t, "secret-pl", "--at", "/homes/stranger", "--ref", "x4", "hi"); rc != 1 {
+		t.Errorf("unknown at accepted")
+	}
+	root, _ := connectorsRoot()
+	log, _ := os.ReadFile(filepath.Join(root, "inbound.log"))
+	if !strings.Contains(string(log), "/homes/stranger") {
+		t.Errorf("unknown at not logged to inbound.log: %q", log)
+	}
+	if rc, _ := peerRC(t, "block", "bob"); rc != 0 {
+		t.Fatal(rc)
+	}
+	rc, out := deliverRC(t, "secret-pl", "--at", "/homes/b", "--ref", "x5", "hi")
+	if rc != 1 || !strings.Contains(out, "rejected") {
+		t.Errorf("blocked peer rc=%d out=%q", rc, out)
+	}
+	if n := countRows(t, db); n != 0 {
+		t.Errorf("rejections stored %d rows", n)
+	}
+	if p, _ := flowdb.GetPeer(db, "bob"); p.LastSeenAt != "" {
+		t.Errorf("rejected delivery stamped last_seen_at")
+	}
+	if rc, _ := peerRC(t, "unblock", "bob"); rc != 0 {
+		t.Fatal(rc)
+	}
+	for name, args := range map[string][]string{
+		"no at":        {"--ref", "y", "hi"},
+		"no ref":       {"--at", "/homes/b", "hi"},
+		"no body":      {"--at", "/homes/b", "--ref", "y"},
+		"bad kind":     {"--at", "/homes/b", "--ref", "y", "--kind", "shout", "hi"},
+		"fyi+options":  {"--at", "/homes/b", "--ref", "y", "--kind", "fyi", "--options", "A|B", "hi"},
+		"unknown flag": {"--at", "/homes/b", "--ref", "y", "--urgent", "hi"},
+	} {
+		if rc, _ := deliverRC(t, "secret-pl", args...); rc != 2 {
+			t.Errorf("%s: rc=%d, want 2", name, rc)
+		}
+	}
+}
+
+// P5 step 4: an answer to one of OUR outbound messages lands in the asking
+// task's inbox; when that task is closed (or there was none) it falls back
+// to the human's mail, labelled.
+func TestPeerDeliverReplyRouting(t *testing.T) {
+	peerHub(t, "0")
+	db := openFlowDB(t)
+	spawned := stubDispatchLauncher(t, nil)
+	mkBusTask(t, db, "gone", "sid-gone")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t")
+	if rc := msgRC(t, "bob", "ship?"); rc != 0 {
+		t.Fatal(rc)
+	}
+	ask := rowByBody(t, db, "ship?")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-gone")
+	if rc := msgRC(t, "bob", "old question"); rc != 0 {
+		t.Fatal(rc)
+	}
+	old := rowByBody(t, db, "old question")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if rc := msgRC(t, "bob", "from terminal"); rc != 0 {
+		t.Fatal(rc)
+	}
+	term := rowByBody(t, db, "from terminal")
+	*spawned = nil
+
+	if rc, out := deliverRC(t, "secret-pl", "--at", "/homes/b", "--ref", "b-9", "--reply-to-ref", ask.ID, "Yes"); rc != 0 {
+		t.Fatalf("reply rc=%d %s", rc, out)
+	}
+	r := rowByBody(t, db, "Yes")
+	if r.ToAssignee != "user" || r.ToTaskSlug != "t" || r.ReplyTo != ask.ID || r.FromAssignee != "bob" ||
+		r.Peer != "bob" || r.OriginRef != "b-9" || r.Ping || r.Status != "pending" {
+		t.Fatalf("reply row = %+v", r)
+	}
+
+	// Asking task done → the human's mail, labelled, pinged.
+	if _, err := db.Exec(`UPDATE tasks SET status='done' WHERE slug='gone'`); err != nil {
+		t.Fatal(err)
+	}
+	if rc, out := deliverRC(t, "secret-pl", "--at", "/homes/b", "--ref", "b-10", "--reply-to-ref", old.ID, "Too late"); rc != 0 {
+		t.Fatalf("late reply rc=%d %s", rc, out)
+	}
+	late, _ := flowdb.InboundByRef(db, "bob", "b-10")
+	if late.ToTaskSlug != "" || late.ToAssignee != "user" || late.ReplyTo != old.ID ||
+		!strings.Contains(late.Body, "answer to "+old.ID) || !strings.Contains(late.Body, "Too late") || !late.Ping {
+		t.Errorf("fallback row = %+v", late)
+	}
+	// An ask sent from a plain terminal had no task: human mail, labelled.
+	if rc, _ := deliverRC(t, "secret-pl", "--at", "/homes/b", "--ref", "b-11", "--reply-to-ref", term.ID, "Sure"); rc != 0 {
+		t.Fatal("terminal reply")
+	}
+	if tr, _ := flowdb.InboundByRef(db, "bob", "b-11"); tr.ToTaskSlug != "" || !strings.Contains(tr.Body, "answer to "+term.ID) {
+		t.Errorf("terminal-ask reply = %+v", tr)
+	}
+	// A reply-to-ref that is not our outbound row to bob: plain human mail.
+	if rc, _ := deliverRC(t, "secret-pl", "--at", "/homes/b", "--ref", "b-12", "--reply-to-ref", "nope", "Huh"); rc != 0 {
+		t.Fatal("unknown reply-to-ref")
+	}
+	if h, _ := flowdb.InboundByRef(db, "bob", "b-12"); h.ToTaskSlug != "" || h.ReplyTo != "" || h.Body != "Huh" {
+		t.Errorf("unmatched reply-to-ref row = %+v", h)
 	}
 }
