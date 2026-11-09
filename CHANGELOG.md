@@ -24,6 +24,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   Root cause, confirmed live: Codex's shell tool backgrounds `flow done`
   after ~10s, the agent ends its turn, and the exiting run kills the
   sweep. An inline sweep (plain or `--ephemeral`) cannot survive that.
+- **Race fixes around the deferred close-out sweep.** The supervisor sweeps
+  after the harness exits and before it records the run's outcome. During
+  that window the task is `done`, the auto run is `running` and the
+  supervisor pid is alive. Three races in that window are fixed:
+  - If the supervisor dies mid-sweep, a done task is reconciled to
+    `completed`, not `dead`. A done child that exits non-zero is also
+    `completed`, so its parent never gets a crash notice.
+  - Only one sweep runs. `flow done` on a task that is already done exits
+    0 and skips the sweep. The status flip is conditional, so of two
+    concurrent `flow done` calls only one sweeps. A `flow done` while the
+    task's Codex auto run is alive (for example a human closing it mid-run)
+    leaves the sweep to the supervisor.
+  - A stale supervisor no longer overwrites a newer run. It finalizes only
+    while the row still carries its own pid. If `flow do --auto --force`
+    started a newer run, the old supervisor logs that the newer run took
+    over. It writes no status and sends no dead-child notice.
 - **Codex Stop hook output.** In Codex sessions the watcher broadcast
   nudge is emitted as `{"decision":"block","reason":…}`. Codex's Stop
   schema rejects `hookSpecificOutput`.
