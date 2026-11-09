@@ -55,6 +55,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   report, the child runs a one-shot `flow inbox pop` in the foreground and
   acts on it. `flow inbox pop --wait` refuses under `FLOW_AUTO_RUN` (exit 3,
   so a stray listener loop stops) and leaves the message unread.
+- **Interactive Codex sessions no longer lose mail to a background inbox
+  listener.** With no Monitor tool, a bound Codex session took the
+  "background Bash `flow inbox pop --wait`" fallback. Measured live on
+  codex-cli 0.166: Codex kills a backgrounded child under 0.5s after the
+  shell command returns, so the listener never listened. Mail already
+  pending when it was armed was acked at once into a log file the model
+  never read, and was lost. A Codex session now gets a no-listener rule at
+  SessionStart: when a flow-bus notice says mail landed or is pending, run a
+  one-shot `flow inbox pop` in the foreground. `flow watch` still works.
+  The pending-count and PreToolUse notices say "pop in the foreground"
+  instead of pointing at a Monitor. `flow inbox pop --wait` refuses in a
+  Codex shell (`$CODEX_THREAD_ID`, exit 3) and leaves the message unread.
+  `flow do --auto` from a Codex parent no longer prints a Monitor recipe.
+  The driver blocks and the delegation child template no longer promise an
+  inbox listener. Claude's Monitor recipe is unchanged.
 - **Harness-neutral SessionStart text.** The hook no longer says "This
   Claude session", "resumes Claude sessions" or "invoke the flow skill via
   the Skill tool". It uses the same wording as the prompts below, names
