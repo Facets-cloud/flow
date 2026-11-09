@@ -735,13 +735,22 @@ func TestB10DocsCoverConnectors(t *testing.T) {
 			t.Errorf("usage lacks %q", want)
 		}
 	}
+	// The connector walkthrough lives in docs/connectors.md; the README
+	// only has to point at it.
 	readme, err := os.ReadFile("../../README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"### Human connectors", `--options "Yes|No"`, "flow connector add macos", "flow connector list --available", "--fyi"} {
-		if !strings.Contains(string(readme), want) {
-			t.Errorf("README lacks %q", want)
+	if !strings.Contains(string(readme), "docs/connectors.md") {
+		t.Errorf("README lacks a link to docs/connectors.md")
+	}
+	guide, err := os.ReadFile("../../docs/connectors.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# Human connectors", `--options "Yes|No"`, "flow connector add macos", "flow connector list --available", "--fyi"} {
+		if !strings.Contains(string(guide), want) {
+			t.Errorf("docs/connectors.md lacks %q", want)
 		}
 	}
 	changelog, err := os.ReadFile("../../CHANGELOG.md")
