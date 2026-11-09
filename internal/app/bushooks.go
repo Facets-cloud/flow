@@ -50,6 +50,18 @@ import (
 const inboxMonitorLoop = "while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; " +
 	"[ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done"
 
+// autoRunNoListenerRule replaces the listener discipline in a headless
+// auto run. Nobody reads a background listener's output there: `pop`
+// acks each message into a file no agent looks at, and the listener dies
+// with the run, so mail sent to the child was silently lost. The child
+// pops its inbox in the foreground (so it sees what it acks) when the
+// PreToolUse notice says mail landed and before each report.
+const autoRunNoListenerRule = " flow-bus, auto run: do NOT arm an inbox listener — no Monitor, " +
+	"no background `flow inbox pop --wait`, no `flow watch`; flow refuses `pop --wait` here. " +
+	"Report with `flow message` and never wait for a reply. When a flow-bus notice says mail landed, and " +
+	"before each report and before `flow done`, run `flow inbox pop` in the foreground (one-shot, never " +
+	"--wait): it shows you one message; repeat until empty and act on what it says."
+
 // busSessionStartContext returns extra SessionStart context (may be "").
 func busSessionStartContext() string {
 	db, err := openBusDB()
@@ -63,6 +75,10 @@ func busSessionStartContext() string {
 	b.WriteString(surfaceHumanMail(db, s.SessionID))
 	if s.TaskSlug != "" {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
+		if t, _ := flowdb.GetTask(db, s.TaskSlug); isAutoRunSession(t) {
+			b.WriteString(autoRunNoListenerRule)
+			return b.String()
+		}
 		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
 			"deferred tool: load it first with ToolSearch \"select:Monitor\"). The loop is " +
 			"required (Monitor streams stdout lines as events): " +
@@ -158,6 +174,12 @@ func busPreToolUseContext() string {
 	// the same messages.
 	_ = flowdb.MarkSurfaced(db, s.TaskSlug, ids)
 
+	// An auto run has no listener (autoRunNoListenerRule): it must pop
+	// in the foreground itself, so don't point it at a Monitor.
+	how := " (or your armed Monitor loop delivers it)"
+	if t, _ := flowdb.GetTask(db, s.TaskSlug); isAutoRunSession(t) {
+		how = " in the foreground now (one-shot, not --wait) and act on it"
+	}
 	lead := msgs[0]
 	subject := "A new message"
 	if len(msgs) > 1 {
@@ -170,9 +192,9 @@ func busPreToolUseContext() string {
 	return fmt.Sprintf(
 		" flow-bus: %s%s just landed in this session's inbox — it may change or cancel the "+
 			"action you're about to take. Top: [%s] %q. Read it BEFORE proceeding: "+
-			"`flow inbox pop` (or your armed Monitor loop delivers it). Inform-only — you have "+
+			"`flow inbox pop`%s. Inform-only — you have "+
 			"NOT consumed it; this notice will not repeat for these message(s).",
-		subject, urgentNote, lead.ID, busSnippet(lead.Body))
+		subject, urgentNote, lead.ID, busSnippet(lead.Body), how)
 }
 
 // humanSurfaceMax caps how many human-mail items a notice shows inline.

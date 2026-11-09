@@ -11,7 +11,13 @@ import "flow/internal/harness/codex"
 // flowSkillStep is the "load the flow skill" instruction (no step number,
 // no trailing period).
 func flowSkillStep() string {
-	s := "Load the flow skill: invoke it via the Skill tool if your harness has one; otherwise read its SKILL.md"
+	return "Load the flow skill: " + flowSkillHow()
+}
+
+// flowSkillHow says how to load the flow skill in either harness (no
+// leading verb, no trailing period); hook text prefixes its own wording.
+func flowSkillHow() string {
+	s := "invoke it via the Skill tool if your harness has one; otherwise read its SKILL.md"
 	if p, err := codex.New().SkillInstallPath(); err == nil {
 		s += " (Codex: " + p + ")"
 	}

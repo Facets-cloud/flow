@@ -61,6 +61,15 @@ with no human watching. Its prompt carries the rule:
   that dies is reported the same way by flow itself.
 - **No parent** → result in an update note; message the human ONLY when
   done or blocked, naming the note. Never routine progress.
+- **No inbox listener, ever.** An auto run must not arm a Monitor, a
+  background `flow inbox pop --wait` loop, or `flow watch`: nobody reads a
+  headless listener's output, so `pop` would ack mail into a void and the
+  listener dies with the run (flow refuses `pop --wait` under
+  `FLOW_AUTO_RUN`, exit 3, so a stray loop stops). Instead, when the
+  PreToolUse notice says mail landed, and before each report and `flow
+  done`, it runs a one-shot `flow inbox pop` in the foreground, repeats
+  until empty, and acts on what it reads. A parent's mid-run instruction
+  therefore reaches the child at its next tool call.
 
 **Need a decision while the user may be away → ask with choices.**
 
@@ -216,7 +225,8 @@ pop returns 3: this session's task is done or archived, so its inbox is
 closed for good. When the Monitor expires (timeout_ms reached)
 you get a notice: re-arm it immediately with the same call. After a
 compaction the SessionStart hook re-fires and repeats this recipe.
-FALLBACK when Monitor is unavailable (non-Claude harnesses): a background
+FALLBACK when Monitor is unavailable (non-Claude harnesses, interactive
+sessions only — never an auto run, see above): a background
 Bash `flow inbox pop --wait` (single-shot — re-arm after every wake). Keep
 one listener per identity. After a relay forwards a message and the human
 answers, ack the specific one with `flow inbox read <id>`.

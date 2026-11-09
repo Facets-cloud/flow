@@ -384,6 +384,12 @@ func busSnippet(body string) string {
 // done or archived: the listener loop breaks on it.
 const popExitTaskClosed = 3
 
+// popExitNoListener is pop's exit code when --wait is refused inside a
+// headless auto run (see inboxPop). It equals popExitTaskClosed on
+// purpose: the canonical listener loop breaks on 3, so a listener an auto
+// run armed anyway stops at once instead of retrying every 5s.
+const popExitNoListener = popExitTaskClosed
+
 func inboxPop(args []string) int {
 	fs := flagSet("inbox pop")
 	wait := fs.Bool("wait", false, "block until a message arrives, then pop it")
@@ -393,6 +399,14 @@ func inboxPop(args []string) int {
 	keepUnread := fs.Bool("keep-unread", false, "reader/relay mode: return the message without acking it (leave it unread)")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	// A headless auto run has no one to wake: a parked listener there
+	// acks each message into output no agent reads, and the message is
+	// lost when the run exits. Refuse before touching the queue.
+	if *wait && os.Getenv(autoRunEnvVar) != "" {
+		fmt.Fprintln(os.Stderr, "flow inbox pop --wait: refused inside an auto run (FLOW_AUTO_RUN) — "+
+			"do not arm an inbox listener here; check `flow inbox` at milestones and `flow inbox read <id>` instead (exit 3)")
+		return popExitNoListener
 	}
 	db, err := openBusDB()
 	if err != nil {

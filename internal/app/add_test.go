@@ -15,6 +15,9 @@ import (
 func setupFlowRoot(t *testing.T) string {
 	t.Helper()
 	root := initTempFlowRoot(t)
+	// Tests can run inside a flow auto run; its marker must not leak in
+	// and flip every bound session into auto-run behavior.
+	t.Setenv(autoRunEnvVar, "")
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}
