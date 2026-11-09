@@ -29,6 +29,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   schema rejects `hookSpecificOutput`.
 - **Codex `$CODEX_HOME`.** The flow skill and `hooks.json` install under
   `$CODEX_HOME` when it is set (default `~/.codex`), where Codex reads them.
+- **Auto runs no longer lose mail to a background inbox listener.** An
+  auto run is bound, so it was told to arm an inbox listener. Codex has no
+  Monitor and took the fallback: a background `flow inbox pop --wait` loop.
+  Each message sent to the child was acked into output nobody read and lost
+  when the run exited. Auto runs now get the opposite rule, in the
+  SessionStart hook and in the auto prompt: no Monitor, no `pop --wait`, no
+  `flow watch`. When the PreToolUse notice says mail landed, and before each
+  report, the child runs a one-shot `flow inbox pop` in the foreground and
+  acts on it. `flow inbox pop --wait` refuses under `FLOW_AUTO_RUN` (exit 3,
+  so a stray listener loop stops) and leaves the message unread.
+- **Harness-neutral SessionStart text.** The hook no longer says "This
+  Claude session", "resumes Claude sessions" or "invoke the flow skill via
+  the Skill tool". It uses the same wording as the prompts below, names
+  `CLAUDE.md / AGENTS.md`, and asks to use AskUserQuestion only if the
+  harness has it.
 - **Harness-neutral session prompts.** The bootstrap, auto-run, close-out
   sweep and owner-tick prompts no longer assume Claude. They say to use the
   Skill tool if the harness has one, or else read the flow `SKILL.md` (the
