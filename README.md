@@ -378,8 +378,33 @@ flow connector priority macos 2          # fallback (same number = same tier, in
 flow connector escalate 10m              # unseen 10m after delivery → next tier (off by default)
 ```
 
-Contract v1, with enough detail to write your own:
+The contract (contract 2 adds roles; contract-1 connectors keep working),
+with enough detail to write your own:
 [`internal/app/skill/references/connectors.md`](internal/app/skill/references/connectors.md).
+
+### Peer hubs (messaging another flow home)
+
+A **peer** is another flow home in your contact book: a nickname for an
+endpoint on a connector with role `"peer"`. An agent asks the other hub's
+human with `flow message <peer> "…"`. The answer comes back into the
+asking task's inbox as a reply, just like a local human answer. Task names
+never cross hubs: `<peer>/<task>` is refused. Each hub's human stays in the
+loop on their own hub.
+
+```bash
+flow peer add bob --via peer-local --at /path/to/bobs/flow-root
+flow peer list | show bob | block bob | unblock bob | rm bob
+flow message bob "ship v2?" --options "Yes|No"     # from a task session
+flow message bob "here you go" --reply-to <id>     # answer bob's message
+```
+
+flow ships no transport of its own, only the ability and two samples. The
+`peer-local` sample links two homes on one machine
+(`flow connector add peer-local`; both homes run with the testing-only
+`FLOW_SECRET_STORE=file`).
+The `macos` sample adds an example **Hand to agent** button for peer mail,
+which hands the question to a headless `flow auto` agent. Details:
+[`internal/app/skill/references/peers.md`](internal/app/skill/references/peers.md).
 
 ### `flow stats`
 

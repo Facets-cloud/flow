@@ -579,3 +579,50 @@ func TestHumanPingPayloadFromPeer(t *testing.T) {
 		t.Errorf("local ping from_peer = %v (present=%v), want empty string", v, ok)
 	}
 }
+
+// P12: the skill (lean core = one trigger line), references, CLI usage,
+// README and CHANGELOG document peer hubs and contract 2.
+func TestPeersDocs(t *testing.T) {
+	core := strings.Join(strings.Fields(readSkillFile(t, "SKILL.md")), " ")
+	for _, want := range []string{"references/peers.md", "flow message <peer>"} {
+		if !strings.Contains(core, want) {
+			t.Errorf("SKILL.md lacks %q", want)
+		}
+	}
+	peers := strings.Join(strings.Fields(readSkillFile(t, "references/peers.md")), " ")
+	for _, want := range []string{
+		"flow peer add <name> --via <connector> --at <endpoint>", "flow peer block",
+		`flow message <peer> "<body>"`, "--reply-to <id>", "<peer>/<task>",
+		"flow peer deliver", "reply_to_ref", "origin_ref", "delivery", "dispatched", "sent", "failed",
+		"inbound.log", "Hand to agent", "peer-local", "FLOW_SECRET_STORE=file", "#118",
+	} {
+		if !strings.Contains(peers, want) {
+			t.Errorf("references/peers.md lacks %q", want)
+		}
+	}
+	conn := strings.Join(strings.Fields(readSkillFile(t, "references/connectors.md")), " ")
+	for _, want := range []string{`"contract": 2`, `"roles"`, `["human","peer"]`, "from_peer",
+		"reply_to_ref", "remote_ref", "flow peer deliver", "references/peers.md", "FLOW_SECRET_STORE=file"} {
+		if !strings.Contains(conn, want) {
+			t.Errorf("references/connectors.md lacks %q", want)
+		}
+	}
+	usage := captureStdout(t, printUsage)
+	for _, want := range []string{"flow peer add <name> --via <connector> --at <endpoint>", "flow peer deliver", `flow message <peer>`} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage lacks %q", want)
+		}
+	}
+	readme, _ := os.ReadFile("../../README.md")
+	for _, want := range []string{"### Peer hubs", "flow peer add bob --via peer-local", "flow connector add peer-local"} {
+		if !strings.Contains(string(readme), want) {
+			t.Errorf("README lacks %q", want)
+		}
+	}
+	changelog, _ := os.ReadFile("../../CHANGELOG.md")
+	for _, want := range []string{"Peer hubs", "flow peer add", "flow peer deliver", "contract 2", "from_peer", "FLOW_SECRET_STORE=file", "peer-local", "Hand to agent"} {
+		if !strings.Contains(string(changelog), want) {
+			t.Errorf("CHANGELOG lacks %q", want)
+		}
+	}
+}

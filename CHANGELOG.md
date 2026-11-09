@@ -7,6 +7,41 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Peer hubs v0.** Flow homes can now message each other, so agents can
+  reach beyond one machine. A peer is a local nickname for an endpoint on a
+  role-`"peer"` connector: `flow peer add <name> --via <connector> --at
+  <endpoint>`, plus `flow peer list | show | rm | block | unblock`.
+  `flow message <peer> "…"` (with `--options`, `--urgent`, `--fyi` and
+  `--reply-to`) stores an outbound row and sends it through the peer's
+  connector. Its delivery state goes from `dispatched` to `sent` or
+  `failed`, with no auto-retry. `<peer>/<task>` is refused with exit 2.
+  Inbound messages enter only through the connector-only
+  `flow peer deliver`. That command checks the connector token, rejects
+  unknown endpoints (logged to `connectors/inbound.log`) and blocked peers,
+  and ignores duplicates. An answer to one of your messages lands in the
+  asking task's inbox; if that task has closed, it goes to your mail with
+  an "answer to <id>" label. Everything else is human mail, pinged as
+  usual. Answering a peer's message (`flow human reply`, or
+  `flow message <peer> --reply-to <id>`) sends the answer back to that peer.
+  Threading uses message ids only (`origin_ref` / `reply_to_ref`). See the
+  skill reference `references/peers.md`.
+- **Connector contract 2.** `connector.json` gains `"contract": 2` and
+  `"roles": ["human"] | ["peer"] | ["human","peer"]`. A contract-1
+  manifest means role human and keeps working. Human pings (priority
+  tiers, escalation) only go to role human. The human-ping payload gains
+  `from_peer`.
+- **`peer-local` sample connector** (`flow connector add peer-local`). It
+  links two flow homes on one machine, using only POSIX sh and awk. It
+  backs a real-binary two-home end-to-end test that runs in CI.
+- **`FLOW_SECRET_STORE=file`** (testing only) keeps connector secrets in
+  0600 files under `$FLOW_ROOT/secrets/` and never touches the keychain.
+- The `macos` sample moves to contract 2 and gains an example
+  **Hand to agent** button for peer mail. It marks the mail seen, then starts
+  `flow auto` with a brief that tells the agent to reply with
+  `flow message <peer> --reply-to <id>` and then `flow done`.
+
 ## [0.1.0-alpha.36] — 2026-11-10
 
 ### Added
