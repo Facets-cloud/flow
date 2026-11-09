@@ -288,7 +288,7 @@ func TestPriorityDocs(t *testing.T) {
 	}
 	for file, wants := range map[string][]string{
 		"../../docs/connectors.md": {"flow connector priority flowhub 1", "flow connector escalate 10m"},
-		"../../CHANGELOG.md": {"flow connector priority", "flow connector escalate"},
+		"../../CHANGELOG.md":       {"flow connector priority", "flow connector escalate"},
 	} {
 		b, err := os.ReadFile(file)
 		if err != nil {
