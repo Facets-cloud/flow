@@ -153,7 +153,9 @@ child C (headless)
   -> lands in P's inbox -> P's Monitor wakes P
 ```
 
-The child's reports only reach you if your inbox Monitor is armed.
+The child's reports wake you only if your inbox Monitor is armed. In
+Codex (no Monitor) they surface as a flow-bus notice at your next tool
+call or prompt.
 
 ## Consuming: unread vs. everything
 
@@ -225,20 +227,30 @@ pop returns 3: this session's task is done or archived, so its inbox is
 closed for good. When the Monitor expires (timeout_ms reached)
 you get a notice: re-arm it immediately with the same call. After a
 compaction the SessionStart hook re-fires and repeats this recipe.
-FALLBACK when Monitor is unavailable (non-Claude harnesses, interactive
-sessions only — never an auto run, see above): a background
-Bash `flow inbox pop --wait` (single-shot — re-arm after every wake). Keep
-one listener per identity. After a relay forwards a message and the human
-answers, ack the specific one with `flow inbox read <id>`.
+Keep one listener per identity. After a relay forwards a message and the
+human answers, ack the specific one with `flow inbox read <id>`.
 
-**Safety net (Claude harness):** a PreToolUse hook also surfaces any
+**Codex: no listener at all.** Codex has no Monitor tool, and its shell
+tool kills a backgrounded child as soon as the command returns (measured
+on codex-cli 0.166: under 0.5s). A background `flow inbox pop --wait`
+therefore never listens, and mail already pending when it is armed is
+acked at once into output the model never reads — lost. So a Codex
+session (interactive or auto) arms no listener; flow refuses `pop --wait`
+there (exit 3) and the SessionStart hook says so. Mail reaches it through
+the flow-bus notices (PreToolUse before each tool call, UserPromptSubmit
+when the user types); when one says mail landed or is pending, run a
+one-shot `flow inbox pop` in the foreground, repeat until empty, and act
+on it. `flow watch` still works: watched reports arrive the same way. An
+idle Codex session does not wake on mail; it sees it on its next turn.
+
+**Safety net (Claude and Codex):** a PreToolUse hook also surfaces any
 just-arrived unread item — directed message OR broadcast — right before a
 tool runs, so a mid-turn "stop, don't do X" reaches you before the action
 it would cancel — even if your Monitor loop hasn't woken yet. It's
 delta-gated (each item is announced at most once, so it never spams across
 a turn's tool calls) and inform-only: it does NOT consume the item, so
-still `flow inbox pop` it to actually read and ack. This backstops the
-listener; it doesn't replace it.
+still `flow inbox pop` it to actually read and ack. In Claude this
+backstops the listener; in Codex and auto runs it is the delivery path.
 
 ## For the user: notification UX is yours
 

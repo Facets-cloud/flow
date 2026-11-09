@@ -1094,5 +1094,16 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 	} else {
 		fmt.Printf("  %s is NOT watching %s; from the parent session run: flow watch %s\n", watcher, task.Slug, task.Slug)
 	}
-	fmt.Println("  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop + "'); re-arm it when it expires.")
+	fmt.Println(parentListenerReminder())
+}
+
+// parentListenerReminder is the last line of the parent reminder: arm a
+// Monitor in Claude; in Codex (no Monitor, background jobs are killed)
+// the child's reports surface as flow-bus notices instead.
+func parentListenerReminder() string {
+	if isCodexSession(nil) {
+		return "  Codex parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
+			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
+	}
+	return "  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop + "'); re-arm it when it expires."
 }

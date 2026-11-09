@@ -49,8 +49,8 @@ func driverRoleBlock() string {
 		"self-contained unit of work (implementation, research, debugging, fix + PR + " +
 		"test, scans, audits) to a headless `flow auto` child, never the harness's " +
 		"built-in Agent/subagent tool: write a brief (goal, where, Done when, gates, report " +
-		"via flow message, never block waiting for a reply (your inbox listener hears " +
-		"it)) then `flow auto \"<name>\" --slug <s> " +
+		"via flow message, never block waiting for a reply (it reaches your inbox; " +
+		"pop it when a flow-bus notice or your listener surfaces it)) then `flow auto \"<name>\" --slug <s> " +
 		"--brief <file>`; announce \"spawning auto child: <slug>\" and continue without asking. " +
 		"Keep with the user: the conversation, design and decisions, verifying each child's " +
 		"result (it names its update note) before reporting, and live/prod applies (children " +

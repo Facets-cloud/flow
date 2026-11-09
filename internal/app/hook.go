@@ -175,7 +175,7 @@ func driverDelegationBlock() string {
 		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
 		"answers. Live/prod changes: the child plans and gates only; you apply them with the user. " +
 		"How: write a brief (goal, where, Done when, gates, report via flow message, never block waiting " +
-		"for a reply (your inbox listener hears it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
+		"for a reply (it reaches your inbox; pop it when a flow-bus notice or your listener surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
 		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
 		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
 		"the child messages you, verify its result (it names its update note) before reporting " +

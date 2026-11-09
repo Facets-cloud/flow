@@ -117,8 +117,9 @@ judgment calls from the user mid-way:
    `--harness`. It refuses with no brief, or a blank one.
 3. Tell the user in one line: `spawning auto child: <slug>`. Do not ask
    permission first, and keep working on the main thread.
-4. Keep your inbox Monitor armed (§4.18): the child reports with
-   `flow message user/<driver>`.
+4. Keep your inbox Monitor armed (§4.18; Codex has none: pop in the
+   foreground when a flow-bus notice says mail landed): the child reports
+   with `flow message user/<driver>`.
 5. When the child says it is done, open the update note it names
    (`flow show task <slug>` lists it), verify the result yourself, then
    report to the user. Do not relay a child's claim unverified.
@@ -150,9 +151,9 @@ to prod", "may push a branch and open a PR, do NOT merge">
   done, and when blocked. Body is positional.
 - Write findings as an update note on your own task; name it in the
   final message.
-- never block waiting for a reply: keep working. Your inbox
-  Monitor runs in the background and surfaces any message (for example
-  from the user via the hub).
+- never block waiting for a reply: keep working. Arm no inbox listener;
+  a message (for example from the user via the hub) surfaces as a
+  flow-bus notice before your next tool call: pop it in the foreground.
   If a decision truly needs the user, set waiting_on, message the driver, and exit.
 - When Done when is met: flow done <slug>, then exit.
 ```

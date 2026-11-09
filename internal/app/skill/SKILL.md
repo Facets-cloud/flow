@@ -795,7 +795,7 @@ Bodies ≤500 chars, lead with the ask, name a task slug for context.
 retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
 the oldest. Never touch the human's mail (pop skips it). Only a BOUND
 session arms ONE inbox **Monitor** at start (never unbound; never in an
-auto run: it pops in the foreground instead). Load via ToolSearch
+auto run or Codex: those pop in the foreground). Load via ToolSearch
 `select:Monitor`; `timeout_ms` REQUIRED (max 1800000):
 
 - **Consumer** (default; `pop` acks as it goes): `Monitor(description:
@@ -805,8 +805,8 @@ auto run: it pops in the foreground instead). Load via ToolSearch
 - **Reader / relay** (must NOT ack): same call with `pop --wait
   --keep-unread` (plain `pop` acks mail you only forward).
 
-Each message wakes you. On expiry, re-arm it immediately. No Monitor:
-background Bash `flow inbox pop --wait`, re-arm per wake. `flow watch
+Each message wakes you. On expiry, re-arm it immediately. No Monitor
+(Codex): no listener; a notice says mail landed → one-shot pop. `flow watch
 <task|project|assignee>` subscribes you; tasks you create from a bound
 session are auto-watched. Hooks NEVER consume.
 

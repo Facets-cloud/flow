@@ -408,6 +408,15 @@ func inboxPop(args []string) int {
 			"do not arm an inbox listener here; when mail lands and before each report, run a one-shot `flow inbox pop` in the foreground (exit 3)")
 		return popExitNoListener
 	}
+	// Codex kills a backgrounded child when its shell command returns, so
+	// a `pop --wait` there either dies unseen or acks pending mail into
+	// output the model never reads. Same refusal, same exit code.
+	if *wait && isCodexSession(nil) {
+		fmt.Fprintln(os.Stderr, "flow inbox pop --wait: refused in a Codex session — Codex kills background "+
+			"shell jobs, so a listener would ack your mail unseen; when a flow-bus notice says mail landed, run a "+
+			"one-shot `flow inbox pop` in the foreground (exit 3)")
+		return popExitNoListener
+	}
 	db, err := openBusDB()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
