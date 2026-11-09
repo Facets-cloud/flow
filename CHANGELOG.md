@@ -7,6 +7,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- `dispatch.log` now records when a connector escalation is armed:
+  `<id> escalate armed <dur> → <next tier>`, written before the wait. An
+  armed line with no later `escalate → …` or `escalate stop` line means
+  the detached dispatcher died mid-wait (reboot, sleep, upgrade) and the
+  escalation was dropped, which used to leave no trace.
+
 ## [0.1.0-alpha.35] — 2026-11-09
 
 ### Added
