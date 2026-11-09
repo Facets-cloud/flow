@@ -454,3 +454,90 @@ func TestPeerDeliverReplyRouting(t *testing.T) {
 		t.Errorf("unmatched reply-to-ref row = %+v", h)
 	}
 }
+
+// inboundAsk delivers one peer message to this hub's human and returns it.
+func inboundAsk(t *testing.T, db *sql.DB, ref, body string, extra ...string) *flowdb.BusMessage {
+	t.Helper()
+	args := append([]string{"--at", "/homes/b", "--ref", ref}, extra...)
+	if rc, out := deliverRC(t, "secret-pl", append(args, body)...); rc != 0 {
+		t.Fatalf("deliver rc=%d %s", rc, out)
+	}
+	m, _ := flowdb.InboundByRef(db, "bob", ref)
+	return m
+}
+
+// P6: flow human reply on an inbound peer row — same local semantics
+// (seen + answered) plus an outbound send to that peer carrying
+// reply_to_ref = the inbound row's origin_ref.
+func TestHumanReplyRoutesToPeer(t *testing.T) {
+	marks := peerHub(t, "0")
+	db := openFlowDB(t)
+	spawned := stubDispatchLauncher(t, nil)
+	installFakeConnector(t, "desk", `"ask"`, "exit 0")
+	desk := withSecret(t, "desk")
+	in := inboundAsk(t, db, "b-1", "ship?", "--options", "Yes|No")
+	*spawned = nil
+
+	t.Setenv("FLOW_CONNECTOR_TOKEN", desk)
+	rc, out := humanRC(t, "reply", in.ID, "Yes")
+	t.Setenv("FLOW_CONNECTOR_TOKEN", "")
+	if rc != 0 {
+		t.Fatalf("reply rc=%d %s", rc, out)
+	}
+	got, _ := flowdb.GetBusMessageByID(db, in.ID)
+	if got.SeenAt == "" || got.AnsweredAt == "" {
+		t.Errorf("inbound not seen+answered: %+v", got)
+	}
+	var outID string
+	if err := db.QueryRow(`SELECT id FROM bus_messages WHERE peer='bob' AND origin_ref IS NULL AND reply_to=?`, in.ID).Scan(&outID); err != nil {
+		t.Fatalf("no outbound reply row: %v", err)
+	}
+	o, _ := flowdb.GetBusMessageByID(db, outID)
+	if o.ToAssignee != "bob" || o.Body != "Yes" || o.Delivery != "dispatched" || o.ToTaskSlug != "" {
+		t.Errorf("outbound reply = %+v", o)
+	}
+	if len(*spawned) != 1 || (*spawned)[0] != outID {
+		t.Fatalf("reply not dispatched: %v", *spawned)
+	}
+	dispatch(t, outID)
+	p := readMark(t, marks, 0)
+	if p["kind"] != "reply" || p["reply_to_ref"] != "b-1" || p["body"] != "Yes" || p["peer"] != "bob" {
+		t.Errorf("reply payload = %v", p)
+	}
+	// Idempotent: a second reply sends nothing.
+	t.Setenv("FLOW_CONNECTOR_TOKEN", desk)
+	humanRC(t, "reply", in.ID, "No")
+	t.Setenv("FLOW_CONNECTOR_TOKEN", "")
+	if len(*spawned) != 1 {
+		t.Errorf("repeat reply dispatched again")
+	}
+}
+
+// P6: an agent (or a plain terminal) answers with flow message <peer>
+// --reply-to <id>: routed out with reply_to_ref; replying to another
+// peer's message is refused.
+func TestMessageReplyToInboundPeer(t *testing.T) {
+	marks := peerHub(t, "0")
+	db := openFlowDB(t)
+	stubDispatchLauncher(t, nil)
+	in := inboundAsk(t, db, "b-7", "status?")
+	if rc, _ := peerRC(t, "add", "carol", "--via", "pl", "--at", "/homes/c"); rc != 0 {
+		t.Fatal(rc)
+	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t")
+	if rc := msgRC(t, "bob", "all green", "--reply-to", in.ID); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	o := rowByBody(t, db, "all green")
+	dispatch(t, o.ID)
+	if p := readMark(t, marks, 0); p["kind"] != "reply" || p["reply_to_ref"] != "b-7" {
+		t.Errorf("payload = %v", p)
+	}
+	if got, _ := flowdb.GetBusMessageByID(db, in.ID); got.SeenAt != "" {
+		t.Errorf("an agent's reply marked the human's mail seen (#118)")
+	}
+	if rc := msgRC(t, "carol", "wrong thread", "--reply-to", in.ID); rc != 2 {
+		t.Errorf("reply to bob's message via carol rc=%d, want 2", rc)
+	}
+}
