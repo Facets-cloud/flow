@@ -183,6 +183,10 @@ func stubAutoRunner(t *testing.T, fn func(h harness.Harness, sessionID, prompt s
 // state, as if a supervisor had just launched it.
 func seedRunningAuto(t *testing.T, slug string, pid int) {
 	t.Helper()
+	// The test process plays the supervisor that owns this run.
+	oldPID := supervisorPID
+	supervisorPID = func() int { return pid }
+	t.Cleanup(func() { supervisorPID = oldPID })
 	db := openFlowDB(t)
 	now := flowdb.NowISO()
 	if _, err := db.Exec(

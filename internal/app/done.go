@@ -70,9 +70,18 @@ func cmdDone(args []string) int {
 		return 1
 	}
 
+	// Idempotent: a task that is already done keeps its status_changed_at
+	// and gets no second sweep — two sweeps would rewrite kb/*.md
+	// concurrently and the last writer would win. The flip is conditional
+	// on status, so of two concurrent `flow done` calls exactly one wins
+	// the flip (and the sweep); the other lands here.
+	if task.Status == "done" {
+		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
+		return 0
+	}
 	now := flowdb.NowISO()
 	res, err := db.Exec(
-		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=?`,
+		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=? AND status != 'done'`,
 		now, now, task.Slug,
 	)
 	if err != nil {
@@ -80,8 +89,8 @@ func cmdDone(args []string) int {
 		return 1
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		fmt.Fprintf(os.Stderr, "error: task %q not updated\n", task.Slug)
-		return 1
+		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
+		return 0
 	}
 	if err := flowdb.CleanupTaskBus(db, task.Slug); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
@@ -95,8 +104,8 @@ func cmdDone(args []string) int {
 			// sweep but keep the status flip (the flip is the
 			// contract; the sweep is best-effort).
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
-		} else if closeoutDeferred(h, task.Slug) {
-			fmt.Println("close-out sweep deferred: the auto-run supervisor runs it after this session exits")
+		} else if closeoutDeferred(h, task) {
+			fmt.Println("close-out sweep deferred: the auto-run supervisor runs it after the harness exits")
 		} else {
 			fmt.Print("updating kbs, project updates...")
 			if err := runCloseoutSweep(h, task); err != nil {
@@ -110,11 +119,21 @@ func cmdDone(args []string) int {
 	return 0
 }
 
-// closeoutDeferred reports whether this `flow done` runs inside the auto
-// run of the SAME task on a harness that can't host a nested sweep. Then
-// the __auto-exec supervisor sweeps after the harness exits instead.
-func closeoutDeferred(h harness.Harness, slug string) bool {
-	return os.Getenv(autoRunEnvVar) == slug && harness.DefersCloseoutInAutoRun(h)
+// closeoutDeferred reports whether the task's auto-run supervisor will run
+// the close-out sweep, so this `flow done` must not (one sweeper). That is
+// the case on a harness that defers (can't host a nested sweep) when
+// either this `flow done` runs inside the task's own auto run, or the
+// task has a live auto run — e.g. a human closing it mid-run. The
+// supervisor sweeps after the harness exits if the task is done.
+func closeoutDeferred(h harness.Harness, task *flowdb.Task) bool {
+	if !harness.DefersCloseoutInAutoRun(h) {
+		return false
+	}
+	if os.Getenv(autoRunEnvVar) == task.Slug {
+		return true
+	}
+	return task.AutoRunStatus.Valid && task.AutoRunStatus.String == "running" &&
+		task.AutoRunPID.Valid && processAlive(int(task.AutoRunPID.Int64))
 }
 
 // runCloseoutSweep runs the headless close-out sweep for task via h.
