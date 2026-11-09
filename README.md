@@ -162,18 +162,33 @@ chmod +x /usr/local/bin/flow
 xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
 
 # 2. Initialize. This is required — it creates ~/.flow/, the SQLite
-#    index, the knowledge base, AND installs the Claude skill +
-#    SessionStart hook. Without this step, Claude can't talk to flow.
+#    index, the knowledge base, AND installs the skill + hooks for
+#    every agent harness it finds (Claude Code, Codex). Without this
+#    step, your agent can't talk to flow.
 flow init
 ```
 
-`flow init` is the step that wires flow into your active agent harness. It:
+`flow init` is the step that wires flow into your agent harnesses. It:
 
 - Creates `~/.flow/` (database, kb, projects, tasks, playbooks)
-- Writes the flow skill to `~/.claude/skills/flow/SKILL.md` or
-  `~/.codex/skills/flow/SKILL.md`
-- Adds a SessionStart hook in the matching harness configuration so every
-  new Claude Code or Codex session auto-loads the skill
+- Installs for **every present harness**, so a Claude user who also
+  launches Codex background runs gets both. A harness counts as present
+  when its binary is on `PATH` or its config home exists (`~/.claude`;
+  `$CODEX_HOME`, else `~/.codex`). If none is found, it installs for
+  Claude.
+- Writes the flow skill to `~/.claude/skills/flow/SKILL.md` and/or
+  `$CODEX_HOME/skills/flow/SKILL.md`
+- Adds the SessionStart, UserPromptSubmit, PreToolUse and Stop hooks to
+  each harness's config (`~/.claude/settings.json`,
+  `$CODEX_HOME/hooks.json`) so every new session auto-loads the skill
+
+`flow init`, `flow skill install|update|uninstall` all take
+`--harness claude|codex` to act on just one harness. A named harness is
+installed even if it isn't detected yet (you asked for it). Uninstall
+without `--harness` removes the skill from every harness that has it.
+The automatic skill refresh after a binary upgrade only touches
+harnesses that already have the skill, so removing it from one harness
+keeps it removed.
 
 The `xattr` step removes Gatekeeper's quarantine attribute so macOS
 doesn't refuse to run the unsigned binary.
@@ -187,7 +202,7 @@ In any Claude Code session:
 > Upgrade flow from https://github.com/Facets-cloud/flow
 
 Claude fetches the latest release binary and runs `flow skill
-update` to refresh the skill and re-wire the SessionStart and
+update` to refresh the skill (for every present harness) and re-wire the SessionStart and
 UserPromptSubmit hooks. Check the running version with
 `flow --version`.
 

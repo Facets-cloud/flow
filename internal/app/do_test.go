@@ -42,7 +42,7 @@ func stubNewUUID(t *testing.T, sid string) {
 func stubCodexProbe(t *testing.T, sid string) {
 	t.Helper()
 	old := codex.ProbeRunner
-	codex.ProbeRunner = func() ([]byte, error) {
+	codex.ProbeRunner = func(string) ([]byte, error) {
 		return []byte(`{"type":"thread.started","thread_id":"` + sid + `"}`), nil
 	}
 	t.Cleanup(func() { codex.ProbeRunner = old })
@@ -1371,5 +1371,34 @@ func TestCmdDoHereForceDoesNotBypassCwdGate(t *testing.T) {
 	task, _ := flowdb.GetTask(db, "force-mismatch")
 	if task.SessionID.String != oldSID {
 		t.Errorf("session_id should be untouched; got %q want %s", task.SessionID.String, oldSID)
+	}
+}
+
+// The Codex probe must mint the thread in the task's work_dir (codex
+// records the cwd in the rollout), not in whatever dir `flow do` ran from.
+func TestCmdDoCodexProbeRunsInTaskWorkDir(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"task", "probe-wd", "--work-dir", wd}); rc != 0 {
+		t.Fatalf("seed rc=%d", rc)
+	}
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	const sid = "019ff4b1-6162-7263-974f-f5f1866ad0fe"
+	var gotDir string
+	old := codex.ProbeRunner
+	codex.ProbeRunner = func(workDir string) ([]byte, error) {
+		gotDir = workDir
+		return []byte(`{"type":"thread.started","thread_id":"` + sid + `"}`), nil
+	}
+	t.Cleanup(func() { codex.ProbeRunner = old })
+	_, _ = stubITerm(t)
+
+	if rc := cmdDo([]string{"probe-wd", "--harness", "codex"}); rc != 0 {
+		t.Fatalf("cmdDo rc=%d", rc)
+	}
+	if gotDir != wd {
+		t.Errorf("probe ran in %q, want task work_dir %q", gotDir, wd)
 	}
 }

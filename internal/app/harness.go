@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"flow/internal/flowdb"
@@ -22,6 +24,10 @@ func allHarnesses() []harness.Harness {
 		// gemini.New(),   // wired when the gemini adapter lands
 	}
 }
+
+// harnessLookPath is the binary-on-PATH probe behind harnessPresent.
+// Package var so tests can make presence deterministic.
+var harnessLookPath = exec.LookPath
 
 // registeredHarnessNames returns the comma-joined list of harness
 // Names this binary supports. Used in error messages so the user
@@ -133,6 +139,81 @@ func defaultHarness() harness.Harness {
 		return h
 	}
 	return claude.New()
+}
+
+// harnessConfigHome returns the harness's config/state root — the
+// directory holding its skills/ tree and hook config (~/.claude for
+// claude; $CODEX_HOME, else ~/.codex, for codex). Derived from
+// SkillInstallPath, which every adapter lays out as
+// <config-home>/skills/flow/SKILL.md, so the adapter stays the single
+// source of truth for where its state lives.
+func harnessConfigHome(h harness.Harness) (string, error) {
+	p, err := h.SkillInstallPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(filepath.Dir(filepath.Dir(p))), nil
+}
+
+// harnessPresent reports whether the harness looks installed on this
+// machine: its binary is on PATH, OR its config home exists. Either is
+// enough — a user can have the binary without ever having launched it,
+// or a config dir from a previous install with the binary elsewhere.
+func harnessPresent(h harness.Harness) bool {
+	if _, err := harnessLookPath(h.Binary()); err == nil {
+		return true
+	}
+	home, err := harnessConfigHome(h)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(home)
+	return err == nil && info.IsDir()
+}
+
+// presentHarnesses returns every registered harness that harnessPresent
+// detects, in registry order. When none is detected it falls back to
+// defaultHarness() so a fresh machine still gets a working install.
+func presentHarnesses() []harness.Harness {
+	var out []harness.Harness
+	for _, h := range allHarnesses() {
+		if harnessPresent(h) {
+			out = append(out, h)
+		}
+	}
+	if len(out) == 0 {
+		out = []harness.Harness{defaultHarness()}
+	}
+	return out
+}
+
+// skillInstalled reports whether flow's SKILL.md exists for h. The
+// skill's presence is the per-harness opt-in: auto-upgrade only
+// refreshes harnesses where it exists, and uninstall only acts there.
+func skillInstalled(h harness.Harness) bool {
+	p, err := h.SkillInstallPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
+	return err == nil
+}
+
+// targetHarnesses resolves the harnesses an install-style command acts
+// on. An empty name means "the default set" (computed by fallback). A
+// non-empty name selects exactly that harness — even if it isn't
+// detected, because the user explicitly asked — and an unknown name is
+// an error listing the registered names (callers exit 2).
+func targetHarnesses(name string, fallback func() []harness.Harness) ([]harness.Harness, error) {
+	if name == "" {
+		return fallback(), nil
+	}
+	for _, h := range allHarnesses() {
+		if string(h.Name()) == name {
+			return []harness.Harness{h}, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown harness %q (valid: %s)", name, registeredHarnessNames())
 }
 
 // liveSessionsForTasks returns a merged id→count map across every

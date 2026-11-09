@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 )
 
 // Message-bus hook handlers — strictly CLI/context primitives, no UI,
@@ -37,8 +39,9 @@ import (
 //	                  exist, no broadcast in 30m, declined-nudge
 //	                  backoff elapsed. Inbox mail is deliberately NOT
 //	                  handled at Stop: an armed Monitor picks it up
-//	                  within seconds, and a listener-less session is
-//	                  informed at its next prompt.
+//	                  within seconds, and a listener-less session (auto
+//	                  run, Codex) is informed at its next tool call or
+//	                  prompt.
 //
 // Hook code must never fail loud — errors degrade to silence.
 
@@ -47,6 +50,55 @@ import (
 // and exits when pop reports the bound task closed (exit 3).
 const inboxMonitorLoop = "while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; " +
 	"[ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done"
+
+// autoRunNoListenerRule replaces the listener discipline in a headless
+// auto run. Nobody reads a background listener's output there: `pop`
+// acks each message into a file no agent looks at, and the listener dies
+// with the run, so mail sent to the child was silently lost. The child
+// pops its inbox in the foreground (so it sees what it acks) when the
+// PreToolUse notice says mail landed and before each report.
+const autoRunNoListenerRule = " flow-bus, auto run: do NOT arm an inbox listener — no Monitor, " +
+	"no background `flow inbox pop --wait`, no `flow watch`; flow refuses `pop --wait` here. " +
+	"Report with `flow message` and never wait for a reply. When a flow-bus notice says mail landed, and " +
+	"before each report and before `flow done`, run `flow inbox pop` in the foreground (one-shot, never " +
+	"--wait): it shows you one message; repeat until empty and act on what it says."
+
+// codexNoListenerRule replaces the Monitor discipline in an interactive
+// Codex session. Codex has no Monitor tool, and its shell tool kills a
+// backgrounded child as soon as the command returns (measured on
+// codex-cli 0.166: under 0.5s), so the old "background `flow inbox pop
+// --wait`" fallback never listened. Worse, mail already pending when it
+// was armed got acked at once into output the model never read, and was
+// lost. Mail reaches a Codex session through the flow-bus notices instead
+// (PreToolUse while it works, UserPromptSubmit when the user types), and
+// it pops in the foreground.
+const codexNoListenerRule = " flow-bus, Codex session: do NOT arm an inbox listener — Codex has no " +
+	"Monitor and kills background shell jobs when the command returns, so a background " +
+	"`flow inbox pop --wait` would ack your mail unseen (flow refuses `pop --wait` here). Mail " +
+	"reaches you as flow-bus notices before your tool calls and when the user types. When a notice " +
+	"says mail landed or is pending, run `flow inbox pop` in the foreground (one-shot, never --wait): " +
+	"it shows you one message; repeat until empty and act on what it says. Still subscribe to what " +
+	"this task depends on: `flow watch <task-or-project-slug>` (tasks you create from this session " +
+	"are watched automatically); their reports arrive the same way."
+
+// isCodexSession reports whether the current session runs under Codex:
+// the bound task is pinned to the codex harness, or this process is a
+// Codex tool shell ($CODEX_THREAD_ID). Hooks see only the pin — Codex
+// exports CODEX_THREAD_ID to tool shells, never to hook processes.
+func isCodexSession(bound *flowdb.Task) bool {
+	if bound != nil && bound.Harness.Valid && bound.Harness.String == string(harness.NameCodex) {
+		return true
+	}
+	h := ambientHarness()
+	return h != nil && h.Name() == harness.NameCodex
+}
+
+// noListenerSession reports whether the session must pop its inbox in
+// the foreground instead of relying on a listener: a headless auto run,
+// or any Codex session.
+func noListenerSession(bound *flowdb.Task) bool {
+	return isAutoRunSession(bound) || isCodexSession(bound)
+}
 
 // busSessionStartContext returns extra SessionStart context (may be "").
 func busSessionStartContext() string {
@@ -61,6 +113,15 @@ func busSessionStartContext() string {
 	b.WriteString(surfaceHumanMail(db, s.SessionID))
 	if s.TaskSlug != "" {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
+		t, _ := flowdb.GetTask(db, s.TaskSlug)
+		if isAutoRunSession(t) {
+			b.WriteString(autoRunNoListenerRule)
+			return b.String()
+		}
+		if isCodexSession(t) {
+			b.WriteString(codexNoListenerRule)
+			return b.String()
+		}
 		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
 			"deferred tool: load it first with ToolSearch \"select:Monitor\"). The loop is " +
 			"required (Monitor streams stdout lines as events): " +
@@ -156,6 +217,12 @@ func busPreToolUseContext() string {
 	// the same messages.
 	_ = flowdb.MarkSurfaced(db, s.TaskSlug, ids)
 
+	// An auto run or a Codex session has no listener: it must pop in the
+	// foreground itself, so don't point it at a Monitor.
+	how := " (or your armed Monitor loop delivers it)"
+	if t, _ := flowdb.GetTask(db, s.TaskSlug); noListenerSession(t) {
+		how = " in the foreground now (one-shot, not --wait) and act on it"
+	}
 	lead := msgs[0]
 	subject := "A new message"
 	if len(msgs) > 1 {
@@ -168,9 +235,9 @@ func busPreToolUseContext() string {
 	return fmt.Sprintf(
 		" flow-bus: %s%s just landed in this session's inbox — it may change or cancel the "+
 			"action you're about to take. Top: [%s] %q. Read it BEFORE proceeding: "+
-			"`flow inbox pop` (or your armed Monitor loop delivers it). Inform-only — you have "+
+			"`flow inbox pop`%s. Inform-only — you have "+
 			"NOT consumed it; this notice will not repeat for these message(s).",
-		subject, urgentNote, lead.ID, busSnippet(lead.Body))
+		subject, urgentNote, lead.ID, busSnippet(lead.Body), how)
 }
 
 // humanSurfaceMax caps how many human-mail items a notice shows inline.
@@ -236,8 +303,12 @@ func pendingTaskNotice(db *sql.DB, slug string) string {
 	if err != nil || n == 0 {
 		return ""
 	}
+	how := " now (or your armed Monitor loop will deliver them)."
+	if t, _ := flowdb.GetTask(db, slug); noListenerSession(t) {
+		how = " in the foreground now (one-shot, not --wait), repeat until empty, and act on them."
+	}
 	return fmt.Sprintf(" flow-bus: %d pending message(s) in this session's inbox — consume with "+
-		"`flow inbox pop` now (or your armed Monitor loop will deliver them).", n)
+		"`flow inbox pop`%s", n, how)
 }
 
 // nudgeBackoffFor returns the cooldown before the next broadcast-nudge
@@ -278,10 +349,11 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 	defer db.Close()
-	slug := lookupBoundTaskSlug()
-	if slug == "" {
+	t := lookupBoundTask()
+	if t == nil {
 		return 0
 	}
+	slug := t.Slug
 	// A headless auto run reports through its prompt's one reporting rule
 	// (parent inbox / human at done-blocked); a broadcast nudge on top
 	// would deliver its progress to the parent twice (it auto-watches).
@@ -292,7 +364,24 @@ func cmdHookStop(args []string) int {
 	if nudge == "" {
 		return 0
 	}
+	if t.Harness.Valid && t.Harness.String == string(harness.NameCodex) {
+		return emitCodexStopBlock(strings.TrimSpace(nudge))
+	}
 	return emitHookContext("Stop", strings.TrimSpace(nudge))
+}
+
+// emitCodexStopBlock is the Codex form of the Stop nudge. Codex's Stop
+// output schema is closed and has no hookSpecificOutput: text reaches
+// the agent only as {"decision":"block","reason":...}, which Codex
+// replays as a continuation prompt (the stop_hook_active guard above
+// keeps that from looping).
+func emitCodexStopBlock(reason string) int {
+	out := map[string]any{"decision": "block", "reason": reason}
+	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encode hook json: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // stopBroadcastNudge returns the watcher broadcast-nudge context (""
