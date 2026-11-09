@@ -9,11 +9,11 @@ import (
 )
 
 func hooksPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := codexHome()
 	if err != nil {
-		return "", fmt.Errorf("no home dir: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".codex", "hooks.json"), nil
+	return filepath.Join(home, "hooks.json"), nil
 }
 
 func installHook(event, matcher, command string) (bool, error) {

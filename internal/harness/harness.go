@@ -60,6 +60,11 @@ type LaunchOpts struct {
 	// (claude: --resume instead of --session-id, which it rejects for an
 	// existing session as "already in use").
 	Resume bool
+
+	// LastMessagePath, when set on a headless run, asks the harness to
+	// write the session's final message to this file (codex: -o). Impls
+	// without an equivalent ignore it.
+	LastMessagePath string
 }
 
 // BackgroundAgent is one entry from a harness's background-agent
@@ -147,7 +152,8 @@ type Harness interface {
 	// synthesizes a v4 UUID) or probe the harness (codex/gemini exec
 	// a one-shot to mint and capture an id). Always returns a real
 	// id on success — flow's caller has a single uniform spawn path.
-	NewSessionID() (string, error)
+	// workDir is the task's work_dir; probing impls run there.
+	NewSessionID(workDir string) (string, error)
 
 	// ValidateSessionID rejects strings that can't be a session id for
 	// this harness. Used by `flow do --here` to gate the env-var-
@@ -317,4 +323,27 @@ type Harness interface {
 
 	// UninstallStopHook removes any Stop entry matching `command`.
 	UninstallStopHook(command string) (removed bool, err error)
+}
+
+// CloseoutDeferrer is an optional capability. A harness that implements it
+// with DefersCloseoutInAutoRun() == true cannot host the close-out sweep
+// (a second headless run) while its own auto run is still alive. Codex is
+// the case: its shell tool yields a long command to a background session
+// after ~10s, so the agent sees `flow done` "return" mid-sweep, ends its
+// turn, and the exiting `codex exec resume` kills the still-running sweep;
+// the orphaned command's late output then hits the closed thread ("failed
+// to record rollout items: thread <id> not found"). Isolating the nested
+// run (--ephemeral etc.) doesn't help — it's a lifecycle problem, not
+// shared state. For such harnesses an auto run's own `flow done` skips the
+// inline sweep and the `flow __auto-exec` supervisor runs it after the
+// harness process exits.
+type CloseoutDeferrer interface {
+	DefersCloseoutInAutoRun() bool
+}
+
+// DefersCloseoutInAutoRun reports whether h opts into the deferred sweep.
+// Harnesses that don't implement CloseoutDeferrer keep the inline sweep.
+func DefersCloseoutInAutoRun(h Harness) bool {
+	d, ok := h.(CloseoutDeferrer)
+	return ok && d.DefersCloseoutInAutoRun()
 }

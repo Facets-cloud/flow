@@ -15,6 +15,12 @@ import (
 func setupFlowRoot(t *testing.T) string {
 	t.Helper()
 	root := initTempFlowRoot(t)
+	// Tests can run inside a flow auto run; its marker must not leak in
+	// and flip every bound session into auto-run behavior.
+	t.Setenv(autoRunEnvVar, "")
+	// Likewise a Codex shell's thread id would turn every session into a
+	// Codex one (no listener, pop --wait refused).
+	t.Setenv("CODEX_THREAD_ID", "")
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}

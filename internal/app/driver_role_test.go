@@ -271,7 +271,10 @@ func TestNoBlockWordingIsConsistent(t *testing.T) {
 			t.Errorf("%s missing \"never block waiting for a reply\"", where)
 		}
 	}
-	if !strings.Contains(string(ref), "Monitor runs in the background") {
-		t.Error("delegation.md template should explain the background Monitor")
+	// The template brief is for an auto child, which arms no listener
+	// (autoRunNoListenerRule): it must say how mail reaches it instead.
+	if !strings.Contains(string(ref), "Arm no inbox listener") ||
+		!strings.Contains(string(ref), "pop it in the foreground") {
+		t.Error("delegation.md template should say the child arms no listener and pops in the foreground")
 	}
 }

@@ -13,11 +13,11 @@ import (
 // RenderTranscript finds Codex's sid-keyed rollout JSONL and renders its
 // response items into the same human-readable shape used by other harnesses.
 func (c *codex) RenderTranscript(_ string, sessionID string, compact bool, w io.Writer) error {
-	home, err := os.UserHomeDir()
+	root, err := codexHome()
 	if err != nil {
-		return fmt.Errorf("no home dir: %w", err)
+		return err
 	}
-	p, err := resolveTranscriptPath(filepath.Join(home, ".codex", "sessions"), sessionID)
+	p, err := resolveTranscriptPath(filepath.Join(root, "sessions"), sessionID)
 	if err != nil {
 		return err
 	}

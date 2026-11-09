@@ -9,6 +9,76 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- `flow init` now installs the PreToolUse hook too. It used to install
+  only three of the four hooks that `flow skill install` installs.
+- **Codex harness.** The live-session guard now sees Codex auto runs
+  (`codex exec resume <flags> <id>`), so `flow do` no longer opens a second
+  writer on a thread a headless run is driving. `flow transcript` honours
+  `$CODEX_HOME`. The thread-minting probe runs in the task's work_dir instead
+  of the caller's cwd.
+- **Codex auto runs no longer log "failed to record rollout items: thread
+  … not found".** A Codex auto run's own `flow done` now defers the
+  close-out sweep, and the `flow __auto-exec` supervisor runs it once the
+  harness process has exited. Before, the sweep ran as a nested `codex exec`
+  inside the live run. Claude and interactive `flow done` still sweep inline.
+  Root cause, confirmed live: Codex's shell tool backgrounds `flow done`
+  after ~10s, the agent ends its turn, and the exiting run kills the
+  sweep. An inline sweep (plain or `--ephemeral`) cannot survive that.
+- **Race fixes around the deferred close-out sweep.** The supervisor sweeps
+  after the harness exits and before it records the run's outcome. During
+  that window the task is `done`, the auto run is `running` and the
+  supervisor pid is alive. Three races in that window are fixed:
+  - If the supervisor dies mid-sweep, a done task is reconciled to
+    `completed`, not `dead`. A done child that exits non-zero is also
+    `completed`, so its parent never gets a crash notice.
+  - Only one sweep runs. `flow done` on a task that is already done exits
+    0 and skips the sweep. The status flip is conditional, so of two
+    concurrent `flow done` calls only one sweeps. A `flow done` while the
+    task's Codex auto run is alive (for example a human closing it mid-run)
+    leaves the sweep to the supervisor.
+  - A stale supervisor no longer overwrites a newer run. It finalizes only
+    while the row still carries its own pid. If `flow do --auto --force`
+    started a newer run, the old supervisor logs that the newer run took
+    over. It writes no status and sends no dead-child notice.
+- **Codex Stop hook output.** In Codex sessions the watcher broadcast
+  nudge is emitted as `{"decision":"block","reason":…}`. Codex's Stop
+  schema rejects `hookSpecificOutput`.
+- **Codex `$CODEX_HOME`.** The flow skill and `hooks.json` install under
+  `$CODEX_HOME` when it is set (default `~/.codex`), where Codex reads them.
+- **Auto runs no longer lose mail to a background inbox listener.** An
+  auto run is bound, so it was told to arm an inbox listener. Codex has no
+  Monitor and took the fallback: a background `flow inbox pop --wait` loop.
+  Each message sent to the child was acked into output nobody read and lost
+  when the run exited. Auto runs now get the opposite rule, in the
+  SessionStart hook and in the auto prompt: no Monitor, no `pop --wait`, no
+  `flow watch`. When the PreToolUse notice says mail landed, and before each
+  report, the child runs a one-shot `flow inbox pop` in the foreground and
+  acts on it. `flow inbox pop --wait` refuses under `FLOW_AUTO_RUN` (exit 3,
+  so a stray listener loop stops) and leaves the message unread.
+- **Interactive Codex sessions no longer lose mail to a background inbox
+  listener.** With no Monitor tool, a bound Codex session took the
+  "background Bash `flow inbox pop --wait`" fallback. Measured live on
+  codex-cli 0.166: Codex kills a backgrounded child under 0.5s after the
+  shell command returns, so the listener never listened. Mail already
+  pending when it was armed was acked at once into a log file the model
+  never read, and was lost. A Codex session now gets a no-listener rule at
+  SessionStart: when a flow-bus notice says mail landed or is pending, run a
+  one-shot `flow inbox pop` in the foreground. `flow watch` still works.
+  The pending-count and PreToolUse notices say "pop in the foreground"
+  instead of pointing at a Monitor. `flow inbox pop --wait` refuses in a
+  Codex shell (`$CODEX_THREAD_ID`, exit 3) and leaves the message unread.
+  `flow do --auto` from a Codex parent no longer prints a Monitor recipe.
+  The driver blocks and the delegation child template no longer promise an
+  inbox listener. Claude's Monitor recipe is unchanged.
+- **Harness-neutral SessionStart text.** The hook no longer says "This
+  Claude session", "resumes Claude sessions" or "invoke the flow skill via
+  the Skill tool". It uses the same wording as the prompts below, names
+  `CLAUDE.md / AGENTS.md`, and asks to use AskUserQuestion only if the
+  harness has it.
+- **Harness-neutral session prompts.** The bootstrap, auto-run, close-out
+  sweep and owner-tick prompts no longer assume Claude. They say to use the
+  Skill tool if the harness has one, or else read the flow `SKILL.md` (the
+  real Codex path is spelled out), and they name `CLAUDE.md / AGENTS.md`.
 - **`FLOW_TERM=bg` spawns no longer fail on newer `claude --bg` output.**
   Newer Claude Code prints a `Starting background service…` line before
   the `backgrounded · <id> · <name>` banner. flow only read the first
@@ -16,6 +86,34 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   the session had started. flow now checks every line for the banner,
   with or without ANSI color, and still reports a clear error when no
   banner line appears.
+
+### Added
+
+- **Install for every present harness.** `flow init`, `flow skill
+  install` and `flow skill update` now install the skill and all four
+  hooks (SessionStart, UserPromptSubmit, PreToolUse, Stop) for every
+  harness on the machine, not just the ambient one. A harness is present
+  when its binary is on `PATH` or its config home exists (`~/.claude`;
+  `$CODEX_HOME`, else `~/.codex`); with none found, Claude is the
+  fallback. `flow skill uninstall` removes the skill from every harness
+  that has it. All four take `--harness claude|codex` to act on one
+  harness; an unknown name is a usage error that lists the valid names,
+  and a named harness that isn't detected is installed anyway. Output is
+  prefixed per harness (`claude: …`, `codex: …`).
+- The post-upgrade skill refresh now checks every harness, each against
+  its own `VERSION` sidecar, and refreshes only harnesses that already
+  have the skill, so a harness you removed it from stays opted out.
+- Codex auto runs write the session's final message (`codex exec -o`) to
+  `auto-runs/<run>.last.txt` next to the run log; `flow show task` lists it
+  as `auto_run_last:` once it exists.
+- **Codex hooks.** `flow skill install` now installs the UserPromptSubmit,
+  PreToolUse and Stop hooks for Codex too (Codex 0.166 fires them; before,
+  only SessionStart was installed). The entries have no matcher, because
+  Codex tool names differ from Claude's.
+- **Hooks fire in headless Codex runs.** Auto runs, the close-out sweep and
+  owner ticks pass `--dangerously-bypass-hook-trust`, so hooks fire without
+  a one-time interactive trust approval, as they do under Claude. Interactive
+  launches keep Codex's trust prompt.
 
 ## [0.1.0-alpha.34] — 2026-11-06
 
