@@ -674,3 +674,68 @@ func TestSpawnTabInRoutesGroupToRex(t *testing.T) {
 		t.Errorf("window new not routed to session:sm; calls=%v", calls)
 	}
 }
+
+// TestSpawnTabMacOnlyBackendOnLinuxFailsGracefully: on a non-darwin host,
+// auto-detection that lands on an osascript backend (iTerm is the
+// historical default) must return an actionable error instead of
+// shelling out to a missing osascript.
+func TestSpawnTabMacOnlyBackendOnLinuxFailsGracefully(t *testing.T) {
+	cases := []struct{ flowTerm, termProgram string }{
+		{"", ""},      // default → iterm
+		{"iterm", ""}, // explicit mac-only choice
+		{"terminal", ""},
+		{"warp", ""},
+		{"ghostty", ""},
+		{"", "ghostty"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flowTerm+"/"+tc.termProgram, func(t *testing.T) {
+			Override = ""
+			oldGOOS := GOOS
+			GOOS = "linux"
+			t.Cleanup(func() { GOOS = oldGOOS })
+			t.Setenv("ZELLIJ", "")
+			t.Setenv("REX_SESSION", "")
+			t.Setenv("KITTY_WINDOW_ID", "")
+			t.Setenv("TERM", "xterm-256color")
+			t.Setenv("FLOW_TERM", tc.flowTerm)
+			t.Setenv("TERM_PROGRAM", tc.termProgram)
+
+			calls := stubAllRunners(t)
+			err := SpawnTab("title", "/tmp", "echo hi", nil)
+			if err == nil {
+				t.Fatal("expected an error for a macOS-only backend on linux")
+			}
+			for _, want := range []string{"macOS", "zellij", "kitty", "--here", "--auto"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q should mention %q", err, want)
+				}
+			}
+			if *calls.iterm || *calls.terminal || *calls.warp || *calls.ghostty {
+				t.Error("no osascript backend runner should be invoked on linux")
+			}
+			found, ferr := FocusSession("sid", "claude")
+			if found || ferr != nil {
+				t.Errorf("FocusSession on linux mac-only backend = (%v, %v), want (false, nil)", found, ferr)
+			}
+		})
+	}
+}
+
+// TestSpawnTabCrossPlatformBackendOnLinux: zellij and kitty work on linux
+// and must not be blocked by the macOS-only guard.
+func TestSpawnTabCrossPlatformBackendOnLinux(t *testing.T) {
+	Override = ""
+	oldGOOS := GOOS
+	GOOS = "linux"
+	t.Cleanup(func() { GOOS = oldGOOS })
+	t.Setenv("ZELLIJ", "0")
+
+	calls := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab in zellij on linux: %v", err)
+	}
+	if !*calls.zellij {
+		t.Error("expected zellij.Runner to be called")
+	}
+}

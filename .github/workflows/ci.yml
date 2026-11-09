@@ -31,3 +31,25 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -s sh install.sh packaging/homebrew/render-formula.sh
+
+  cross-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [darwin/arm64, darwin/amd64, linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build ${{ matrix.target }}
+        run: |
+          GOOS="${MATRIX_TARGET%/*}" GOARCH="${MATRIX_TARGET#*/}" CGO_ENABLED=0 go build -o /dev/null .
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}

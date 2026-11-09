@@ -10,32 +10,35 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Pure Go (CGO_ENABLED=0), so every target cross-compiles from one runner.
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - goarch: arm64
-            asset: flow-darwin-arm64
-          - goarch: amd64
-            asset: flow-darwin-amd64
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+    env:
+      ASSET: flow-${{ matrix.goos }}-${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build ${{ matrix.asset }}
+      - name: Build ${{ env.ASSET }}
         env:
-          GOOS: darwin
+          GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
         run: |
           go build -trimpath \
             -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
-            -o "${{ matrix.asset }}" .
+            -o "${ASSET}" .
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
           if-no-files-found: error
 
   release:
@@ -49,7 +52,7 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: |
-          shasum -a 256 flow-darwin-* > SHA256SUMS
+          sha256sum flow-darwin-* flow-linux-* > SHA256SUMS
           cat SHA256SUMS
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -57,6 +60,49 @@ jobs:
           files: |
             dist/flow-darwin-arm64
             dist/flow-darwin-amd64
+            dist/flow-linux-amd64
+            dist/flow-linux-arm64
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  homebrew:
+    # Bumps Formula/flow.rb in Facets-cloud/homebrew-tap. Skipped (not failed)
+    # until the tap repo exists and the HOMEBREW_TAP_TOKEN secret is set — see
+    # packaging/homebrew/README.md.
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Check tap token
+        id: gate
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else echo "HOMEBREW_TAP_TOKEN not set; skipping tap bump."; fi
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: flow
+      - if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Facets-cloud/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Render and push formula
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p SHA256SUMS -D .
+          mkdir -p tap/Formula
+          sh flow/packaging/homebrew/render-formula.sh "$GITHUB_REF_NAME" SHA256SUMS > tap/Formula/flow.rb
+          cd tap
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add Formula/flow.rb
+          git diff --cached --quiet && { echo "formula unchanged"; exit 0; }
+          git commit -m "flow ${GITHUB_REF_NAME}"
+          git push

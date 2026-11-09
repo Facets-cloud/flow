@@ -33,7 +33,9 @@ import (
 	"flow/internal/terminal"
 	"flow/internal/warp"
 	"flow/internal/zellij"
+	"fmt"
 	"os"
+	"runtime"
 )
 
 // Backend identifies which terminal app a SpawnTab call targets.
@@ -52,6 +54,10 @@ const (
 // Override, if non-empty, forces a backend regardless of env vars.
 // Used by tests; production code should leave it as "".
 var Override Backend
+
+// GOOS is the host OS used by the macOS-only backend guard. Defaults to
+// runtime.GOOS; tests pin it to exercise the linux path on a Mac.
+var GOOS = runtime.GOOS
 
 // BackgroundOverride, if non-nil, forces IsBackground's result
 // regardless of $FLOW_TERM. Used by tests; production code leaves it nil.
@@ -117,6 +123,9 @@ func SpawnTab(title, cwd, command string, envVars map[string]string) error {
 // tab should open in. Only the Rex backend has groups; every other
 // backend ignores it. An empty group means "wherever flow ran from".
 func SpawnTabIn(group, title, cwd, command string, envVars map[string]string) error {
+	if err := unsupportedHere(); err != nil {
+		return err
+	}
 	switch Detect() {
 	case BackendZellij:
 		return zellij.SpawnTab(title, cwd, command, envVars)
@@ -153,6 +162,9 @@ func SpawnTabIn(group, title, cwd, command string, envVars map[string]string) er
 //   - Terminal.app: pid → tty via ps, then osascript walk
 //   - iTerm2 (default): pid → tty via ps, then osascript walk
 func FocusSession(sessionID, binary string) (bool, error) {
+	if unsupportedHere() != nil {
+		return false, nil
+	}
 	switch Detect() {
 	case BackendZellij:
 		return zellij.FocusSession(sessionID, binary)
@@ -165,6 +177,34 @@ func FocusSession(sessionID, binary string) (bool, error) {
 	default:
 		return iterm.FocusSession(sessionID, binary)
 	}
+}
+
+// macOnly reports whether a backend drives its terminal via osascript and
+// therefore only works on macOS.
+func macOnly(b Backend) bool {
+	switch b {
+	case BackendITerm, BackendTerminal, BackendWarp, BackendGhostty:
+		return true
+	}
+	return false
+}
+
+// unsupportedHere returns an actionable error when auto-detection lands on
+// a macOS-only backend on a non-darwin host (e.g. Linux, where iTerm is
+// still the fallback default). Override is test-only and bypasses the
+// guard so tests can pin a mocked backend on any CI host.
+func unsupportedHere() error {
+	if Override != "" || GOOS == "darwin" {
+		return nil
+	}
+	b := Detect()
+	if !macOnly(b) {
+		return nil
+	}
+	return fmt.Errorf("cannot open a terminal tab: the %q backend is macOS-only and this host is %s.\n"+
+		"Run flow inside zellij or kitty (or set FLOW_TERM=zellij|kitty), or skip the tab:\n"+
+		"  flow do --here <task>   bind the current session\n"+
+		"  flow do --auto <task>   run headless in the background", b, GOOS)
 }
 
 // ShellQuote is re-exported so callers don't need to import the chosen
