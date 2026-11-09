@@ -7,6 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
+  opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
+  `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an
+  already-open session. When no supported terminal is detected (Linux
+  outside tmux/zellij/kitty) `flow do` no longer dead-ends: it keeps the
+  reserved session, prints the exact command to run by hand and points at
+  `--here` / `--auto`. The macOS selection order is unchanged.
+- **Prompt-based install.** A root `INSTALL.md` tells a coding agent how to
+  install flow on macOS or Linux from one pasted line: detect OS/arch, run
+  `install.sh`, fix PATH, `flow init`, verify. The skill's upgrade
+  reference follows the same path on both OSes, and the skill text now
+  scopes osascript/xattr/launchd advice to macOS.
+- **CI runs the full suite on macOS and Linux**, plus a Linux smoke job
+  (`scripts/smoke-linux.sh`) that installs from a local mirror with
+  `install.sh`, inits, adds a task, binds with `--here`, spawns inside tmux
+  with a stub `claude`, closes with `flow done`, and round-trips a message.
+
 ### Fixed
 
 - **A dead parentless auto run no longer fails silently.** When a

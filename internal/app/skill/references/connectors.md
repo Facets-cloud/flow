@@ -6,7 +6,10 @@ to the asking task. Nothing pings unless the user installed one. This page
 is the full public contract: it is enough to write a connector from
 scratch. A working sample is `examples/connectors/macos` in the flow repo
 (a native macOS dialog). It is also built into the flow binary, so
-`flow connector add macos` works with no repo checkout.
+`flow connector add macos` works with no repo checkout. On Linux there is
+no built-in desktop-dialog connector yet; hub/webhook-style connectors work
+the same on both OSes, and secrets fall back from the macOS keychain to
+0600 files under `$FLOW_ROOT/secrets`.
 
 ```
 agent: flow message user "q" --options "A|B"      (returns at once)
