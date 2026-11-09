@@ -265,6 +265,13 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	t.AutoRunStatus = sql.NullString{String: status, Valid: true}
 	t.AutoRunFinished = sql.NullString{String: finished, Valid: true}
 	t.AutoRunPID = sql.NullInt64{}
+	// The supervisor itself died (kill -9, reboot), so it never sent a
+	// dead notice. This UPDATE matched exactly once, so this is the single
+	// running→dead transition: tell the human about a parentless run.
+	// (Parented reconcile is unchanged: no parent notice here.)
+	if status == "dead" {
+		notifyHumanOfDeadOrphan(db, t)
+	}
 }
 
 // cmdAutoExec is the hidden `flow __auto-exec <slug>` supervisor. It runs
@@ -303,7 +310,9 @@ func cmdAutoExec(args []string) int {
 	}
 	if !task.SessionID.Valid || task.SessionID.String == "" {
 		fmt.Fprintf(os.Stderr, "error: task %q has no session_id; cannot run headlessly\n", slug)
-		_, _ = finalizeAutoRun(db, slug, "dead")
+		if owned, _ := finalizeAutoRun(db, slug, "dead"); owned {
+			notifyHumanOfDeadOrphan(db, task)
+		}
 		return 1
 	}
 
@@ -324,7 +333,9 @@ func cmdAutoExec(args []string) int {
 	h, herr := harnessForSpawn(task)
 	if herr != nil {
 		fmt.Fprintf(os.Stderr, "error: resolve harness for %q: %v\n", slug, herr)
-		_, _ = finalizeAutoRun(db, slug, "dead")
+		if owned, _ := finalizeAutoRun(db, slug, "dead"); owned {
+			notifyHumanOfDeadOrphan(db, task)
+		}
 		return 1
 	}
 	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
@@ -371,6 +382,7 @@ func cmdAutoExec(args []string) int {
 	}
 	if status == "dead" && owned {
 		notifyParentOfDeadChild(db, task)
+		notifyHumanOfDeadOrphan(db, task)
 	}
 
 	if runErr != nil {
