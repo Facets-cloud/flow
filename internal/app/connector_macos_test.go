@@ -254,3 +254,90 @@ func TestB8MacosRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+// Peer hubs: for mail from a peer hub (from_peer set) the sample shows an
+// EXAMPLE third button, "Hand to agent": it marks the mail seen, then
+// starts `flow auto` with a brief telling the agent to answer the peer
+// with `flow message <peer> --reply-to <id>` and `flow done`.
+
+// recordingFlow points the harness's FLOW_BIN at a fake that appends one
+// NUL-separated argv line per call to <dir>/calls and saves each call's
+// stdin to <dir>/stdin.<n>.
+func (h *macosHarness) recordingFlow() string {
+	h.t.Helper()
+	dir := h.t.TempDir()
+	fake := filepath.Join(dir, "flow")
+	script := "#!/bin/bash\nn=$(ls " + dir + " | grep -c '^stdin\\.')\ncat > " + dir + "/stdin.$n\n" +
+		"{ printf '%s\\0' \"$@\"; printf '\\n'; } >> " + dir + "/calls\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+	for i, kv := range h.env {
+		if strings.HasPrefix(kv, "FLOW_BIN=") {
+			h.env[i] = "FLOW_BIN=" + fake
+		}
+	}
+	return dir
+}
+
+func flowCalls(t *testing.T, dir string, want int) [][]string {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		b, _ := os.ReadFile(filepath.Join(dir, "calls"))
+		lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+		if len(b) > 0 && len(lines) >= want {
+			var out [][]string
+			for _, l := range lines {
+				out = append(out, strings.Split(strings.TrimSuffix(l, "\x00"), "\x00"))
+			}
+			return out
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("want %d flow calls, got %q", want, b)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+const peerPayload = `{"id":"ab12","from_task":"","from_peer":"bob","body":"ship v2?","options":["Yes","No"],"urgent":false,"kind":"ask","created_at":"2026-11-09T10:00:00Z","reply_hint":"x"}`
+
+func TestMacosPeerHandToAgent(t *testing.T) {
+	h := newMacosHarness(t, "Hand to agent"+us+"yes if CI is green")
+	dir := h.recordingFlow()
+	h.run("send", peerPayload)
+	calls := flowCalls(t, dir, 2)
+	eqArgs(t, "first call", calls[0], []string{"human", "seen", "ab12"})
+	if len(calls[1]) < 3 || calls[1][0] != "auto" || !strings.HasPrefix(calls[1][1], "Answer bob: ship v2?") ||
+		calls[1][2] != "--brief" || calls[1][3] != "-" {
+		t.Fatalf("auto call = %q", calls[1])
+	}
+	brief, err := os.ReadFile(filepath.Join(dir, "stdin.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ship v2?", "yes if CI is green", "Yes | No",
+		`flow message bob --reply-to ab12`, "flow done"} {
+		if !strings.Contains(string(brief), want) {
+			t.Errorf("brief lacks %q:\n%s", want, brief)
+		}
+	}
+	args := h.dialogArgs()
+	eqArgs(t, "dialog argv", args[2:], []string{"flow · from bob", "ship v2?\n\nChoices: Yes | No", "peer", "Later", "Yes", "No"})
+}
+
+func TestMacosPeerReplyDirectly(t *testing.T) {
+	h := newMacosHarness(t, "Reply"+us+"Yes")
+	h.run("send", peerPayload)
+	eqArgs(t, "flow call", h.flowCall(), []string{"human", "reply", "ab12", "Yes"})
+}
+
+func TestMacosLocalAskHasNoHandToAgent(t *testing.T) {
+	h := newMacosHarness(t, "LATER")
+	h.run("send", `{"id":"cd34","from_task":"asker","from_peer":"","body":"hi","options":[],"urgent":false,"kind":"ask","created_at":"x","reply_hint":"x"}`)
+	args := h.dialogArgs()
+	if args[4] != "ask" {
+		t.Errorf("local ask dialog mode = %q, want ask", args[4])
+	}
+	h.noFlowCall()
+}

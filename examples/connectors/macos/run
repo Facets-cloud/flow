@@ -1,8 +1,15 @@
 #!/bin/bash
-# flow human connector (contract v1): a native macOS dialog.
+# flow human connector (contract 2, role "human"): a native macOS dialog.
 #
-#   run send   stdin: {"id","from_task","body","options":[...],"urgent",...}
+#   run send   stdin: {"id","from_task","from_peer","body","options":[...],"urgent",...}
 #   run test   stdin: same shape, id "test" — shows an OK-only dialog
+#
+# Mail from a peer hub (from_peer set) gets an EXAMPLE third button,
+# "Hand to agent": it marks the mail seen, then starts a headless agent
+#   "$FLOW_BIN" auto "Answer <peer>: …" --brief -
+# whose brief carries the question, your note, and the instruction to
+# answer with `flow message <peer> --reply-to <id>` then `flow done`.
+# That is this connector's own logic, not a flow feature.
 #
 # Stock macOS only: bash 3.2 + osascript (JXA parses the JSON; a plain
 # AppleScript `display dialog` asks — no `tell application "System
@@ -22,13 +29,13 @@ log() {
 	printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$HERE/state/dialog.log" 2>/dev/null
 }
 
-# JXA: JSON on argv[0] → id US from_task US body US urgent US options... US END
+# JXA: JSON on argv[0] → id US from_task US body US urgent US from_peer US options... US END
 PARSE_JS='function run(argv) {
   var j = JSON.parse(argv[0]);
   if (j === null || typeof j !== "object") throw new Error("payload is not a JSON object");
   var opts = Array.isArray(j.options) ? j.options.map(String) : [];
   var s = function (v) { return (v === undefined || v === null) ? "" : String(v); };
-  return [s(j.id), s(j.from_task), s(j.body), j.urgent ? "1" : "0"].concat(opts).concat(["END"]).join(String.fromCharCode(31));
+  return [s(j.id), s(j.from_task), s(j.body), j.urgent ? "1" : "0", s(j.from_peer)].concat(opts).concat(["END"]).join(String.fromCharCode(31));
 }'
 
 # AppleScript dialog. argv: title body mode later-label options...
@@ -48,7 +55,10 @@ DIALOG_AS='on run argv
 			return "OK"
 		end if
 		try
-			if (count of opts) = 0 then
+			if theMode is "peer" then
+				set r to display dialog theBody with title theTitle default answer "" buttons {laterLabel, "Hand to agent", "Reply"} default button "Reply" cancel button laterLabel
+				return (button returned of r) & sep & (text returned of r)
+			else if (count of opts) = 0 then
 				set r to display dialog theBody with title theTitle default answer "" buttons {laterLabel, "Reply"} default button "Reply" cancel button laterLabel
 				return "Reply" & sep & (text returned of r)
 			else if (count of opts) < 3 then
@@ -67,13 +77,51 @@ DIALOG_AS='on run argv
 	end timeout
 end run'
 
-# dialog <mode> <id> <from_task> <body> <urgent> [options...]
+# hand_to_agent <id> <peer> <body> <note> [options...]: the EXAMPLE
+# "Hand to agent" action — mark the mail seen, then start a headless
+# agent whose brief tells it how to answer the peer.
+hand_to_agent() {
+	local id="$1" peer="$2" body="$3" note="$4"
+	shift 4
+	"$FLOW_BIN" human seen "$id" </dev/null >/dev/null 2>&1 || log "$id human seen failed"
+	local short="${body%%$'\n'*}"
+	[ "${#short}" -gt 50 ] && short="${short:0:49}…"
+	local choices="" o
+	for o in "$@"; do
+		if [ -z "$choices" ]; then choices="$o"; else choices="$choices | $o"; fi
+	done
+	{
+		printf '# Answer %s\n\n' "$peer"
+		printf '%s (another flow hub) asked me, the human:\n\n' "$peer"
+		printf '%s\n' "$body" | sed 's/^/> /'
+		[ -n "$choices" ] && printf '\nChoices offered: %s\n' "$choices"
+		printf '\nMy note for you: %s\n\n' "${note:-(none — use your judgment)}"
+		printf '## What to do\n\n'
+		printf 'Work out the answer (follow my note). Then reply ONCE with:\n\n'
+		printf '    flow message %s --reply-to %s "<your answer>"\n\n' "$peer" "$id"
+		printf 'then run `flow done`.\n\n## Done when\n\nThe answer was sent to %s with --reply-to %s.\n' "$peer" "$id"
+	} | "$FLOW_BIN" auto "Answer $peer: $short" --brief - >/dev/null 2>&1 || log "$id flow auto failed"
+}
+
+# dialog <mode> <id> <from_task> <body> <urgent> <from_peer> [options...]
 # Runs detached (see below): shows the dialog, then answers flow.
 dialog() {
-	local mode="$1" id="$2" from="$3" body="$4" urgent="$5"
-	shift 5
+	local mode="$1" id="$2" from="$3" body="$4" urgent="$5" peer="$6"
+	shift 6
 	local title="flow"
 	[ -n "$from" ] && title="flow · $from"
+	local question="$body"
+	if [ "$mode" = "ask" ] && [ -n "$peer" ]; then
+		mode=peer
+		title="flow · from $peer"
+		if [ "$#" -gt 0 ]; then
+			local choices="" o
+			for o in "$@"; do
+				if [ -z "$choices" ]; then choices="$o"; else choices="$choices | $o"; fi
+			done
+			body="$body"$'\n\n'"Choices: $choices"
+		fi
+	fi
 	[ "$mode" = "test" ] && title="flow · test"
 	[ "$urgent" = "1" ] && body="URGENT: $body"
 	local later="Later" o
@@ -92,8 +140,13 @@ dialog() {
 	local choice="${result%%"$US"*}" note=""
 	[ "$result" != "$choice" ] && note="${result#*"$US"}"
 
+	if [ "$mode" = "peer" ] && [ "$choice" = "Hand to agent" ]; then
+		hand_to_agent "$id" "$peer" "$question" "$note" "$@"
+		return 0
+	fi
+
 	local text
-	if [ "$#" -eq 0 ]; then
+	if [ "$mode" = "peer" ] || [ "$#" -eq 0 ]; then
 		text="$note"
 	elif [ -n "$note" ]; then
 		text="$choice — $note"
@@ -128,12 +181,12 @@ if ! parsed="$(osascript -l JavaScript -e "$PARSE_JS" "$payload" 2>&1)"; then
 fi
 IFS="$US" read -r -d '' -a F <<<"$parsed"
 n=${#F[@]}
-if [ "$n" -lt 5 ]; then
+if [ "$n" -lt 6 ]; then
 	echo "bad payload: too few fields" >&2
 	exit 1
 fi
 opts=()
-i=4
+i=5
 while [ "$i" -lt $((n - 1)) ]; do
 	opts+=("${F[$i]}")
 	i=$((i + 1))
@@ -151,5 +204,5 @@ fi
 # Fork the dialog and return at once; flow waits on us for at most 30s.
 mode=ask
 [ "$verb" = "test" ] && mode=test
-nohup "$SELF" __dialog "$mode" "${F[0]}" "${F[1]}" "${F[2]}" "${F[3]}" ${opts[@]+"${opts[@]}"} </dev/null >/dev/null 2>&1 &
+nohup "$SELF" __dialog "$mode" "${F[0]}" "${F[1]}" "${F[2]}" "${F[3]}" "${F[4]}" ${opts[@]+"${opts[@]}"} </dev/null >/dev/null 2>&1 &
 exit 0
