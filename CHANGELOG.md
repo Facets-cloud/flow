@@ -7,6 +7,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Pick a child's harness by preference.** When both Claude Code and
+  Codex are installed, the SessionStart driver and delegation blocks add
+  one line: `harnesses available for children: claude, codex (flow auto …
+  --harness <name>; follow the user's preference)`. With one harness the
+  blocks are unchanged. The skill's delegation reference now says how to
+  choose: use the user's stated preference, else ask once and save it to
+  `kb/user.md`, else (headless) the caller's harness. When a child dies
+  on a Claude or Codex usage limit, the driver reports the limit and its
+  reset time and offers to re-run the same brief on the other harness as
+  a new child. No usage reading, no automatic switching, no re-pinning.
+
 ### Fixed
 
 - **A dead parentless auto run no longer fails silently.** When a
