@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dead parentless auto run no longer fails silently.** When a
+  `flow do --auto` / `flow auto` run (or a playbook run) with no parent task
+  ends dead — exited without `flow done`, or its supervisor was killed and
+  the run is settled dead on the next read — flow now sends the human a
+  normal, pinging message naming the task, its slug, the first line of its
+  brief and the auto-run log path, with how to reopen it. Sent once per
+  dead transition. Parented runs keep the existing parent notice; tasks
+  tagged `owner:<slug>` are left to their owner's next tick.
+
 ## [0.1.0-alpha.35] — 2026-11-09
 
 ### Added
