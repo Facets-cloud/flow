@@ -165,7 +165,9 @@ to prod", "may push a branch and open a PR, do NOT merge">
 - Parent done/archived: the child still writes its update note and sends
   its done/blocked report to the human as `flow message user "FYI: …" --fyi`.
   flow's own dead-child notice falls back to the human the same way.
-- No parent: update note; the human hears only at done/blocked.
+- No parent: update note; the human hears only at done/blocked. If the run
+  ends dead, flow itself pings the human (normal, not FYI) with the slug,
+  brief first line and log path. Owner-tagged tasks are left to the owner.
 
 ## Result contract
 
