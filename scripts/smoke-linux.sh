@@ -21,9 +21,13 @@ set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
 SOCK="flowsmoke$$"
+ORIG_HOME="$HOME"
 cleanup() {
   tmux -L "$SOCK" kill-server 2>/dev/null || true
-  rm -rf "$WORK"
+  # Never let cleanup decide the verdict (Go leaves read-only files behind
+  # if it ever writes a cache under $WORK).
+  chmod -R u+w "$WORK" 2>/dev/null || true
+  rm -rf "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -44,7 +48,9 @@ step "1. build or copy the binary into a local release mirror"
 if [ -n "${FLOW_BIN:-}" ]; then
   cp "$FLOW_BIN" "$WORK/mirror/$asset"
 else
-  (cd "$REPO" && CGO_ENABLED=0 go build -ldflags '-X main.version=v0.0.0-smoke' -o "$WORK/mirror/$asset" .)
+  # Build with the real HOME so Go uses the runner's GOPATH/module/build
+  # caches instead of downloading everything into the throwaway home.
+  (cd "$REPO" && HOME="$ORIG_HOME" CGO_ENABLED=0 go build -ldflags '-X main.version=v0.0.0-smoke' -o "$WORK/mirror/$asset" .)
 fi
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$WORK/mirror" && sha256sum "$asset" > SHA256SUMS)
