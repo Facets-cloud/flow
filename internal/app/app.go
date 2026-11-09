@@ -169,6 +169,8 @@ Human connectors (opt-in pings for asks to the human — skill references/connec
   flow connector list --available    (built-in sample connectors)
   flow connector remove <name>       (delete the connector and its secret)
   flow connector test [<name>]
+  flow connector priority <name> <n>|--clear   (ping order: lower n first, next tier only on failure)
+  flow connector escalate <dur>|off  (unseen after <dur> → ping the next tier; max 24h)
   flow human reply <id> "<text>"     (connectors only, FLOW_CONNECTOR_TOKEN: answer → asking task's inbox)
   flow human seen <id>               (connectors only: mark seen without answering)
 
