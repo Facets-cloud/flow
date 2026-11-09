@@ -119,7 +119,21 @@ type BusMessage struct {
 	NotifiedAt string
 	// AnsweredAt is when a connector recorded the human's answer.
 	AnsweredAt string
+	// Peer is the other hub: the target of an outbound row, the source
+	// of an inbound one ("" for local mail).
+	Peer string
+	// OriginRef is the other hub's message id on an inbound peer row.
+	OriginRef string
+	// Delivery is an outbound peer row's state: dispatched|sent|failed.
+	Delivery      string
+	DeliveryError string
 }
+
+// IsPeerInbound reports whether the row arrived from another hub.
+func (m *BusMessage) IsPeerInbound() bool { return m.Peer != "" && m.OriginRef != "" }
+
+// IsPeerOutbound reports whether the row is addressed to another hub.
+func (m *BusMessage) IsPeerOutbound() bool { return m.Peer != "" && m.OriginRef == "" }
 
 // Consumer identifies who changes a row's state: By is the verb recorded
 // in acked_by ('pop', 'prompt', 'read'); Identity is the consumer's bus
@@ -159,7 +173,8 @@ const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug
     urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,''),
     COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,''),
     COALESCE(options,''), fyi, ping, COALESCE(notified_at,''),
-    COALESCE(answered_at,'')`
+    COALESCE(answered_at,''), COALESCE(peer,''), COALESCE(origin_ref,''),
+    COALESCE(delivery,''), COALESCE(delivery_error,'')`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -178,7 +193,8 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
 			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt,
-			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping, &m.NotifiedAt, &m.AnsweredAt); err != nil {
+			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping, &m.NotifiedAt, &m.AnsweredAt,
+			&m.Peer, &m.OriginRef, &m.Delivery, &m.DeliveryError); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
@@ -219,8 +235,9 @@ func insertBusMessage(db queryRower, m *BusMessage) error {
 	var ping int
 	err = db.QueryRow(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi, ping)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,
+         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi,
+         peer, origin_ref, delivery, ping)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,
           CASE WHEN ?=0 THEN 0 WHEN ?=1 THEN 1
                WHEN EXISTS (SELECT 1 FROM bus_messages
                             WHERE from_task_slug=? AND kind='message' AND to_task_slug IS NULL
@@ -230,6 +247,7 @@ func insertBusMessage(db queryRower, m *BusMessage) error {
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
 		m.Body, boolInt(m.Urgent), NullIfEmpty(m.ReplyTo), options, boolInt(m.FYI),
+		NullIfEmpty(m.Peer), NullIfEmpty(m.OriginRef), NullIfEmpty(m.Delivery),
 		boolInt(candidate), boolInt(forced), m.FromTaskSlug, BusUser).Scan(&ping)
 	m.Ping = ping == 1
 	return err
