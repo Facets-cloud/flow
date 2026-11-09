@@ -85,6 +85,8 @@ func Run(args []string) int {
 		return cmdConnector(rest)
 	case "human":
 		return cmdHuman(rest)
+	case "peer":
+		return cmdPeer(rest)
 	case "inbox":
 		return cmdInbox(rest)
 	case "broadcast", "post":
@@ -174,6 +176,14 @@ Human connectors (opt-in pings for asks to the human — skill references/connec
   flow connector escalate <dur>|off  (unseen after <dur> → ping the next tier; max 24h)
   flow human reply <id> "<text>"     (connectors only, FLOW_CONNECTOR_TOKEN: answer → asking task's inbox)
   flow human seen <id>               (connectors only: mark seen without answering)
+
+Peer hubs (other flow homes, via a role-"peer" connector — skill references/peers.md):
+  flow peer add <name> --via <connector> --at <endpoint>
+  flow peer list | show <name> | rm <name> | block <name> | unblock <name>
+  flow message <peer> "<body>" [--options "A|B"] [--urgent] [--fyi] [--reply-to <id>]
+                                     (to another hub's human; never <peer>/<task>)
+  flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>]
+                    [--kind ask|fyi] [--options "A|B"] "<body>"   (connectors only)
 
 Workdirs:
   flow workdir list
