@@ -365,7 +365,20 @@ installed a connector. Connectors are any executable that follows a small
 JSON contract (`run send` / `run test`, answering with `flow human reply`).
 Each one gets its own secret, kept in the macOS keychain (scoped to the
 flow home, so two `FLOW_ROOT`s never share one), so an agent can't
-answer for you. Contract v1, with enough detail to write your own:
+answer for you.
+
+With more than one connector, order them instead of pinging all at once.
+flow tries the lowest tier first and falls back only if every connector in
+it fails; with escalation on, an ask still unseen after the delay goes to
+the next tier too (`--urgent` asks still go to all at once):
+
+```bash
+flow connector priority flowhub 1        # tried first
+flow connector priority macos 2          # fallback (same number = same tier, in parallel)
+flow connector escalate 10m              # unseen 10m after delivery → next tier (off by default)
+```
+
+Contract v1, with enough detail to write your own:
 [`internal/app/skill/references/connectors.md`](internal/app/skill/references/connectors.md).
 
 ### `flow stats`

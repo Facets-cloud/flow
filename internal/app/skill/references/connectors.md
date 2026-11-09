@@ -53,7 +53,7 @@ object on stdin.
 
 | Verb | When | Contract |
 |---|---|---|
-| `run send` | a human ask was marked to ping | Notify the human. Exit 0 = notified; non-zero = failed (logged). |
+| `run send` | a human ask was marked to ping | Notify the human. Exit 0 = notified, meaning a human can actually see it now; non-zero = failed (logged, and the next priority tier is tried). |
 | `run test` | `flow connector add` and `flow connector test` | Send a sample notification. It gets the same JSON shape with `"id": "test"` and `"kind": "test"`, and takes no reply. |
 
 stdin for `send`:
@@ -87,8 +87,8 @@ Rules:
   group) after 30s. Anything that waits on the human, such as a dialog or
   a chat thread, must be forked into its own session with stdio
   redirected, and then `exit 0`.
-- One failing or hanging connector never blocks the others; they run in
-  parallel.
+- One failing or hanging connector never blocks the others; connectors
+  in the same priority tier run in parallel (see Priority and fallback).
 - Results go one line per connector to `$FLOW_ROOT/connectors/dispatch.log`.
   `notified_at` is stamped on the row if any connector succeeded.
 
@@ -121,13 +121,60 @@ flow connector add macos       same, from the copy built into the binary (no che
 flow connector list            installed connectors, their events and where the secret lives
 flow connector list --available  built-in sample names
 flow connector test [<name>]   send a test notification (all if no name)
-flow connector remove <name>   delete the folder and its secret
+flow connector remove <name>   delete the folder, its secret and its priority
+flow connector priority <name> <n>       ping order (see below)
+flow connector priority <name> --clear
+flow connector escalate <dur>|off        global, default off
 ```
 
 `add` treats its argument as a path when that directory exists, otherwise
 as a built-in sample name; an unknown name exits 1 and lists the samples.
 If `add`'s test fails, the install is rolled back. To change an installed
 connector, `remove` it and `add` it again; the secret is regenerated.
+
+## Priority and fallback
+
+With several connectors installed, every ask would otherwise ping all of
+them at once (answer in one, the others stay open). The user can order
+them instead. The order is the user's choice, not the connector author's:
+it lives in a flow-owned file, `$FLOW_ROOT/connectors/config.json`, never
+in `connector.json`.
+
+```
+flow connector priority flowhub 1     lower n is tried first
+flow connector priority macos 2       same n = one tier, run in parallel
+flow connector escalate 10m           or off (default); max 24h
+```
+
+```json
+{"priority": {"flowhub": 1, "macos": 2}, "escalate_after": "10m"}
+```
+
+```
+dispatch <id>   (detached; never blocks the sender)
+  urgent ──────► every tier at once (as with no priorities)
+  ask ─────────► tier 1 ─ any connector exit 0 ─► delivered, stop
+                   └ all fail / time out ─► tier 2 … none ok ─► stays unread
+     escalate set & a tier delivered:
+        sleep <dur>; still unseen and unanswered? ─► next tier (same walk)
+        repeat until seen or the tiers run out — one chain per ask
+```
+
+- No priorities set: one tier holding every connector, exactly the
+  all-in-parallel contract v1 behavior.
+- Connectors without a priority form one last tier, after every
+  prioritized one.
+- This is why exit 0 must mean a human can actually see it: a connector
+  that exits 0 for a ping nobody will see (a hub that is down but queues
+  silently) stops the fallback.
+- `dispatch.log` records the path, e.g. `bc93f2bf flowhub fail → macos ok`
+  or `bc93f2bf escalate → macos ok`, plus one line per connector.
+- A broken `config.json` never silences pings: dispatch logs it and falls
+  back to all at once. `flow connector list` shows each priority, the
+  resulting order, and the escalation setting. `remove` drops the
+  connector's priority.
+- The one-ping-per-task rule and `--fyi` are unchanged; escalation only
+  re-pings the same ask through the next tier.
 
 ## Writing one: a checklist
 

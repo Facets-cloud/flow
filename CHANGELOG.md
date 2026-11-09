@@ -7,6 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Connector priority, fallback and escalation.** With more than one
+  human connector installed, every ask used to ping all of them at once.
+  `flow connector priority <name> <n>` now orders them: the lowest tier is
+  tried first (same number = one tier, in parallel), and the next tier
+  only if every connector in it failed. `flow connector escalate <dur>|off`
+  (default off, max 24h) pings the next tier when an ask is still unseen
+  that long after delivery. `--urgent` asks still go to all at once, and
+  with no priorities set nothing changes. The settings live in
+  `$FLOW_ROOT/connectors/config.json`; `flow connector list` shows the
+  order and `dispatch.log` records the path taken (e.g. `flowhub fail →
+  macos ok`).
+
 ### Fixed
 
 - `flow init` now installs the PreToolUse hook too. It used to install

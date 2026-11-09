@@ -2,12 +2,14 @@ package app
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -258,13 +260,18 @@ func testPayload() connector.Payload {
 	}
 }
 
-const connectorUsage = `usage: flow connector <add|list|remove|test> ...
+const connectorUsage = `usage: flow connector <add|list|remove|test|priority|escalate> ...
   flow connector add <dir|sample> validate, install, store a secret, run its test
                                   (<sample> = a built-in name, e.g. macos)
-  flow connector list             installed connectors
+  flow connector list             installed connectors, priority order, escalation
   flow connector list --available built-in sample connectors (no checkout needed)
-  flow connector remove <name>    delete the connector and its secret
-  flow connector test [<name>]    send a test notification (all if no name)`
+  flow connector remove <name>    delete the connector, its secret and priority
+  flow connector test [<name>]    send a test notification (all if no name)
+  flow connector priority <name> <n>       ping order: lower n first, same n together;
+                                           a tier is tried only if the earlier one failed
+  flow connector priority <name> --clear   drop its priority (unprioritized go last)
+  flow connector escalate <dur>|off        if an ask stays unseen <dur> after a tier
+                                           delivered it, ping the next tier (max 24h)`
 
 // cmdConnector implements `flow connector ...` (opt-in human pings).
 func cmdConnector(args []string) int {
@@ -281,6 +288,10 @@ func cmdConnector(args []string) int {
 		return cmdConnectorRemove(args[1:])
 	case "test":
 		return cmdConnectorTest(args[1:])
+	case "priority":
+		return cmdConnectorPriority(args[1:])
+	case "escalate":
+		return cmdConnectorEscalate(args[1:])
 	case "dispatch":
 		return cmdConnectorDispatch(args[1:])
 	case "-h", "--help", "help":
@@ -400,16 +411,39 @@ func cmdConnectorList(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	cfg, cfgErr := connector.LoadConfig(root)
 	for _, m := range ms {
 		where := store.Where(m.Name)
 		if where == "" {
 			where = "MISSING secret"
 		}
-		fmt.Printf("%-16s events=%s  secret=%s  %s\n", m.Name, strings.Join(m.Events, ","), where, m.Dir)
+		prio := "-"
+		if n, ok := cfg.Priority[m.Name]; ok {
+			prio = fmt.Sprint(n)
+		}
+		fmt.Printf("%-16s priority=%s  events=%s  secret=%s  %s\n", m.Name, prio, strings.Join(m.Events, ","), where, m.Dir)
 	}
 	for _, e := range errs {
 		fmt.Printf("invalid: %v\n", e)
 	}
+	if cfgErr != nil {
+		fmt.Printf("invalid: %v (dispatch ignores it and pings all connectors at once)\n", cfgErr)
+		return 0
+	}
+	var order []string
+	for _, tier := range connector.Tiers(ms, cfg.Priority) {
+		var ns []string
+		for _, m := range tier {
+			ns = append(ns, m.Name)
+		}
+		order = append(order, strings.Join(ns, "+"))
+	}
+	fmt.Printf("order: %s (urgent asks go to all at once)\n", strings.Join(order, " → "))
+	esc := cfg.EscalateAfter
+	if esc == "" {
+		esc = "off"
+	}
+	fmt.Printf("escalate: %s\n", esc)
 	return 0
 }
 
@@ -446,7 +480,110 @@ func cmdConnectorRemove(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: remove secret: %v\n", err)
 		return 1
 	}
+	if cfg, err := connector.LoadConfig(root); err == nil {
+		if _, ok := cfg.Priority[name]; ok {
+			delete(cfg.Priority, name)
+			if err := connector.SaveConfig(root, cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: drop priority: %v\n", err)
+			}
+		}
+	}
 	fmt.Printf("removed connector %s (folder and secret)\n", name)
+	return 0
+}
+
+// cmdConnectorPriority sets or clears one connector's tier number in
+// connectors/config.json (the user's routing, not the connector's).
+func cmdConnectorPriority(args []string) int {
+	const usage = "usage: flow connector priority <name> <n>|--clear   (n ≥ 1; lower n is pinged first)"
+	if len(args) != 2 {
+		fmt.Fprintln(os.Stderr, usage)
+		return 2
+	}
+	name, val := args[0], args[1]
+	n := 0
+	if val != "--clear" {
+		v, err := strconv.Atoi(val)
+		if err != nil || v < 1 {
+			fmt.Fprintf(os.Stderr, "error: priority %q must be an integer ≥ 1\n%s\n", val, usage)
+			return 2
+		}
+		n = v
+	}
+	root, err := connectorsRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	cfg, err := connector.LoadConfig(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v (fix or delete it)\n", err)
+		return 1
+	}
+	if n == 0 {
+		delete(cfg.Priority, name)
+	} else {
+		installed := false
+		for _, m := range installedConnectors() {
+			if m.Name == name {
+				installed = true
+			}
+		}
+		if !installed {
+			fmt.Fprintf(os.Stderr, "error: no connector %q installed\n", name)
+			return 1
+		}
+		if cfg.Priority == nil {
+			cfg.Priority = map[string]int{}
+		}
+		cfg.Priority[name] = n
+	}
+	if err := connector.SaveConfig(root, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if n == 0 {
+		fmt.Printf("cleared priority of %s\n", name)
+	} else {
+		fmt.Printf("priority %s = %d\n", name, n)
+	}
+	return 0
+}
+
+// cmdConnectorEscalate sets the global escalation delay (or off).
+func cmdConnectorEscalate(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: flow connector escalate <dur>|off   (e.g. 10m; max 24h)")
+		return 2
+	}
+	d, err := connector.ParseEscalate(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	root, err := connectorsRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	cfg, err := connector.LoadConfig(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v (fix or delete it)\n", err)
+		return 1
+	}
+	cfg.EscalateAfter = ""
+	if d > 0 {
+		cfg.EscalateAfter = args[0]
+	}
+	if err := connector.SaveConfig(root, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if d == 0 {
+		fmt.Println("escalation off")
+	} else {
+		fmt.Printf("escalation: an ask still unseen %v after a tier delivered it goes to the next tier\n", args[0])
+	}
 	return 0
 }
 
@@ -485,12 +622,22 @@ func cmdConnectorTest(args []string) int {
 	return rc
 }
 
+// dispatchSleep is the escalation wait inside the detached dispatcher.
+// Overridable in tests so escalation never costs real minutes.
+var dispatchSleep = time.Sleep
+
 // cmdConnectorDispatch is the hidden detached worker spawned after a
-// pinging send: `flow connector dispatch <id>`. It runs `send` on every
-// installed connector subscribed to the row's event (ask | urgent), all in
-// parallel so one hanging connector never delays the others, logs one
-// line per connector to connectors/dispatch.log, and stamps notified_at
-// when at least one succeeded.
+// pinging send: `flow connector dispatch <id>`. It runs `send` on the
+// installed connectors subscribed to the row's event (ask | urgent), logs
+// one line per connector to connectors/dispatch.log, and stamps
+// notified_at when at least one succeeded.
+//
+//	urgent          ─► every connector at once (parallel)
+//	ask, no prio    ─► one tier = every connector at once (contract v1)
+//	ask, priorities ─► tier 1 (parallel within) ─ any ok ─► done
+//	                         └ all fail ─► tier 2 … none ok ─► stays unread
+//	    escalate on & a tier succeeded: sleep; if still unseen ─► next
+//	    tier (same fail-walk); repeat until seen or tiers run out.
 func cmdConnectorDispatch(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: flow connector dispatch <message-id>")
@@ -532,31 +679,89 @@ func cmdConnectorDispatch(args []string) int {
 		Urgent: m.Urgent, Kind: "ask", CreatedAt: m.CreatedAt,
 		ReplyHint: fmt.Sprintf(`"$FLOW_BIN" human reply %s "<answer>"  (or: "$FLOW_BIN" human seen %s)`, m.ID, m.ID),
 	}
-	errs := make([]error, len(targets))
-	var wg sync.WaitGroup
-	for i, c := range targets {
-		wg.Add(1)
-		go func(i int, c *connector.Manifest) {
-			defer wg.Done()
-			errs[i] = invokeConnector(c, connector.VerbSend, p)
-		}(i, c)
-	}
-	wg.Wait()
-	ok := false
-	for i, c := range targets {
-		if errs[i] != nil {
-			logDispatch("%s %s fail %v", m.ID, c.Name, errs[i])
-			continue
+
+	var cfg connector.Config
+	if root, err := connectorsRoot(); err == nil {
+		if cfg, err = connector.LoadConfig(root); err != nil {
+			// A broken config must never silence pings: fall back to
+			// all-in-parallel, the pre-priority behavior.
+			logDispatch("%s config error %v (ignoring priorities)", m.ID, err)
+			cfg = connector.Config{}
 		}
-		ok = true
-		logDispatch("%s %s ok", m.ID, c.Name)
 	}
-	if ok {
-		if err := flowdb.MarkNotified(db, m.ID); err != nil {
-			logDispatch("%s error mark notified: %v", m.ID, err)
+	escalate, err := cfg.Escalate()
+	if err != nil {
+		logDispatch("%s config error %v (escalation off)", m.ID, err)
+		escalate = 0
+	}
+	tiers := [][]*connector.Manifest{targets}
+	if !m.Urgent {
+		tiers = connector.Tiers(targets, cfg.Priority)
+	}
+	if len(targets) == 0 {
+		tiers = nil
+	}
+
+	next, ok := walkTiers(db, m.ID, tiers, 0, p, "")
+	for ok && escalate > 0 && next < len(tiers) {
+		dispatchSleep(escalate)
+		cur, err := flowdb.GetBusMessageByID(db, m.ID)
+		if err != nil || cur == nil {
+			logDispatch("%s escalate stop: %v", m.ID, err)
+			break
 		}
+		if cur.SeenAt != "" || cur.AnsweredAt != "" {
+			logDispatch("%s escalate stop: seen", m.ID)
+			break
+		}
+		next, ok = walkTiers(db, m.ID, tiers, next, p, "escalate → ")
 	}
 	return 0
+}
+
+// walkTiers runs tiers[from:] one at a time until one tier has a success
+// (each tier's connectors run in parallel). It logs one line per
+// connector, stamps notified_at on success, and — when more than one tier
+// ran, or prefix is set — a path line like "<id> flowhub fail → macos ok".
+// It returns the index after the succeeding tier and whether one did.
+func walkTiers(db *sql.DB, id string, tiers [][]*connector.Manifest, from int, p connector.Payload, prefix string) (int, bool) {
+	var path []string
+	i := from
+	ok := false
+	for ; i < len(tiers) && !ok; i++ {
+		tier := tiers[i]
+		errs := make([]error, len(tier))
+		var wg sync.WaitGroup
+		for j, c := range tier {
+			wg.Add(1)
+			go func(j int, c *connector.Manifest) {
+				defer wg.Done()
+				errs[j] = invokeConnector(c, connector.VerbSend, p)
+			}(j, c)
+		}
+		wg.Wait()
+		var parts []string
+		for j, c := range tier {
+			if errs[j] != nil {
+				logDispatch("%s %s fail %v", id, c.Name, errs[j])
+				parts = append(parts, c.Name+" fail")
+				continue
+			}
+			ok = true
+			logDispatch("%s %s ok", id, c.Name)
+			parts = append(parts, c.Name+" ok")
+		}
+		path = append(path, strings.Join(parts, ", "))
+	}
+	if ok {
+		if err := flowdb.MarkNotified(db, id); err != nil {
+			logDispatch("%s error mark notified: %v", id, err)
+		}
+	}
+	if prefix != "" || len(path) > 1 {
+		logDispatch("%s %s%s", id, prefix, strings.Join(path, " → "))
+	}
+	return i, ok
 }
 
 // copyTree copies a connector folder (regular files and directories,
