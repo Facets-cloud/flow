@@ -29,7 +29,6 @@ func TestInstallDocIsAgentReady(t *testing.T) {
 		"macOS",
 		"Linux",
 		"sudo",
-		"brew install facets-cloud/tap/flow",
 		"tmux",
 		"FLOW_INSTALL_DIR",
 		"FLOW_VERSION",
@@ -41,6 +40,11 @@ func TestInstallDocIsAgentReady(t *testing.T) {
 	// Agent docs drift into essays; keep this one a checklist.
 	if n := strings.Count(doc, "\n"); n > 140 {
 		t.Errorf("INSTALL.md is %d lines; keep it under 140 so an agent follows it verbatim", n)
+	}
+	// Homebrew is not an install path (no tap exists); the agent must not
+	// send users to one.
+	if strings.Contains(strings.ToLower(doc), "brew") {
+		t.Errorf("INSTALL.md mentions Homebrew; the install path is install.sh only")
 	}
 	// Both OSes use the same path; the doc must not tell Linux users to
 	// run a macOS-only command unconditionally.
@@ -54,10 +58,13 @@ func TestInstallDocIsAgentReady(t *testing.T) {
 // hard-coding the macOS-only xattr step and the README.
 func TestSkillUpgradeReferenceIsOSAware(t *testing.T) {
 	ref := skillCorpusFile(t, "references/upgrade.md")
-	for _, want := range []string{"INSTALL.md", "Linux", "macOS", "install.sh", "flow skill update", "brew upgrade"} {
+	for _, want := range []string{"INSTALL.md", "Linux", "macOS", "install.sh", "flow skill update"} {
 		if !strings.Contains(ref, want) {
 			t.Errorf("references/upgrade.md lacks %q", want)
 		}
+	}
+	if strings.Contains(strings.ToLower(ref), "brew") {
+		t.Errorf("references/upgrade.md mentions Homebrew; there is no tap to upgrade from")
 	}
 	if strings.Contains(ref, "Do not skip the `xattr") {
 		t.Errorf("references/upgrade.md still makes xattr unconditional; it is macOS-only and install.sh already does it")

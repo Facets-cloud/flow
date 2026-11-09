@@ -28,8 +28,6 @@ via `AskUserQuestion`.
    (override with `FLOW_INSTALL_DIR`; pin with `FLOW_VERSION=vX.Y.Z`).
 3. Pick the lane that matches where the binary lives:
    - `~/.local/bin/flow` (install.sh default) → re-run install.sh.
-   - Homebrew (macOS, `brew list flow` works) → `brew upgrade
-     facets-cloud/tap/flow`.
    - `/usr/local/bin/flow` or another root-owned path → re-run install.sh
      with `FLOW_INSTALL_DIR=<that dir>`; it needs `sudo`, so say so and
      let the user run it (or move to `~/.local/bin` and fix PATH).
@@ -47,8 +45,7 @@ via `AskUserQuestion`.
 
 **Platform notes:**
 
-- macOS: install.sh and the Homebrew formula clear Gatekeeper's quarantine
-  attribute themselves. Only a hand-downloaded binary needs
+- macOS: install.sh clears Gatekeeper's quarantine attribute itself. Only a hand-downloaded binary needs
   `xattr -d com.apple.quarantine <path>` before it will run.
 - Linux: there is no quarantine step. Nothing else differs.
 

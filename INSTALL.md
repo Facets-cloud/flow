@@ -33,8 +33,6 @@ curl -fsSL https://raw.githubusercontent.com/Facets-cloud/flow/main/install.sh |
   `sudo` — say so and let the user run it).
 - No `curl`? The script also works with `wget`. If neither exists, ask
   before installing one (`apt-get install -y curl` needs `sudo`).
-- macOS alternative: `brew install facets-cloud/tap/flow`. Always use the
-  full tap name; plain `brew install flow` is an unrelated tool.
 - From source (needs Go 1.25+): `git clone https://github.com/Facets-cloud/flow && cd flow && make install`.
 
 ## 3. Make sure `flow` is on PATH
