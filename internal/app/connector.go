@@ -719,6 +719,9 @@ func cmdConnectorDispatch(args []string) int {
 		Urgent: m.Urgent, Kind: "ask", CreatedAt: m.CreatedAt,
 		ReplyHint: fmt.Sprintf(`"$FLOW_BIN" human reply %s "<answer>"  (or: "$FLOW_BIN" human seen %s)`, m.ID, m.ID),
 	}
+	if m.IsPeerInbound() {
+		p.FromPeer = m.Peer
+	}
 
 	var cfg connector.Config
 	if root, err := connectorsRoot(); err == nil {

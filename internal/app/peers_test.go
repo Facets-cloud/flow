@@ -8,7 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"flow/internal/connector"
 	"flow/internal/flowdb"
 )
 
@@ -539,5 +541,41 @@ func TestMessageReplyToInboundPeer(t *testing.T) {
 	}
 	if rc := msgRC(t, "carol", "wrong thread", "--reply-to", in.ID); rc != 2 {
 		t.Errorf("reply to bob's message via carol rc=%d, want 2", rc)
+	}
+}
+
+// P7: the human-ping payload names the peer a message came from
+// ("from_peer"; empty for local senders).
+func TestHumanPingPayloadFromPeer(t *testing.T) {
+	peerHub(t, "0")
+	db := openFlowDB(t)
+	stubDispatchLauncher(t, nil)
+	installFakeConnector(t, "desk", `"ask","urgent"`, "exit 0")
+	withSecret(t, "desk")
+	var payloads []map[string]any
+	orig := runConnector
+	t.Cleanup(func() { runConnector = orig })
+	runConnector = func(m *connector.Manifest, verb string, payload []byte, env []string, timeout time.Duration) error {
+		var p map[string]any
+		if err := json.Unmarshal(payload, &p); err != nil {
+			t.Fatalf("payload %s: %v", payload, err)
+		}
+		payloads = append(payloads, p)
+		return nil
+	}
+
+	in := inboundAsk(t, db, "b-1", "ship?")
+	dispatch(t, in.ID)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t")
+	local := askRow(t, "local ask")
+	dispatch(t, local.ID)
+	if len(payloads) != 2 {
+		t.Fatalf("payloads = %v", payloads)
+	}
+	if v, ok := payloads[0]["from_peer"]; !ok || v != "bob" {
+		t.Errorf("inbound ping from_peer = %v (present=%v)", v, ok)
+	}
+	if v, ok := payloads[1]["from_peer"]; !ok || v != "" {
+		t.Errorf("local ping from_peer = %v (present=%v), want empty string", v, ok)
 	}
 }

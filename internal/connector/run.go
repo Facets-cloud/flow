@@ -27,6 +27,9 @@ type Payload struct {
 	Kind      string   `json:"kind"` // "ask" | "test"
 	CreatedAt string   `json:"created_at"`
 	ReplyHint string   `json:"reply_hint"`
+	// FromPeer names the peer hub the message came from ("" for mail
+	// from this hub's own tasks).
+	FromPeer string `json:"from_peer"`
 }
 
 // Timeout is how long one connector invocation may run before it (and
