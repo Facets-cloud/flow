@@ -79,8 +79,11 @@ func TestInboxPopWaitRefusedInAutoRun(t *testing.T) {
 	if rc != popExitNoListener {
 		t.Fatalf("pop --wait in auto run rc=%d, want %d; out=%s", rc, popExitNoListener, out)
 	}
-	if !strings.Contains(out, "auto run") {
-		t.Errorf("refusal must explain itself, got: %s", out)
+	if !strings.Contains(out, "auto run") || !strings.Contains(out, "one-shot `flow inbox pop` in the foreground") {
+		t.Errorf("refusal must explain itself and give the foreground-pop rule, got: %s", out)
+	}
+	if strings.Contains(out, "flow inbox read <id>") {
+		t.Errorf("refusal still points at flow inbox read: %s", out)
 	}
 	var status string
 	if err := db.QueryRow(`SELECT status FROM bus_messages WHERE body='ping'`).Scan(&status); err != nil {

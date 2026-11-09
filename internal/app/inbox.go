@@ -405,7 +405,7 @@ func inboxPop(args []string) int {
 	// lost when the run exits. Refuse before touching the queue.
 	if *wait && os.Getenv(autoRunEnvVar) != "" {
 		fmt.Fprintln(os.Stderr, "flow inbox pop --wait: refused inside an auto run (FLOW_AUTO_RUN) — "+
-			"do not arm an inbox listener here; check `flow inbox` at milestones and `flow inbox read <id>` instead (exit 3)")
+			"do not arm an inbox listener here; when mail lands and before each report, run a one-shot `flow inbox pop` in the foreground (exit 3)")
 		return popExitNoListener
 	}
 	db, err := openBusDB()
