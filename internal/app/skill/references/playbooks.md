@@ -219,3 +219,25 @@ that as your signal.
 **Capture-back is a primary deliverable of the first run.** Not an
 afterthought. After the first run, the playbook should be
 substantially more concrete than it started.
+
+### Scheduling a playbook (a cadence, not a daemon)
+
+"Run X every morning / every 6 hours / nightly" → `flow schedule` installs
+the OS timer that fires `flow run playbook <slug> --auto` (headless; the run
+self-closes with `flow done`). Confirm via AskUserQuestion first (it runs
+unattended from then on), then:
+
+```
+flow schedule install playbook <slug> --at 09:00     # daily at HH:MM (24h, local time)
+flow schedule install playbook <slug> --every 6h     # on an interval
+flow schedule list                                   # what is installed, per backend
+flow schedule remove playbook <slug>
+```
+
+launchd on macOS, a systemd --user timer on Linux (cron when no user
+session is reachable, or `--backend cron`); `--dry-run` prints the file
+and commands without installing; logs land in
+`$FLOW_ROOT/schedules/<slug>.{log,err.log}`. The slug must be an existing
+playbook. A hand-written plist/unit with the same name is only replaced
+with `--force`. Each fire is a normal run-task (`flow list runs <slug>`).
+

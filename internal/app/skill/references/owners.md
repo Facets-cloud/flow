@@ -111,31 +111,42 @@ Confirm retire/delete via AskUserQuestion (`--delete` is destructive). Edit
 the charter directly at `owners/<slug>/charter.md`.
 
 **Ensuring the tick scheduler (host setup, once per machine).** flow has **no
-daemon and no OS-specific scheduler code** — it only provides `flow owner
-tick-due` (scan due owners, dispatch detached ticks). Firing it on an
-interval is **this skill's job, per host**. When the user creates/starts
-their first owner — or asks "are my owners running?" — ensure (idempotently:
-check → install if missing → reload if dropped) a host scheduler runs `flow
-owner tick-due` ~every 60s:
-- **macOS (launchd):** if `launchctl list | grep
-  cloud.facets.flow.owner-scheduler` is absent, write
-  `~/Library/LaunchAgents/cloud.facets.flow.owner-scheduler.plist` —
-  `Label`, `ProgramArguments=[<abs flow>, owner, tick-due]`,
-  `StartInterval=60`, `RunAtLoad=true`,
-  `StandardOut/ErrorPath=~/.flow/owner-scheduler.{log,err.log}`, and —
-  **CRITICAL** — `EnvironmentVariables.PATH` = the user's full interactive
-  `$PATH` (launchd's default PATH is minimal; without it the tick fails
-  `exec: "claude": executable file not found` — claude/gh/git live in
-  ~/.local/bin, homebrew). `launchctl load -w <plist>` (or `bootstrap
-  gui/$UID`), then verify with `launchctl list`.
-- **Linux:** a systemd **user** timer (`OnUnitActiveSec=60s` + a `.service`
-  running `flow owner tick-due`), or `* * * * * <flow> owner tick-due` in
-  crontab.
+daemon** — it only provides `flow owner tick-due` (scan due owners, dispatch
+detached ticks). Firing it on an interval is the OS timer's job, and
+**`flow schedule` installs that timer**; never hand-write a plist, unit or
+crontab line. When the user creates/starts their first owner — or asks "are
+my owners running?" — check `flow schedule list` and, if `owner-scheduler`
+is missing or not loaded/active, offer (AskUserQuestion, never silently):
 
-It's **opt-in** (owners then run unattended until paused/unloaded) — offer
-via AskUserQuestion; never install silently. Re-verify/respawn whenever the
-user touches owners. **Stop all:** unload the plist; **stop one:** `flow
-owner pause`.
+```
+flow schedule install owners            # every 60s; --every <dur> to change
+flow schedule list                      # NAME BACKEND WHEN STATUS SOURCE COMMAND
+flow schedule remove owners             # stop it
+```
+
+Per OS it writes, prints (file + content + commands run) and activates:
+- **macOS (launchd):** `~/Library/LaunchAgents/cloud.facets.flow.owner-scheduler.plist`
+  with `StartInterval`, `RunAtLoad`, the user's full `PATH` (launchd's own is
+  minimal — without it ticks fail `exec: "claude": executable file not
+  found`), `HOME`, `FLOW_ROOT` when set; `launchctl load -w`.
+- **Linux (systemd --user):** `~/.config/systemd/user/flow-owner-scheduler.{service,timer}`
+  (`OnUnitActiveSec`), `systemctl --user daemon-reload` + `enable --now`.
+  Picked when a user manager is reachable (`systemctl --user` works —
+  needs a login session; on a headless box `loginctl enable-linger $USER`
+  keeps it running after logout).
+- **Linux (cron):** one tagged crontab line (`# flow-schedule:owner-scheduler`)
+  when no systemd user session is reachable, or on `--backend cron`. cron
+  speaks whole minutes/hours only.
+- Logs: `$FLOW_ROOT/schedules/owner-scheduler.{log,err.log}`. `--dry-run`
+  shows the plan without touching anything. A file flow did not write is
+  never replaced or removed without `--force` (so a hand-written
+  `cloud.facets.flow.owner-scheduler.plist` from before this command needs
+  `--force` once, then it is flow-managed). Windows: not supported yet.
+
+It's **opt-in** (owners then run unattended until paused/removed) — offer
+via AskUserQuestion; never install silently. Re-verify with `flow schedule
+list` whenever the user touches owners. **Stop all:** `flow schedule remove
+owners`; **stop one:** `flow owner pause`.
 
 **Anti-patterns:**
 - **Don't auto-create owners** — explicit request only (they run unattended).

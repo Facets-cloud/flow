@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# flow human connector (contract v1): a Linux desktop dialog.
+#
+#   run send   stdin: {"id","from_task","body","options":[...],"urgent",...}
+#   run test   stdin: same shape, id "test" — a notification, no reply
+#
+# Tools, picked at run time from what is installed:
+#   zenity   (GNOME/GTK) or kdialog (KDE)  — the ask dialog with options
+#   notify-send                           — the test toast, and the ask
+#                                           itself when no dialog tool exists
+#   jq or python3                         — JSON parsing
+# `send`/`test` fork the dialog and exit at once; the dialog never
+# auto-dismisses. The answer goes back with
+#   "$FLOW_BIN" human reply <id> "<choice> — <note>"
+# (FLOW_BIN and FLOW_CONNECTOR_TOKEN come from flow). Cancel does nothing,
+# so the mail stays unread in `flow inbox`.
+#
+# No display (DISPLAY and WAYLAND_DISPLAY both unset — an SSH box, a
+# container, a server): `send` exits 1 saying so. flow logs the failure,
+# tries the next connector tier, and the ask stays in `flow inbox`.
+
+US=$'\x1f' # field separator between the parser and this script
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SELF="$HERE/$(basename "$0")"
+
+log() {
+	mkdir -p "$HERE/state" 2>/dev/null
+	printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$HERE/state/dialog.log" 2>/dev/null
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+has_display() { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }
+
+# dialog_tool prints zenity or kdialog (zenity preferred), or nothing.
+dialog_tool() {
+	if have zenity; then
+		echo zenity
+	elif have kdialog; then
+		echo kdialog
+	fi
+}
+
+# parse: JSON on stdin → id US from_task US body US urgent US options... US END
+parse() {
+	if have jq; then
+		jq -j 'if type != "object" then error("payload is not a JSON object") else . end
+			| [(.id // "" | tostring), (.from_task // "" | tostring), (.body // "" | tostring), (if .urgent then "1" else "0" end)]
+			  + ((.options // []) | map(tostring)) + ["END"] | join("\u001f")'
+	elif have python3; then
+		python3 -c '
+import json, sys
+j = json.load(sys.stdin)
+if not isinstance(j, dict):
+    raise SystemExit("payload is not a JSON object")
+s = lambda v: "" if v is None else str(v)
+o = j.get("options")
+opts = [str(x) for x in o] if isinstance(o, list) else []
+sys.stdout.write("\x1f".join([s(j.get("id")), s(j.get("from_task")), s(j.get("body")), "1" if j.get("urgent") else "0"] + opts + ["END"]))
+'
+	else
+		echo "needs jq or python3 to parse the payload" >&2
+		return 1
+	fi
+}
+
+# reply <id> <text>: answer flow; empty text only marks the ask seen.
+reply() {
+	local id="$1" text="$2"
+	if [ -z "$text" ]; then
+		"$FLOW_BIN" human seen "$id" >/dev/null 2>&1 || log "$id human seen failed"
+	else
+		"$FLOW_BIN" human reply "$id" "$text" >/dev/null 2>&1 || log "$id human reply failed"
+	fi
+}
+
+# dialog <mode> <id> <from_task> <body> <urgent> [options...]
+# Runs detached (see below): shows the dialog(s), then answers flow.
+dialog() {
+	local mode="$1" id="$2" from="$3" body="$4" urgent="$5"
+	shift 5
+	local title="flow"
+	[ -n "$from" ] && title="flow · $from"
+	[ "$mode" = "test" ] && title="flow · test"
+	[ "$urgent" = "1" ] && body="URGENT: $body"
+	local tool
+	tool="$(dialog_tool)"
+	[ -z "$tool" ] && { log "$id no dialog tool"; return 0; }
+
+	if [ "$mode" = "test" ]; then
+		if [ "$tool" = zenity ]; then
+			zenity --info --title="$title" --text="$body" >/dev/null 2>&1
+		else
+			kdialog --title "$title" --msgbox "$body" >/dev/null 2>&1
+		fi
+		return 0
+	fi
+
+	local text choice note
+	if [ "$#" -eq 0 ]; then
+		# No options: a text field. Cancel → nothing; empty → seen.
+		if [ "$tool" = zenity ]; then
+			text="$(zenity --entry --title="$title" --text="$body" 2>/dev/null)" || return 0
+		else
+			text="$(kdialog --title "$title" --inputbox "$body" 2>/dev/null)" || return 0
+		fi
+		reply "$id" "$text"
+		return 0
+	fi
+
+	# Options: a pick list, then an optional note.
+	if [ "$tool" = zenity ]; then
+		choice="$(zenity --list --title="$title" --text="$body" --column=Choice --hide-header "$@" 2>/dev/null)" || return 0
+	else
+		choice="$(kdialog --title "$title" --combobox "$body" "$@" 2>/dev/null)" || return 0
+	fi
+	[ -z "$choice" ] && return 0
+	local prompt="You chose: $choice"$'\n\n'"Add a note (optional):"
+	if [ "$tool" = zenity ]; then
+		note="$(zenity --entry --title="$title" --text="$prompt" 2>/dev/null)" || return 0
+	else
+		note="$(kdialog --title "$title" --inputbox "$prompt" 2>/dev/null)" || return 0
+	fi
+	text="$choice"
+	[ -n "$note" ] && text="$choice — $note"
+	reply "$id" "$text"
+}
+
+# detach <args...>: run "$SELF args" in its own session so flow's 30s
+# process-group kill (and our exit) never takes the dialog down.
+detach() {
+	if have setsid; then
+		setsid "$SELF" "$@" </dev/null >/dev/null 2>&1 &
+	else
+		nohup "$SELF" "$@" </dev/null >/dev/null 2>&1 &
+	fi
+}
+
+verb="${1:-}"
+case "$verb" in
+send | test) ;;
+__dialog)
+	shift
+	dialog "$@"
+	exit 0
+	;;
+*)
+	echo "usage: run send|test  (JSON on stdin)" >&2
+	exit 2
+	;;
+esac
+
+if ! parsed="$(parse 2>&1)"; then
+	echo "bad payload: $parsed" >&2
+	exit 1
+fi
+IFS="$US" read -r -d '' -a F <<<"$parsed"
+n=${#F[@]}
+if [ "$n" -lt 5 ]; then
+	echo "bad payload: too few fields" >&2
+	exit 1
+fi
+opts=()
+i=4
+while [ "$i" -lt $((n - 1)) ]; do
+	opts+=("${F[$i]}")
+	i=$((i + 1))
+done
+id="${F[0]}" from="${F[1]}" body="${F[2]}" urgent="${F[3]}"
+
+if [ -z "$id" ]; then
+	echo "bad payload: no id" >&2
+	exit 1
+fi
+if [ "$verb" = "send" ] && { [ -z "${FLOW_BIN:-}" ] || [ ! -x "$FLOW_BIN" ]; }; then
+	echo "FLOW_BIN is not set to the flow binary" >&2
+	exit 1
+fi
+
+if ! has_display; then
+	echo "no display (DISPLAY and WAYLAND_DISPLAY are unset): cannot show this on screen; the ask stays in flow inbox (flow inbox --as user)" >&2
+	exit 1
+fi
+
+tool="$(dialog_tool)"
+notify=""
+if have notify-send; then
+	notify=1
+fi
+if [ -z "$tool" ] && [ -z "$notify" ]; then
+	echo "no desktop tool found: install zenity or kdialog (dialogs) and/or notify-send (notifications)" >&2
+	exit 1
+fi
+
+title="flow"
+[ -n "$from" ] && title="flow · $from"
+urgency=normal
+[ "$urgent" = "1" ] && urgency=critical
+
+if [ "$verb" = "test" ]; then
+	if [ -n "$notify" ]; then
+		notify-send --app-name=flow -u "$urgency" "flow · test" "$body" >/dev/null 2>&1 || {
+			echo "notify-send failed" >&2
+			exit 1
+		}
+		exit 0
+	fi
+	detach __dialog test "$id" "$from" "$body" "$urgent"
+	exit 0
+fi
+
+if [ -n "$tool" ]; then
+	# Fork the dialog and return at once; flow waits on us for at most 30s.
+	detach __dialog ask "$id" "$from" "$body" "$urgent" ${opts[@]+"${opts[@]}"}
+	exit 0
+fi
+
+# No dialog tool: a notification is still something a human can see.
+# They answer from a terminal, so say how.
+text="$body"
+[ "$urgent" = "1" ] && text="URGENT: $text"
+if [ "${#opts[@]}" -gt 0 ]; then
+	joined=""
+	for o in "${opts[@]}"; do
+		[ -n "$joined" ] && joined="$joined | "
+		joined="$joined$o"
+	done
+	text="$text"$'\n\n'"Options: $joined"
+fi
+text="$text"$'\n'"Answer in a terminal: flow inbox --as user"
+notify-send --app-name=flow -u "$urgency" "$title" "$text" >/dev/null 2>&1 || {
+	echo "notify-send failed" >&2
+	exit 1
+}
+exit 0

@@ -7,6 +7,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`flow schedule`: the OS timer as a flow command.** Owners need a clock
+  (`flow owner tick-due` on an interval) and playbooks run on a cadence;
+  both used to mean a hand-written launchd plist. `flow schedule install
+  owners [--every 60s]` and `flow schedule install playbook <slug> --at
+  HH:MM | --every <dur>` now write and activate the native timer: launchd
+  on macOS (`~/Library/LaunchAgents/cloud.facets.flow.<name>.plist`), a
+  systemd --user `.service` + `.timer` on Linux, or one tagged crontab line
+  when no systemd user session is reachable (or `--backend cron`). It
+  prints every file (with content) and command it ran, `--dry-run` shows
+  the plan, logs go to `$FLOW_ROOT/schedules/<name>.{log,err.log}`, and
+  `flow schedule list` / `remove` manage what is installed. Files flow
+  writes carry a marker; a hand-written file is never replaced or removed
+  without `--force`. Scheduled playbooks run `--auto` (headless). Windows
+  is not supported yet.
+- **Linux human connector.** `flow connector add linux` installs a desktop
+  counterpart of the macOS dialog: `zenity` (or `kdialog`) shows the ask
+  with its options and an optional note, `notify-send` carries the test
+  toast and the ask itself when no dialog tool is installed, and the reply
+  goes back with `flow human reply`. On a box with no display it fails
+  clearly (`no display … the ask stays in flow inbox`) so the next
+  connector tier is tried and the ask waits in `flow inbox`. Needs `jq` or
+  `python3`.
+
 ### Fixed
 
 - **A dead parentless auto run no longer fails silently.** When a
