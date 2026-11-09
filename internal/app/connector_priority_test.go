@@ -270,7 +270,7 @@ func TestDispatchCorruptConfigFallsBack(t *testing.T) {
 	}
 }
 
-// Docs: the contract page, usage, README and CHANGELOG teach priority,
+// Docs: the contract page, usage, docs/connectors.md and CHANGELOG teach priority,
 // fallback and escalation.
 func TestPriorityDocs(t *testing.T) {
 	ref := strings.Join(strings.Fields(readSkillFile(t, "references/connectors.md")), " ")
@@ -287,8 +287,8 @@ func TestPriorityDocs(t *testing.T) {
 		}
 	}
 	for file, wants := range map[string][]string{
-		"../../README.md":    {"flow connector priority flowhub 1", "flow connector escalate 10m"},
-		"../../CHANGELOG.md": {"flow connector priority", "flow connector escalate"},
+		"../../docs/connectors.md": {"flow connector priority flowhub 1", "flow connector escalate 10m"},
+		"../../CHANGELOG.md":       {"flow connector priority", "flow connector escalate"},
 	} {
 		b, err := os.ReadFile(file)
 		if err != nil {
