@@ -40,13 +40,36 @@ const Timeout = 30 * time.Second
 // it forked; a connector that wants a long-lived child (a dialog) must
 // detach it into its own session.
 func Run(m *Manifest, verb string, payload []byte, env []string, timeout time.Duration) error {
+	_, err := RunOutput(m, verb, payload, env, timeout)
+	return err
+}
+
+// PeerPayload is the JSON a role-"peer" connector reads on stdin for
+// `send`: one message to carry to peer at endpoint At. Kind is "ask",
+// "fyi" or "reply" (ReplyToRef set: the other hub's id this answers).
+type PeerPayload struct {
+	ID         string   `json:"id"`
+	Peer       string   `json:"peer"`
+	At         string   `json:"at"`
+	Kind       string   `json:"kind"`
+	Body       string   `json:"body"`
+	Options    []string `json:"options"`
+	Urgent     bool     `json:"urgent"`
+	ReplyToRef string   `json:"reply_to_ref"`
+	CreatedAt  string   `json:"created_at"`
+}
+
+// RunOutput is Run that also returns the connector's stdout (at most
+// 64 KiB are kept). A peer connector may print {"remote_ref":"…"}.
+func RunOutput(m *Manifest, verb string, payload []byte, env []string, timeout time.Duration) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, m.ExecPath(), verb)
 	cmd.Dir = m.Dir
 	cmd.Env = env
 	cmd.Stdin = bytes.NewReader(payload)
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &tailWriter{buf: &stdout, max: 64 << 10}
 	cmd.Stderr = &tailWriter{buf: &stderr, max: 2048}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -59,17 +82,17 @@ func Run(m *Manifest, verb string, payload []byte, env []string, timeout time.Du
 	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("%s %s timed out after %s", m.Name, verb, timeout)
+		return stdout.Bytes(), fmt.Errorf("%s %s timed out after %s", m.Name, verb, timeout)
 	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && msg != "" {
-			return fmt.Errorf("%s %s: %v: %s", m.Name, verb, err, msg)
+			return stdout.Bytes(), fmt.Errorf("%s %s: %v: %s", m.Name, verb, err, msg)
 		}
-		return fmt.Errorf("%s %s: %v", m.Name, verb, err)
+		return stdout.Bytes(), fmt.Errorf("%s %s: %v", m.Name, verb, err)
 	}
-	return nil
+	return stdout.Bytes(), nil
 }
 
 // tailWriter keeps only the last max bytes written.

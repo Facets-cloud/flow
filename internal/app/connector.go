@@ -27,6 +27,10 @@ var sampleConnectors fs.FS = connectorsamples.Samples
 // runConnector executes one connector verb. Overridable in tests.
 var runConnector = connector.Run
 
+// runPeerConnector executes a peer connector's send, returning stdout.
+// Overridable in tests.
+var runPeerConnector = connector.RunOutput
+
 // chmodSampleExec marks the manifest's exec target executable. It reads
 // the raw manifest because connector.Load already demands the exec bit.
 func chmodSampleExec(dir string) error {
@@ -237,31 +241,41 @@ func secretStore() (connector.SecretStore, error) {
 // invokeConnector runs one verb of an installed connector with its secret,
 // FLOW_BIN and FLOW_ROOT in the environment.
 func invokeConnector(m *connector.Manifest, verb string, p connector.Payload) error {
-	store, err := secretStore()
-	if err != nil {
-		return err
-	}
-	secret, err := store.Get(m.Name)
-	if err != nil {
-		return fmt.Errorf("%s: %w (re-add the connector)", m.Name, err)
-	}
-	root, err := flowRoot()
-	if err != nil {
-		return err
-	}
 	if p.Options == nil {
 		p.Options = []string{}
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false) // keep <, >, & literal for simple shell parsers
-	if err := enc.Encode(p); err != nil {
+	payload, env, err := connectorCall(m, p)
+	if err != nil {
 		return err
 	}
-	payload := bytes.TrimRight(buf.Bytes(), "\n")
+	return runConnector(m, verb, payload, env, connectorTimeout)
+}
+
+// connectorCall encodes a payload (HTML escaping off, so <, >, & stay
+// literal for simple shell parsers) and builds the connector's
+// environment: its secret, FLOW_BIN and FLOW_ROOT.
+func connectorCall(m *connector.Manifest, p any) ([]byte, []string, error) {
+	store, err := secretStore()
+	if err != nil {
+		return nil, nil, err
+	}
+	secret, err := store.Get(m.Name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w (re-add the connector)", m.Name, err)
+	}
+	root, err := flowRoot()
+	if err != nil {
+		return nil, nil, err
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(p); err != nil {
+		return nil, nil, err
+	}
 	env := append(connectorEnv(),
 		"FLOW_CONNECTOR_TOKEN="+secret, "FLOW_BIN="+flowBinPath(), "FLOW_ROOT="+root)
-	return runConnector(m, verb, payload, env, connectorTimeout)
+	return bytes.TrimRight(buf.Bytes(), "\n"), env, nil
 }
 
 // testPayload is what `run test` receives: the send shape with id "test".
@@ -677,6 +691,9 @@ func cmdConnectorDispatch(args []string) int {
 		logDispatch("%s error no such message", args[0])
 		fmt.Fprintf(os.Stderr, "error: no message %q\n", args[0])
 		return 1
+	}
+	if m.IsPeerOutbound() {
+		return peerSend(db, m)
 	}
 	if m.Kind != "message" || m.ToTaskSlug != "" {
 		logDispatch("%s error not a human ask", m.ID)

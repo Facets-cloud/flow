@@ -2,9 +2,11 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	"flow/internal/connector"
 	"flow/internal/flowdb"
@@ -230,7 +232,30 @@ func cmdPeerShow(args []string) int {
 	if _, err := peerConnector(p.Connector); err != nil {
 		fmt.Printf("warning:    %v\n", err)
 	}
+	recent, err := flowdb.RecentPeerMessages(db, p.Name, 5)
+	if err == nil && len(recent) > 0 {
+		fmt.Println("recent:")
+		for _, m := range recent {
+			dir, state := "←", ""
+			if m.IsPeerOutbound() {
+				dir, state = "→", " ["+m.Delivery+"]"
+				if m.DeliveryError != "" {
+					state = " [" + m.Delivery + ": " + m.DeliveryError + "]"
+				}
+			}
+			fmt.Printf("  %s %s %s %s%s\n", dir, m.ID, m.CreatedAt, oneLine(m.Body, 60), state)
+		}
+	}
 	return 0
+}
+
+// oneLine flattens and truncates a body for one-line listings.
+func oneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > max {
+		return string(r[:max-1]) + "…"
+	}
+	return s
 }
 
 func cmdPeerRemove(args []string) int {
@@ -262,6 +287,109 @@ func cmdPeerBlock(args []string, block bool) int {
 		fmt.Printf("blocked peer %s — its inbound messages are rejected\n", p.Name)
 	} else {
 		fmt.Printf("unblocked peer %s\n", p.Name)
+	}
+	return 0
+}
+
+// sendToPeer stores an outbound row to peer p and spawns the detached
+// dispatch that hands it to p's connector. Human-role connectors are
+// never involved. Called by cmdMessage once addr resolved to a peer.
+func sendToPeer(db *sql.DB, p *flowdb.Peer, s busSender, body string, urgent, fyi bool, options []string, replyTo string) int {
+	if replyTo != "" {
+		parent, err := flowdb.GetBusMessageByID(db, replyTo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if parent == nil {
+			fmt.Fprintf(os.Stderr, "error: no message %q to reply to\n", replyTo)
+			return 2
+		}
+		if parent.IsPeerInbound() && parent.Peer != p.Name {
+			fmt.Fprintf(os.Stderr, "error: %s came from peer %s, not %s — reply to %s instead\n", replyTo, parent.Peer, p.Name, parent.Peer)
+			return 2
+		}
+	}
+	m := &flowdb.BusMessage{
+		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: s.Assignee, FromTaskSlug: s.TaskSlug, SenderSessionID: s.SessionID,
+		ToAssignee: p.Name, Body: body, Urgent: urgent, ReplyTo: replyTo, Options: options,
+		FYI: fyi, Peer: p.Name, Delivery: flowdb.DeliveryDispatched,
+	}
+	if err := flowdb.InsertBusMessage(db, m); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	dispatchPeer(db, m)
+	fmt.Printf("messaged peer %s [%s] via %s — delivery dispatched (flow peer show %s)\n", p.Name, m.ID, p.Connector, p.Name)
+	return 0
+}
+
+// dispatchPeer spawns the detached sender for an outbound peer row; a
+// spawn failure marks the row failed (never the caller's error).
+func dispatchPeer(db *sql.DB, m *flowdb.BusMessage) {
+	if err := dispatchLauncher(m.ID); err != nil {
+		logDispatch("%s peer %s spawn-error %v", m.ID, m.Peer, err)
+		_ = flowdb.SetDelivery(db, m.ID, flowdb.DeliveryFailed, "spawn: "+err.Error())
+	}
+}
+
+// peerSend runs inside the detached `flow connector dispatch <id>` for an
+// outbound peer row: one `run send` on the peer's connector. Exit 0 →
+// delivery=sent; non-zero, timeout or a missing peer/connector →
+// delivery=failed with the error. No auto-retry in v0.
+func peerSend(db *sql.DB, m *flowdb.BusMessage) int {
+	if m.Delivery == flowdb.DeliverySent {
+		logDispatch("%s peer %s skip already sent", m.ID, m.Peer)
+		return 0
+	}
+	fail := func(err error) int {
+		logDispatch("%s peer %s fail %v", m.ID, m.Peer, err)
+		_ = flowdb.SetDelivery(db, m.ID, flowdb.DeliveryFailed, err.Error())
+		return 0
+	}
+	p, err := flowdb.GetPeer(db, m.Peer)
+	if err != nil {
+		return fail(err)
+	}
+	if p == nil {
+		return fail(fmt.Errorf("no peer %q", m.Peer))
+	}
+	c, err := peerConnector(p.Connector)
+	if err != nil {
+		return fail(err)
+	}
+	pp := connector.PeerPayload{
+		ID: m.ID, Peer: p.Name, At: p.At, Kind: "ask", Body: m.Body, Options: m.Options,
+		Urgent: m.Urgent, CreatedAt: m.CreatedAt,
+	}
+	if pp.Options == nil {
+		pp.Options = []string{}
+	}
+	if m.FYI {
+		pp.Kind = "fyi"
+	}
+	if m.ReplyTo != "" {
+		if parent, _ := flowdb.GetBusMessageByID(db, m.ReplyTo); parent != nil &&
+			parent.IsPeerInbound() && parent.Peer == p.Name {
+			pp.Kind, pp.ReplyToRef = "reply", parent.OriginRef
+		}
+	}
+	payload, env, err := connectorCall(c, pp)
+	if err != nil {
+		return fail(err)
+	}
+	out, err := runPeerConnector(c, connector.VerbSend, payload, env, connectorTimeout)
+	if err != nil {
+		return fail(err)
+	}
+	var res struct {
+		RemoteRef string `json:"remote_ref"`
+	}
+	_ = json.Unmarshal(out, &res) // optional, debugging only
+	logDispatch("%s peer %s via %s ok remote_ref=%s", m.ID, p.Name, c.Name, res.RemoteRef)
+	if err := flowdb.SetDelivery(db, m.ID, flowdb.DeliverySent, ""); err != nil {
+		logDispatch("%s peer %s error mark sent: %v", m.ID, p.Name, err)
 	}
 	return 0
 }

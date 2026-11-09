@@ -158,11 +158,35 @@ func TouchPeerSeen(db *sql.DB, name string) error {
 }
 
 // SetDelivery records an outbound peer row's delivery state; errMsg is
-// stored for failed and cleared otherwise.
+// stored for failed and cleared otherwise. A sent row is also acked (by
+// "peer"): it left this hub, so it rolls off with normal retention; a
+// failed row stays pending — an outstanding, visible send.
 func SetDelivery(db *sql.DB, id, state, errMsg string) error {
+	if state == DeliverySent {
+		_, err := db.Exec(`UPDATE bus_messages SET delivery=?, delivery_error=NULL,
+                status='acked', acked_at=COALESCE(acked_at, ?), acked_by=COALESCE(acked_by, 'peer')
+            WHERE id=?`, state, NowISO(), id)
+		return err
+	}
 	_, err := db.Exec(`UPDATE bus_messages SET delivery=?, delivery_error=? WHERE id=?`,
 		state, NullIfEmpty(errMsg), id)
 	return err
+}
+
+// RecentPeerMessages returns the newest n rows to or from peer, newest
+// first.
+func RecentPeerMessages(db *sql.DB, peer string, n int) ([]*BusMessage, error) {
+	rows, err := queryBusMsgs(db, `peer=?`, peer)
+	if err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
+	if len(rows) > n {
+		rows = rows[:n]
+	}
+	return rows, nil
 }
 
 // InboundByRef returns the inbound row peer delivered with the other

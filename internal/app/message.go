@@ -137,6 +137,17 @@ func cmdMessage(args []string) int {
 	}
 	defer db.Close()
 
+	// A bare name that is a peer goes to that hub; <peer>/<task> is never
+	// valid (another hub's task names are unknowable).
+	if i := strings.IndexByte(addr, '/'); i >= 0 {
+		if p, _ := flowdb.GetPeer(db, addr[:i]); p != nil {
+			fmt.Fprintf(os.Stderr, "error: %q is a peer hub — its task names are unknowable; message the peer itself: flow message %s \"...\"\n", p.Name, p.Name)
+			return 2
+		}
+	} else if p, _ := flowdb.GetPeer(db, addr); p != nil {
+		return sendToPeer(db, p, currentBusSender(), body, urgent, fyi, options, replyTo)
+	}
+
 	toAssignee, toSlug, err := parseBusAddress(db, addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

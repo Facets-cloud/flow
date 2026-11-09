@@ -1,8 +1,10 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -149,4 +151,122 @@ func TestPeerCRUDCommands(t *testing.T) {
 func flowdbListPeers(t *testing.T) ([]*flowdb.Peer, error) {
 	t.Helper()
 	return flowdb.ListPeers(openFlowDB(t))
+}
+
+// peerHub sets up a flow home with a peer-role connector "pl" whose run
+// script records stdin to <marks>/pl.<n> and exits rc, plus peer "bob".
+func peerHub(t *testing.T, rc string) (marks string) {
+	t.Helper()
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "t", "sid-t")
+	marks = t.TempDir()
+	installRoleConnector(t, "pl", `"peer"`, ``,
+		`[ "$1" = send ] || exit 0; n=$(ls `+marks+` | wc -l | tr -d ' '); cat > `+marks+`/pl.$n; printf '{"remote_ref":"r-%s"}' "$n"; echo oops >&2; exit `+rc)
+	if rc, out := peerRC(t, "add", "bob", "--via", "pl", "--at", "/homes/b"); rc != 0 {
+		t.Fatalf("add peer: %d %s", rc, out)
+	}
+	return marks
+}
+
+func readMark(t *testing.T, marks string, n int) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(marks, "pl."+strconv.Itoa(n)))
+	if err != nil {
+		t.Fatalf("connector never received send #%d: %v", n, err)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatalf("payload %q: %v", b, err)
+	}
+	return p
+}
+
+// P4: flow message <peer> stores an outbound row and dispatches it to the
+// peer's connector; delivery becomes sent (exit 0) or failed (+error).
+func TestMessagePeerOutbound(t *testing.T) {
+	marks := peerHub(t, "0")
+	db := openFlowDB(t)
+	spawned := stubDispatchLauncher(t, nil)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t")
+
+	rc, out := 0, ""
+	out = captureStdout(t, func() { rc = cmdMessage([]string{"bob", "ship?", "--options", "Yes|No"}) })
+	if rc != 0 {
+		t.Fatalf("rc=%d %s", rc, out)
+	}
+	m := rowByBody(t, db, "ship?")
+	if m.Peer != "bob" || m.ToAssignee != "bob" || m.ToTaskSlug != "" || m.FromTaskSlug != "t" ||
+		m.Delivery != "dispatched" || m.Ping || m.OriginRef != "" {
+		t.Fatalf("outbound row = %+v", m)
+	}
+	if strings.Contains(out, "no cross-user transport") || !strings.Contains(out, "peer bob") {
+		t.Errorf("send output: %q", out)
+	}
+	if len(*spawned) != 1 || (*spawned)[0] != m.ID {
+		t.Fatalf("dispatch spawned = %v, want [%s]", *spawned, m.ID)
+	}
+
+	dispatch(t, m.ID)
+	p := readMark(t, marks, 0)
+	if p["id"] != m.ID || p["peer"] != "bob" || p["at"] != "/homes/b" || p["kind"] != "ask" ||
+		p["body"] != "ship?" || p["urgent"] != false || p["reply_to_ref"] != "" || p["created_at"] != m.CreatedAt {
+		t.Errorf("payload = %v", p)
+	}
+	if opts, _ := p["options"].([]any); len(opts) != 2 || opts[0] != "Yes" {
+		t.Errorf("payload options = %v", p["options"])
+	}
+	got, _ := flowdb.GetBusMessageByID(db, m.ID)
+	if got.Delivery != "sent" || got.DeliveryError != "" {
+		t.Errorf("after send: delivery=%q err=%q", got.Delivery, got.DeliveryError)
+	}
+	if !strings.Contains(readDispatchLog(t), "r-0") {
+		t.Errorf("remote_ref not logged: %s", readDispatchLog(t))
+	}
+
+	// --fyi travels as kind fyi; an unbound plain terminal may send too.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if rc := msgRC(t, "bob", "heads up", "--fyi"); rc != 0 {
+		t.Fatalf("fyi rc=%d", rc)
+	}
+	f := rowByBody(t, db, "heads up")
+	if f.FromTaskSlug != "" || !f.FYI {
+		t.Errorf("fyi row = %+v", f)
+	}
+	dispatch(t, f.ID)
+	if p := readMark(t, marks, 1); p["kind"] != "fyi" {
+		t.Errorf("fyi kind = %v", p["kind"])
+	}
+}
+
+func TestMessagePeerDeliveryFailed(t *testing.T) {
+	peerHub(t, "3")
+	db := openFlowDB(t)
+	stubDispatchLauncher(t, nil)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t")
+	if rc := msgRC(t, "bob", "anyone?"); rc != 0 {
+		t.Fatal(rc)
+	}
+	m := rowByBody(t, db, "anyone?")
+	dispatch(t, m.ID)
+	got, _ := flowdb.GetBusMessageByID(db, m.ID)
+	if got.Delivery != "failed" || !strings.Contains(got.DeliveryError, "oops") {
+		t.Errorf("failed delivery = %q err=%q", got.Delivery, got.DeliveryError)
+	}
+	out := captureStdout(t, func() { _ = cmdPeer([]string{"show", "bob"}) })
+	if !strings.Contains(out, "failed") || !strings.Contains(out, "anyone?") {
+		t.Errorf("peer show lacks recent delivery:\n%s", out)
+	}
+}
+
+// P4: remote task names are unknowable — <peer>/<task> is a usage error.
+func TestMessagePeerTaskAddressRejected(t *testing.T) {
+	peerHub(t, "0")
+	stubDispatchLauncher(t, nil)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t")
+	var rc int
+	out := captureStdout(t, func() { rc = cmdMessage([]string{"bob/x", "hi"}) })
+	if rc != 2 || !strings.Contains(out, "peer") {
+		t.Errorf("bob/x rc=%d out=%q", rc, out)
+	}
 }
