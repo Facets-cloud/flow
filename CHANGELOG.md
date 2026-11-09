@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.35] — 2026-11-09
+
 ### Added
 
 - **Connector priority, fallback and escalation.** With more than one
