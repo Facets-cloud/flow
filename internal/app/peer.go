@@ -296,7 +296,7 @@ func cmdPeerBlock(args []string, block bool) int {
 // sendToPeer stores an outbound row to peer p and spawns the detached
 // dispatch that hands it to p's connector. Human-role connectors are
 // never involved. Called by cmdMessage once addr resolved to a peer.
-func sendToPeer(db *sql.DB, p *flowdb.Peer, s busSender, body string, urgent, fyi bool, options []string, replyTo string) int {
+func sendToPeer(db *sql.DB, p *flowdb.Peer, s busSender, body string, urgent, fyi bool, options []string, replyTo string, srcs []attachSrc) int {
 	if replyTo != "" {
 		parent, err := flowdb.GetBusMessageByID(db, replyTo)
 		if err != nil {
@@ -318,7 +318,7 @@ func sendToPeer(db *sql.DB, p *flowdb.Peer, s busSender, body string, urgent, fy
 		ToAssignee: p.Name, Body: body, Urgent: urgent, ReplyTo: replyTo, Options: options,
 		FYI: fyi, Peer: p.Name, Delivery: flowdb.DeliveryDispatched,
 	}
-	if err := flowdb.InsertBusMessage(db, m); err != nil {
+	if err := insertWithAttachments(db, m, srcs); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -368,6 +368,10 @@ func peerSend(db *sql.DB, m *flowdb.BusMessage) int {
 	if pp.Options == nil {
 		pp.Options = []string{}
 	}
+	pp.Attachments = []connector.PeerAttachment{}
+	for _, a := range attachmentsJSON(m) {
+		pp.Attachments = append(pp.Attachments, connector.PeerAttachment{Name: a.Name, Size: a.Size, SHA256: a.SHA256, Path: a.Path})
+	}
 	if m.FYI {
 		pp.Kind = "fyi"
 	}
@@ -416,7 +420,8 @@ func logInbound(format string, a ...any) {
 }
 
 const deliverUsage = `usage: flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>]
-                         [--to <task>] [--kind ask|fyi] [--options "A|B"] "<body>"   (connectors only)`
+                         [--to <task>] [--kind ask|fyi] [--options "A|B"]
+                         [--attach <file> ...] "<body>"   (connectors only)`
 
 // cmdPeerDeliver is the only inbound door from another hub, callable only
 // by an installed connector (FLOW_CONNECTOR_TOKEN):
@@ -438,11 +443,11 @@ const deliverUsage = `usage: flow peer deliver --at <endpoint> --ref <their-id> 
 func cmdPeerDeliver(args []string) int {
 	var at, ref, replyToRef, kind, optionsFlag, toTask string
 	var haveOptions bool
-	var pos []string
+	var pos, attach []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--at", "--ref", "--reply-to-ref", "--kind", "--options", "--to":
+		case "--at", "--ref", "--reply-to-ref", "--kind", "--options", "--to", "--attach":
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "error: %s needs a value\n%s\n", a, deliverUsage)
 				return 2
@@ -462,6 +467,8 @@ func cmdPeerDeliver(args []string) int {
 				optionsFlag, haveOptions = v, true
 			case "--to":
 				toTask = v
+			case "--attach":
+				attach = append(attach, v)
 			}
 		case "--":
 			pos = append(pos, args[i+1:]...)
@@ -539,6 +546,13 @@ func cmdPeerDeliver(args []string) int {
 		fmt.Printf("duplicate %s from %s — already delivered [%s]\n", ref, p.Name, dup.ID)
 		return 0
 	}
+	// Same caps as flow message --attach; flow checks size only — the
+	// connector verifies the sender's sha256.
+	srcs, err := checkAttachments(attach)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v — nothing stored\n", err)
+		return 2
+	}
 	if toTask != "" {
 		t, err := flowdb.GetTask(db, toTask)
 		if err != nil || t == nil {
@@ -573,7 +587,7 @@ func cmdPeerDeliver(args []string) int {
 		m.ToTaskSlug = routeTo
 		m.Options, m.FYI = nil, false
 	}
-	if err := flowdb.InsertBusMessage(db, m); err != nil {
+	if err := insertWithAttachments(db, m, srcs); err != nil {
 		if flowdb.IsUniqueViolation(err) {
 			fmt.Printf("duplicate %s from %s — already delivered\n", ref, p.Name)
 			return 0

@@ -270,6 +270,37 @@ func TestPeersTwoHomeE2E(t *testing.T) {
 		t.Errorf("(7b) closed-task reply with --to = %+v", m)
 	}
 
+	// (7c) Attachments round-trip over peer-local: A's copy is handed to
+	// B's deliver, B stores its own copy; sha256 matches end to end.
+	srcDir := filepath.Join(base, "src dir")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "line one\nit's a 'quoted' file\n"
+	if err := os.WriteFile(filepath.Join(srcDir, "bob's notes.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.must([]string{"CLAUDE_CODE_SESSION_ID=sid-a-d"}, "message", "bob", "see attached",
+		"--attach", filepath.Join(srcDir, "bob's notes.txt"), "--attach", filepath.Join(srcDir, "bob's notes.txt"))
+	sent := rowByBody(t, adb, "see attached")
+	got := waitRow(t, bdb, "attachment in B", `SELECT id FROM bus_messages WHERE peer='alice' AND origin_ref=?`, sent.ID)
+	if len(sent.Attachments) != 2 || len(got.Attachments) != 2 {
+		t.Fatalf("(7c) attachments A=%+v B=%+v", sent.Attachments, got.Attachments)
+	}
+	for i := range sent.Attachments {
+		sa, ga := sent.Attachments[i], got.Attachments[i]
+		if sa.SHA256 != sha(content) || ga.SHA256 != sa.SHA256 || ga.Size != sa.Size {
+			t.Errorf("(7c) #%d A=%+v B=%+v", i, sa, ga)
+		}
+		bpath := filepath.Join(b.root, "attachments", got.ID, ga.Name)
+		if body, err := os.ReadFile(bpath); err != nil || string(body) != content {
+			t.Errorf("(7c) B's copy %s: %q %v", bpath, body, err)
+		}
+	}
+	if out := b.must(none, "inbox"); !strings.Contains(out, filepath.Join(b.root, "attachments", got.ID, "bob's notes-2.txt")) {
+		t.Errorf("(7c) B's inbox lacks the attachment path:\n%s", out)
+	}
+
 	// (5) Rejections.
 	count := func() int {
 		var n int

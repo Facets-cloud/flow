@@ -63,6 +63,19 @@ type PeerPayload struct {
 	Urgent     bool     `json:"urgent"`
 	ReplyToRef string   `json:"reply_to_ref"`
 	CreatedAt  string   `json:"created_at"`
+	// Attachments are the files carried with the message ([] when none):
+	// Path is the absolute copy in the sending hub's attachments dir.
+	Attachments []PeerAttachment `json:"attachments"`
+}
+
+// PeerAttachment is one file in a PeerPayload. The receiving connector
+// should verify SHA256 after transport, then hand the file to
+// `flow peer deliver --attach <path>`.
+type PeerAttachment struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+	Path   string `json:"path"`
 }
 
 // RunOutput is Run that also returns the connector's stdout (at most

@@ -36,10 +36,10 @@ func cmdMessage(args []string) int {
 	// --body constantly). Previously the body was a blind positional, so a
 	// flag written before it became the literal body ("--urgent") and the
 	// real text was silently dropped. Unknown flags now error instead.
-	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>] [--options "A|B"] [--fyi]   (body also accepts --body "<text>")`
+	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>] [--options "A|B"] [--fyi] [--attach <file> ...]   (body also accepts --body "<text>")`
 	var urgent, haveBody, rest, fyi, haveOptions bool
 	var bodyFlag, replyTo, optionsFlag string
-	var pos []string
+	var pos, attach []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -77,8 +77,16 @@ func cmdMessage(args []string) int {
 			optionsFlag, haveOptions, i = args[i+1], true, i+1
 		case strings.HasPrefix(a, "--options="):
 			optionsFlag, haveOptions = a[len("--options="):], true
+		case a == "--attach" || a == "-attach":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --attach needs a file path")
+				return 2
+			}
+			attach, i = append(attach, args[i+1]), i+1
+		case strings.HasPrefix(a, "--attach="):
+			attach = append(attach, a[len("--attach="):])
 		case a != "-" && strings.HasPrefix(a, "-"):
-			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent/--body/--reply-to/--options/--fyi are flags\n%s\n", a, usage)
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent/--body/--reply-to/--options/--fyi/--attach are flags\n%s\n", a, usage)
 			return 2
 		default:
 			pos = append(pos, a)
@@ -129,6 +137,11 @@ func cmdMessage(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --fyi takes no --options — choices make it an ask; drop --fyi to ask")
 		return 2
 	}
+	srcs, err := checkAttachments(attach)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v — nothing sent\n", err)
+		return 2
+	}
 
 	db, err := openBusDB()
 	if err != nil {
@@ -162,7 +175,7 @@ func cmdMessage(args []string) int {
 			return 2
 		}
 	} else if p, _ := flowdb.GetPeer(db, addr); p != nil {
-		return sendToPeer(db, p, s, body, urgent, fyi, options, replyTo)
+		return sendToPeer(db, p, s, body, urgent, fyi, options, replyTo, srcs)
 	}
 	if len(body) > busBodyMax {
 		return bodyTooLong(body, busBodyMax)
@@ -205,7 +218,7 @@ func cmdMessage(args []string) int {
 		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: urgent,
 		ReplyTo: replyTo, Options: options, FYI: fyi,
 	}
-	if err := flowdb.InsertBusMessage(db, m); err != nil {
+	if err := insertWithAttachments(db, m, srcs); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -221,6 +234,7 @@ func cmdMessage(args []string) int {
 			toAssignee, toSlug, m.ID)
 	}
 	_ = flowdb.SweepBus(db, time.Now())
+	pruneAttachments(db)
 	return 0
 }
 

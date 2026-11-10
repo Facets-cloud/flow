@@ -110,6 +110,8 @@ type busMsgJSON struct {
 	ReplyTo   string   `json:"reply_to,omitempty"`
 	Options   []string `json:"options,omitempty"`
 	FYI       bool     `json:"fyi,omitempty"`
+	// Attachments carry absolute paths to the stored copies.
+	Attachments []attachmentJSON `json:"attachments,omitempty"`
 	// ConsumedBy is who last claimed/acked/saw the row (omitted if nobody).
 	ConsumedBy *consumerJSON `json:"consumed_by,omitempty"`
 }
@@ -131,7 +133,7 @@ func toMsgJSON(m *flowdb.BusMessage) busMsgJSON {
 		To:   addrJSON{Assignee: m.ToAssignee, TaskSlug: m.ToTaskSlug},
 		Body: m.Body, Urgent: m.Urgent, Status: m.Status, Mail: mailLabel(m),
 		WaitedS: m.WaitedS, ReplyTo: m.ReplyTo, Options: m.Options, FYI: m.FYI,
-		ConsumedBy: consumedByJSON(m),
+		ConsumedBy: consumedByJSON(m), Attachments: attachmentsJSON(m),
 	}
 }
 
@@ -230,6 +232,7 @@ func inboxList(args []string) int {
 			extra += "  fyi"
 		}
 		fmt.Printf("%s [%s] %s%s  %s: %s%s\n", mark, m.ID, busAge(m.CreatedAt, now), extra, busFrom(m), m.Body, optionsSuffix(m))
+		fmt.Print(attachmentLines(m))
 	}
 	if *all {
 		fmt.Printf("\nread one by id: flow inbox read <id>\n")
@@ -352,6 +355,7 @@ func printBusMessage(db *sql.DB, m *flowdb.BusMessage) {
 	if line := replyToLine(db, m); line != "" {
 		fmt.Println(line)
 	}
+	fmt.Print(attachmentLines(m))
 	if m.Urgent {
 		fmt.Println("        marked URGENT by the sender")
 	}

@@ -50,7 +50,9 @@ func migratePeers(db *sql.DB) error {
 	if _, err := db.Exec(peersDDL); err != nil {
 		return fmt.Errorf("peers table: %w", err)
 	}
-	for _, col := range []string{"peer", "origin_ref", "delivery", "delivery_error"} {
+	// attachments (JSON array of {name,size,sha256}) arrived with peer
+	// desk primitives; additive and nullable like the peer columns.
+	for _, col := range []string{"peer", "origin_ref", "delivery", "delivery_error", "attachments"} {
 		has, err := columnExists(db, "bus_messages", col)
 		if err != nil {
 			return err
