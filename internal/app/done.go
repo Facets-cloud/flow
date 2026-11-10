@@ -55,7 +55,14 @@ func cmdDone(args []string) int {
 	if rc != 0 {
 		return rc
 	}
+	return closeTask(db, task)
+}
 
+// closeTask is the one way a task becomes done: the conditional status
+// flip, bus cleanup, and the close-out sweep (inline, or deferred to the
+// auto-run supervisor). Shared by `flow done` and `flow update task
+// --status done` so no close path skips the sweep.
+func closeTask(db *sql.DB, task *flowdb.Task) int {
 	// Done implies a session existed and produced learnings. A backlog
 	// task that was never started has nothing to sweep. The task-table
 	// CHECK constraint would reject the UPDATE with a cryptic error;
@@ -81,8 +88,15 @@ func cmdDone(args []string) int {
 		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
 		return 0
 	}
+	// The sweep runs a headless harness; inside the Codex sandbox it would
+	// fail AFTER the flip, losing the sweep for good (a done task is never
+	// swept again). Refuse before flipping instead.
+	if rc := sweepSandboxRefusal(task); rc != 0 {
+		return rc
+	}
 	beforeDoneFlip()
 	now := flowdb.NowISO()
+	var err error
 	// RETURNING reads the auto-run columns in the same statement as the
 	// flip, so the deferral decision below sees the row as it was at the
 	// flip — not the copy loaded earlier, which a supervisor may have
@@ -128,6 +142,19 @@ func cmdDone(args []string) int {
 		}
 	}
 	return 0
+}
+
+// sweepSandboxRefusal refuses (rc 1) when closing task would run the
+// close-out sweep inline from inside the Codex sandbox. 0 otherwise.
+func sweepSandboxRefusal(task *flowdb.Task) int {
+	if task.Status == "done" || !task.SessionID.Valid || task.SessionID.String == "" {
+		return 0
+	}
+	h, err := harnessForTask(task)
+	if err != nil || closeoutDeferred(h, task) {
+		return 0
+	}
+	return refuseInCodexSandbox("flow done (its close-out sweep)")
 }
 
 // beforeDoneFlip is a test seam: it runs between loading the task and

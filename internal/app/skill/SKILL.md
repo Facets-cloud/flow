@@ -224,14 +224,13 @@ to select instead of typing. Common patterns:
 | Priority | "High", "Medium", "Low" |
 | Mutation confirm | "Yes, do it" / "No, wait" with the action named in the description |
 
-Keep `header` under 12 chars. Put enough context in `question` so
-the choice is clear without scrolling back. If the user already
+Keep `header` under 12 chars; make `question` self-contained. If the user already
 answered in their message, don't re-ask — just use their answer.
 
-**Prose questions are deprecated.** Don't write "Want me to do X?"
-or "Should I do Y?" or "(yes/no)" in chat — those force the user to
-type a free-text reply. The tool produces clickable options; always
-prefer the tool.
+**Prose questions are deprecated** ("Want me to X?", "(yes/no)"): they
+force typing; the tool gives clicks. **No such tool (Codex)?** Ask in
+plain chat with numbered options and WAIT for the reply; never
+self-confirm, and close only via `flow done`.
 
 **Mid-interview drift.** Within an open-ended interview (intake,
 deferred-section prompt), the parent question may be free-form

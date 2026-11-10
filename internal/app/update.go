@@ -64,6 +64,7 @@ func cmdUpdateTask(args []string) int {
 	clearTags := fs.Bool("clear-tags", false, "remove all tags from the task")
 	project := fs.String("project", "", "move the task into this project (work_dir is unchanged)")
 	clearProject := fs.Bool("clear-project", false, "detach the task from its project (make it floating)")
+	noSweep := fs.Bool("no-sweep", false, "with --status done: flip the status only, skipping the close-out sweep `flow done` runs (for scripted bulk edits)")
 	if err := fs.Parse(flagArgs); err != nil {
 		return flagParseRC(err)
 	}
@@ -160,6 +161,13 @@ func cmdUpdateTask(args []string) int {
 		return 1
 	}
 
+	if *status == "done" && !*noSweep {
+		// Refuse before touching any field, not halfway through.
+		if rc := sweepSandboxRefusal(task); rc != 0 {
+			return rc
+		}
+	}
+
 	now := flowdb.NowISO()
 	if *project != "" {
 		p, err := flowdb.GetProject(db, *project)
@@ -220,7 +228,11 @@ func cmdUpdateTask(args []string) int {
 		}
 		fmt.Printf("work_dir → %s\n", absWorkDir)
 	}
-	if *status != "" {
+	// --status done goes through the same close path as `flow done` (run
+	// last, after the other fields land) so the close-out sweep is never
+	// skipped by accident; --no-sweep keeps the old status-only flip.
+	closeViaDone := *status == "done" && !*noSweep
+	if *status != "" && !closeViaDone {
 		// Session-id invariant: any non-backlog status requires a
 		// session_id. Enforced at the DB level via CHECK, but we error
 		// here with a friendly pointer instead of letting the user see
@@ -244,6 +256,9 @@ func cmdUpdateTask(args []string) int {
 			return 1
 		}
 		fmt.Printf("status → %s\n", *status)
+		if *status == "done" && *noSweep {
+			fmt.Fprintf(os.Stderr, "note: close-out sweep skipped (--no-sweep); KB/project distillation for %s will not run\n", task.Slug)
+		}
 	}
 	if *priority != "" {
 		if _, err := db.Exec(
@@ -348,6 +363,15 @@ func cmdUpdateTask(args []string) int {
 		fmt.Printf("tag + %s\n", t)
 	}
 	announceDriverChange(db, task, wasDriver)
+	if closeViaDone {
+		fmt.Println("status → done (routed through `flow done`: runs the close-out sweep; --no-sweep to skip)")
+		fresh, err := flowdb.GetTask(db, task.Slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: re-read task: %v\n", err)
+			return 1
+		}
+		return closeTask(db, fresh)
+	}
 	return 0
 }
 

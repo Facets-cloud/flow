@@ -39,6 +39,9 @@ func cmdAuto(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: unexpected argument %q (quote the task name)\n", fs.Arg(0))
 		return 2
 	}
+	if rc := refuseInCodexSandbox("flow auto"); rc != 0 {
+		return rc
+	}
 
 	dbPath, err := flowDBPath()
 	if err != nil {

@@ -111,6 +111,9 @@ func ownerTickManual(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: owner tick requires an owner slug")
 		return 2
 	}
+	if rc := refuseInCodexSandbox("flow owner tick"); rc != 0 {
+		return rc
+	}
 
 	dbPath, err := flowDBPath()
 	if err != nil {

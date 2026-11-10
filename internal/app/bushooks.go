@@ -81,6 +81,19 @@ const codexNoListenerRule = " flow-bus, Codex session: do NOT arm an inbox liste
 	"this task depends on: `flow watch <task-or-project-slug>` (tasks you create from this session " +
 	"are watched automatically); their reports arrive the same way."
 
+// codexSessionRules covers the two ways an interactive Codex session
+// differs from Claude beyond the inbox (live test 2026-11-10): it has no
+// question tool, so a driver "confirmed" its own close-out and flipped the
+// status with `flow update task --status done`, skipping the sweep; and it
+// runs sandboxed, where anything flow launches dies (flow refuses there).
+const codexSessionRules = " Codex session rules: you have no AskUserQuestion tool — wherever the flow " +
+	"skill says to confirm via AskUserQuestion, ask in plain chat (numbered options) and wait for the user's " +
+	"reply before acting; never answer for them. Close a task only with `flow done <slug>` (it runs the " +
+	"close-out sweep), never `flow update task --status done`, and only after the user said yes. flow " +
+	"commands that launch a harness run (`flow auto`, `flow do`, `flow do --auto`, `flow run playbook`, " +
+	"`flow owner tick`, `flow done`) cannot work inside your sandbox and refuse there: run them with " +
+	"escalated permissions (request approval to run outside the sandbox) on the first try."
+
 // isCodexSession reports whether the current session runs under Codex:
 // the bound task is pinned to the codex harness, or this process is a
 // Codex tool shell ($CODEX_THREAD_ID). Hooks see only the pin — Codex
@@ -120,6 +133,7 @@ func busSessionStartContext() string {
 		}
 		if isCodexSession(t) {
 			b.WriteString(codexNoListenerRule)
+			b.WriteString(codexSessionRules)
 			return b.String()
 		}
 		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +

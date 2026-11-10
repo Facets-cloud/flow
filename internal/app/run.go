@@ -43,6 +43,11 @@ func cmdRunPlaybook(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: run playbook requires a slug")
 		return 2
 	}
+	if !*here {
+		if rc := refuseInCodexSandbox("flow run playbook"); rc != 0 {
+			return rc
+		}
+	}
 
 	// Reject misuse before we materialize the run-task row.
 	if _, rc := loadInjectionText(fs, *withInstr, *withFile); rc != 0 {

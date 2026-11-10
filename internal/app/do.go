@@ -121,6 +121,15 @@ func cmdDo(args []string) int {
 	if err := fs.Parse(fs.Args()[1:]); err != nil {
 		return flagParseRC(err)
 	}
+	if !*here {
+		what := "flow do"
+		if *auto {
+			what = "flow do --auto"
+		}
+		if rc := refuseInCodexSandbox(what); rc != 0 {
+			return rc
+		}
+	}
 
 	injectionText, rc := loadInjectionText(fs, *withInstr, *withFile)
 	if rc != 0 {
