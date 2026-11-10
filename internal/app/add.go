@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness/claude"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -259,6 +260,14 @@ func addTask(args []string) int {
 		if err := os.MkdirAll(absWorkDir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error: create workspace %s: %v\n", absWorkDir, err)
 			return 1
+		}
+		// flow owns this folder, so pre-accept Claude Code's folder-trust
+		// dialog for it now: a background/headless session launched here
+		// later (peer desk wake, FLOW_TERM=bg, owner tick) has no human to
+		// click "trust". Best-effort — no-op when Claude Code isn't set up;
+		// the launch path re-checks and reports failures.
+		if err := claude.EnsureTrusted(absWorkDir); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not pre-trust workspace for Claude Code: %v\n", err)
 		}
 	}
 

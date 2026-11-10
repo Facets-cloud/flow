@@ -83,6 +83,21 @@ type BackgroundAgent struct {
 	State     string // finer state, e.g. "working" / "blocked" / "done"
 }
 
+// WorkDirPreparer is an OPTIONAL harness capability: readying a working
+// directory before flow launches a session there that no human is
+// watching (`claude --bg`, `flow do --auto`, owner ticks). Claude Code
+// implements it to pre-accept its folder-trust dialog for exactly that
+// directory — otherwise a background session in a never-opened folder
+// parks on the dialog and silently does no work. Codex does not need it:
+// its headless `codex exec` has no folder-trust gate (hook trust is
+// bypassed per-invocation via --dangerously-bypass-hook-trust).
+//
+// Callers treat an error as fatal for the launch: better a clear error
+// than a session that stalls invisibly.
+type WorkDirPreparer interface {
+	PrepareWorkDir(workDir string) error
+}
+
 // BackgroundLauncher is an OPTIONAL harness capability: hosting
 // terminal-free background sessions (claude's Agent View, via
 // `claude --bg`). flow selects this path when spawner.IsBackground() is

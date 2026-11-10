@@ -200,6 +200,8 @@ func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, erro
 	logName := time.Now().UTC().Format("2006-01-02-150405") + ".log"
 	logPath := filepath.Join(runsDir, logName)
 
+	prepareHeadlessWorkDir(task)
+
 	env := append(autoChildEnv(), autoRunEnvVar+"="+task.Slug)
 	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, env)
 	if err != nil {
@@ -495,4 +497,25 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
 		slug, slug,
 	)
+}
+
+// prepareHeadlessWorkDir readies task.WorkDir for a session nobody is
+// watching (harness.WorkDirPreparer — for Claude: pre-accept the
+// folder-trust dialog for exactly that dir). Best-effort here: the
+// headless `claude -p` an auto run uses skips the trust dialog anyway, so
+// a failure is surfaced as a warning rather than blocking the run. The
+// `claude --bg` path (which DOES stall on the dialog) treats the same
+// failure as fatal inside the harness.
+func prepareHeadlessWorkDir(task *flowdb.Task) {
+	h, err := harnessForTask(task)
+	if err != nil {
+		return
+	}
+	prep, ok := h.(harness.WorkDirPreparer)
+	if !ok {
+		return
+	}
+	if err := prep.PrepareWorkDir(task.WorkDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 }

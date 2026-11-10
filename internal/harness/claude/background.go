@@ -167,6 +167,9 @@ func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.Laun
 	if opts.Inject != "" {
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
+	if err := c.PrepareWorkDir(workDir); err != nil {
+		return harness.BackgroundAgent{}, err
+	}
 	args := []string{"--bg", "--name", name, prompt}
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
@@ -181,6 +184,9 @@ func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.Laun
 // this captures and returns the new id exactly like SpawnBackground; the
 // caller re-records it on the task.
 func (c *claude) ResumeBackground(workDir, sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+	if err := c.PrepareWorkDir(workDir); err != nil {
+		return harness.BackgroundAgent{}, err
+	}
 	args := []string{"--bg", "--resume", sessionID}
 	if opts.Inject != "" {
 		args = append(args, harness.InjectionMarker+"\n"+opts.Inject)

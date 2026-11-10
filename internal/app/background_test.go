@@ -36,6 +36,9 @@ func TestMain(m *testing.M) {
 	// install tests only see harnesses their sandbox creates.
 	harnessLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	os.Unsetenv("CODEX_HOME")
+	// Never let an ambient CLAUDE_CONFIG_DIR route trust writes at the
+	// developer's real Claude config; tests use a temp HOME instead.
+	os.Unsetenv("CLAUDE_CONFIG_DIR")
 	notBG := false
 	spawner.BackgroundOverride = &notBG
 	os.Exit(m.Run())

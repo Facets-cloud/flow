@@ -7,6 +7,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Background Claude sessions no longer stall on the folder-trust
+  prompt.** A `claude --bg` session (`FLOW_TERM=bg`, peer desk wakes)
+  started in a folder Claude Code had never opened sat on the "trust this
+  folder?" dialog with nobody to click it, and silently did no work. flow
+  now pre-accepts trust for exactly the task's work_dir in
+  `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`) before launching
+  — atomically, preserving every other key, a no-op when already trusted,
+  never for `/`, `$HOME` or its parents. If it can't, the background
+  launch fails with a clear error instead of stalling. Flow-owned
+  workspaces (`tasks/<slug>/workspace`) are trusted when created, and
+  `flow do --auto` trusts its work_dir too (best-effort: `claude -p`
+  skips the dialog anyway). Codex needs no change: headless `codex exec`
+  has no folder-trust gate.
+
 ## [0.1.0-alpha.36] — 2026-11-10
 
 ### Added
