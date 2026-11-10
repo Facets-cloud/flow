@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"flow/internal/flowdb"
@@ -58,7 +59,24 @@ func driverRoleBlock() string {
 		"user's open decisions; when the user returns or child mail arrives, lead with what " +
 		"changed (done / blocked / dead children); end any turn that needs the user with a " +
 		"numbered \"Needs from you:\" list answerable as \"1 yes, 2 later\". Children cannot " +
-		"spawn grandchildren. Recipe: flow skill references/delegation.md."
+		"spawn grandchildren. Recipe: flow skill references/delegation.md." +
+		childHarnessesLine()
+}
+
+// childHarnessesLine names the harnesses a child can run on, so a driver
+// can follow the user's harness preference (delegation.md). Empty with
+// one harness present: the block is then unchanged.
+func childHarnessesLine() string {
+	hs := presentHarnesses()
+	if len(hs) < 2 {
+		return ""
+	}
+	names := make([]string, len(hs))
+	for i, h := range hs {
+		names[i] = string(h.Name())
+	}
+	return " harnesses available for children: " + strings.Join(names, ", ") +
+		" (flow auto … --harness <name>; follow the user's preference)"
 }
 
 // roleBlockFor picks the block for a bound, human-driven session: the
