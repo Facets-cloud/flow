@@ -41,6 +41,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   a UTF-8 locale, so a C/POSIX locale no longer makes zenity reject the
   text and exit without a dialog.
 
+## [0.1.0-alpha.36] — 2026-11-10
+
+### Added
+
+- **Pick a child's harness by preference.** When both Claude Code and
+  Codex are installed, the SessionStart driver and delegation blocks add
+  one line: `harnesses available for children: claude, codex (flow auto …
+  --harness <name>; follow the user's preference)`. With one harness the
+  blocks are unchanged. The skill's delegation reference now says how to
+  choose: use the user's stated preference, else ask once and save it to
+  `kb/user.md`, else (headless) the caller's harness. When a child dies
+  on a Claude or Codex usage limit, the driver reports the limit and its
+  reset time and offers to re-run the same brief on the other harness as
+  a new child. No usage reading, no automatic switching, no re-pinning.
+- `dispatch.log` now records when a connector escalation is armed:
+  `<id> escalate armed <dur> → <next tier>`, written before the wait. An
+  armed line with no later `escalate → …` or `escalate stop` line means
+  the detached dispatcher died mid-wait (reboot, sleep, upgrade) and the
+  escalation was dropped, which used to leave no trace.
+
 ### Fixed
 
 - **A dead parentless auto run no longer fails silently.** When a
@@ -51,6 +71,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   brief and the auto-run log path, with how to reopen it. Sent once per
   dead transition. Parented runs keep the existing parent notice; tasks
   tagged `owner:<slug>` are left to their owner's next tick.
+- **A `flow done` that lands while an auto run is winding down is no
+  longer lost.** The auto-run supervisor read the task status once after
+  the harness exited, but `flow done` keeps deferring its close-out sweep
+  to the supervisor for as long as that pid is alive. A done that landed
+  after the read (a human closing the task, or a late backgrounded `flow
+  done`) was neither swept nor counted: the run finalized `dead` and the
+  parent got a dead-child notice for a finished task. The supervisor now
+  finalizes `dead` only while the task is still not done (one conditional
+  UPDATE) and otherwise takes the done path (sweep, `completed`); `flow
+  done` decides whether to defer from the row as it was at the status
+  flip (`UPDATE … RETURNING`), not from the copy it loaded earlier, so a
+  supervisor that already finalized makes it sweep inline. (#120
+  follow-up.)
 
 ## [0.1.0-alpha.35] — 2026-11-09
 
