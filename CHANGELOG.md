@@ -19,6 +19,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   on a Claude or Codex usage limit, the driver reports the limit and its
   reset time and offers to re-run the same brief on the other harness as
   a new child. No usage reading, no automatic switching, no re-pinning.
+- `dispatch.log` now records when a connector escalation is armed:
+  `<id> escalate armed <dur> → <next tier>`, written before the wait. An
+  armed line with no later `escalate → …` or `escalate stop` line means
+  the detached dispatcher died mid-wait (reboot, sleep, upgrade) and the
+  escalation was dropped, which used to leave no trace.
 
 ### Fixed
 
