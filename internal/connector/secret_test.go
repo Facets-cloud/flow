@@ -193,3 +193,34 @@ func TestKeychainAccountIsPerFlowRoot(t *testing.T) {
 		t.Errorf("home B secret survived delete")
 	}
 }
+
+// FLOW_SECRET_STORE=file (testing only) never touches the keychain, even
+// when one is available: secrets live in 0600 files under FileDir.
+func TestSecretStoreFileSeam(t *testing.T) {
+	kc := fakeKeychain(t, false)
+	t.Setenv(SecretStoreEnv, "file")
+	s := SecretStore{FileDir: filepath.Join(t.TempDir(), "secrets"), Account: "flow-abc"}
+	kc["flow-connector-desk@flow-abc"] = "from-keychain"
+	where, err := s.Put("desk", "s3cret")
+	if err != nil || where != "file" {
+		t.Fatalf("Put = %q, %v", where, err)
+	}
+	if kc["flow-connector-desk@flow-abc"] != "from-keychain" {
+		t.Errorf("keychain written under the file seam")
+	}
+	if got, err := s.Get("desk"); err != nil || got != "s3cret" {
+		t.Errorf("Get = %q, %v (keychain must be skipped)", got, err)
+	}
+	if w := s.Where("desk"); w != "file" {
+		t.Errorf("Where = %q", w)
+	}
+	if err := s.Delete("desk"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := kc["flow-connector-desk@flow-abc"]; !ok {
+		t.Errorf("Delete reached the keychain under the file seam")
+	}
+	if w := s.Where("desk"); w != "" {
+		t.Errorf("Where after delete = %q", w)
+	}
+}

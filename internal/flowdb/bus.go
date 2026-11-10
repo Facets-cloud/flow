@@ -119,7 +119,33 @@ type BusMessage struct {
 	NotifiedAt string
 	// AnsweredAt is when a connector recorded the human's answer.
 	AnsweredAt string
+	// Peer is the other hub: the target of an outbound row, the source
+	// of an inbound one ("" for local mail).
+	Peer string
+	// OriginRef is the other hub's message id on an inbound peer row.
+	OriginRef string
+	// Delivery is an outbound peer row's state: dispatched|sent|failed.
+	Delivery      string
+	DeliveryError string
+	// Attachments are files carried with the message, copied into
+	// $FLOW_ROOT/attachments/<id>/<name>; stored as a JSON array, nil when
+	// none.
+	Attachments []Attachment
 }
+
+// Attachment is one file carried with a message. The bytes live at
+// $FLOW_ROOT/attachments/<message-id>/<Name>; flow never opens or runs them.
+type Attachment struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
+// IsPeerInbound reports whether the row arrived from another hub.
+func (m *BusMessage) IsPeerInbound() bool { return m.Peer != "" && m.OriginRef != "" }
+
+// IsPeerOutbound reports whether the row is addressed to another hub.
+func (m *BusMessage) IsPeerOutbound() bool { return m.Peer != "" && m.OriginRef == "" }
 
 // Consumer identifies who changes a row's state: By is the verb recorded
 // in acked_by ('pop', 'prompt', 'read'); Identity is the consumer's bus
@@ -159,7 +185,8 @@ const busMsgCols = `id, created_at, kind, from_assignee, COALESCE(from_task_slug
     urgent, status, COALESCE(waited_s,0), COALESCE(reply_to,''), COALESCE(seen_at,''),
     COALESCE(consumed_by_identity,''), COALESCE(consumed_by_session,''),
     COALESCE(options,''), fyi, ping, COALESCE(notified_at,''),
-    COALESCE(answered_at,'')`
+    COALESCE(answered_at,''), COALESCE(peer,''), COALESCE(origin_ref,''),
+    COALESCE(delivery,''), COALESCE(delivery_error,''), COALESCE(attachments,'')`
 
 func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) {
 	// rowid tiebreak: created_at is second-granularity RFC3339, so
@@ -174,11 +201,12 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 	for rows.Next() {
 		m := &BusMessage{}
 		var urgent, fyi, ping int
-		var options string
+		var options, attachments string
 		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Kind, &m.FromAssignee, &m.FromTaskSlug,
 			&m.SenderSessionID, &m.ToAssignee, &m.ToTaskSlug, &m.Body,
 			&urgent, &m.Status, &m.WaitedS, &m.ReplyTo, &m.SeenAt,
-			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping, &m.NotifiedAt, &m.AnsweredAt); err != nil {
+			&m.ConsumedByIdentity, &m.ConsumedBySession, &options, &fyi, &ping, &m.NotifiedAt, &m.AnsweredAt,
+			&m.Peer, &m.OriginRef, &m.Delivery, &m.DeliveryError, &attachments); err != nil {
 			return nil, err
 		}
 		m.Urgent = urgent == 1
@@ -186,6 +214,9 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 		m.Ping = ping == 1
 		if options != "" {
 			_ = json.Unmarshal([]byte(options), &m.Options)
+		}
+		if attachments != "" {
+			_ = json.Unmarshal([]byte(attachments), &m.Attachments)
 		}
 		out = append(out, m)
 	}
@@ -214,13 +245,18 @@ func insertBusMessage(db queryRower, m *BusMessage) error {
 	if err != nil {
 		return err
 	}
+	attachments, err := attachmentsJSON(m.Attachments)
+	if err != nil {
+		return err
+	}
 	candidate := m.Kind == "message" && m.ToTaskSlug == "" && m.ToAssignee == BusUser && !m.FYI
 	forced := candidate && (m.Urgent || m.FromTaskSlug == "")
 	var ping int
 	err = db.QueryRow(`INSERT INTO bus_messages
         (id, created_at, kind, from_assignee, from_task_slug, sender_session_id,
-         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi, ping)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,
+         to_assignee, to_task_slug, body, urgent, status, reply_to, options, fyi,
+         peer, origin_ref, delivery, attachments, ping)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,
           CASE WHEN ?=0 THEN 0 WHEN ?=1 THEN 1
                WHEN EXISTS (SELECT 1 FROM bus_messages
                             WHERE from_task_slug=? AND kind='message' AND to_task_slug IS NULL
@@ -230,6 +266,7 @@ func insertBusMessage(db queryRower, m *BusMessage) error {
 		m.ID, m.CreatedAt, m.Kind, m.FromAssignee, NullIfEmpty(m.FromTaskSlug),
 		NullIfEmpty(m.SenderSessionID), m.ToAssignee, NullIfEmpty(m.ToTaskSlug),
 		m.Body, boolInt(m.Urgent), NullIfEmpty(m.ReplyTo), options, boolInt(m.FYI),
+		NullIfEmpty(m.Peer), NullIfEmpty(m.OriginRef), NullIfEmpty(m.Delivery), attachments,
 		boolInt(candidate), boolInt(forced), m.FromTaskSlug, BusUser).Scan(&ping)
 	m.Ping = ping == 1
 	return err
@@ -248,6 +285,18 @@ func optionsJSON(opts []string) (any, error) {
 		return nil, nil
 	}
 	b, err := json.Marshal(opts)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+// attachmentsJSON encodes attachment metadata (NULL when none).
+func attachmentsJSON(as []Attachment) (any, error) {
+	if len(as) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(as)
 	if err != nil {
 		return nil, err
 	}
@@ -373,6 +422,13 @@ func GetBusMessageByID(db *sql.DB, id string) (*BusMessage, error) {
 		return nil, err
 	}
 	return rows[0], nil
+}
+
+// DeleteBusMessage removes one row by id. Used to roll back a send whose
+// attachments could not be moved into place after the row was inserted.
+func DeleteBusMessage(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM bus_messages WHERE id=?`, id)
+	return err
 }
 
 // ReadMessageByID marks one message read by id and returns (row, newly).

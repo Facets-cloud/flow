@@ -681,10 +681,7 @@ follow it:
 - persisting in-run procedural adjustments back to the live playbook brief.
 - first-run capture-back (the first run crystallizes the real procedure).
 
-**Do not auto-fire `flow run playbook`** — manual trigger only, even if a
-playbook is named in passing. Do not propose scheduling during playbook
-intake. "The bootstrapped task" for drift/close-out purposes includes
-playbook-run tasks.
+Never auto-fire or propose scheduling (§8).
 ### 4.14 Substantive-unrelated-work check (passive, ongoing)
 
 A **passive workflow** alongside every other: it fires when substantive
@@ -774,7 +771,9 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    unread until answered; `--urgent` for truly blocking. A decision →
    `--options "A|B"`: the answer lands in your inbox (`reply_to`) — never
    block on it. Progress → `--fyi` (never pings). ONE per wait — NEVER
-   re-send. Opt-in pings: references/connectors.md.
+   re-send. Opt-in pings: references/connectors.md. Another flow hub's
+   human: `flow message <peer> "…"` (never `<peer>/<task>`) →
+   references/peers.md.
 2. **Collaborate with peers.** `flow message <assignee>/<task-slug> "<what
    to DO>"` hands context to that task's session (no interruption). Add
    `--reply-to <id>` so a routed reply carries lineage (the bus doesn't

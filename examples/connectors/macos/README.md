@@ -1,7 +1,7 @@
 # macOS dialog connector
 
 An opt-in [flow human connector](../../../internal/app/skill/references/connectors.md)
-(contract v1). When an agent asks you something with
+(contract 2, role `human`). When an agent asks you something with
 
 ```bash
 flow message user "Deploy v2 to prod?" --options "Yes|No"
@@ -51,6 +51,22 @@ permission.
 - Dialogs never auto-dismiss. flow sends one ping per task until you've
   seen it, so dialogs don't pile up from a chatty agent. Nothing is ever
   re-popped.
+
+## Mail from a peer hub — "Hand to agent" (example)
+
+When the message came from another flow hub (a peer, see
+`references/peers.md`), the dialog is titled `flow · from <peer>`, lists any
+choices in the text, and offers three buttons: **Later**, **Hand to agent**,
+**Reply**.
+
+- **Reply** sends what you typed back to that peer (`flow human reply`).
+- **Hand to agent** marks the mail seen (`flow human seen <id>`) and starts a
+  headless agent with `flow auto "Answer <peer>: …" --brief -`. The brief
+  carries the question, the note you typed, and the instruction to answer
+  with `flow message <peer> --reply-to <id> "…"` and then `flow done`.
+
+This button is the connector's own example logic, not a flow feature. Copy
+it and change it to suit you.
 
 ## Files
 

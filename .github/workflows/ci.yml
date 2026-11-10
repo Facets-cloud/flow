@@ -14,8 +14,9 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
 
-  test:
+  test-os:
     # Full suite on both supported OSes — not just a cross-compile.
+    name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +28,20 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+
+  test:
+    # The single "test" check that branch protection on main requires.
+    # Passes only when the suite passed on every OS in test-os.
+    if: always()
+    needs: test-os
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the suite to pass on every OS
+        env:
+          RESULT: ${{ needs.test-os.result }}
+        run: |
+          echo "test-os result: $RESULT"
+          [ "$RESULT" = "success" ]
 
   linux-smoke:
     # End-to-end on a real Linux box: install.sh from a local mirror, init,

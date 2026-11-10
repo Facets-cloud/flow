@@ -309,3 +309,20 @@ func TestAckScopedToRepliersOwnQueue(t *testing.T) {
 		t.Errorf("shashwat's message was consumed by self's reply")
 	}
 }
+
+func TestDeleteBusMessage(t *testing.T) {
+	db := openBusTestDB(t)
+	_ = InsertBusMessage(db, &BusMessage{ID: "del00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", ToTaskSlug: "t", Body: "gone"})
+	_ = InsertBusMessage(db, &BusMessage{ID: "kep00001", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", ToTaskSlug: "t", Body: "kept"})
+	if err := DeleteBusMessage(db, "del00001"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := GetBusMessageByID(db, "del00001"); m != nil {
+		t.Errorf("row survived delete")
+	}
+	if m, _ := GetBusMessageByID(db, "kep00001"); m == nil {
+		t.Errorf("unrelated row deleted")
+	}
+}

@@ -326,6 +326,10 @@ func OpenDB(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("stamp legacy seen_at: %w", err)
 		}
 	}
+	if err := migratePeers(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate peers: %w", err)
+	}
 	return db, nil
 }
 
