@@ -10,8 +10,13 @@ import (
 
 // schemaRevision must be bumped by any migration that does NOT also change
 // schemaDDL / busDDL / indexesPostMigrate (e.g. a data-only backfill or a
-// table rebuild). DDL changes bump the fingerprint on their own.
-const schemaRevision = 1
+// table rebuild). DDL changes bump the fingerprint on their own, and so
+// do the peer DDL and peerBusColumns.
+//
+// rev 2: peer hubs (migratePeers). A DB stamped by a pre-peers build must
+// not take OpenDB's fast path, or it never gets the peers table and the
+// bus_messages peer columns.
+const schemaRevision = 2
 
 // schemaFingerprint identifies the schema this binary migrates to. It is
 // stored in PRAGMA user_version after a successful migration pass; OpenDB
@@ -20,9 +25,12 @@ const schemaRevision = 1
 func schemaFingerprint() int64 {
 	h := crc32.NewIEEE()
 	fmt.Fprintf(h, "rev=%d\x00", schemaRevision)
-	for _, ddl := range []string{schemaDDL, busDDL, indexesPostMigrate} {
+	for _, ddl := range []string{schemaDDL, busDDL, indexesPostMigrate, peersDDL, peerBusIndexDDL} {
 		h.Write([]byte(ddl))
 		h.Write([]byte{0})
+	}
+	for _, col := range peerBusColumns {
+		fmt.Fprintf(h, "bus_messages.%s\x00", col)
 	}
 	v := int64(h.Sum32() & 0x7fffffff)
 	if v == 0 {

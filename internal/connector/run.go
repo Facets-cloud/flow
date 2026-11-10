@@ -27,6 +27,12 @@ type Payload struct {
 	Kind      string   `json:"kind"` // "ask" | "test"
 	CreatedAt string   `json:"created_at"`
 	ReplyHint string   `json:"reply_hint"`
+	// FromPeer names the peer hub the message came from ("" for mail
+	// from this hub's own tasks).
+	FromPeer string `json:"from_peer"`
+	// FromConnector names the connector that sent this notice to the
+	// human ("" for mail from a task or peer), so a dialog can label it.
+	FromConnector string `json:"from_connector"`
 }
 
 // Timeout is how long one connector invocation may run before it (and
@@ -40,13 +46,49 @@ const Timeout = 30 * time.Second
 // it forked; a connector that wants a long-lived child (a dialog) must
 // detach it into its own session.
 func Run(m *Manifest, verb string, payload []byte, env []string, timeout time.Duration) error {
+	_, err := RunOutput(m, verb, payload, env, timeout)
+	return err
+}
+
+// PeerPayload is the JSON a role-"peer" connector reads on stdin for
+// `send`: one message to carry to peer at endpoint At. Kind is "ask",
+// "fyi" or "reply" (ReplyToRef set: the other hub's id this answers).
+type PeerPayload struct {
+	ID         string   `json:"id"`
+	Peer       string   `json:"peer"`
+	At         string   `json:"at"`
+	Kind       string   `json:"kind"`
+	Body       string   `json:"body"`
+	Options    []string `json:"options"`
+	Urgent     bool     `json:"urgent"`
+	ReplyToRef string   `json:"reply_to_ref"`
+	CreatedAt  string   `json:"created_at"`
+	// Attachments are the files carried with the message ([] when none):
+	// Path is the absolute copy in the sending hub's attachments dir.
+	Attachments []PeerAttachment `json:"attachments"`
+}
+
+// PeerAttachment is one file in a PeerPayload. The receiving connector
+// should verify SHA256 after transport, then hand the file to
+// `flow peer deliver --attach <path>`.
+type PeerAttachment struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+	Path   string `json:"path"`
+}
+
+// RunOutput is Run that also returns the connector's stdout (at most
+// 64 KiB are kept). A peer connector may print {"remote_ref":"…"}.
+func RunOutput(m *Manifest, verb string, payload []byte, env []string, timeout time.Duration) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, m.ExecPath(), verb)
 	cmd.Dir = m.Dir
 	cmd.Env = env
 	cmd.Stdin = bytes.NewReader(payload)
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &tailWriter{buf: &stdout, max: 64 << 10}
 	cmd.Stderr = &tailWriter{buf: &stderr, max: 2048}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -59,17 +101,17 @@ func Run(m *Manifest, verb string, payload []byte, env []string, timeout time.Du
 	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("%s %s timed out after %s", m.Name, verb, timeout)
+		return stdout.Bytes(), fmt.Errorf("%s %s timed out after %s", m.Name, verb, timeout)
 	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && msg != "" {
-			return fmt.Errorf("%s %s: %v: %s", m.Name, verb, err, msg)
+			return stdout.Bytes(), fmt.Errorf("%s %s: %v: %s", m.Name, verb, err, msg)
 		}
-		return fmt.Errorf("%s %s: %v", m.Name, verb, err)
+		return stdout.Bytes(), fmt.Errorf("%s %s: %v", m.Name, verb, err)
 	}
-	return nil
+	return stdout.Bytes(), nil
 }
 
 // tailWriter keeps only the last max bytes written.

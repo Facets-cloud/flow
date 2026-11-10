@@ -1,0 +1,225 @@
+#!/bin/sh
+# flow peer connector (contract 2, role "peer"): links two flow homes on
+# ONE machine. A sample and a test fixture, not a transport.
+#
+#   run send   stdin: {"id","peer","at","kind","body","options","urgent",
+#                      "reply_to_ref","created_at",
+#                      "attachments":[{"name","size","sha256","path"}]}
+#   run test   stdin: a sample payload — validates the environment only
+#
+# `at` is the OTHER home's FLOW_ROOT (exactly as that home sees it).
+# send runs, as the other home:
+#   FLOW_ROOT=<at> FLOW_CONNECTOR_TOKEN=<its peer-local token> \
+#     "$FLOW_BIN" peer deliver --at "$FLOW_ROOT" --ref <id> [...] \
+#       [--attach <path> ...] -- <body>
+# Each attachment's sha256 is checked (sha256sum or shasum, when present)
+# before it is handed over; the other home copies it into its own
+# attachments dir.
+# so the other home must have this home as a peer:
+#   flow peer add <name> --via peer-local --at <this home's FLOW_ROOT>
+#
+# The other home's token is read from <at>/secrets/peer-local, i.e. both
+# homes run with FLOW_SECRET_STORE=file (testing only). Stock POSIX tools
+# only (sh + awk): the JSON is parsed by the awk below, which prints shell
+# assignments that are single-quoted, so nothing in a payload is ever
+# executed.
+
+PARSE_AWK='
+function ch() { return substr(s, i, 1) }
+function ws() { while (i <= n && ch() ~ /[ \t\r\n]/) i++ }
+function fail() { bad = 1; exit 2 }
+function hexval(h,   j, v, d) {
+	v = 0
+	for (j = 1; j <= 4; j++) {
+		d = index("0123456789abcdef", tolower(substr(h, j, 1)))
+		if (d == 0) fail()
+		v = v * 16 + d - 1
+	}
+	return v
+}
+function utf8(c) {
+	if (c == 0) return ""
+	if (c < 128) return sprintf("%c", c)
+	if (c < 2048) return sprintf("%c%c", 192 + int(c / 64), 128 + c % 64)
+	return sprintf("%c%c%c", 224 + int(c / 4096), 128 + int(c / 64) % 64, 128 + c % 64)
+}
+function str(   r, c) {
+	i++
+	r = ""
+	for (;;) {
+		if (i > n) fail()
+		c = ch(); i++
+		if (c == "\"") return r
+		if (c == "\\") {
+			c = ch(); i++
+			if (c == "n") r = r "\n"
+			else if (c == "t") r = r "\t"
+			else if (c == "r") r = r "\r"
+			else if (c == "b") r = r "\b"
+			else if (c == "f") r = r "\f"
+			else if (c == "u") { r = r utf8(hexval(substr(s, i, 4))); i += 4 }
+			else r = r c
+		} else r = r c
+	}
+}
+function obj(k,   kk, c, st, v, o) {
+	# one {"name":..,"path":..} element of an array of objects: collect
+	# its "path" and "sha256" into k_paths / k_shas (newline-separated)
+	i++
+	o_path = ""; o_sha = ""
+	for (;;) {
+		ws(); c = ch()
+		if (i > n) fail()
+		if (c == "}") { i++; break }
+		if (c == ",") { i++; continue }
+		if (c != "\"") fail()
+		kk = str()
+		ws(); if (ch() != ":") fail(); i++; ws()
+		if (ch() == "\"") v = str()
+		else {
+			st = i
+			while (i <= n && ch() !~ /[,}]/) i++
+			v = substr(s, st, i - st)
+		}
+		if (kk == "path") o_path = v
+		else if (kk == "sha256") o_sha = v
+	}
+	paths[k] = paths[k] (npaths[k]++ ? "\n" : "") o_path
+	shas[k] = shas[k] (nshas[k]++ ? "\n" : "") o_sha
+}
+function out(k, v,   o, j, c) {
+	if (k !~ /^[a-z_]+$/) return
+	o = ""
+	for (j = 1; j <= length(v); j++) {
+		c = substr(v, j, 1)
+		o = o (c == "\047" ? "\047\"\047\"\047" : c)
+	}
+	printf "F_%s=\047%s\047\n", k, o
+}
+{ s = s $0 "\n" }
+END {
+	if (bad) exit 2
+	n = length(s); i = 1
+	ws(); if (ch() != "{") fail(); i++
+	for (;;) {
+		ws(); c = ch()
+		if (i > n) fail()
+		if (c == "}") break
+		if (c == ",") { i++; continue }
+		if (c != "\"") fail()
+		k = str()
+		ws(); if (ch() != ":") fail(); i++; ws()
+		c = ch()
+		if (c == "\"") out(k, str())
+		else if (c == "[") {
+			i++; v = ""; first = 1
+			for (;;) {
+				ws(); c = ch()
+				if (i > n) fail()
+				if (c == "]") { i++; break }
+				if (c == ",") { i++; continue }
+				if (c == "{") { obj(k); continue }
+				if (c != "\"") fail()
+				e = str(); v = first ? e : v "|" e; first = 0
+			}
+			if (k in paths) { out(k "_paths", paths[k]); out(k "_shas", shas[k]) }
+			else out(k, v)
+		} else {
+			st = i
+			while (i <= n && ch() !~ /[,}]/) i++
+			v = substr(s, st, i - st); sub(/[ \t\r\n]+$/, "", v)
+			out(k, v)
+		}
+	}
+}'
+
+verb="${1:-}"
+case "$verb" in
+send | test) ;;
+*)
+	echo "usage: run send|test  (JSON on stdin)" >&2
+	exit 2
+	;;
+esac
+
+payload="$(cat)"
+if ! assign="$(printf '%s\n' "$payload" | LC_ALL=C awk "$PARSE_AWK")"; then
+	echo "bad payload: not the expected JSON object" >&2
+	exit 1
+fi
+F_id='' F_at='' F_kind='' F_body='' F_options='' F_reply_to_ref=''
+F_attachments_paths='' F_attachments_shas=''
+eval "$assign"
+
+if [ -z "$F_id" ]; then
+	echo "bad payload: no id" >&2
+	exit 1
+fi
+if [ "$verb" = "test" ]; then
+	[ -n "${FLOW_ROOT:-}" ] || { echo "FLOW_ROOT is not set" >&2; exit 1; }
+	exit 0
+fi
+
+if [ -z "${FLOW_BIN:-}" ] || [ ! -x "$FLOW_BIN" ]; then
+	echo "FLOW_BIN is not set to the flow binary" >&2
+	exit 1
+fi
+if [ -z "${FLOW_ROOT:-}" ]; then
+	echo "FLOW_ROOT is not set" >&2
+	exit 1
+fi
+if [ -z "$F_at" ] || [ ! -f "$F_at/flow.db" ]; then
+	echo "no flow home at $F_at (at = the other home's FLOW_ROOT)" >&2
+	exit 1
+fi
+tokfile="$F_at/secrets/peer-local"
+if [ ! -r "$tokfile" ]; then
+	echo "no peer-local token in $tokfile — install peer-local there with FLOW_SECRET_STORE=file" >&2
+	exit 1
+fi
+token="$(tr -d ' \t\r\n' <"$tokfile")"
+
+set -- peer deliver --at "$FLOW_ROOT" --ref "$F_id"
+[ -n "$F_reply_to_ref" ] && set -- "$@" --reply-to-ref "$F_reply_to_ref"
+[ "$F_kind" = "fyi" ] && set -- "$@" --kind fyi
+[ -n "$F_options" ] && set -- "$@" --options "$F_options"
+
+# Attachments: verify each copy against the sender's sha256, then pass it
+# on. Paths are newline-separated (one per line, in payload order).
+if [ -n "$F_attachments_paths" ]; then
+	nl='
+'
+	shas="$F_attachments_shas$nl"
+	oldifs=$IFS
+	IFS=$nl
+	for path in $F_attachments_paths; do
+		IFS=$oldifs
+		want="${shas%%"$nl"*}"
+		shas="${shas#*"$nl"}"
+		if [ ! -f "$path" ]; then
+			echo "attachment $path is missing" >&2
+			exit 1
+		fi
+		got=''
+		if command -v sha256sum >/dev/null 2>&1; then
+			got="$(sha256sum <"$path" | awk '{print $1}')"
+		elif command -v shasum >/dev/null 2>&1; then
+			got="$(shasum -a 256 <"$path" | awk '{print $1}')"
+		fi
+		if [ -n "$got" ] && [ -n "$want" ] && [ "$got" != "$want" ]; then
+			echo "attachment $path: sha256 $got, sender said $want" >&2
+			exit 1
+		fi
+		set -- "$@" --attach "$path"
+		IFS=$nl
+	done
+	IFS=$oldifs
+fi
+
+if ! res="$(FLOW_ROOT="$F_at" FLOW_CONNECTOR_TOKEN="$token" "$FLOW_BIN" "$@" -- "$F_body" 2>&1)"; then
+	echo "deliver to $F_at failed: $res" >&2
+	exit 1
+fi
+ref="$(printf '%s\n' "$res" | sed -n 's/.*\[\([0-9a-f]*\)\]$/\1/p' | tail -n 1)"
+printf '{"remote_ref":"%s"}\n' "$ref"
+exit 0

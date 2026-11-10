@@ -354,6 +354,9 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("stamp legacy seen_at: %w", err)
 		}
 	}
+	if err := migratePeers(db); err != nil {
+		return fmt.Errorf("migrate peers: %w", err)
+	}
 	return nil
 }
 

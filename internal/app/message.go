@@ -36,10 +36,10 @@ func cmdMessage(args []string) int {
 	// --body constantly). Previously the body was a blind positional, so a
 	// flag written before it became the literal body ("--urgent") and the
 	// real text was silently dropped. Unknown flags now error instead.
-	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>] [--options "A|B"] [--fyi]   (body also accepts --body "<text>")`
+	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>] [--options "A|B"] [--fyi] [--attach <file> ...]   (body also accepts --body "<text>")`
 	var urgent, haveBody, rest, fyi, haveOptions bool
 	var bodyFlag, replyTo, optionsFlag string
-	var pos []string
+	var pos, attach []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -80,8 +80,16 @@ func cmdMessage(args []string) int {
 			optionsFlag, haveOptions, i = args[i+1], true, i+1
 		case strings.HasPrefix(a, "--options="):
 			optionsFlag, haveOptions = a[len("--options="):], true
+		case a == "--attach" || a == "-attach":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --attach needs a file path")
+				return 2
+			}
+			attach, i = append(attach, args[i+1]), i+1
+		case strings.HasPrefix(a, "--attach="):
+			attach = append(attach, a[len("--attach="):])
 		case a != "-" && strings.HasPrefix(a, "-"):
-			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent/--body/--reply-to/--options/--fyi are flags\n%s\n", a, usage)
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q — the body is positional or use --body \"...\"; only --urgent/--body/--reply-to/--options/--fyi/--attach are flags\n%s\n", a, usage)
 			return 2
 		default:
 			pos = append(pos, a)
@@ -111,10 +119,10 @@ func cmdMessage(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: empty message body\n"+usage)
 		return 2
 	}
-	if len(body) > busBodyMax {
-		fmt.Fprintf(os.Stderr, "error: message body is %d chars (max %d) — messages are short; mention a task slug or update-file path in the body for context\n",
-			len(body), busBodyMax)
-		return 2
+	// Peer mail may be longer (peerBodyMax); the local cap is applied
+	// once the address is known not to be a peer.
+	if len(body) > peerBodyMax {
+		return bodyTooLong(body, peerBodyMax)
 	}
 
 	var options []string
@@ -132,6 +140,11 @@ func cmdMessage(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --fyi takes no --options — choices make it an ask; drop --fyi to ask")
 		return 2
 	}
+	srcs, err := checkAttachments(attach)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v — nothing sent\n", err)
+		return 2
+	}
 
 	db, err := openBusDB()
 	if err != nil {
@@ -139,6 +152,37 @@ func cmdMessage(args []string) int {
 		return 1
 	}
 	defer db.Close()
+
+	// A connector process (no bound task, holding its installed secret in
+	// FLOW_CONNECTOR_TOKEN) may notify the human — and only the human.
+	s := currentBusSender()
+	if s.TaskSlug == "" {
+		if name := callingConnector(); name != "" {
+			if canonicalAssignee(addr) != busUser {
+				fmt.Fprintf(os.Stderr, "error: a connector may only notify the human (flow message user ...), not %q\n", addr)
+				return 2
+			}
+			if haveOptions {
+				fmt.Fprintln(os.Stderr, "error: a connector notifies, it cannot ask — drop --options (an answer would have nowhere to go)")
+				return 2
+			}
+			s = busSender{Assignee: connectorSenderPrefix + name}
+		}
+	}
+
+	// A bare name that is a peer goes to that hub; <peer>/<task> is never
+	// valid (another hub's task names are unknowable).
+	if i := strings.IndexByte(addr, '/'); i >= 0 {
+		if p, _ := flowdb.GetPeer(db, addr[:i]); p != nil {
+			fmt.Fprintf(os.Stderr, "error: %q is a peer hub — its task names are unknowable; message the peer itself: flow message %s \"...\"\n", p.Name, p.Name)
+			return 2
+		}
+	} else if p, _ := flowdb.GetPeer(db, addr); p != nil {
+		return sendToPeer(db, p, s, body, urgent, fyi, options, replyTo, srcs)
+	}
+	if len(body) > busBodyMax {
+		return bodyTooLong(body, busBodyMax)
+	}
 
 	toAssignee, toSlug, err := parseBusAddress(db, addr)
 	if err != nil {
@@ -149,7 +193,6 @@ func cmdMessage(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --options/--fyi are for human-addressed mail only (flow message user ...), not a task's session")
 		return 2
 	}
-	s := currentBusSender()
 	if toSlug != "" && toSlug == s.TaskSlug {
 		fmt.Fprintf(os.Stderr, "error: %s/%s is THIS session's own inbox — you are the one who would pop it. Message `user` for the human, or another task's address.\n", toAssignee, toSlug)
 		return 2
@@ -178,7 +221,7 @@ func cmdMessage(args []string) int {
 		ToAssignee: toAssignee, ToTaskSlug: toSlug, Body: body, Urgent: urgent,
 		ReplyTo: replyTo, Options: options, FYI: fyi,
 	}
-	if err := flowdb.InsertBusMessage(db, m); err != nil {
+	if err := insertWithAttachments(db, m, srcs); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -194,6 +237,7 @@ func cmdMessage(args []string) int {
 			toAssignee, toSlug, m.ID)
 	}
 	_ = flowdb.SweepBus(db, time.Now())
+	pruneAttachments(db)
 	return 0
 }
 
@@ -217,6 +261,17 @@ func parseAskOptions(s string) []string {
 const busUser = flowdb.BusUser
 
 const busBodyMax = 500
+
+// peerBodyMax caps a message to another hub (`flow message <peer>`) and
+// an inbound `flow peer deliver` body: it may carry a human's own words,
+// so it shares the human-reply cap. The local bus stays at busBodyMax.
+const peerBodyMax = humanReplyMax
+
+func bodyTooLong(body string, max int) int {
+	fmt.Fprintf(os.Stderr, "error: message body is %d chars (max %d) — messages are short; mention a task slug or update-file path in the body for context\n",
+		len(body), max)
+	return 2
+}
 
 // busSelfAlias is the legacy spelling of busUser. It is accepted wherever
 // an address or --as identity is read, and always means the human.
@@ -319,9 +374,24 @@ func deliverableTask(t *flowdb.Task) error {
 	return nil
 }
 
+// connectorSenderPrefix marks from_assignee on mail a connector sent the
+// human: "connector:<name>".
+const connectorSenderPrefix = "connector:"
+
+// fromConnector returns the connector that sent m, or "".
+func fromConnector(m *flowdb.BusMessage) string {
+	if m.FromTaskSlug == "" && strings.HasPrefix(m.FromAssignee, connectorSenderPrefix) {
+		return strings.TrimPrefix(m.FromAssignee, connectorSenderPrefix)
+	}
+	return ""
+}
+
 func busFrom(m *flowdb.BusMessage) string {
 	if m.FromTaskSlug != "" {
 		return m.FromTaskSlug
+	}
+	if c := fromConnector(m); c != "" {
+		return "connector " + c
 	}
 	return m.FromAssignee
 }

@@ -32,6 +32,11 @@ flow message user "blocked on your GCP login — state bucket perms broken" --ur
   when the user is clearly active in this session (they'll see it live).
 - ONE message per wait — NEVER re-send.
 - Body ≤500 chars, lead with the ask, name the task slug for context.
+- Files: `--attach <file>` (repeatable; any address) copies each into
+  `$FLOW_ROOT/attachments/<id>/` — the recipient sees absolute paths in
+  `flow inbox`/`pop`, and `--json` carries `"attachments"`
+  `[{name,size,sha256,path}]`. 25 MiB/file, 100 MiB/message, 20 files,
+  regular files only. Prefer a path over pasting long content.
 - Ack is automatic when the user replies in THIS session — a prompt they
   actually type; `--with` injections, auto runs, owner ticks, /loop and
   wakeup firings never count (a hook injects

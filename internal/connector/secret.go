@@ -90,6 +90,15 @@ func keychainAvailable() error {
 	return nil
 }
 
+// SecretStoreEnv selects the secret backend. "file" (TESTING ONLY) skips
+// the keychain entirely and keeps every secret in a 0600 file under
+// $FLOW_ROOT/secrets — so real-binary tests and the peer-local sample can
+// run on macOS without touching the user's keychain. Unset (or any other
+// value) is the normal keychain-then-file behavior.
+const SecretStoreEnv = "FLOW_SECRET_STORE"
+
+func fileOnly() bool { return os.Getenv(SecretStoreEnv) == "file" }
+
 // NewSecret returns a fresh random 256-bit secret, hex encoded.
 func NewSecret() string {
 	b := make([]byte, 32)
@@ -111,8 +120,10 @@ func (s SecretStore) file(name string) string { return filepath.Join(s.FileDir, 
 
 // Put stores a secret and reports where: "keychain" or "file".
 func (s SecretStore) Put(name, secret string) (string, error) {
-	if err := KeychainSet(KeychainService(name), s.Account, secret); err == nil {
-		return "keychain", nil
+	if !fileOnly() {
+		if err := KeychainSet(KeychainService(name), s.Account, secret); err == nil {
+			return "keychain", nil
+		}
 	}
 	if err := os.MkdirAll(s.FileDir, 0o700); err != nil {
 		return "", err
@@ -125,8 +136,10 @@ func (s SecretStore) Put(name, secret string) (string, error) {
 
 // Get returns a connector's secret (keychain first, then the file).
 func (s SecretStore) Get(name string) (string, error) {
-	if v, err := KeychainGet(KeychainService(name), s.Account); err == nil && v != "" {
-		return v, nil
+	if !fileOnly() {
+		if v, err := KeychainGet(KeychainService(name), s.Account); err == nil && v != "" {
+			return v, nil
+		}
 	}
 	data, err := os.ReadFile(s.file(name))
 	if err != nil {
@@ -144,8 +157,10 @@ func (s SecretStore) Get(name string) (string, error) {
 // Where reports where a connector's secret lives: "keychain", "file", or
 // "" when none is stored.
 func (s SecretStore) Where(name string) string {
-	if v, err := KeychainGet(KeychainService(name), s.Account); err == nil && v != "" {
-		return "keychain"
+	if !fileOnly() {
+		if v, err := KeychainGet(KeychainService(name), s.Account); err == nil && v != "" {
+			return "keychain"
+		}
 	}
 	if _, err := os.Stat(s.file(name)); err == nil {
 		return "file"
@@ -155,7 +170,9 @@ func (s SecretStore) Where(name string) string {
 
 // Delete removes a connector's secret from both places.
 func (s SecretStore) Delete(name string) error {
-	_ = KeychainDelete(KeychainService(name), s.Account)
+	if !fileOnly() {
+		_ = KeychainDelete(KeychainService(name), s.Account)
+	}
 	if err := os.Remove(s.file(name)); err != nil && !os.IsNotExist(err) {
 		return err
 	}

@@ -14,7 +14,8 @@ import (
 const humanReplyMax = 4000
 
 const humanUsage = `usage: flow human <reply|seen> ...   (connectors only — needs FLOW_CONNECTOR_TOKEN)
-  flow human reply <id> "<text>"   record the human's answer; delivers it to the asking task (reply_to=<id>)
+  flow human reply <id> "<text>"   record the human's answer; delivers it to the asking task (reply_to=<id>),
+                                   or back to the peer hub the message came from
   flow human seen <id>             mark human mail seen without answering`
 
 // cmdHuman implements the connector → flow half of the contract. Only a
@@ -150,9 +151,20 @@ func humanReply(id, text string) int {
 	defer db.Close()
 
 	// Deliver to the asking task only while its session can still read it.
+	// An ask from a peer hub is answered back to that peer instead.
 	var reply *flowdb.BusMessage
 	undeliverable := ""
-	if m.FromTaskSlug == "" {
+	if m.IsPeerInbound() {
+		if p, err := flowdb.GetPeer(db, m.Peer); err != nil || p == nil {
+			undeliverable = fmt.Sprintf("peer %q no longer exists", m.Peer)
+		} else {
+			reply = &flowdb.BusMessage{
+				ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+				FromAssignee: busUser, ToAssignee: p.Name, Body: text, ReplyTo: m.ID,
+				Peer: p.Name, Delivery: flowdb.DeliveryDispatched,
+			}
+		}
+	} else if m.FromTaskSlug == "" {
 		undeliverable = "the ask came from no task"
 	} else if t, err := flowdb.GetTask(db, m.FromTaskSlug); err != nil || t == nil {
 		undeliverable = fmt.Sprintf("task %q no longer exists", m.FromTaskSlug)
@@ -179,6 +191,11 @@ func humanReply(id, text string) int {
 	}
 	if reply == nil {
 		fmt.Fprintf(os.Stderr, "warning: answer to %s recorded but not delivered: %s\n", m.ID, undeliverable)
+		return 0
+	}
+	if reply.IsPeerOutbound() {
+		dispatchPeer(db, reply)
+		fmt.Printf("answered %s → peer %s [%s]\n", m.ID, reply.Peer, reply.ID)
 		return 0
 	}
 	fmt.Printf("answered %s → %s/%s [%s]\n", m.ID, reply.ToAssignee, reply.ToTaskSlug, reply.ID)

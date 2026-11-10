@@ -27,6 +27,10 @@ var sampleConnectors fs.FS = connectorsamples.Samples
 // runConnector executes one connector verb. Overridable in tests.
 var runConnector = connector.Run
 
+// runPeerConnector executes a peer connector's send, returning stdout.
+// Overridable in tests.
+var runPeerConnector = connector.RunOutput
+
 // chmodSampleExec marks the manifest's exec target executable. It reads
 // the raw manifest because connector.Load already demands the exec bit.
 func chmodSampleExec(dir string) error {
@@ -132,6 +136,18 @@ func installedConnectors() []*connector.Manifest {
 	return ms
 }
 
+// humanConnectors lists the installed connectors with role "human" —
+// the only ones human-ping dispatch (tiers, escalation) ever invokes.
+func humanConnectors() []*connector.Manifest {
+	var out []*connector.Manifest
+	for _, m := range installedConnectors() {
+		if m.HasRole(connector.RoleHuman) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // logDispatch appends one line to $FLOW_ROOT/connectors/dispatch.log.
 // Best-effort: logging must never fail the caller.
 func logDispatch(format string, a ...any) {
@@ -154,7 +170,7 @@ func logDispatch(format string, a ...any) {
 // row when it was marked to ping and a connector is installed. The
 // sender never waits on it and never sees its errors.
 func maybeDispatch(m *flowdb.BusMessage) {
-	if !m.Ping || len(installedConnectors()) == 0 {
+	if !m.Ping || len(humanConnectors()) == 0 {
 		return
 	}
 	if err := dispatchLauncher(m.ID); err != nil {
@@ -225,31 +241,41 @@ func secretStore() (connector.SecretStore, error) {
 // invokeConnector runs one verb of an installed connector with its secret,
 // FLOW_BIN and FLOW_ROOT in the environment.
 func invokeConnector(m *connector.Manifest, verb string, p connector.Payload) error {
-	store, err := secretStore()
-	if err != nil {
-		return err
-	}
-	secret, err := store.Get(m.Name)
-	if err != nil {
-		return fmt.Errorf("%s: %w (re-add the connector)", m.Name, err)
-	}
-	root, err := flowRoot()
-	if err != nil {
-		return err
-	}
 	if p.Options == nil {
 		p.Options = []string{}
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false) // keep <, >, & literal for simple shell parsers
-	if err := enc.Encode(p); err != nil {
+	payload, env, err := connectorCall(m, p)
+	if err != nil {
 		return err
 	}
-	payload := bytes.TrimRight(buf.Bytes(), "\n")
+	return runConnector(m, verb, payload, env, connectorTimeout)
+}
+
+// connectorCall encodes a payload (HTML escaping off, so <, >, & stay
+// literal for simple shell parsers) and builds the connector's
+// environment: its secret, FLOW_BIN and FLOW_ROOT.
+func connectorCall(m *connector.Manifest, p any) ([]byte, []string, error) {
+	store, err := secretStore()
+	if err != nil {
+		return nil, nil, err
+	}
+	secret, err := store.Get(m.Name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w (re-add the connector)", m.Name, err)
+	}
+	root, err := flowRoot()
+	if err != nil {
+		return nil, nil, err
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(p); err != nil {
+		return nil, nil, err
+	}
 	env := append(connectorEnv(),
 		"FLOW_CONNECTOR_TOKEN="+secret, "FLOW_BIN="+flowBinPath(), "FLOW_ROOT="+root)
-	return runConnector(m, verb, payload, env, connectorTimeout)
+	return bytes.TrimRight(buf.Bytes(), "\n"), env, nil
 }
 
 // testPayload is what `run test` receives: the send shape with id "test".
@@ -425,7 +451,8 @@ func cmdConnectorList(args []string) int {
 		if n, ok := cfg.Priority[m.Name]; ok {
 			prio = fmt.Sprint(n)
 		}
-		fmt.Printf("%-16s priority=%s  events=%s  secret=%s  %s\n", m.Name, prio, strings.Join(m.Events, ","), where, m.Dir)
+		fmt.Printf("%-16s roles=%s  priority=%s  events=%s  secret=%s  %s\n", m.Name,
+			strings.Join(m.EffectiveRoles(), ","), prio, strings.Join(m.Events, ","), where, m.Dir)
 	}
 	for _, e := range errs {
 		fmt.Printf("invalid: %v\n", e)
@@ -434,13 +461,22 @@ func cmdConnectorList(args []string) int {
 		fmt.Printf("invalid: %v (dispatch ignores it and pings all connectors at once)\n", cfgErr)
 		return 0
 	}
+	var human []*connector.Manifest
+	for _, m := range ms {
+		if m.HasRole(connector.RoleHuman) {
+			human = append(human, m)
+		}
+	}
 	var order []string
-	for _, tier := range connector.Tiers(ms, cfg.Priority) {
+	for _, tier := range connector.Tiers(human, cfg.Priority) {
 		var ns []string
 		for _, m := range tier {
 			ns = append(ns, m.Name)
 		}
 		order = append(order, strings.Join(ns, "+"))
+	}
+	if len(order) == 0 {
+		order = []string{"(no human connectors)"}
 	}
 	fmt.Printf("order: %s (urgent asks go to all at once)\n", strings.Join(order, " → "))
 	esc := cfg.EscalateAfter
@@ -668,6 +704,9 @@ func cmdConnectorDispatch(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: no message %q\n", args[0])
 		return 1
 	}
+	if m.IsPeerOutbound() {
+		return peerSend(db, m)
+	}
 	if m.Kind != "message" || m.ToTaskSlug != "" {
 		logDispatch("%s error not a human ask", m.ID)
 		fmt.Fprintf(os.Stderr, "error: %s is not a human ask\n", m.ID)
@@ -682,7 +721,7 @@ func cmdConnectorDispatch(args []string) int {
 		event = connector.EventUrgent
 	}
 	var targets []*connector.Manifest
-	for _, c := range installedConnectors() {
+	for _, c := range humanConnectors() {
 		if c.Wants(event) {
 			targets = append(targets, c)
 		}
@@ -692,6 +731,10 @@ func cmdConnectorDispatch(args []string) int {
 		Urgent: m.Urgent, Kind: "ask", CreatedAt: m.CreatedAt,
 		ReplyHint: fmt.Sprintf(`"$FLOW_BIN" human reply %s "<answer>"  (or: "$FLOW_BIN" human seen %s)`, m.ID, m.ID),
 	}
+	if m.IsPeerInbound() {
+		p.FromPeer = m.Peer
+	}
+	p.FromConnector = fromConnector(m)
 
 	var cfg connector.Config
 	if root, err := connectorsRoot(); err == nil {
