@@ -128,6 +128,51 @@ Prefer this over the harness's built-in Agent/subagent tool for multi-step
 work: a flow child has its own task, transcript, brief and close-out
 sweep, and survives this session.
 
+## Choosing the child's harness
+
+When more than one harness is installed, the driver block adds a
+`harnesses available for children: claude, codex` line. Pick each
+child's harness by the **user's stated preference**. No automatic
+switching, and never read usage numbers.
+
+```
+ preference in kb/user.md / said this session? ── yes ─▶ use it
+        │ no
+ can ask the user? ── yes ─▶ ask ONCE "Run children on Claude or Codex?"
+        │ no (headless)          └─▶ save to kb/user.md, use it
+        ▼
+ caller's harness (flow auto with no --harness, as today)
+```
+
+- **Ask once.** Use the harness's question tool if it has one. Save the
+  answer to `kb/user.md` as a KB scoop entry (§4.10 format), e.g.
+  "prefers Codex for auto children". Reuse it after that without asking
+  again.
+- The user can override per child ("run this one on Claude"): pass
+  `--harness <name>` for that child only; don't rewrite the KB unless
+  they say the preference changed.
+- No preference and no one to ask: omit `--harness`, so the child runs
+  on the caller's harness.
+
+### Limit hit → offer the other harness
+
+A child that ends `dead` may have hit a usage limit. Check its auto-run
+log (`flow show task <slug>` → `auto_run_log:`) and `flow transcript
+<slug>`:
+
+- **Claude**: `You've hit your … limit` in the log; in the transcript
+  `quotaLimits.status:"rejected"` or `error:"rate_limit"`.
+- **Codex**: `rate_limit_reached_type` set, or a usage-limit error in
+  the log.
+
+Then tell the user which limit was hit and when it resets (quote the
+reset time from the message), and offer to re-run on the other harness.
+On yes, spawn a NEW child with the same brief and `--harness <other>`
+under a new slug (e.g. `<slug>-codex`): the old task is pinned to its
+harness. No DB edits, no re-pinning. The same applies to the driver
+itself: if its own harness hits its limit, the user can open
+the work in the other harness (references/harness-transfer.md).
+
 ## Child brief template
 
 ```markdown
@@ -165,7 +210,9 @@ to prod", "may push a branch and open a PR, do NOT merge">
 - Parent done/archived: the child still writes its update note and sends
   its done/blocked report to the human as `flow message user "FYI: …" --fyi`.
   flow's own dead-child notice falls back to the human the same way.
-- No parent: update note; the human hears only at done/blocked.
+- No parent: update note; the human hears only at done/blocked. If the run
+  ends dead, flow itself pings the human (normal, not FYI) with the slug,
+  brief first line and log path. Owner-tagged tasks are left to the owner.
 
 ## Result contract
 
