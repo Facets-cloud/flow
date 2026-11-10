@@ -9,6 +9,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
+  opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
+  `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an
+  already-open session. When no supported terminal is detected (Linux
+  outside tmux/zellij/kitty) `flow do` no longer dead-ends: it keeps the
+  reserved session, prints the exact command to run by hand and points at
+  `--here` / `--auto`. With `FLOW_TERM` unset, the macOS selection order
+  is unchanged for everyone not already inside tmux.
+- **Prompt-based install.** A root `INSTALL.md` tells a coding agent how to
+  install flow on macOS or Linux from one pasted line: detect OS/arch, run
+  `install.sh`, fix PATH, `flow init`, verify. The skill's upgrade
+  reference follows the same path on both OSes, and the skill text now
+  scopes osascript/xattr/launchd advice to macOS.
+- **CI runs the full suite on macOS and Linux**, plus a Linux smoke job
+  (`scripts/smoke-linux.sh`) that installs from a local mirror with
+  `install.sh`, inits, adds a task, binds with `--here`, spawns inside tmux
+  with a stub `claude`, closes with `flow done`, and round-trips a message.
+  The same script runs on macOS when a tmux binary is on PATH.
 - **Peer desk primitives.** `flow peer deliver --to <task>` lets the
   receiving connector route inbound peer mail to a local task it chooses
   (it must be open; else exit 1, nothing stored). A reply whose asking
@@ -63,6 +81,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   **Hand to agent** button for peer mail. It marks the mail seen, then starts
   `flow auto` with a brief that tells the agent to reply with
   `flow message <peer> --reply-to <id>` and then `flow done`.
+
+### Changed
+
+- **`FLOW_TERM` now outranks every ambient terminal marker.** An explicit,
+  valid `FLOW_TERM` beats `$TMUX`, `$ZELLIJ` and Rex's and kitty's
+  variables, not just `TERM_PROGRAM`: those describe where flow happens to
+  run, `FLOW_TERM` is the user saying which backend they want. Until now a
+  tmux-inside-iTerm user who had always got iTerm tabs got tmux windows the
+  moment the tmux backend landed, and `FLOW_TERM=iterm` could not opt out.
+  With `FLOW_TERM` unset the order is unchanged: zellij, tmux, Rex, kitty,
+  then `TERM_PROGRAM`.
+
+### Fixed
+
+- **`flow do` inside tmux on macOS now actually starts the harness.** The
+  tmux backend typed the whole launch line (over 1 KB) into the new window
+  before its shell had switched the tty to raw mode. A macOS tty in
+  canonical mode takes at most 1024 bytes per line (`MAX_CANON`), so under
+  zsh the line was cut inside the quoted bootstrap prompt, the window sat
+  at `quote>`, and `flow do` still reported `Spawned` (rc 0) with a task
+  left in-progress on a session that never started. The launch command now
+  lives in a per-spawn, self-deleting script (as the Warp backend does) and
+  the typed line is a few dozen bytes however long the prompt is. Linux
+  (`MAX_CANON` 4096) was unaffected. `scripts/smoke-linux.sh` drives its
+  control window the same way, so it passes on macOS too.
 
 ## [0.1.0-alpha.36] — 2026-11-10
 

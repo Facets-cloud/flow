@@ -14,14 +14,46 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
 
-  test:
-    runs-on: ubuntu-latest
+  test-os:
+    # Full suite on both supported OSes — not just a cross-compile.
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: go test ./...
+
+  test:
+    # The single "test" check that branch protection on main requires.
+    # Passes only when the suite passed on every OS in test-os.
+    if: always()
+    needs: test-os
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the suite to pass on every OS
+        env:
+          RESULT: ${{ needs.test-os.result }}
+        run: |
+          echo "test-os result: $RESULT"
+          [ "$RESULT" = "success" ]
+
+  linux-smoke:
+    # End-to-end on a real Linux box: install.sh from a local mirror, init,
+    # add, --here, flow do inside tmux with a stub claude, done, message.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+      - run: sh scripts/smoke-linux.sh
 
   build:
     runs-on: ubuntu-latest
@@ -31,3 +63,25 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -s sh install.sh scripts/smoke-linux.sh
+
+  cross-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [darwin/arm64, darwin/amd64, linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build ${{ matrix.target }}
+        run: |
+          GOOS="${MATRIX_TARGET%/*}" GOARCH="${MATRIX_TARGET#*/}" CGO_ENABLED=0 go build -o /dev/null .
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
