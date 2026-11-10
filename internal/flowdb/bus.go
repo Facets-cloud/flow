@@ -424,6 +424,13 @@ func GetBusMessageByID(db *sql.DB, id string) (*BusMessage, error) {
 	return rows[0], nil
 }
 
+// DeleteBusMessage removes one row by id. Used to roll back a send whose
+// attachments could not be moved into place after the row was inserted.
+func DeleteBusMessage(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM bus_messages WHERE id=?`, id)
+	return err
+}
+
 // ReadMessageByID marks one message read by id and returns (row, newly).
 // It fixes pop's oldest-first limitation: any specific message can be
 // acked/read directly, out of arrival order. A human-directed message

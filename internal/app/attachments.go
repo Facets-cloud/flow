@@ -9,13 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"flow/internal/flowdb"
 )
 
 // Message attachments: files carried with a bus message (local or peer).
-// flow copies each into $FLOW_ROOT/attachments/<message-id>/<name> before
-// the row is stored and records {name,size,sha256} on the row. Files are
+// flow copies each into $FLOW_ROOT/attachments/<message-id>/<name>
+// (staged, then moved into place once the row is stored) and records {name,size,sha256} on the row. Files are
 // data — flow never opens, runs or interprets them.
 //
 //	flow message <to> "<note>" --attach a.txt --attach b/a.txt
@@ -100,30 +101,60 @@ func attachmentPath(msgID, name string) string {
 	return filepath.Join(dir, msgID, name)
 }
 
-// storeAttachments copies srcs into attachments/<msgID>/ and returns their
-// metadata. On any error the message's directory is removed.
-func storeAttachments(msgID string, srcs []attachSrc) ([]flowdb.Attachment, error) {
-	if len(srcs) == 0 {
-		return nil, nil
-	}
+// Attachment storage is stage → insert → rename so a concurrent
+// pruneAttachments (run at the end of every `flow message`) can never
+// delete files of a send that is still in flight (#131):
+//
+//	copy  → attachments/.staging-<id>-<rand>/   (prune skips dot-dirs)
+//	insert row
+//	rename staging → attachments/<id>/          (row exists: prune keeps it)
+//
+// If the insert fails the staging dir is removed. If the rename fails
+// after the insert, the row is deleted and the send errors, so a row
+// never claims files that aren't there.
+
+const (
+	attachStagingPrefix = ".staging-"
+	// pruneOrphanMinAge: an orphaned attachments/<id>/ younger than this is
+	// left alone — belt and braces for any other writer mid-flight.
+	pruneOrphanMinAge = 10 * time.Minute
+	// pruneStagingMaxAge: staging dirs older than this belong to crashed
+	// sends and are removed.
+	pruneStagingMaxAge = time.Hour
+)
+
+// renameAttachDir moves a staging dir into place; a var so tests can fail it.
+var renameAttachDir = os.Rename
+
+// stageAttachments copies srcs into a fresh staging dir under the
+// attachments root and returns the dir and the files' metadata. On any
+// error the staging dir is removed.
+func stageAttachments(msgID string, srcs []attachSrc) (string, []flowdb.Attachment, error) {
 	root, err := attachmentsRoot()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	dir := filepath.Join(root, msgID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", nil, err
+	}
+	dir, err := os.MkdirTemp(root, attachStagingPrefix+msgID+"-")
+	if err != nil {
+		return "", nil, err
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		os.RemoveAll(dir)
+		return "", nil, err
 	}
 	var out []flowdb.Attachment
 	for _, s := range srcs {
 		a, err := copyAttachment(s, filepath.Join(dir, s.name))
 		if err != nil {
 			os.RemoveAll(dir)
-			return nil, fmt.Errorf("attachment %s: %v", s.path, err)
+			return "", nil, fmt.Errorf("attachment %s: %v", s.path, err)
 		}
 		out = append(out, a)
 	}
-	return out, nil
+	return dir, out, nil
 }
 
 func copyAttachment(s attachSrc, dst string) (flowdb.Attachment, error) {
@@ -153,32 +184,41 @@ func copyAttachment(s attachSrc, dst string) (flowdb.Attachment, error) {
 	return flowdb.Attachment{Name: s.name, Size: n, SHA256: hex.EncodeToString(h.Sum(nil))}, nil
 }
 
-// removeAttachments deletes a message's stored attachments (best-effort).
-func removeAttachments(msgID string) {
-	if root, err := attachmentsRoot(); err == nil && msgID != "" {
-		os.RemoveAll(filepath.Join(root, msgID))
-	}
-}
-
-// insertWithAttachments copies srcs for m, then inserts m; if the insert
-// fails the copies are removed so no orphan directory is left behind.
+// insertWithAttachments stages srcs, inserts m, then moves the staged
+// files into attachments/<m.ID>/ (see the stage → insert → rename note
+// above). Without attachments it is a plain insert.
 func insertWithAttachments(db *sql.DB, m *flowdb.BusMessage, srcs []attachSrc) error {
-	as, err := storeAttachments(m.ID, srcs)
+	if len(srcs) == 0 {
+		return flowdb.InsertBusMessage(db, m)
+	}
+	staging, as, err := stageAttachments(m.ID, srcs)
 	if err != nil {
 		return err
 	}
 	m.Attachments = as
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
-		if len(as) > 0 {
-			removeAttachments(m.ID)
-		}
+		os.RemoveAll(staging)
 		return err
+	}
+	root, err := attachmentsRoot()
+	if err == nil {
+		err = renameAttachDir(staging, filepath.Join(root, m.ID))
+	}
+	if err != nil {
+		os.RemoveAll(staging)
+		if derr := flowdb.DeleteBusMessage(db, m.ID); derr != nil {
+			return fmt.Errorf("store attachments: %v (and removing the row failed: %v)", err, derr)
+		}
+		return fmt.Errorf("store attachments: %v", err)
 	}
 	return nil
 }
 
 // pruneAttachments removes attachment directories whose message row has
-// rolled off the bus (retention). Best-effort, cheap: one directory read.
+// rolled off the bus (retention), and staging dirs left by crashed sends.
+// It never touches a staging dir younger than pruneStagingMaxAge nor an
+// orphaned dir younger than pruneOrphanMinAge, so in-flight sends are
+// safe. Best-effort, cheap: one directory read.
 func pruneAttachments(db *sql.DB) {
 	root, err := attachmentsRoot()
 	if err != nil {
@@ -188,12 +228,28 @@ func pruneAttachments(db *sql.DB) {
 	if err != nil {
 		return
 	}
+	now := time.Now()
 	for _, e := range ents {
 		if !e.IsDir() {
 			continue
 		}
-		if m, err := flowdb.GetBusMessageByID(db, e.Name()); err == nil && m == nil {
-			os.RemoveAll(filepath.Join(root, e.Name()))
+		fi, err := e.Info()
+		if err != nil {
+			continue // vanished (renamed/removed) under us
+		}
+		age := now.Sub(fi.ModTime())
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			if strings.HasPrefix(name, attachStagingPrefix) && age > pruneStagingMaxAge {
+				os.RemoveAll(filepath.Join(root, name))
+			}
+			continue
+		}
+		if age < pruneOrphanMinAge {
+			continue
+		}
+		if m, err := flowdb.GetBusMessageByID(db, name); err == nil && m == nil {
+			os.RemoveAll(filepath.Join(root, name))
 		}
 	}
 }
