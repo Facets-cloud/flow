@@ -59,7 +59,7 @@ func openFlowDBForWorkdir() (*sql.DB, int) {
 func cmdWorkdirList(args []string) int {
 	fs := flagSet("workdir list")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "error: workdir list takes no positional arguments")
@@ -155,7 +155,7 @@ func cmdWorkdirAdd(args []string) int {
 	fs.String("name", "", "short nickname")                  // for -h rendering only
 	fs.String("description", "", "one-line free-form notes") // for -h rendering only
 	if err := fs.Parse(rest); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "error: workdir add requires exactly one path")
@@ -249,7 +249,7 @@ func extractWorkdirStringFlag(args []string, flagName string) (string, []string,
 func cmdWorkdirRemove(args []string) int {
 	fs := flagSet("workdir remove")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "error: workdir remove requires exactly one path")
@@ -282,7 +282,7 @@ func cmdWorkdirScan(args []string) int {
 	fs := flagSet("workdir scan")
 	fs.Bool("add", false, "register discovered candidates") // for -h only
 	if err := fs.Parse(rest); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	var roots []string

@@ -47,6 +47,9 @@ func cmdMessage(args []string) int {
 			pos = append(pos, a)
 		case a == "--":
 			rest = true
+		case isHelpArg(a):
+			fmt.Fprintln(os.Stderr, usage)
+			return 0
 		case a == "--urgent" || a == "-urgent":
 			urgent = true
 		case a == "--body" || a == "-body" || a == "--message" || a == "-m" || a == "-b":

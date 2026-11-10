@@ -37,17 +37,17 @@ retroactively change past runs.*
 
 // addPlaybook implements `flow add playbook "<name>" [flags]`.
 func addPlaybook(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: add playbook requires a name")
-		return 2
-	}
-	name := args[0]
+	name, flagArgs, missing := splitPositional(args)
 	fs := flagSet("add playbook")
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	project := fs.String("project", "", "parent project slug (optional)")
 	workDir := fs.String("work-dir", "", "absolute path to the playbook's work directory (required)")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: add playbook requires a name")
 		return 2
 	}
 

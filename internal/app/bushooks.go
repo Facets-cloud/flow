@@ -337,7 +337,7 @@ func nudgeBackoffFor(attempts int) time.Duration {
 func cmdHookStop(args []string) int {
 	fs := flagSet("hook stop")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	// A missing or malformed payload counts as active — when in doubt,
 	// don't block.

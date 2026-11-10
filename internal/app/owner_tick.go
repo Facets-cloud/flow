@@ -87,7 +87,7 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 	if err != nil {
 		return fmt.Errorf("new session id: %w", err)
 	}
-	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{})
+	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{WritableDirs: sandboxWritableDirs()})
 	var spawnEnv map[string]string
 	if root := os.Getenv("FLOW_ROOT"); root != "" {
 		spawnEnv = map[string]string{"FLOW_ROOT": root}
@@ -101,14 +101,14 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 // to check something early. `--auto` runs it headlessly instead. Neither
 // path advances the owner's schedule; this is an extra tick on top of it.
 func ownerTickManual(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: owner tick requires an owner slug")
-		return 2
-	}
-	slug := args[0]
+	slug, flagArgs, missing := splitPositional(args)
 	fs := flagSet("owner tick")
 	auto := fs.Bool("auto", false, "run the tick headlessly in the background (no tab, no human)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: owner tick requires an owner slug")
 		return 2
 	}
 
@@ -206,7 +206,7 @@ func ownerTickManual(args []string) int {
 func ownerTickDue(args []string) int {
 	fs := flagSet("owner tick-due")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	dbPath, err := flowDBPath()

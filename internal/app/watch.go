@@ -30,7 +30,7 @@ func cmdWatch(args []string) int {
 	rm := fs.String("rm", "", "unsubscribe from a target")
 	as := consumerFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	db, err := openBusDB()
 	if err != nil {

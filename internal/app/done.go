@@ -29,13 +29,13 @@ import (
 // A failed sweep (missing claude binary, non-zero exit) only emits a
 // warning — the status flip is the contract; the sweep is best-effort.
 func cmdDone(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: done requires a task ref")
-		return 2
-	}
-	query := args[0]
+	query, flagArgs, missing := splitPositional(args)
 	fs := flagSet("done")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: done requires a task ref")
 		return 2
 	}
 

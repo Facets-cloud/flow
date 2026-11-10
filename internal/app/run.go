@@ -29,18 +29,18 @@ func cmdRun(args []string) int {
 }
 
 func cmdRunPlaybook(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: run playbook requires a slug")
-		return 2
-	}
-	slug := args[0]
+	slug, flagArgs, missing := splitPositional(args)
 	fs := flagSet("run playbook")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness (ignored when --here is set)")
 	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
 	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via `flow done`")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: run playbook requires a slug")
 		return 2
 	}
 

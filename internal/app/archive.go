@@ -27,7 +27,7 @@ func setArchivedAt(args []string, archive bool) int {
 	}
 	fs := flagSet(verb)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() != 1 {
 		fmt.Fprintf(os.Stderr, "error: %s requires exactly one ref\n", verb)

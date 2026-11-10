@@ -38,7 +38,7 @@ func cmdShow(args []string) int {
 func showTaskCmd(args []string) int {
 	fs := flagSet("show task")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	ref := ""
 	if fs.NArg() > 0 {
@@ -97,7 +97,7 @@ func showTaskCmd(args []string) int {
 func showProjectCmd(args []string) int {
 	fs := flagSet("show project")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	ref := ""
 	if fs.NArg() > 0 {
@@ -157,7 +157,7 @@ func showProjectCmd(args []string) int {
 func showPlaybookCmd(args []string) int {
 	fs := flagSet("show playbook")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	ref := ""
 	if fs.NArg() > 0 {

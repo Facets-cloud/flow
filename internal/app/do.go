@@ -111,7 +111,7 @@ func cmdDo(args []string) int {
 	// the flags: first absorb any leading flags, then take the next
 	// non-flag as the slug, then absorb any trailing flags.
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
@@ -119,7 +119,7 @@ func cmdDo(args []string) int {
 	}
 	query := fs.Arg(0)
 	if err := fs.Parse(fs.Args()[1:]); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	injectionText, rc := loadInjectionText(fs, *withInstr, *withFile)
@@ -453,6 +453,7 @@ func cmdDo(args []string) int {
 	launchOpts := harness.LaunchOpts{
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
+		WritableDirs:    sandboxWritableDirs(),
 	}
 	if needsBootstrap {
 		// Fresh bootstrap path. For pre-allocating harnesses (claude),

@@ -61,7 +61,7 @@ func cmdOwner(args []string) int {
 func loadOwnerArg(args []string, name string) (*flowdb.Owner, *sql.DB, int) {
 	fs := flagSet(name)
 	if err := fs.Parse(args); err != nil {
-		return nil, nil, 2
+		return nil, nil, flagParseRC(err)
 	}
 	if fs.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "error: %s requires an owner slug\n", name)
@@ -97,7 +97,7 @@ func loadOwnerArg(args []string, name string) (*flowdb.Owner, *sql.DB, int) {
 // split into in-flight work units and questions parked for the human.
 func ownerShow(args []string) int {
 	o, db, rc := loadOwnerArg(args, "owner show")
-	if rc != 0 {
+	if rc != 0 || o == nil {
 		return rc
 	}
 	defer db.Close()
@@ -201,14 +201,14 @@ func printOwnerTaskSection(label string, tasks []*flowdb.Task) {
 // hand-deleting). Either way, owned tasks (tagged owner:<slug>) are left
 // intact — the work the owner spawned outlives it.
 func ownerRetire(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: owner retire requires an owner slug")
-		return 2
-	}
-	slug := args[0]
+	slug, flagArgs, missing := splitPositional(args)
 	fs := flagSet("owner retire")
 	del := fs.Bool("delete", false, "permanently delete the owner row + its directory (instead of archiving)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: owner retire requires an owner slug")
 		return 2
 	}
 
@@ -264,15 +264,15 @@ func ownerRetire(args []string) int {
 // end of each run it decides when it next needs to act and sets it here,
 // overriding the `--every` fallback. Exactly one of --in/--at is required.
 func ownerNext(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: owner next requires an owner slug")
-		return 2
-	}
-	slug := args[0]
+	slug, flagArgs, missing := splitPositional(args)
 	fs := flagSet("owner next")
 	in := fs.String("in", "", "set next tick this far from now (e.g. 15m, 2h)")
 	at := fs.String("at", "", "set next tick at an absolute time (RFC3339, or YYYY-MM-DD/today/tomorrow)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: owner next requires an owner slug")
 		return 2
 	}
 	if (*in == "") == (*at == "") {
@@ -351,7 +351,7 @@ func parseOwnerWhen(s string) (time.Time, error) {
 // the next scheduler pass picks it up. Then it ticks every Every.
 func ownerStart(args []string) int {
 	o, db, rc := loadOwnerArg(args, "owner start")
-	if rc != 0 {
+	if rc != 0 || o == nil {
 		return rc
 	}
 	defer db.Close()
@@ -369,7 +369,7 @@ func ownerStart(args []string) int {
 // ownerPause stops an owner from ticking while preserving all its state.
 func ownerPause(args []string) int {
 	o, db, rc := loadOwnerArg(args, "owner pause")
-	if rc != 0 {
+	if rc != 0 || o == nil {
 		return rc
 	}
 	defer db.Close()
@@ -388,7 +388,7 @@ func ownerList(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived owners")
 	statusFilter := fs.String("status", "", "active|paused|retired")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	dbPath, err := flowDBPath()
@@ -467,18 +467,18 @@ func roundDur(d time.Duration) string {
 
 // addOwner implements `flow add owner "<name>" --work-dir <p> --every <dur>`.
 func addOwner(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: add owner requires a name")
-		return 2
-	}
-	name := args[0]
+	name, flagArgs, missing := splitPositional(args)
 	fs := flagSet("add owner")
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	workDir := fs.String("work-dir", "", "absolute path to the owner's work directory (required)")
 	project := fs.String("project", "", "parent project slug (optional)")
 	every := fs.String("every", "", "fallback/max tick interval (heartbeat floor), e.g. 1h, 24h; default 24h — ticks self-pace via `flow owner next`")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: add owner requires a name")
 		return 2
 	}
 

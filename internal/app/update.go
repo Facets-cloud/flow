@@ -45,11 +45,7 @@ func cmdUpdate(args []string) int {
 // $CLAUDE_CODE_SESSION_ID), which prevents wrong-session attachment
 // by construction.
 func cmdUpdateTask(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: update task requires a task ref")
-		return 2
-	}
-	ref := args[0]
+	ref, flagArgs, missing := splitPositional(args)
 	fs := flagSet("update task")
 	workDir := fs.String("work-dir", "", "new absolute work directory")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
@@ -68,7 +64,11 @@ func cmdUpdateTask(args []string) int {
 	clearTags := fs.Bool("clear-tags", false, "remove all tags from the task")
 	project := fs.String("project", "", "move the task into this project (work_dir is unchanged)")
 	clearProject := fs.Bool("clear-project", false, "detach the task from its project (make it floating)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: update task requires a task ref")
 		return 2
 	}
 	if *mkdir && *workDir == "" {
@@ -394,16 +394,16 @@ func isValidStatus(s string) bool {
 // field with a real reason to change. Status and other shape edits go
 // through `flow archive` / `flow edit`.
 func cmdUpdateProject(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: update project requires a project ref")
-		return 2
-	}
-	ref := args[0]
+	ref, flagArgs, missing := splitPositional(args)
 	fs := flagSet("update project")
 	priority := fs.String("priority", "", "new priority: high|medium|low")
 	terminalGroup := fs.String("terminal-group", "", "where flow do opens this project's task tabs (Rex session label)")
 	clearTerminalGroup := fs.Bool("clear-terminal-group", false, "open task tabs wherever flow do runs from")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: update project requires a project ref")
 		return 2
 	}
 	group := strings.TrimSpace(*terminalGroup)

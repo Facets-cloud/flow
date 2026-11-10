@@ -20,11 +20,7 @@ import (
 //	  ├─ write brief.md     (replaces the stub)
 //	  └─ flow do --auto     (detached headless run)
 func cmdAuto(args []string) int {
-	if len(args) == 0 || args[0] == "" || strings.HasPrefix(args[0], "-") {
-		fmt.Fprintln(os.Stderr, "error: auto requires a task name: flow auto \"<name>\" --brief <file|->")
-		return 2
-	}
-	name := args[0]
+	name, flagArgs, missing := splitPositional(args)
 	fs := flagSet("auto")
 	slugFlag := fs.String("slug", "", "short slug (default: auto-generated from name)")
 	briefFlag := fs.String("brief", "", "brief file for the child (required; - reads stdin)")
@@ -32,7 +28,11 @@ func cmdAuto(args []string) int {
 	workDir := fs.String("work-dir", "", "work directory (default: inherited like flow add task)")
 	mkdir := fs.Bool("mkdir", false, "same as flow add task --mkdir")
 	harnessName := fs.String("harness", "", "harness for the child session (one of: "+registeredHarnessNames()+")")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: auto requires a task name: flow auto \"<name>\" --brief <file|->")
 		return 2
 	}
 	if fs.NArg() > 0 {

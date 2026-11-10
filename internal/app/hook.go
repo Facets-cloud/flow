@@ -110,7 +110,7 @@ func readHookPayload() (p hookPayload, ok bool) {
 func cmdHookSessionStart(args []string) int {
 	fs := flagSet("hook session-start")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	readHookPayload()
 
@@ -325,7 +325,7 @@ func emitHookContext(event, ctx string) int {
 func cmdHookUserPromptSubmit(args []string) int {
 	fs := flagSet("hook user-prompt-submit")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	readHookPayload()
 	pageCtx := busPromptSubmitContext()
@@ -366,7 +366,7 @@ func cmdHookUserPromptSubmit(args []string) int {
 func cmdHookPreToolUse(args []string) int {
 	fs := flagSet("hook pre-tool-use")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	readHookPayload()
 	ctx := busPreToolUseContext()

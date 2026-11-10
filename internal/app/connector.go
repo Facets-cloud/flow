@@ -304,6 +304,10 @@ func cmdConnector(args []string) int {
 }
 
 func cmdConnectorAdd(args []string) int {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stderr, "usage: flow connector add <dir|sample>")
+		return 0
+	}
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: flow connector add <dir|sample>")
 		return 2
@@ -448,6 +452,10 @@ func cmdConnectorList(args []string) int {
 }
 
 func cmdConnectorRemove(args []string) int {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stderr, "usage: flow connector remove <name>")
+		return 0
+	}
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: flow connector remove <name>")
 		return 2
@@ -588,6 +596,10 @@ func cmdConnectorEscalate(args []string) int {
 }
 
 func cmdConnectorTest(args []string) int {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stderr, "usage: flow connector test [<name>]")
+		return 0
+	}
 	if len(args) > 1 {
 		fmt.Fprintln(os.Stderr, "usage: flow connector test [<name>]")
 		return 2

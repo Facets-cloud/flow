@@ -129,7 +129,7 @@ func listTagsCmd(args []string) int {
 	fs := flagSet("list tags")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
@@ -210,7 +210,7 @@ func listTasksCmd(args []string) int {
 	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
@@ -565,7 +565,7 @@ func listProjectsCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived projects")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
@@ -738,7 +738,7 @@ func listPlaybooksCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
@@ -826,7 +826,7 @@ func listRunsCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {

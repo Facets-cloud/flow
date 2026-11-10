@@ -225,7 +225,7 @@ func skillInstall(args []string, forceDefault bool) int {
 	skipHook := fs.Bool("skip-hook", false, "don't auto-install the hooks")
 	only := harnessFlag(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	targets, ok := resolveTargets(*only, presentHarnesses)
 	if !ok {
@@ -295,7 +295,7 @@ func skillUninstall(args []string) int {
 	keepHook := fs.Bool("keep-hook", false, "don't remove the hooks")
 	only := harnessFlag(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	targets, ok := resolveTargets(*only, installedHarnesses)
 	if !ok {

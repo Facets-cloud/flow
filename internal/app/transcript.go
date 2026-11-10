@@ -24,7 +24,7 @@ func cmdTranscript(args []string) int {
 	fs := flagSet("transcript")
 	compact := fs.Bool("compact", false, "omit tool results and thinking blocks")
 	if err := fs.Parse(flagArgs); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	dbPath, err := flowDBPath()

@@ -226,7 +226,7 @@ func TestCmdDoCurrentSessionGuard(t *testing.T) {
 }
 
 func TestCmdDoExplicitHarnessSelectsCodexForNewTask(t *testing.T) {
-	setupFlowRoot(t)
+	root := setupFlowRoot(t)
 	seedTask(t, "explicit-codex")
 	for _, h := range allHarnesses() {
 		t.Setenv(h.SessionIDEnvVar(), "")
@@ -250,8 +250,13 @@ func TestCmdDoExplicitHarnessSelectsCodexForNewTask(t *testing.T) {
 	if task.Harness.String != "codex" || task.SessionID.String != sid {
 		t.Errorf("task = harness=%q session=%q, want codex/%q", task.Harness.String, task.SessionID.String, sid)
 	}
-	if !strings.Contains(script(), "codex resume "+sid) {
-		t.Errorf("spawn script did not resume Codex: %q", script())
+	if !strings.Contains(script(), "codex resume -s workspace-write -a on-request --add-dir ") || !strings.Contains(script(), sid) {
+		t.Errorf("spawn script did not resume Codex workspace-write/on-request: %q", script())
+	}
+	// F1: the sandboxed session must be able to write the flow root
+	// (flow.db), or `flow show task` fails "attempt to write a readonly database".
+	if !strings.Contains(script(), root) {
+		t.Errorf("spawn script does not make the flow root %q writable: %q", root, script())
 	}
 }
 
