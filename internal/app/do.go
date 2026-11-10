@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -486,13 +487,15 @@ func cmdDo(args []string) int {
 		Inject:          injectionText,
 		WritableDirs:    sandboxWritableDirs(),
 	}
-	if needsBootstrap {
-		// Fresh bootstrap path. For pre-allocating harnesses (claude),
-		// PrepareSpawn already minted the sessionID and the status flip
-		// above committed it, so the harness can embed it in the spawn
-		// command (e.g. `--session-id <uuid>`) for deterministic
-		// transcript paths. For self-allocating harnesses sessionID will
-		// be empty — the SessionStart hook completes the binding later.
+	// bootstrapCmd builds the first-start command. For pre-allocating
+	// harnesses (claude), PrepareSpawn already minted the sessionID and
+	// the status flip above committed it, so the harness can embed it in
+	// the spawn command (e.g. `--session-id <uuid>`) for deterministic
+	// transcript paths. For self-allocating harnesses sessionID will be
+	// empty — the SessionStart hook completes the binding later. A closure
+	// because the no-terminal handoff needs it again for a session that
+	// was reserved but never started.
+	bootstrapCmd := func() string {
 		playbookSlug := ""
 		isFirstRun := false
 		if task.PlaybookSlug.Valid {
@@ -510,7 +513,10 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
-		command = h.LaunchCmd(sessionID, prompt, launchOpts)
+		return h.LaunchCmd(sessionID, prompt, launchOpts)
+	}
+	if needsBootstrap {
+		command = bootstrapCmd()
 	} else {
 		// Resume path: the UUID we already have in the DB is what the
 		// harness used when it first wrote its transcript.
@@ -531,34 +537,52 @@ func cmdDo(args []string) int {
 	if project != nil && project.TerminalGroup.Valid {
 		group = project.TerminalGroup.String
 	}
+	handedOff := false
 	if err := spawner.SpawnTabIn(group, buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
-		if needsBootstrap {
-			// Spawn failed before claude could write its jsonl. Undo
-			// both the session_id pre-allocation AND the status flip
-			// so the next `flow do` retries bootstrap fresh. The
-			// session-id invariant (in-progress requires session_id)
-			// makes "preserve status, drop session_id" illegal —
-			// rolling status back to backlog is the only consistent
-			// recovery. The user's next `flow do` will flip fresh.
+		if errors.Is(err, spawner.ErrNoTerminal) {
+			// No supported terminal on this host (Linux outside
+			// tmux/zellij/kitty). Not a failure: the binding above
+			// stands — the printed command carries the same session
+			// id, so running it by hand lands in a bound session via
+			// the SessionStart hook. Rolling back would orphan that id.
 			//
-			// The WHERE clause guards against a concurrent `flow do`
-			// having mutated session_id between commit and now —
-			// only roll back if we still own the session.
-			if _, undoErr := db.Exec(
-				`UPDATE tasks SET
-					session_id        = NULL,
-					session_started   = NULL,
-					status            = 'backlog',
-					status_changed_at = NULL,
-					updated_at        = ?
-				 WHERE slug=? AND session_id=?`,
-				flowdb.NowISO(), task.Slug, sessionID,
-			); undoErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+			// A session reserved by an earlier handoff but never started
+			// has no transcript yet; `--resume` would be refused, so hand
+			// out the bootstrap command (same id) again.
+			if !needsBootstrap && h.ValidateSession(cwd, sessionID) != nil {
+				command = bootstrapCmd()
 			}
+			printNoTerminalHandoff(task.Slug, cwd, command, spawnEnv)
+			handedOff = true
+		} else {
+			if needsBootstrap {
+				// Spawn failed before claude could write its jsonl. Undo
+				// both the session_id pre-allocation AND the status flip
+				// so the next `flow do` retries bootstrap fresh. The
+				// session-id invariant (in-progress requires session_id)
+				// makes "preserve status, drop session_id" illegal —
+				// rolling status back to backlog is the only consistent
+				// recovery. The user's next `flow do` will flip fresh.
+				//
+				// The WHERE clause guards against a concurrent `flow do`
+				// having mutated session_id between commit and now —
+				// only roll back if we still own the session.
+				if _, undoErr := db.Exec(
+					`UPDATE tasks SET
+						session_id        = NULL,
+						session_started   = NULL,
+						status            = 'backlog',
+						status_changed_at = NULL,
+						updated_at        = ?
+					 WHERE slug=? AND session_id=?`,
+					flowdb.NowISO(), task.Slug, sessionID,
+				); undoErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
 	}
 
 	// Post-spawn bookkeeping, outside the main tx.
@@ -579,12 +603,42 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
 	}
 
-	if needsBootstrap {
+	switch {
+	case handedOff:
+		// printNoTerminalHandoff already said what to do.
+	case needsBootstrap:
 		fmt.Printf("Spawned %s (session %s)\n", task.Slug, sessionID)
-	} else {
+	default:
 		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
 	}
 	return 0
+}
+
+// printNoTerminalHandoff is the no-dead-end path for hosts where flow
+// cannot open a tab (no tmux/zellij/kitty on Linux). It prints the exact
+// command the tab would have run — cwd and env included — so the user can
+// paste it into any terminal, plus the two tab-free alternatives.
+func printNoTerminalHandoff(slug, cwd, command string, envVars map[string]string) {
+	envPrefix := ""
+	if len(envVars) > 0 {
+		keys := make([]string, 0, len(envVars))
+		for k := range envVars {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+"="+spawner.ShellQuote(envVars[k]))
+		}
+		envPrefix = strings.Join(parts, " ") + " "
+	}
+	fmt.Printf("%s: no supported terminal detected on this host, so no tab was opened.\n", slug)
+	fmt.Printf("The session is reserved for you — run this in any terminal to start it:\n\n")
+	fmt.Printf("  cd %s && %s%s\n\n", spawner.ShellQuote(cwd), envPrefix, strings.ReplaceAll(command, "\n", " "))
+	fmt.Printf("Or skip the tab:\n")
+	fmt.Printf("  flow do --here %s   bind the harness session you are already in\n", slug)
+	fmt.Printf("  flow do --auto %s   run it headless in the background\n", slug)
+	fmt.Printf("Tabs open automatically inside tmux, zellij or kitty (or set FLOW_TERM=tmux|zellij|kitty).\n")
 }
 
 // harnessForExplicitSpawn applies `flow do --harness <name>` to an

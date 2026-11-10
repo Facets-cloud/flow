@@ -1407,3 +1407,138 @@ func TestCmdDoCodexProbeRunsInTaskWorkDir(t *testing.T) {
 		t.Errorf("probe ran in %q, want task work_dir %q", gotDir, wd)
 	}
 }
+
+// pinNoTerminalHost makes spawner detection land on the macOS-only
+// default (iterm) while pretending the host is linux, so SpawnTab
+// returns spawner.ErrNoTerminal. iterm.Runner is stubbed to fail loudly
+// if anything still tries to shell out to osascript.
+func pinNoTerminalHost(t *testing.T) {
+	t.Helper()
+	oldOverride := spawner.Override
+	spawner.Override = ""
+	t.Cleanup(func() { spawner.Override = oldOverride })
+	oldGOOS := spawner.GOOS
+	spawner.GOOS = "linux"
+	t.Cleanup(func() { spawner.GOOS = oldGOOS })
+	for _, k := range []string{"ZELLIJ", "TMUX", "REX_SESSION", "KITTY_WINDOW_ID", "FLOW_TERM", "TERM_PROGRAM"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("TERM", "xterm-256color")
+	old := iterm.Runner
+	iterm.Runner = func(args []string) error {
+		t.Errorf("osascript backend must not be invoked on a no-terminal host; argv=%v", args)
+		return errors.New("osascript on linux")
+	}
+	t.Cleanup(func() { iterm.Runner = old })
+}
+
+// TestCmdDoNoTerminalFallbackPrintsCommand — on a host with no supported
+// terminal (Linux outside tmux/zellij/kitty) `flow do` must not dead-end:
+// it keeps the fresh binding (session_id + in-progress), prints the exact
+// command to run by hand, points at --here / --auto, and exits 0.
+func TestCmdDoNoTerminalFallbackPrintsCommand(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "linux-task")
+	const pinnedSID = "ffffffff-aaaa-4bbb-8ccc-dddddddddddd"
+	stubNewUUID(t, pinnedSID)
+	pinNoTerminalHost(t)
+
+	var rc int
+	out := captureStdout(t, func() { rc = cmdDo([]string{"linux-task"}) })
+	if rc != 0 {
+		t.Fatalf("rc=%d, want 0; output:\n%s", rc, out)
+	}
+	for _, want := range []string{
+		"no supported terminal",
+		"claude --session-id " + pinnedSID,
+		"flow do --here linux-task",
+		"flow do --auto linux-task",
+		"tmux",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output should contain %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Spawned linux-task") {
+		t.Errorf("fallback must not claim a tab was spawned; got:\n%s", out)
+	}
+
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, "linux-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SessionID.Valid || task.SessionID.String != pinnedSID {
+		t.Errorf("session_id should stay %s so the printed command binds on start; got %v", pinnedSID, task.SessionID)
+	}
+	if task.Status != "in-progress" {
+		t.Errorf("status = %q, want in-progress (the session is handed to the user, not rolled back)", task.Status)
+	}
+}
+
+// TestCmdDoNoTerminalFallbackResume — same fallback on the resume path
+// prints the resume command and leaves the row alone.
+func TestCmdDoNoTerminalFallbackResume(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "linux-resume")
+	pinNoTerminalHost(t)
+	stubClaudeStatOK(t) // the session was started once: transcript exists
+	db := openFlowDB(t)
+	const sid = "11111111-2222-4333-8444-555555555555"
+	if _, err := db.Exec(`UPDATE tasks SET session_id=?, session_started=?, status='in-progress', harness='claude' WHERE slug='linux-resume'`,
+		sid, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	// No live process carries this id, so the live-session guard is quiet.
+	oldPS := claude.PSRunner
+	claude.PSRunner = func() ([]byte, error) { return []byte("PID COMMAND\n"), nil }
+	t.Cleanup(func() { claude.PSRunner = oldPS })
+
+	var rc int
+	out := captureStdout(t, func() { rc = cmdDo([]string{"linux-resume"}) })
+	if rc != 0 {
+		t.Fatalf("rc=%d, want 0; output:\n%s", rc, out)
+	}
+	if !strings.Contains(out, "claude --resume "+sid) {
+		t.Errorf("output should contain the resume command; got:\n%s", out)
+	}
+	task, err := flowdb.GetTask(db, "linux-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SessionID.String != sid || task.Status != "in-progress" {
+		t.Errorf("row changed: session_id=%q status=%q", task.SessionID.String, task.Status)
+	}
+}
+
+// TestCmdDoNoTerminalFallbackReservedNeverStarted — a session that was
+// handed off but never actually started (no transcript on disk) must get
+// the bootstrap command again, not `--resume <sid>` (which the harness
+// would reject). Same session id both times, so the binding still holds.
+func TestCmdDoNoTerminalFallbackReservedNeverStarted(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "linux-reserved")
+	pinNoTerminalHost(t)
+	stubClaudeStatMissing(t)
+	db := openFlowDB(t)
+	const sid = "22222222-2222-4333-8444-555555555555"
+	if _, err := db.Exec(`UPDATE tasks SET session_id=?, session_started=?, status='in-progress', harness='claude' WHERE slug='linux-reserved'`,
+		sid, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	oldPS := claude.PSRunner
+	claude.PSRunner = func() ([]byte, error) { return []byte("PID COMMAND\n"), nil }
+	t.Cleanup(func() { claude.PSRunner = oldPS })
+
+	var rc int
+	out := captureStdout(t, func() { rc = cmdDo([]string{"linux-reserved"}) })
+	if rc != 0 {
+		t.Fatalf("rc=%d, want 0; output:\n%s", rc, out)
+	}
+	if !strings.Contains(out, "claude --session-id "+sid) {
+		t.Errorf("never-started session should get the bootstrap command; got:\n%s", out)
+	}
+	if strings.Contains(out, "--resume") {
+		t.Errorf("never-started session must not be resumed; got:\n%s", out)
+	}
+}

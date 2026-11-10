@@ -411,13 +411,11 @@ X", or a bare `flow do --auto X`.
 3. On "no task matching", ask the user to clarify or offer `flow add task`.
 4. Pass `--fresh` ONLY if the user explicitly asked ("start over", "fresh
    session"). Never on your own.
-5. **Harness selection:** if the user explicitly asks to open an
-   unbootstrapped task in another harness (for example, "open auth in
-   Codex" while speaking from Claude Code), pass `--harness codex`.
-   Without that flag, flow selects the active harness automatically. This is
-   a first-session choice only: never offer `--harness` for a task that
-   already has a session or is in progress, because its harness is pinned to
-   preserve its transcript and resume path.
+5. **Harness selection:** pass `--harness codex` only when the user
+   explicitly asks to open an *unbootstrapped* task in the other harness
+   ("open auth in Codex" from Claude Code); otherwise flow picks the active
+   harness. Never offer `--harness` for a task that already has a session —
+   its harness is pinned to its transcript.
 
 **Autonomous mode (`--auto`):** launches a detached headless run instead
 of a tab, returns immediately, does the work end-to-end and calls `flow
@@ -431,19 +429,20 @@ dead` + a log under `tasks/<slug>/auto-runs/`; `flow list tasks` has an
 `completed` = finished and closed itself. After launch, report it and
 stop — do NOT poll, tail the log, or peek at its separate session.
 
-**After `flow do` succeeds** it already spawned the tab and exported env
-vars. Report "opened tab: <title>" and stop. Do NOT: run diagnostics
-(`pgrep`, `osascript`) to verify the tab; spawn a tab
-yourself; re-run `flow do` unless asked; or peek into the new session (you
-have no access). If `flow do` errored (rc≠0), relay it and stop — no
-workarounds.
+**After `flow do` succeeds** it already spawned the tab. Report "opened
+tab: <title>" and stop — no diagnostics (`pgrep`, `osascript`, `tmux ls`),
+no spawning a tab yourself, no re-running `flow do`, no peeking into the
+new session. If it printed `no supported terminal detected` (Linux outside
+tmux/zellij/kitty), relay the printed command and the `--here` / `--auto`
+options verbatim. If it errored (rc≠0), relay it and stop — no workarounds.
 
 #### `flow do` edge cases & surgical instructions
 
 Read **references/do-advanced.md** when any of these apply:
 - `flow do` errors with the **live-session guard** (the task's session is
   already running in another tab).
-- `flow do` errors asking for **macOS Accessibility** (Terminal.app backend).
+- `flow do` errors asking for **macOS Accessibility** (Terminal.app), or
+  prints the Linux **no supported terminal** handoff.
 - The user wants to fire a one-off instruction at a task without opening the
   tab: `--with "<instruction>"` or `--with-file <path>` (also works on
   `flow run playbook`).
@@ -730,10 +729,10 @@ moving into design / implementation / debugging. Re-evaluate on every turn.
 
 **Triggers:** "update flow", "upgrade flow", "new flow version", "what
 version am I on", a bare `flow --version`, or a SessionStart
-`flow-version-stale:` signal. The procedure — capture `flow --version`, read
-the README install/upgrade sections at https://github.com/Facets-cloud/flow
-(do not invent download URLs), replace the binary, `xattr -d
-com.apple.quarantine`, `flow skill update`, re-check version — lives in
+`flow-version-stale:` signal. The procedure — capture `flow --version`,
+follow INSTALL.md at https://github.com/Facets-cloud/flow (re-running
+install.sh upgrades in place on macOS and Linux; never invent download
+URLs), `flow skill update`, re-check version — lives in
 **references/upgrade.md**.
 ### 4.16a Tagging tasks
 

@@ -1,11 +1,13 @@
 package spawner
 
 import (
+	"errors"
 	"flow/internal/ghostty"
 	"flow/internal/iterm"
 	"flow/internal/kitty"
 	"flow/internal/rex"
 	"flow/internal/terminal"
+	"flow/internal/tmux"
 	"flow/internal/warp"
 	"flow/internal/zellij"
 	"strings"
@@ -80,6 +82,7 @@ func TestDetectFromEnv(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.termProgram, func(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
+			t.Setenv("TMUX", "")
 			t.Setenv("REX_SESSION", "")
 			t.Setenv("KITTY_WINDOW_ID", "")
 			t.Setenv("TERM", "")
@@ -99,6 +102,7 @@ func TestDetectFromEnv(t *testing.T) {
 // the dispatcher without relying on env-var mutation order.
 func TestOverrideBeatsEnv(t *testing.T) {
 	t.Setenv("ZELLIJ", "")
+	t.Setenv("TMUX", "")
 	t.Setenv("REX_SESSION", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("TERM", "")
@@ -107,7 +111,7 @@ func TestOverrideBeatsEnv(t *testing.T) {
 	t.Cleanup(func() { Override = "" })
 
 	for _, want := range []Backend{
-		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij, BackendGhostty, BackendRex,
+		BackendTerminal, BackendWarp, BackendITerm, BackendKitty, BackendZellij, BackendGhostty, BackendRex, BackendTmux,
 	} {
 		Override = want
 		if got := Detect(); got != want {
@@ -116,15 +120,18 @@ func TestOverrideBeatsEnv(t *testing.T) {
 	}
 }
 
-// TestDetectZellij verifies the ZELLIJ env var beats every other signal.
-// zellij sets ZELLIJ in every shell it spawns, so its presence means the
-// user is inside a zellij session regardless of which terminal hosts it.
+// TestDetectZellij verifies the ZELLIJ env var beats every ambient
+// signal. zellij sets ZELLIJ in every shell it spawns, so its presence
+// means the user is inside a zellij session regardless of which terminal
+// hosts it. (An explicit FLOW_TERM still outranks it — see
+// TestDetectFlowTermBeatsAmbient.)
 func TestDetectZellij(t *testing.T) {
 	t.Setenv("ZELLIJ", "0")
+	t.Setenv("TMUX", "/tmp/tmux-501/default,123,0") // proves ZELLIJ wins over TMUX
 	t.Setenv("REX_SESSION", "")
-	t.Setenv("KITTY_WINDOW_ID", "1")      // proves ZELLIJ wins over kitty
-	t.Setenv("TERM", "xterm-kitty")       // ditto
-	t.Setenv("FLOW_TERM", "iterm")        // proves ZELLIJ wins over FLOW_TERM
+	t.Setenv("KITTY_WINDOW_ID", "1") // proves ZELLIJ wins over kitty
+	t.Setenv("TERM", "xterm-kitty")  // ditto
+	t.Setenv("FLOW_TERM", "")
 	t.Setenv("TERM_PROGRAM", "iTerm.app") // proves ZELLIJ wins over TERM_PROGRAM
 	Override = ""
 	if got := Detect(); got != BackendZellij {
@@ -152,6 +159,7 @@ func TestDetectKitty(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
+			t.Setenv("TMUX", "")
 			t.Setenv("REX_SESSION", "")
 			t.Setenv("KITTY_WINDOW_ID", tc.kittyWindowID)
 			t.Setenv("TERM", tc.term)
@@ -166,9 +174,10 @@ func TestDetectKitty(t *testing.T) {
 }
 
 // TestDetectFlowTermOverride — FLOW_TERM with a valid backend value
-// wins over TERM_PROGRAM but loses to ZELLIJ and kitty. Iterates over
-// every valid backend value so we catch regressions where a new
-// backend is added but missed in Detect()'s FLOW_TERM filter.
+// wins over TERM_PROGRAM (and, per TestDetectFlowTermBeatsAmbient, over
+// every ambient session marker). Iterates over every valid backend value
+// so we catch regressions where a new backend is added but missed in
+// Detect()'s FLOW_TERM filter.
 func TestDetectFlowTermOverride(t *testing.T) {
 	cases := []struct {
 		flowTerm string
@@ -181,10 +190,12 @@ func TestDetectFlowTermOverride(t *testing.T) {
 		{"warp", BackendWarp},
 		{"ghostty", BackendGhostty},
 		{"rex", BackendRex},
+		{"tmux", BackendTmux},
 	}
 	for _, tc := range cases {
 		t.Run(tc.flowTerm, func(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
+			t.Setenv("TMUX", "")
 			t.Setenv("REX_SESSION", "")
 			t.Setenv("KITTY_WINDOW_ID", "")
 			t.Setenv("TERM", "")
@@ -199,19 +210,70 @@ func TestDetectFlowTermOverride(t *testing.T) {
 	}
 }
 
-// TestDetectKittyBeatsFlowTerm — kitty's per-window markers beat
-// FLOW_TERM, matching ZELLIJ's behavior. Rationale: if the user is
-// inside kitty, that's where their workflow lives.
-func TestDetectKittyBeatsFlowTerm(t *testing.T) {
-	t.Setenv("ZELLIJ", "")
-	t.Setenv("REX_SESSION", "")
-	t.Setenv("KITTY_WINDOW_ID", "42")
-	t.Setenv("TERM", "")
-	t.Setenv("FLOW_TERM", "iterm")
-	t.Setenv("TERM_PROGRAM", "")
-	Override = ""
-	if got := Detect(); got != BackendKitty {
-		t.Errorf("Detect() with KITTY_WINDOW_ID + FLOW_TERM=iterm: got %q, want %q", got, BackendKitty)
+// TestDetectFlowTermBeatsAmbient — an explicit, valid FLOW_TERM outranks
+// every ambient session marker ($TMUX, $ZELLIJ, Rex's and kitty's).
+// Rationale: those markers describe the environment flow happens to run
+// in; FLOW_TERM is the user saying which backend they want. Before this,
+// tmux-inside-iTerm users who had always got an iTerm tab started getting
+// tmux windows the moment the tmux backend landed, and FLOW_TERM=iterm
+// could not opt them out.
+func TestDetectFlowTermBeatsAmbient(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      map[string]string
+		flowTerm string
+		want     Backend
+	}{
+		{"FLOW_TERM=iterm beats TMUX", map[string]string{"TMUX": "/tmp/tmux-501/default,123,0"}, "iterm", BackendITerm},
+		{"FLOW_TERM=warp beats TMUX", map[string]string{"TMUX": "/tmp/tmux-501/default,123,0"}, "warp", BackendWarp},
+		{"FLOW_TERM=tmux beats ZELLIJ", map[string]string{"ZELLIJ": "0"}, "tmux", BackendTmux},
+		{"FLOW_TERM=iterm beats ZELLIJ", map[string]string{"ZELLIJ": "0"}, "iterm", BackendITerm},
+		{"FLOW_TERM=iterm beats KITTY_WINDOW_ID", map[string]string{"KITTY_WINDOW_ID": "42"}, "iterm", BackendITerm},
+		{"FLOW_TERM=iterm beats TERM=xterm-kitty", map[string]string{"TERM": "xterm-kitty"}, "iterm", BackendITerm},
+		{"FLOW_TERM=iterm beats REX_SESSION", map[string]string{"REX_SESSION": "session:abc"}, "iterm", BackendITerm},
+		{"FLOW_TERM=zellij beats TERM_PROGRAM=rex", map[string]string{"TERM_PROGRAM": "rex"}, "zellij", BackendZellij},
+		{"FLOW_TERM=terminal beats all markers at once", map[string]string{
+			"ZELLIJ": "0", "TMUX": "/tmp/tmux-501/default,123,0", "REX_SESSION": "session:abc",
+			"KITTY_WINDOW_ID": "42", "TERM": "xterm-kitty", "TERM_PROGRAM": "iTerm.app",
+		}, "terminal", BackendTerminal},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range []string{"ZELLIJ", "TMUX", "REX_SESSION", "KITTY_WINDOW_ID", "TERM", "TERM_PROGRAM"} {
+				t.Setenv(k, tc.env[k])
+			}
+			t.Setenv("FLOW_TERM", tc.flowTerm)
+			Override = ""
+			if got := Detect(); got != tc.want {
+				t.Errorf("Detect() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDetectAmbientMarkersStillWinWithoutFlowTerm — with FLOW_TERM unset
+// (or set to a non-backend value such as bg) the ambient markers keep
+// their old order: ZELLIJ > TMUX > Rex > kitty > TERM_PROGRAM.
+func TestDetectAmbientMarkersStillWinWithoutFlowTerm(t *testing.T) {
+	for _, flowTerm := range []string{"", "bg", "garbage-not-a-backend"} {
+		t.Run("FLOW_TERM="+flowTerm, func(t *testing.T) {
+			t.Setenv("ZELLIJ", "")
+			t.Setenv("REX_SESSION", "")
+			t.Setenv("KITTY_WINDOW_ID", "")
+			t.Setenv("TERM", "")
+			t.Setenv("TERM_PROGRAM", "iTerm.app")
+			t.Setenv("FLOW_TERM", flowTerm)
+			Override = ""
+			t.Setenv("TMUX", "/tmp/tmux-501/default,123,0")
+			if got := Detect(); got != BackendTmux {
+				t.Errorf("TMUX set: Detect() = %q, want %q", got, BackendTmux)
+			}
+			t.Setenv("KITTY_WINDOW_ID", "42")
+			t.Setenv("TMUX", "")
+			if got := Detect(); got != BackendKitty {
+				t.Errorf("KITTY_WINDOW_ID set: Detect() = %q, want %q", got, BackendKitty)
+			}
+		})
 	}
 }
 
@@ -219,6 +281,7 @@ func TestDetectKittyBeatsFlowTerm(t *testing.T) {
 // value is silently ignored and TERM_PROGRAM detection takes over.
 func TestDetectFlowTermInvalidFallsThrough(t *testing.T) {
 	t.Setenv("ZELLIJ", "")
+	t.Setenv("TMUX", "")
 	t.Setenv("REX_SESSION", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("TERM", "")
@@ -416,7 +479,7 @@ func TestFocusSessionRoutesToKitty(t *testing.T) {
 // routing tests can assert which backend FocusSession dispatched to
 // without an awkward multi-return-value tuple.
 type focusFlags struct {
-	iterm, terminal, zellij, kitty *bool
+	iterm, terminal, zellij, kitty, tmux *bool
 }
 
 // stubAllFocusBackends replaces the per-backend PSRunner / RunnerOutput
@@ -424,7 +487,7 @@ type focusFlags struct {
 // path runs. Restores originals on cleanup.
 func stubAllFocusBackends(t *testing.T) focusFlags {
 	t.Helper()
-	var itermCalled, terminalCalled, zellijCalled, kittyCalled bool
+	var itermCalled, terminalCalled, zellijCalled, kittyCalled, tmuxCalled bool
 
 	oldITermPS := iterm.PSRunner
 	iterm.PSRunner = func() ([]byte, error) {
@@ -454,11 +517,19 @@ func stubAllFocusBackends(t *testing.T) focusFlags {
 	}
 	t.Cleanup(func() { kitty.RunnerOutput = oldKittyRO })
 
+	oldTmuxPS := tmux.PSRunner
+	tmux.PSRunner = func() ([]byte, error) {
+		tmuxCalled = true
+		return []byte(""), nil // no harness row -> (false, nil)
+	}
+	t.Cleanup(func() { tmux.PSRunner = oldTmuxPS })
+
 	return focusFlags{
 		iterm:    &itermCalled,
 		terminal: &terminalCalled,
 		zellij:   &zellijCalled,
 		kitty:    &kittyCalled,
+		tmux:     &tmuxCalled,
 	}
 }
 
@@ -483,6 +554,9 @@ func TestShellQuoteParity(t *testing.T) {
 		if got := ghostty.ShellQuote(in); got != exp {
 			t.Errorf("ghostty.ShellQuote(%q) = %q; want %q", in, got, exp)
 		}
+		if got := tmux.ShellQuote(in); got != exp {
+			t.Errorf("tmux.ShellQuote(%q) = %q; want %q", in, got, exp)
+		}
 	}
 }
 
@@ -490,7 +564,7 @@ func TestShellQuoteParity(t *testing.T) {
 // can assert on which backend SpawnTab dispatched to without an
 // awkward multi-return-value tuple.
 type runnerFlags struct {
-	iterm, terminal, zellij, kitty, warp, ghostty *bool
+	iterm, terminal, zellij, kitty, warp, ghostty, tmux *bool
 }
 
 // stubAllRunners replaces every backend's Runner (plus warp's
@@ -499,7 +573,7 @@ type runnerFlags struct {
 // cleanup.
 func stubAllRunners(t *testing.T) runnerFlags {
 	t.Helper()
-	var itermCalled, terminalCalled, zellijCalled, kittyCalled, warpCalled, ghosttyCalled bool
+	var itermCalled, terminalCalled, zellijCalled, kittyCalled, warpCalled, ghosttyCalled, tmuxCalled bool
 
 	oldITerm := iterm.Runner
 	iterm.Runner = func(args []string) error {
@@ -581,6 +655,23 @@ func stubAllRunners(t *testing.T) runnerFlags {
 	}
 	t.Cleanup(func() { ghostty.Runner = oldGhostty })
 
+	// tmux: new-window (RunnerOutput) then two send-keys (Runner).
+	oldTmux := tmux.Runner
+	tmux.Runner = func(args []string) error {
+		tmuxCalled = true
+		if len(args) >= 1 && args[0] != "send-keys" {
+			t.Errorf("tmux Runner argv does not start with 'send-keys': %v", args)
+		}
+		return nil
+	}
+	t.Cleanup(func() { tmux.Runner = oldTmux })
+	oldTmuxRO := tmux.RunnerOutput
+	tmux.RunnerOutput = func(args []string) ([]byte, error) {
+		tmuxCalled = true
+		return []byte("%1\n"), nil
+	}
+	t.Cleanup(func() { tmux.RunnerOutput = oldTmuxRO })
+
 	return runnerFlags{
 		iterm:    &itermCalled,
 		terminal: &terminalCalled,
@@ -588,13 +679,16 @@ func stubAllRunners(t *testing.T) runnerFlags {
 		kitty:    &kittyCalled,
 		warp:     &warpCalled,
 		ghostty:  &ghosttyCalled,
+		tmux:     &tmuxCalled,
 	}
 }
 
 // TestDetectRex verifies $REX_SESSION and TERM_PROGRAM=rex both route to
-// BackendRex, and that Rex's markers beat kitty and FLOW_TERM (Rex sets
+// BackendRex, and that Rex's markers beat kitty's (Rex sets
 // TERM=xterm-256color, so TERM_PROGRAM / REX_SESSION are the only
 // signals; without this check Rex users fall back to the iTerm path).
+// An explicit FLOW_TERM outranks Rex's markers like every other ambient
+// signal — see TestDetectFlowTermBeatsAmbient.
 func TestDetectRex(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -607,11 +701,11 @@ func TestDetectRex(t *testing.T) {
 		{"TERM_PROGRAM=rex", "", "rex", "", ""},
 		{"both set", "session:abc", "rex", "", ""},
 		{"REX_SESSION beats kitty marker", "session:abc", "", "42", ""},
-		{"REX_SESSION beats FLOW_TERM", "session:abc", "", "", "iterm"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ZELLIJ", "")
+			t.Setenv("TMUX", "")
 			t.Setenv("REX_SESSION", tc.rexSession)
 			t.Setenv("KITTY_WINDOW_ID", tc.kittyWindowID)
 			t.Setenv("TERM", "")
@@ -672,5 +766,190 @@ func TestSpawnTabInRoutesGroupToRex(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("window new not routed to session:sm; calls=%v", calls)
+	}
+}
+
+// TestSpawnTabMacOnlyBackendOnLinuxFailsGracefully: on a non-darwin host,
+// auto-detection that lands on an osascript backend (iTerm is the
+// historical default) must return an actionable error instead of
+// shelling out to a missing osascript.
+func TestSpawnTabMacOnlyBackendOnLinuxFailsGracefully(t *testing.T) {
+	cases := []struct{ flowTerm, termProgram string }{
+		{"", ""},      // default → iterm
+		{"iterm", ""}, // explicit mac-only choice
+		{"terminal", ""},
+		{"warp", ""},
+		{"ghostty", ""},
+		{"", "ghostty"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flowTerm+"/"+tc.termProgram, func(t *testing.T) {
+			Override = ""
+			oldGOOS := GOOS
+			GOOS = "linux"
+			t.Cleanup(func() { GOOS = oldGOOS })
+			t.Setenv("ZELLIJ", "")
+			t.Setenv("TMUX", "")
+			t.Setenv("REX_SESSION", "")
+			t.Setenv("KITTY_WINDOW_ID", "")
+			t.Setenv("TERM", "xterm-256color")
+			t.Setenv("FLOW_TERM", tc.flowTerm)
+			t.Setenv("TERM_PROGRAM", tc.termProgram)
+
+			calls := stubAllRunners(t)
+			err := SpawnTab("title", "/tmp", "echo hi", nil)
+			if err == nil {
+				t.Fatal("expected an error for a macOS-only backend on linux")
+			}
+			for _, want := range []string{"macOS", "tmux", "zellij", "kitty", "--here", "--auto"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q should mention %q", err, want)
+				}
+			}
+			if !errors.Is(err, ErrNoTerminal) {
+				t.Errorf("error should wrap ErrNoTerminal so callers can fall back; got %v", err)
+			}
+			if *calls.iterm || *calls.terminal || *calls.warp || *calls.ghostty {
+				t.Error("no osascript backend runner should be invoked on linux")
+			}
+			found, ferr := FocusSession("sid", "claude")
+			if found || ferr != nil {
+				t.Errorf("FocusSession on linux mac-only backend = (%v, %v), want (false, nil)", found, ferr)
+			}
+		})
+	}
+}
+
+// TestSpawnTabCrossPlatformBackendOnLinux: zellij and kitty work on linux
+// and must not be blocked by the macOS-only guard.
+func TestSpawnTabCrossPlatformBackendOnLinux(t *testing.T) {
+	Override = ""
+	oldGOOS := GOOS
+	GOOS = "linux"
+	t.Cleanup(func() { GOOS = oldGOOS })
+	t.Setenv("ZELLIJ", "0")
+
+	calls := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab in zellij on linux: %v", err)
+	}
+	if !*calls.zellij {
+		t.Error("expected zellij.Runner to be called")
+	}
+}
+
+// TestDetectTmux — $TMUX routes to BackendTmux and beats Rex, kitty and
+// TERM_PROGRAM (tmux is a session manager like zellij: if the user is
+// inside it, that's where their workflow lives). $ZELLIJ outranks it
+// (TestDetectZellij), and so does an explicit FLOW_TERM
+// (TestDetectFlowTermBeatsAmbient).
+func TestDetectTmux(t *testing.T) {
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
+	t.Setenv("REX_SESSION", "s1")
+	t.Setenv("KITTY_WINDOW_ID", "42")
+	t.Setenv("TERM", "xterm-kitty")
+	t.Setenv("FLOW_TERM", "")
+	t.Setenv("TERM_PROGRAM", "tmux") // tmux >= 3.2 sets this itself
+	Override = ""
+	if got := Detect(); got != BackendTmux {
+		t.Errorf("Detect() with TMUX set: got %q, want %q", got, BackendTmux)
+	}
+}
+
+// TestDetectTmuxTermProgramAloneIsNotTmux — TERM_PROGRAM=tmux without
+// $TMUX (e.g. an inherited env in a detached shell) must not pick the
+// tmux backend: there is no server to talk to. Falls to the default.
+func TestDetectTmuxTermProgramAloneIsNotTmux(t *testing.T) {
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("TMUX", "")
+	t.Setenv("REX_SESSION", "")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM", "")
+	t.Setenv("FLOW_TERM", "")
+	t.Setenv("TERM_PROGRAM", "tmux")
+	Override = ""
+	if got := Detect(); got != BackendITerm {
+		t.Errorf("Detect() with only TERM_PROGRAM=tmux: got %q, want %q", got, BackendITerm)
+	}
+}
+
+// TestSpawnTabRoutesToTmux asserts the tmux backend is the one called
+// when Detect() resolves to BackendTmux.
+func TestSpawnTabRoutesToTmux(t *testing.T) {
+	Override = BackendTmux
+	t.Cleanup(func() { Override = "" })
+
+	calls := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab: %v", err)
+	}
+	if !*calls.tmux {
+		t.Error("expected tmux backend to be called")
+	}
+	if *calls.iterm || *calls.terminal || *calls.zellij || *calls.kitty || *calls.warp || *calls.ghostty {
+		t.Error("only tmux backend should be called")
+	}
+}
+
+// TestFocusSessionRoutesToTmux — Override=Tmux hits the tmux backend.
+func TestFocusSessionRoutesToTmux(t *testing.T) {
+	Override = BackendTmux
+	t.Cleanup(func() { Override = "" })
+
+	flags := stubAllFocusBackends(t)
+	if _, err := FocusSession("11111111-2222-4333-8444-555555555555", "claude"); err != nil {
+		t.Fatalf("FocusSession: %v", err)
+	}
+	if !*flags.tmux {
+		t.Error("expected tmux focus path to be called")
+	}
+	if *flags.iterm || *flags.terminal || *flags.zellij || *flags.kitty {
+		t.Error("only tmux focus path should be called")
+	}
+}
+
+// TestSpawnTabTmuxOnLinux: tmux works on linux and must not be blocked
+// by the macOS-only guard (same as zellij/kitty).
+func TestSpawnTabTmuxOnLinux(t *testing.T) {
+	Override = ""
+	oldGOOS := GOOS
+	GOOS = "linux"
+	t.Cleanup(func() { GOOS = oldGOOS })
+	t.Setenv("ZELLIJ", "")
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1,0")
+
+	calls := stubAllRunners(t)
+	if err := SpawnTab("title", "/tmp", "echo hi", nil); err != nil {
+		t.Fatalf("SpawnTab in tmux on linux: %v", err)
+	}
+	if !*calls.tmux {
+		t.Error("expected tmux backend to be called")
+	}
+}
+
+// TestMacDefaultsUnchangedWithoutTmux pins the macOS selection order:
+// with no session-manager marker set, TERM_PROGRAM still decides and
+// the historical iTerm default still applies. Guards against the tmux
+// addition shifting behaviour for existing mac users.
+func TestMacDefaultsUnchangedWithoutTmux(t *testing.T) {
+	oldGOOS := GOOS
+	GOOS = "darwin"
+	t.Cleanup(func() { GOOS = oldGOOS })
+	for tp, want := range map[string]Backend{
+		"iTerm.app": BackendITerm, "Apple_Terminal": BackendTerminal,
+		"WarpTerminal": BackendWarp, "ghostty": BackendGhostty, "": BackendITerm,
+	} {
+		t.Setenv("ZELLIJ", "")
+		t.Setenv("TMUX", "")
+		t.Setenv("REX_SESSION", "")
+		t.Setenv("KITTY_WINDOW_ID", "")
+		t.Setenv("TERM", "xterm-256color")
+		t.Setenv("FLOW_TERM", "")
+		t.Setenv("TERM_PROGRAM", tp)
+		Override = ""
+		if got := Detect(); got != want {
+			t.Errorf("TERM_PROGRAM=%q on darwin: got %q, want %q", tp, got, want)
+		}
 	}
 }

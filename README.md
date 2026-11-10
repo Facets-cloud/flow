@@ -140,26 +140,28 @@ now will know everything every prior weekly review surfaced.
 
 ## Install
 
-In any Claude Code or Codex session, paste this:
+flow runs on macOS and Linux (arm64 and x86_64). In any Claude Code or
+Codex session, paste this:
 
 > Install flow from https://github.com/Facets-cloud/flow
 
-Your agent reads the repo, downloads the binary, and runs `flow init` —
-which installs the flow skill and SessionStart hook for the active harness
-so future sessions load the skill automatically. Then say **"let's get to
-work"** and follow along.
+Your agent follows [INSTALL.md](INSTALL.md): it detects your OS, installs
+the binary, puts it on your `PATH`, and runs `flow init` — which installs
+the flow skill and SessionStart hook for the active harness so future
+sessions load the skill automatically. Then say **"let's get to work"**
+and follow along.
 
 <details>
-<summary>Manual install (curl + chmod + flow init)</summary>
+<summary>Manual install (install.sh + flow init)</summary>
 
 ```bash
-# 1. Download the binary for your Mac.
-ARCH=arm64        # Apple Silicon (M1/M2/M3/M4) — use amd64 for Intel.
+# 1. Install the binary for your OS and CPU into ~/.local/bin (no sudo).
+#    It verifies the download against the release's SHA256SUMS and, on
+#    macOS, clears the quarantine flag on the unsigned binary.
+curl -fsSL https://raw.githubusercontent.com/Facets-cloud/flow/main/install.sh | sh
 
-curl -fsSL -o /usr/local/bin/flow \
-  "https://github.com/Facets-cloud/flow/releases/latest/download/flow-darwin-${ARCH}"
-chmod +x /usr/local/bin/flow
-xattr -d com.apple.quarantine /usr/local/bin/flow 2>/dev/null || true
+# Make sure ~/.local/bin is on your PATH (add this to ~/.bashrc or ~/.zshrc).
+export PATH="$HOME/.local/bin:$PATH"
 
 # 2. Initialize. This is required — it creates ~/.flow/, the SQLite
 #    index, the knowledge base, AND installs the skill + hooks for
@@ -190,8 +192,11 @@ The automatic skill refresh after a binary upgrade only touches
 harnesses that already have the skill, so removing it from one harness
 keeps it removed.
 
-The `xattr` step removes Gatekeeper's quarantine attribute so macOS
-doesn't refuse to run the unsigned binary.
+install.sh options: `FLOW_VERSION=vX.Y.Z` pins a release,
+`FLOW_INSTALL_DIR=/some/dir` installs somewhere else (a root-owned
+directory needs `sudo`). If you download a macOS binary by hand instead,
+run `xattr -d com.apple.quarantine <path>` so macOS doesn't refuse to run
+it.
 
 </details>
 
@@ -201,7 +206,7 @@ In any Claude Code session:
 
 > Upgrade flow from https://github.com/Facets-cloud/flow
 
-Claude fetches the latest release binary and runs `flow skill
+Claude re-runs install.sh (same on macOS and Linux) and runs `flow skill
 update` to refresh the skill (for every present harness) and re-wire the SessionStart and
 UserPromptSubmit hooks. Check the running version with
 `flow --version`.
@@ -216,10 +221,12 @@ handles the rest.
 - **One task, one Claude session, one tab.** `flow do <task>`
   spawns a dedicated tab in iTerm2, Warp, stock macOS Terminal, kitty
   (requires `allow_remote_control yes` in `kitty.conf`), your current
-  [Rex](https://www.superlogical.com/rex) session, or your
-  current zellij session (requires zellij ≥ 0.40) — flow picks
-  whichever you launched it from. Override with
-  `FLOW_TERM=warp|iterm|terminal|zellij|kitty|rex` when you're on a
+  [Rex](https://www.superlogical.com/rex) session, your current
+  zellij session (requires zellij ≥ 0.40), or a new window in your
+  current tmux session — flow picks whichever you launched it from. On
+  Linux, run it inside tmux, zellij or kitty; anywhere else flow prints
+  the exact command to start the session instead. Override with
+  `FLOW_TERM=warp|iterm|terminal|zellij|kitty|rex|tmux` when you're on a
   non-standard host — or set `FLOW_TERM=bg` to launch the session as a
   **terminal-free Claude background agent** (Claude Code's Agent View,
   `claude agents`) with no tab at all. Tomorrow's `flow do <task>`
@@ -241,12 +248,16 @@ handles the rest.
 ## How it works under the hood
 
 `flow do <task>` selects the task's pinned harness, records its session
-identifier, and spawns a tab in zellij (when `$ZELLIJ` is set), Rex
-(when `$REX_SESSION` is set or `$TERM_PROGRAM=rex`), kitty
-(when `$KITTY_WINDOW_ID` is set or `$TERM=xterm-kitty`), the backend
-named in `$FLOW_TERM` (when set), or Warp / iTerm2 / stock
-Terminal.app (auto-detected from `$TERM_PROGRAM`) — chosen in that
-priority order, with iTerm as the historical fallback. Claude sessions use
+identifier, and spawns a tab in the backend named in `$FLOW_TERM` (when
+set — an explicit choice beats every auto-detected marker), else zellij
+(when `$ZELLIJ` is set), a tmux window (when `$TMUX` is set), Rex (when
+`$REX_SESSION` is set or `$TERM_PROGRAM=rex`), kitty (when
+`$KITTY_WINDOW_ID` is set or `$TERM=xterm-kitty`), or Warp / iTerm2 /
+stock Terminal.app (auto-detected from `$TERM_PROGRAM`) — chosen in that
+priority order, with iTerm as the historical fallback on macOS. On Linux, when none of these is available, flow reports
+"no supported terminal detected", keeps the task bound, and prints the
+command to start the session yourself (or use `flow do --here` /
+`flow do --auto`). Claude sessions use
 an allocated UUID; Codex sessions mint a real thread with `codex exec --json`
 before flow opens `codex resume <thread-id>`. Future `flow do` calls resume
 the recorded conversation. A SessionStart hook re-injects the task brief,
@@ -487,13 +498,18 @@ and reinstall the skill + hook.
 
 ## Where flow runs (and where we'd love help)
 
-Today flow runs on **macOS (iTerm2, Warp, stock Terminal.app, kitty,
-Rex, zellij, or Claude Code background agents via `FLOW_TERM=bg`) + Claude
-Code and Codex**. The background-agent backend is
-platform-agnostic (no terminal, no AppleScript) but Claude-only. zellij
-and kitty work on Linux too as a side effect — both are
-cross-platform and flow's zellij / kitty backends don't depend on
-any macOS APIs. Kitty needs `allow_remote_control yes` (or
+Today flow runs on **macOS and Linux, with Claude Code and Codex**.
+
+- **macOS:** iTerm2, Warp, stock Terminal.app, kitty, Rex, zellij, tmux,
+  or Claude Code background agents via `FLOW_TERM=bg`. The
+  background-agent backend is platform-agnostic (no terminal, no
+  AppleScript) but Claude-only.
+- **Linux:** tmux, zellij or kitty open tabs; none of them uses macOS
+  APIs. Outside those, flow prints the command to start the session, and
+  `flow do --here` / `flow do --auto` work everywhere. Release binaries
+  for linux-amd64 and linux-arm64 are installed by install.sh.
+
+Kitty needs `allow_remote_control yes` (or
 `socket-only`) in `kitty.conf` so flow can drive `kitty @ launch`
 from inside the running kitty instance. Rex needs no setup: flow
 drives the `rex` CLI that Rex puts on `PATH` in every terminal, and
@@ -515,7 +531,7 @@ tab.
 
 The architecture is portable — session spawning is one small
 package — but other harnesses (Cursor, plain shell) and other
-terminals (Linux + tmux/wezterm, Windows Terminal) need contributors
+terminals (wezterm, Windows Terminal) and Windows itself need contributors
 who run those stacks daily and care enough to wire them in. If that's
 you, [a PR is very welcome](CONTRIBUTING.md).
 

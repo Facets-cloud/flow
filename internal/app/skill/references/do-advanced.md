@@ -47,6 +47,41 @@ suggest the user reinstall flow, do not attempt to grant Accessibility
 yourself. macOS guards Accessibility deliberately — there is no CLI to
 self-grant it, and an agent cannot bypass that.
 
+#### Special case: no supported terminal (Linux outside tmux/zellij/kitty)
+
+flow opens tabs through the terminal it is running in. On macOS that is
+iTerm2, Terminal.app, Warp, Ghostty, kitty, zellij or tmux; on Linux it is
+tmux, zellij or kitty only. When none is detected, `flow do` exits 0 and
+prints a handoff instead of a tab:
+
+```
+<slug>: no supported terminal detected on this host, so no tab was opened.
+The session is reserved for you — run this in any terminal to start it:
+
+  cd '<work_dir>' && claude --session-id <uuid> '<bootstrap prompt>'
+
+Or skip the tab:
+  flow do --here <slug>   bind the harness session you are already in
+  flow do --auto <slug>   run it headless in the background
+```
+
+The task is already in-progress with that session id, so running the
+printed command lands in a bound session (the SessionStart hook finds the
+task). A later `flow do <slug>` prints the command again — with
+`--session-id` until the session has actually been started once, then
+`--resume`. When you see it:
+
+1. **Do not run the printed command yourself** — it starts an interactive
+   harness and would hang your Bash tool. Relay it to the user verbatim.
+2. Offer via AskUserQuestion (header: "No tab here", options:
+   "I'll paste the command" / "Bind this session (--here)" /
+   "Run it headless (--auto)"). `--here` only makes sense when the user
+   is already inside the harness session they want to use for the task.
+3. Mention once, not every time: starting their shell inside tmux
+   (`tmux` — `apt install tmux` / `dnf install tmux`) or zellij makes
+   future tabs open automatically; `FLOW_TERM=tmux|zellij|kitty` forces a
+   backend when auto-detection misses.
+
 #### Surgical instructions: `--with` and `--with-file`
 
 **Triggers:** the user wants to *fire a one-off instruction at a task*
