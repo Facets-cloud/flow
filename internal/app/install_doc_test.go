@@ -96,3 +96,32 @@ func skillCorpusFile(t *testing.T, name string) string {
 	}
 	return string(b)
 }
+
+// TestReadmeLinuxFacts — the README's install and platform sections must
+// match what ships: install.sh for macOS and Linux, tmux as a Linux tab
+// backend, and the printed handoff when no supported terminal is found.
+func TestReadmeLinuxFacts(t *testing.T) {
+	b, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	for _, want := range []string{
+		"https://raw.githubusercontent.com/Facets-cloud/flow/main/install.sh",
+		"INSTALL.md",
+		"macOS and Linux",
+		"tmux",
+		"no supported terminal",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("README lacks %q", want)
+		}
+	}
+	// The manual install must not be a macOS-only download recipe.
+	if strings.Contains(doc, "releases/latest/download/flow-darwin-") {
+		t.Errorf("README still hard-codes the darwin binary download; use install.sh")
+	}
+	if strings.Contains(doc, "Linux + tmux/wezterm") {
+		t.Errorf("README still lists Linux + tmux as needing contributors")
+	}
+}
