@@ -1,8 +1,10 @@
-# Human connectors — contract v1
+# Connectors — contract 2 (contract 1 still accepted)
 
-A **connector** is an opt-in executable that pings the human when an agent
-asks them something (`flow message user "<q>"`), and relays the answer back
-to the asking task. Nothing pings unless the user installed one. This page
+A **connector** is an opt-in executable. With role `"human"` it pings the
+human when an agent asks them something (`flow message user "<q>"`), and
+relays the answer back to the asking task. With role `"peer"` it carries
+messages to other flow hubs (see references/peers.md and "Peer role"
+below). Nothing pings unless the user installed one. This page
 is the full public contract: it is enough to write a connector from
 scratch. Two working samples live in the flow repo and are built into the
 binary, so they install with no checkout:
@@ -40,7 +42,8 @@ agent: flow message user "q" --options "A|B"      (returns at once)
 ```json
 {
   "name": "macos",
-  "contract": 1,
+  "contract": 2,
+  "roles": ["human"],
   "exec": "./run",
   "capabilities": ["send"],
   "events": ["ask", "urgent"]
@@ -49,12 +52,18 @@ agent: flow message user "q" --options "A|B"      (returns at once)
 
 - `name`: lowercase letters, digits, `-` or `_`. The installed folder is
   named after it.
-- `contract`: must be `1`.
+- `contract`: `2` (or `1`, see below).
+- `roles`: what the connector does. Use `["human"]`, `["peer"]` or
+  `["human","peer"]`. A contract-1 manifest (`"contract": 1`, no
+  `roles`) means `["human"]`, so v1 connectors keep working unchanged. Human-ping
+  dispatch (tiers, escalation) only ever goes to role `"human"`. Sends to
+  a peer only go to that peer's own connector, which needs role `"peer"`.
 - `exec`: a path relative to the folder. It must stay inside the folder
   and be executable (`chmod +x`).
 - `capabilities`: must include `"send"`.
 - `events`: one or both of `"ask"` (a normal ask) and `"urgent"` (an
   `--urgent` ask). A connector receives only the events it lists.
+  Required for role `"human"`; a peer-only connector may omit it.
 
 ## Verbs flow invokes
 
@@ -72,11 +81,16 @@ stdin for `send`:
 {"id":"7983227a","from_task":"deploy-v2","body":"Ship to prod?",
  "options":["Yes","No"],"urgent":false,"kind":"ask",
  "created_at":"2026-11-06T10:00:00+05:30",
- "reply_hint":"\"$FLOW_BIN\" human reply 7983227a \"<answer>\"  (or: \"$FLOW_BIN\" human seen 7983227a)"}
+ "reply_hint":"\"$FLOW_BIN\" human reply 7983227a \"<answer>\"  (or: \"$FLOW_BIN\" human seen 7983227a)",
+ "from_peer":"","from_connector":""}
 ```
 
 `options` is always an array (`[]` when the ask has none). `from_task` is
-`""` for an ask that came from no task.
+`""` for an ask that came from no task. `from_peer` names the peer hub a
+message came from, and is `""` for mail from this hub's own tasks. Answering
+peer mail with `human reply` sends the answer back to that peer.
+`from_connector` names the connector that sent the notice (see below), and is
+`""` otherwise — label the dialog with it.
 
 Environment (the connector's whole environment is the caller's, minus the
 harness session variables, plus these):
@@ -108,9 +122,11 @@ Rules:
 |---|---|
 | `"$FLOW_BIN" human reply <id> "<text>"` | Records the human's answer (seen + answered) and delivers `<text>` to `user/<from_task>` with `reply_to=<id>`. Idempotent: a repeat does nothing. If the asking task is gone or closed, the answer is still recorded and a warning printed (exit 0). Text can be up to 4000 chars. |
 | `"$FLOW_BIN" human seen <id>` | Marks the mail seen without answering. |
+| `"$FLOW_BIN" message user [--fyi\|--urgent] "<text>"` | Notifies the human (e.g. "alice wants to pair: run flow-p2p accept alice"). The row is human mail from `connector:<name>` (`flow inbox` shows "connector <name>: …"); normal ping rules apply (`--fyi` never pings, default pings, `--urgent` allowed). Only `user` is addressable this way — tasks, peers and other names exit 2 — and `--options` is refused (a connector notifies, it cannot ask). |
 
 Without a token that matches an installed connector, both exit 1 ("not a
-connector"). That is why an agent can never answer for the human. If the
+connector"); `message user` without one is the usual "your own queue" refusal
+(exit 2). That is why an agent can never answer for the human. If the
 human dismisses ("Later"), call nothing: the mail stays unread in `flow
 inbox`.
 
@@ -192,6 +208,47 @@ dispatch <id>   (detached; never blocks the sender)
 - The one-ping-per-task rule and `--fyi` are unchanged; escalation only
   re-pings the same ask through the next tier.
 
+## Peer role (contract 2)
+
+A connector with role `"peer"` carries one message to another flow hub.
+flow runs `run send` (same rules: 30s, fork anything slow) with this on
+stdin:
+
+```json
+{"id":"7983227a","peer":"bob","at":"<opaque endpoint>","kind":"ask",
+ "body":"Ship to prod?","options":["Yes","No"],"urgent":false,
+ "reply_to_ref":"","created_at":"2026-11-09T10:00:00+05:30",
+ "attachments":[{"name":"plan.md","size":412,"sha256":"<hex>","path":"/abs/.flow/attachments/7983227a/plan.md"}]}
+```
+
+- `attachments` is `[]` when there are none. `path` is the sending hub's
+  stored copy; carry the bytes, verify `sha256` on arrival, then pass the
+  received file to `peer deliver --attach <path>` (repeat per file). Bodies
+  may be up to 4000 chars.
+
+- `kind` is `ask`, `fyi` or `reply`. A `reply` has `reply_to_ref` set to the
+  other hub's id of the message it answers.
+- Exit 0 means delivered, and the row becomes `delivery=sent`. A non-zero
+  exit or a timeout makes it `delivery=failed` and records the error. There
+  is no retry. Optional stdout `{"remote_ref":"…"}` is logged to
+  `dispatch.log` for debugging only.
+- On the receiving hub, its own peer connector hands the message in with
+  `"$FLOW_BIN" peer deliver --at <sender's endpoint> --ref <id>
+  [--reply-to-ref <reply_to_ref>] [--to <task>] [--kind fyi] [--options "A|B"]
+  [--attach <path> ...] -- "<body>"`
+  using its own `FLOW_CONNECTOR_TOKEN`. `--to <task>` lets the receiving
+  connector pick the local task (a desk) the mail lands in instead of the
+  human's mail; it must be an open task there. That command (`flow peer deliver`)
+  is the only inbound door; references/peers.md has its rules.
+- `run test` gets the human test payload (`"id": "test"`). Validate your
+  setup and call nothing back.
+
+The `peer-local` sample (`flow connector add peer-local`) links two flow
+homes on one machine. It reads the other home's token from
+`<at>/secrets/peer-local`, so both homes run with `FLOW_SECRET_STORE=file`.
+That setting is for testing only: it keeps every connector secret in a 0600
+file under `$FLOW_ROOT/secrets/` and never touches the keychain.
+
 ## Writing one: a checklist
 
 1. Write `connector.json` with your events, and an executable `run`.
@@ -201,5 +258,7 @@ dispatch <id>   (detached; never blocks the sender)
    (the note is optional). When they only acknowledge:
    `"$FLOW_BIN" human seen "$id"`.
 4. `run test`: show a harmless sample and do not call back.
-5. `flow connector add ./<name>`, then `flow message user "hi?" --options "Yes|No"`
+5. Document your connector's own CLI (pairing, status, …) in its README;
+   humans and agents find it via `flow connector list`.
+6. `flow connector add ./<name>`, then `flow message user "hi?" --options "Yes|No"`
    from a task session to try it end to end.

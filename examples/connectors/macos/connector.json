@@ -1,6 +1,7 @@
 {
   "name": "macos",
-  "contract": 1,
+  "contract": 2,
+  "roles": ["human"],
   "exec": "./run",
   "capabilities": ["send"],
   "events": ["ask", "urgent"]
