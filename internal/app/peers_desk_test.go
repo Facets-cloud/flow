@@ -124,3 +124,28 @@ func TestPeerDeliverReplyWithTo(t *testing.T) {
 		t.Errorf("closed-task reply without --to = %+v", h)
 	}
 }
+
+// F2: a message to a peer may carry up to peerBodyMax (4000) chars; the
+// local bus stays at busBodyMax (500).
+func TestPeerMessageBodyCap(t *testing.T) {
+	peerHub(t, "0")
+	db := openFlowDB(t)
+	stubDispatchLauncher(t, nil)
+	mkBusTask(t, db, "other", "sid-other")
+	long := strings.Repeat("x", 4000)
+	if rc := msgRC(t, "bob", long); rc != 0 {
+		t.Errorf("4000-char peer message rc=%d, want 0", rc)
+	}
+	if rc := msgRC(t, "bob", long+"y"); rc != 2 {
+		t.Errorf("4001-char peer message rc=%d, want 2", rc)
+	}
+	if rc := msgRC(t, "user/other", strings.Repeat("z", 501)); rc != 2 {
+		t.Errorf("501-char local message rc=%d, want 2", rc)
+	}
+	if rc := msgRC(t, "user", strings.Repeat("z", 501)); rc != 2 {
+		t.Errorf("501-char human message rc=%d, want 2", rc)
+	}
+	if peerBodyMax != 4000 || busBodyMax != 500 {
+		t.Errorf("caps = %d/%d", peerBodyMax, busBodyMax)
+	}
+}

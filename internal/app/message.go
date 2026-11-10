@@ -108,10 +108,10 @@ func cmdMessage(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: empty message body\n"+usage)
 		return 2
 	}
-	if len(body) > busBodyMax {
-		fmt.Fprintf(os.Stderr, "error: message body is %d chars (max %d) — messages are short; mention a task slug or update-file path in the body for context\n",
-			len(body), busBodyMax)
-		return 2
+	// Peer mail may be longer (peerBodyMax); the local cap is applied
+	// once the address is known not to be a peer.
+	if len(body) > peerBodyMax {
+		return bodyTooLong(body, peerBodyMax)
 	}
 
 	var options []string
@@ -163,6 +163,9 @@ func cmdMessage(args []string) int {
 		}
 	} else if p, _ := flowdb.GetPeer(db, addr); p != nil {
 		return sendToPeer(db, p, s, body, urgent, fyi, options, replyTo)
+	}
+	if len(body) > busBodyMax {
+		return bodyTooLong(body, busBodyMax)
 	}
 
 	toAssignee, toSlug, err := parseBusAddress(db, addr)
@@ -241,6 +244,17 @@ func parseAskOptions(s string) []string {
 const busUser = flowdb.BusUser
 
 const busBodyMax = 500
+
+// peerBodyMax caps a message to another hub (`flow message <peer>`) and
+// an inbound `flow peer deliver` body: it may carry a human's own words,
+// so it shares the human-reply cap. The local bus stays at busBodyMax.
+const peerBodyMax = humanReplyMax
+
+func bodyTooLong(body string, max int) int {
+	fmt.Fprintf(os.Stderr, "error: message body is %d chars (max %d) — messages are short; mention a task slug or update-file path in the body for context\n",
+		len(body), max)
+	return 2
+}
 
 // busSelfAlias is the legacy spelling of busUser. It is accepted wherever
 // an address or --as identity is read, and always means the human.

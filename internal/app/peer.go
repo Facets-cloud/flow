@@ -479,8 +479,8 @@ func cmdPeerDeliver(args []string) int {
 		return 2
 	}
 	body := strings.TrimSpace(pos[0])
-	if len(body) > humanReplyMax {
-		fmt.Fprintf(os.Stderr, "error: body is %d chars (max %d)\n", len(body), humanReplyMax)
+	if len(body) > peerBodyMax {
+		fmt.Fprintf(os.Stderr, "error: body is %d chars (max %d)\n", len(body), peerBodyMax)
 		return 2
 	}
 	// "reply" is accepted as an alias of ask: the payload kind a sender's
