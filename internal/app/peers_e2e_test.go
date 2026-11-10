@@ -250,8 +250,27 @@ func TestPeersTwoHomeE2E(t *testing.T) {
 		t.Errorf("(4) A's inbox lacks the labelled answer:\n%s", out)
 	}
 
-	// (5) Rejections.
+	// (7) Desk routing: the receiving hub's connector picks the task with
+	// --to (flow keeps no peer→task map). (a) new mail with --to lands in
+	// that task, not the human; (b) a reply whose asking task closed lands
+	// in the --to task, reply_to kept.
 	plTok := "FLOW_CONNECTOR_TOKEN=" + b.secret("peer-local")
+	b.must([]string{plTok}, "peer", "deliver", "--at", a.root, "--ref", "desk-1", "--to", "u", "--", "triage this")
+	if m, _ := flowdb.InboundByRef(bdb, "alice", "desk-1"); m == nil || m.ToTaskSlug != "u" || m.ToAssignee != "user" || m.Ping {
+		t.Errorf("(7a) --to row = %+v", m)
+	}
+	if out := b.must(agentB, "inbox"); !strings.Contains(out, "triage this") {
+		t.Errorf("(7a) task u inbox lacks its --to mail:\n%s", out)
+	}
+	a.must(none, "add", "task", "d", "--slug", "d", "--work-dir", base)
+	bindTask(t, adb, "d", "sid-a-d")
+	plTokA := []string{"FLOW_CONNECTOR_TOKEN=" + a.secret("peer-local")}
+	a.must(plTokA, "peer", "deliver", "--at", b.root, "--ref", "late-2", "--reply-to-ref", askA2.ID, "--to", "d", "--", "still sure")
+	if m, _ := flowdb.InboundByRef(adb, "bob", "late-2"); m == nil || m.ToTaskSlug != "d" || m.ReplyTo != askA2.ID || m.Body != "still sure" || m.Ping {
+		t.Errorf("(7b) closed-task reply with --to = %+v", m)
+	}
+
+	// (5) Rejections.
 	count := func() int {
 		var n int
 		if err := bdb.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&n); err != nil {

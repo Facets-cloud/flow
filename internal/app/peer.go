@@ -416,7 +416,7 @@ func logInbound(format string, a ...any) {
 }
 
 const deliverUsage = `usage: flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>]
-                         [--kind ask|fyi] [--options "A|B"] "<body>"   (connectors only)`
+                         [--to <task>] [--kind ask|fyi] [--options "A|B"] "<body>"   (connectors only)`
 
 // cmdPeerDeliver is the only inbound door from another hub, callable only
 // by an installed connector (FLOW_CONNECTOR_TOKEN):
@@ -425,19 +425,24 @@ const deliverUsage = `usage: flow peer deliver --at <endpoint> --ref <their-id> 
 //	(C, at) → peer P ───── unknown ──► exit 1 + connectors/inbound.log
 //	                       blocked ──► exit 1 "rejected"
 //	(P, ref) seen before ──────────► exit 0, no-op (dedupe)
-//	--reply-to-ref = our outbound row to P, its task still open
-//	                 ──► user/<that task>, reply_to=<our-id>
-//	otherwise ──► the human's mail (from=P; pinged unless --kind fyi;
-//	              an answer whose task closed is labelled "answer to <id>")
+//	--to X not an open task here ──► exit 1, nothing stored
+//	routing (the connector chooses X; flow keeps no peer→task map):
+//	  reply to our row → task T, T open        ──► user/T, reply_to=<our-id>
+//	  reply to our row → T closed/gone, --to X ──► user/X, reply_to kept
+//	  reply to our row → T closed/gone, no --to──► human mail, labelled
+//	                                               "answer to <our-id>"
+//	  not a reply (or unknown ref), --to X     ──► user/X
+//	  not a reply, no --to                     ──► the human's mail
+//	task mail never pings the human; human mail pings unless --kind fyi
 //	P.last_seen_at = now
 func cmdPeerDeliver(args []string) int {
-	var at, ref, replyToRef, kind, optionsFlag string
+	var at, ref, replyToRef, kind, optionsFlag, toTask string
 	var haveOptions bool
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--at", "--ref", "--reply-to-ref", "--kind", "--options":
+		case "--at", "--ref", "--reply-to-ref", "--kind", "--options", "--to":
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "error: %s needs a value\n%s\n", a, deliverUsage)
 				return 2
@@ -455,6 +460,8 @@ func cmdPeerDeliver(args []string) int {
 				kind = v
 			case "--options":
 				optionsFlag, haveOptions = v, true
+			case "--to":
+				toTask = v
 			}
 		case "--":
 			pos = append(pos, args[i+1:]...)
@@ -532,23 +539,39 @@ func cmdPeerDeliver(args []string) int {
 		fmt.Printf("duplicate %s from %s — already delivered [%s]\n", ref, p.Name, dup.ID)
 		return 0
 	}
+	if toTask != "" {
+		t, err := flowdb.GetTask(db, toTask)
+		if err != nil || t == nil {
+			fmt.Fprintf(os.Stderr, "error: --to %s: no such task on this hub — nothing stored\n", toTask)
+			return 1
+		}
+		if err := deliverableTask(t); err != nil {
+			fmt.Fprintf(os.Stderr, "error: --to %s: %v — nothing stored\n", toTask, err)
+			return 1
+		}
+	}
 
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 		FromAssignee: p.Name, ToAssignee: busUser, Body: body, Options: options, FYI: fyi,
 		Peer: p.Name, OriginRef: ref,
 	}
+	routeTo := toTask
 	if replyToRef != "" {
 		if ours, _ := flowdb.GetBusMessageByID(db, replyToRef); ours != nil &&
 			ours.IsPeerOutbound() && ours.Peer == p.Name {
 			m.ReplyTo = ours.ID
 			if openTask(db, ours.FromTaskSlug) {
-				m.ToTaskSlug = ours.FromTaskSlug
-				m.Options, m.FYI = nil, false
-			} else {
+				routeTo = ours.FromTaskSlug
+			} else if routeTo == "" {
 				m.Body = fmt.Sprintf("[answer to %s] %s", ours.ID, body)
 			}
 		}
+	}
+	if routeTo != "" {
+		// Task mail: delivered into that session, never a human ping.
+		m.ToTaskSlug = routeTo
+		m.Options, m.FYI = nil, false
 	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
 		if flowdb.IsUniqueViolation(err) {
