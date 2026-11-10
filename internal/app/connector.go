@@ -637,7 +637,8 @@ var dispatchSleep = time.Sleep
 //	ask, priorities ─► tier 1 (parallel within) ─ any ok ─► done
 //	                         └ all fail ─► tier 2 … none ok ─► stays unread
 //	    escalate on & a tier succeeded: sleep; if still unseen ─► next
-//	    tier (same fail-walk); repeat until seen or tiers run out.
+//	    tier (same fail-walk); repeat until seen or tiers run out. Each
+//	    wait logs "<id> escalate armed <dur> → <next tier>" before it.
 func cmdConnectorDispatch(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: flow connector dispatch <message-id>")
@@ -704,6 +705,14 @@ func cmdConnectorDispatch(args []string) int {
 
 	next, ok := walkTiers(db, m.ID, tiers, 0, p, "")
 	for ok && escalate > 0 && next < len(tiers) {
+		// Escalation state lives only in this process. Log the arm first
+		// so a dispatcher that dies mid-wait (reboot, sleep, upgrade)
+		// leaves an "armed" line with no "escalate → …"/"stop" after it.
+		var names []string
+		for _, c := range tiers[next] {
+			names = append(names, c.Name)
+		}
+		logDispatch("%s escalate armed %v → %s", m.ID, escalate, strings.Join(names, ", "))
 		dispatchSleep(escalate)
 		cur, err := flowdb.GetBusMessageByID(db, m.ID)
 		if err != nil || cur == nil {
