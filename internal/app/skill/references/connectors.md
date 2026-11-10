@@ -207,8 +207,14 @@ stdin:
 ```json
 {"id":"7983227a","peer":"bob","at":"<opaque endpoint>","kind":"ask",
  "body":"Ship to prod?","options":["Yes","No"],"urgent":false,
- "reply_to_ref":"","created_at":"2026-11-09T10:00:00+05:30"}
+ "reply_to_ref":"","created_at":"2026-11-09T10:00:00+05:30",
+ "attachments":[{"name":"plan.md","size":412,"sha256":"<hex>","path":"/abs/.flow/attachments/7983227a/plan.md"}]}
 ```
+
+- `attachments` is `[]` when there are none. `path` is the sending hub's
+  stored copy; carry the bytes, verify `sha256` on arrival, then pass the
+  received file to `peer deliver --attach <path>` (repeat per file). Bodies
+  may be up to 4000 chars.
 
 - `kind` is `ask`, `fyi` or `reply`. A `reply` has `reply_to_ref` set to the
   other hub's id of the message it answers.
@@ -218,8 +224,11 @@ stdin:
   `dispatch.log` for debugging only.
 - On the receiving hub, its own peer connector hands the message in with
   `"$FLOW_BIN" peer deliver --at <sender's endpoint> --ref <id>
-  [--reply-to-ref <reply_to_ref>] [--kind fyi] [--options "A|B"] -- "<body>"`
-  using its own `FLOW_CONNECTOR_TOKEN`. That command (`flow peer deliver`)
+  [--reply-to-ref <reply_to_ref>] [--to <task>] [--kind fyi] [--options "A|B"]
+  [--attach <path> ...] -- "<body>"`
+  using its own `FLOW_CONNECTOR_TOKEN`. `--to <task>` lets the receiving
+  connector pick the local task (a desk) the mail lands in instead of the
+  human's mail; it must be an open task there. That command (`flow peer deliver`)
   is the only inbound door; references/peers.md has its rules.
 - `run test` gets the human test payload (`"id": "test"`). Validate your
   setup and call nothing back.

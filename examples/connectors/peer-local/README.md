@@ -33,6 +33,13 @@ FLOW_ROOT=$A flow message bob "ship?" --options "Yes|No"
 FLOW_ROOT=$B flow inbox            # from alice: ship?  (Yes | No)
 ```
 
+Attachments (`flow message bob "see" --attach plan.md`) travel too: `send`
+checks each file's sha256 (with `sha256sum` or `shasum` when present) and
+passes the sending home's copy to the other home's
+`flow peer deliver --attach`, which stores its own copy. This sample never
+passes `--to`, so new mail lands in the other home's human mail; a real
+desk connector would pick a task with `--to <task>`.
+
 Requirements: POSIX `sh` and `awk` only (the JSON payload is parsed in awk
 and turned into single-quoted shell assignments, so nothing in a message is
 ever executed).

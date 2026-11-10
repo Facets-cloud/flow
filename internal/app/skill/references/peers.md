@@ -43,9 +43,13 @@ task t: flow message bob "ship?" --options "Yes|No"
 flow peer add <name> --via <connector> --at <endpoint>
 flow peer list | show <name> | rm <name> | block <name> | unblock <name>
 flow message <peer> "<body>" [--options "A|B"] [--urgent] [--fyi] [--reply-to <local-id>]
+                  [--attach <file> ...]
 flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>]
-                  [--kind ask|fyi] [--options "A|B"] "<body>"     # connectors only
+                  [--to <task>] [--kind ask|fyi] [--options "A|B"]
+                  [--attach <file> ...] "<body>"                  # connectors only
 ```
+
+- A body to a peer may be up to 4000 chars (local bus mail stays at 500).
 
 - `flow peer add` needs an installed connector with role `"peer"`
   (contract 2, see references/connectors.md). Otherwise it exits 1. Each
@@ -70,6 +74,21 @@ When `--reply-to <id>` names an inbound peer row, the payload is
 `kind: "reply"` with `reply_to_ref` set to that row's `origin_ref` (the
 other hub's id).
 
+## Attachments
+
+`--attach <file>` (repeatable, on `flow message` to anyone and on
+`flow peer deliver`) copies each file into `$FLOW_ROOT/attachments/<id>/`
+before the row is stored; a repeated basename becomes `name-2.ext`. The row
+records `[{name,size,sha256}]`; `flow inbox`, `pop` and `read` print the
+absolute paths, and `--json` has `"attachments":[{name,size,sha256,path}]`.
+Caps: 25 MiB per file, 100 MiB per message, 20 files; only regular files
+(directories and symlinks are refused, exit 2, nothing stored). Files are
+data — flow never opens or runs them. To a peer, the connector's `run send`
+payload lists each copy's `path` and `sha256`; the receiving connector
+verifies the sha and hands the file in with `flow peer deliver --attach`,
+which copies it into that hub's own attachments dir (flow checks size only).
+Directories of rows that rolled off the bus are pruned on the next send.
+
 ## Inbound — `flow peer deliver` (the only door)
 
 1. A valid `FLOW_CONNECTOR_TOKEN` identifies the calling connector C.
@@ -79,13 +98,23 @@ other hub's id).
    ("rejected").
 3. A repeat of `(P, ref)` is a no-op that exits 0 (dedupe on the unique
    `(peer, origin_ref)`).
-4. `--reply-to-ref <our-id>` that names our outbound row to P is stored in
-   `user/<that row's from_task>` with `reply_to=<our-id>`. If that task is
-   done, archived or empty, it falls back to step 5 with the body labelled
-   `[answer to <our-id>]`.
-5. Otherwise it goes to the human's mail: `to_assignee=user`, from P,
-   pinged per the connector rules (#119 tiers and escalation). `--kind fyi`
-   makes it an FYI that never pings. Options are passed through.
+4. `--to <task>` must name a task on this hub that is not done or archived;
+   otherwise it exits 1 and stores nothing. The CONNECTOR chooses the task
+   (a desk); flow keeps no peer→task mapping and wakes nothing.
+5. Routing:
+
+   ```
+   reply to our row → task T, T open          → user/T            (--to ignored)
+   reply to our row → T closed/gone, --to X   → user/<--to task>, reply_to kept
+   reply to our row → T closed/gone, no --to  → human mail, "[answer to <our-id>]"
+   not a reply (or unknown ref), --to X       → user/<--to task>
+   not a reply, no --to                       → human mail
+   ```
+
+   Mail routed to a task is task mail: it never pings the human, and its
+   options/fyi are dropped. Human mail goes to `to_assignee=user`, from P,
+   pinged per the connector rules (#119 tiers and escalation); `--kind fyi`
+   makes it an FYI that never pings, and options are passed through.
 6. P's `last_seen_at` is updated.
 
 Threading uses message ids only: `origin_ref` on an inbound row is the other

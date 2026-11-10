@@ -9,6 +9,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Peer desk primitives.** `flow peer deliver --to <task>` lets the
+  receiving connector route inbound peer mail to a local task it chooses
+  (it must be open; else exit 1, nothing stored). A reply whose asking
+  task has closed lands in the `--to` task with `reply_to` kept; task mail
+  never pings the human. flow keeps no peer→task mapping. Messages to a
+  peer may now carry 4000 chars (local bus stays 500). Attachments:
+  `flow message <to> --attach <file>` (repeatable) and
+  `flow peer deliver --attach <path>` copy files into
+  `$FLOW_ROOT/attachments/<id>/` and record `{name,size,sha256}` in a new
+  additive `bus_messages.attachments` column; caps 25 MiB/file, 100
+  MiB/message, 20 files, regular files only. Inbox views show absolute
+  paths, `--json` carries `attachments:[{name,size,sha256,path}]`, and the
+  peer `run send` payload gains `attachments` (`[]` when none). The
+  peer-local sample verifies each sha256 and carries the files.
 - **Connectors can notify the human.** A connector process (no bound task)
   holding its `FLOW_CONNECTOR_TOKEN` may now run `flow message user
   [--fyi|--urgent] "<text>"`. The row is human mail from

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -147,5 +148,36 @@ func TestPeerMessageBodyCap(t *testing.T) {
 	}
 	if peerBodyMax != 4000 || busBodyMax != 500 {
 		t.Errorf("caps = %d/%d", peerBodyMax, busBodyMax)
+	}
+}
+
+// F4: the desk primitives are documented in the references (not the lean
+// core) and the CHANGELOG.
+func TestPeerDeskDocs(t *testing.T) {
+	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	peers := norm(readSkillFile(t, "references/peers.md"))
+	for _, want := range []string{"--to <task>", "--attach <file>", "4000", "user/<--to task>",
+		"$FLOW_ROOT/attachments/<id>/", "25 MiB", "100 MiB", "20 files"} {
+		if !strings.Contains(peers, want) {
+			t.Errorf("references/peers.md lacks %q", want)
+		}
+	}
+	conn := norm(readSkillFile(t, "references/connectors.md"))
+	for _, want := range []string{`"attachments":[{"name"`, `"sha256"`, `"path"`, "--attach <path>", "--to <task>"} {
+		if !strings.Contains(conn, want) {
+			t.Errorf("references/connectors.md lacks %q", want)
+		}
+	}
+	msg := norm(readSkillFile(t, "references/messaging.md"))
+	for _, want := range []string{"--attach <file>", `"attachments"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("references/messaging.md lacks %q", want)
+		}
+	}
+	cl, _ := os.ReadFile("../../CHANGELOG.md")
+	for _, want := range []string{"peer deliver --to", "--attach", "4000"} {
+		if !strings.Contains(string(cl), want) {
+			t.Errorf("CHANGELOG lacks %q", want)
+		}
 	}
 }

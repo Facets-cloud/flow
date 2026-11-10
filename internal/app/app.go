@@ -151,12 +151,13 @@ Edit / mutate:
   flow unarchive <ref>
 
 Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
-  flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--options "A|B"] [--fyi]
+  flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--options "A|B"] [--fyi] [--attach <file>]
                                      (message a human — "user" is the local human — or the
                                       session bound to a task; never your own address; alias: msg.
                                       Flags may come in any order; the body is positional or
                                       --body "<text>". --options = answer choices, --fyi = never
-                                      ping; both only for mail to the human.)
+                                      ping; both only for mail to the human. --attach copies a
+                                      file in, repeatable: 25 MiB/file, 100 MiB, 20 files.)
   flow broadcast "<one-liner>"       (fan out to whoever watches this task/project/assignee; alias: post)
   flow inbox [--as <assignee>] [--json]           (what's pending; --as user = the human's queue)
   flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
@@ -180,10 +181,11 @@ Human connectors (opt-in pings for asks to the human — skill references/connec
 Peer hubs (other flow homes, via a role-"peer" connector — skill references/peers.md):
   flow peer add <name> --via <connector> --at <endpoint>
   flow peer list | show <name> | rm <name> | block <name> | unblock <name>
-  flow message <peer> "<body>" [--options "A|B"] [--urgent] [--fyi] [--reply-to <id>]
-                                     (to another hub's human; never <peer>/<task>)
-  flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>]
-                    [--kind ask|fyi] [--options "A|B"] "<body>"   (connectors only)
+  flow message <peer> "<body>" [--options "A|B"] [--urgent] [--fyi] [--reply-to <id>] [--attach <file>]
+                                     (to another hub's human, ≤4000 chars; never <peer>/<task>)
+  flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>] [--to <task>]
+                    [--kind ask|fyi] [--options "A|B"] [--attach <file>] "<body>"   (connectors only;
+                                      --to = the local task this mail lands in)
 
 Workdirs:
   flow workdir list
