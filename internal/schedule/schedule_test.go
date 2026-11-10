@@ -145,8 +145,8 @@ func TestLaunchdCalendarSpecAndXMLEscaping(t *testing.T) {
 	if strings.Contains(got, "StartInterval") {
 		t.Errorf("calendar spec must not set StartInterval")
 	}
-	if strings.Contains(got, "<true/>") {
-		t.Errorf("a calendar job must not RunAtLoad (it would fire on every login)")
+	if !strings.Contains(got, "<key>RunAtLoad</key>\n\t<false/>") {
+		t.Errorf("a calendar job must not RunAtLoad (it would fire on every login):\n%s", got)
 	}
 }
 
@@ -399,6 +399,7 @@ func TestCronInstallReplacesOnlyItsOwnLine(t *testing.T) {
 	fr.install(t)
 	b := &Cron{}
 	s := ownersSpec("/home/u/.flow/schedules")
+	s.LogDir = filepath.Join(t.TempDir(), "schedules")
 	rep, err := b.Install(s, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -414,14 +415,15 @@ func TestCronInstallReplacesOnlyItsOwnLine(t *testing.T) {
 	if n := strings.Count(newTab, "# flow-schedule:owner-scheduler"); n != 1 {
 		t.Errorf("tagged lines = %d:\n%s", n, newTab)
 	}
-	line := rep.Writes[0].Content
-	wantContains(t, "line", line,
-		"* * * * * ", "PATH='/opt/bin:/usr/bin:/bin' ", "FLOW_ROOT='/home/u/.flow' ", "'/opt/bin/flow' owner tick-due",
-		">>'/home/u/.flow/schedules/owner-scheduler.log' 2>>'/home/u/.flow/schedules/owner-scheduler.err.log'",
-		"# flow-schedule:owner-scheduler")
-	if strings.Contains(line, "HOME=") {
-		t.Errorf("cron sets HOME itself; do not override it: %s", line)
+	line := rep.Writes[1].Content
+	wantContains(t, "line", line, "* * * * * /bin/sh '"+s.LogDir+"/owner-scheduler.sh' # flow-schedule:owner-scheduler")
+	wrapper := rep.Writes[0]
+	if wrapper.Path != s.LogDir+"/owner-scheduler.sh" {
+		t.Errorf("wrapper path = %q", wrapper.Path)
 	}
+	wantContains(t, "wrapper", wrapper.Content,
+		"export PATH='/opt/bin:/usr/bin:/bin'\n", "export HOME='/home/u'\n", "export FLOW_ROOT='/home/u/.flow'\n",
+		"exec '/opt/bin/flow' owner tick-due >>'"+s.LogDir+"/owner-scheduler.log' 2>>'"+s.LogDir+"/owner-scheduler.err.log'\n")
 	if !strings.HasSuffix(newTab, "\n") {
 		t.Errorf("crontab must end with a newline")
 	}
@@ -461,14 +463,16 @@ func TestCronNoCrontabYetListAndRemove(t *testing.T) {
 	fr := &fakeRunner{answers: map[string]string{}, fail: map[string]string{"crontab -l": "no crontab for u"}}
 	fr.install(t)
 	b := &Cron{}
-	if _, err := b.Install(playbookSpec("/l"), Options{}); err != nil {
+	logDir := t.TempDir()
+	if _, err := b.Install(playbookSpec(logDir), Options{}); err != nil {
 		t.Fatalf("install on empty crontab: %v", err)
 	}
 	tab := fr.stdins[len(fr.stdins)-1]
-	wantContains(t, "crontab", tab, "30 9 * * * ", "'/opt/bin/flow' run playbook daily-triage --auto", "# flow-schedule:daily-triage")
+	wantContains(t, "crontab", tab, "30 9 * * * /bin/sh '"+logDir+"/daily-triage.sh' # flow-schedule:daily-triage")
+	wantContains(t, "wrapper", mustRead(t, filepath.Join(logDir, "daily-triage.sh")), "exec '/opt/bin/flow' run playbook daily-triage --auto >>")
 	// A real `crontab -l` failure (not "no crontab") is an error.
 	fr.fail["crontab -l"] = "crontab: permission denied"
-	if _, err := b.Install(playbookSpec("/l"), Options{}); err == nil {
+	if _, err := b.Install(playbookSpec(logDir), Options{}); err == nil {
 		t.Errorf("a failing crontab -l must not be treated as empty")
 	}
 	delete(fr.fail, "crontab -l")
@@ -488,8 +492,12 @@ func TestCronNoCrontabYetListAndRemove(t *testing.T) {
 	if strings.Contains(after, "flow-schedule:daily-triage") || !strings.Contains(after, "flow-schedule:other") {
 		t.Errorf("remove rewrote wrong lines:\n%s", after)
 	}
-	if len(rep.Removed) != 1 {
+	// The line and its wrapper.
+	if len(rep.Removed) != 2 || rep.Removed[1] != filepath.Join(logDir, "daily-triage.sh") {
 		t.Errorf("removed = %v", rep.Removed)
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "daily-triage.sh")); !os.IsNotExist(err) {
+		t.Errorf("wrapper still there")
 	}
 	fr.answers["crontab -l"] = after
 	if _, err := b.Remove("daily-triage", Options{}); err == nil {
@@ -558,5 +566,204 @@ func TestParseClock(t *testing.T) {
 		if _, err := ParseClock(bad); err == nil {
 			t.Errorf("%q must not parse", bad)
 		}
+	}
+}
+
+// ---------- review fixes (#130): detached children, names, %, long PATH ----------
+
+// The job (`flow owner tick-due`, `flow run playbook --auto`) forks a
+// detached child (setsid) and exits. systemd's default KillMode=control-group
+// then kills the child with the cgroup, so every fire "succeeds" and nothing
+// runs. KillMode=process lets the child outlive the oneshot.
+func TestSystemdServiceLetsDetachedChildrenLive(t *testing.T) {
+	svc := renderService(ownersSpec("/l"))
+	wantContains(t, "service", svc, "Type=oneshot\n", "KillMode=process\n")
+	if strings.Index(svc, "[Service]") > strings.Index(svc, "KillMode=process") {
+		t.Errorf("KillMode must sit in [Service]:\n%s", svc)
+	}
+}
+
+// launchd kills what is left in the job's process group unless told not to.
+// flow's children are in their own session (setsid) already; the key makes
+// the intent explicit and survives a launcher that stops calling setsid.
+func TestLaunchdPlistAbandonsProcessGroup(t *testing.T) {
+	pl := renderPlist(ownersSpec("/l"))
+	wantContains(t, "plist", pl, "<key>AbandonProcessGroup</key>\n\t<true/>\n")
+}
+
+func TestValidateName(t *testing.T) {
+	for _, ok := range []string{"owner-scheduler", "daily-triage", "a", "x.y_z-9"} {
+		if err := ValidateName(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "x/../victim", "../victim", "/abs", "Caps", "has space", "a\nb", strings.Repeat("a", 65), ".hidden", "-dash"} {
+		if err := ValidateName(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+// `flow schedule remove playbook 'x/../victim' --force` must not resolve to
+// another file: Remove validates the name before touching anything.
+func TestRemoveRejectsPathTraversalOnEveryBackend(t *testing.T) {
+	fr := &fakeRunner{answers: map[string]string{"crontab -l": "1 2 * * * /x # flow-schedule:x/../victim\n"}}
+	fr.install(t)
+	dir := t.TempDir()
+	victims := []string{filepath.Join(dir, "victim.plist"), filepath.Join(dir, "victim.timer"), filepath.Join(dir, "victim.service")}
+	for _, v := range victims {
+		if err := os.WriteFile(v, []byte("hand-written\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, b := range []Backend{&Launchd{AgentsDir: dir}, &Systemd{UnitDir: dir}, &Cron{}} {
+		for _, name := range []string{"x/../victim", "../victim", ""} {
+			rep, err := b.Remove(name, Options{Force: true})
+			if err == nil || !strings.Contains(err.Error(), "schedule name") {
+				t.Errorf("%s Remove(%q) = %+v, %v; want a name error", b.Name(), name, rep, err)
+			}
+		}
+	}
+	for _, v := range victims {
+		if _, err := os.Stat(v); err != nil {
+			t.Errorf("%s was deleted", filepath.Base(v))
+		}
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("nothing may run for a bad name: %v", fr.calls)
+	}
+}
+
+// `%` is a specifier in systemd unit files; a literal needs `%%`.
+func TestSystemdEscapesPercent(t *testing.T) {
+	fr := &fakeRunner{}
+	fr.install(t)
+	dir := t.TempDir()
+	s := Spec{
+		Name:    "daily-triage",
+		Args:    []string{"run", "playbook", "daily-triage", "--auto", "--with", "100% sure"},
+		At:      &Clock{Hour: 9, Minute: 30},
+		FlowBin: "/opt/100%/flow",
+		Env:     map[string]string{"PATH": "/opt/100%/bin:/usr/bin", "FLOW_ROOT": "/home/u/100%/.flow"},
+		LogDir:  "/home/u/100%/.flow/schedules",
+	}
+	b := &Systemd{UnitDir: dir}
+	if _, err := b.Install(s, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	svc := mustRead(t, filepath.Join(dir, "flow-daily-triage.service"))
+	wantContains(t, "service", svc,
+		`Environment="PATH=/opt/100%%/bin:/usr/bin"`,
+		`Environment="FLOW_ROOT=/home/u/100%%/.flow"`,
+		`ExecStart=/opt/100%%/flow run playbook daily-triage --auto --with "100%% sure"`,
+		"StandardOutput=append:/home/u/100%%/.flow/schedules/daily-triage.log",
+		"StandardError=append:/home/u/100%%/.flow/schedules/daily-triage.err.log",
+	)
+	if n := strings.Count(strings.ReplaceAll(svc, "%%", ""), "%"); n != 0 {
+		t.Errorf("%d unescaped %% left:\n%s", n, svc)
+	}
+	ents, err := b.List()
+	if err != nil || len(ents) != 1 {
+		t.Fatalf("list = %+v, %v", ents, err)
+	}
+	if ents[0].Command != "/opt/100%/flow run playbook daily-triage --auto --with 100% sure" {
+		t.Errorf("list must show the literal command: %q", ents[0].Command)
+	}
+}
+
+// cron: the crontab line only points at a short wrapper script, so a long
+// PATH never breaks Debian cron's line limit, and `%` (a newline to cron)
+// is escaped on the line and never reaches the command through cron.
+func TestCronLineIsShortAndPointsAtWrapper(t *testing.T) {
+	fr := &fakeRunner{answers: map[string]string{}, fail: map[string]string{"crontab -l": "no crontab for u"}}
+	fr.install(t)
+	logDir := filepath.Join(t.TempDir(), "100%", "schedules")
+	s := ownersSpec(logDir)
+	s.Env["PATH"] = strings.Repeat("/some/very/long/dir:", 80) + "/opt/bin"
+	s.FlowBin = "/opt/100%/flow"
+	s.Args = []string{"owner", "tick-due", "--with", "100% sure"}
+	rep, err := (&Cron{}).Install(s, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(logDir, "owner-scheduler.sh")
+	if len(rep.Writes) != 2 || rep.Writes[0].Path != script || rep.Writes[1].Path != "crontab" {
+		t.Fatalf("writes = %+v", rep.Writes)
+	}
+	line := rep.Writes[1].Content
+	if len(line) > 300 {
+		t.Errorf("crontab line is %d bytes; it must stay short regardless of PATH:\n%s", len(line), line)
+	}
+	wantContains(t, "line", line, "* * * * * /bin/sh '"+strings.ReplaceAll(script, "%", `\%`)+"' # flow-schedule:owner-scheduler")
+	if strings.Contains(line, "PATH=") || strings.Contains(line, "tick-due") {
+		t.Errorf("env and command belong in the wrapper, not the line:\n%s", line)
+	}
+	if n := strings.Count(strings.ReplaceAll(line, `\%`, ""), "%"); n != 0 {
+		t.Errorf("%d unescaped %% on the crontab line:\n%s", n, line)
+	}
+	body := mustRead(t, script)
+	wantContains(t, "wrapper", body,
+		"#!/bin/sh\n", "# "+Marker,
+		"export PATH='"+s.Env["PATH"]+"'\n", "export HOME='/home/u'\n", "export FLOW_ROOT='/home/u/.flow'\n",
+		"exec '/opt/100%/flow' owner tick-due --with '100% sure' >>'"+filepath.Join(logDir, "owner-scheduler.log")+"' 2>>'"+filepath.Join(logDir, "owner-scheduler.err.log")+"'\n",
+	)
+	if strings.Contains(body, `\%`) {
+		t.Errorf("the wrapper is plain sh; %% needs no escaping there:\n%s", body)
+	}
+	if fi, err := os.Stat(script); err != nil || fi.Mode()&0o100 == 0 {
+		t.Errorf("wrapper must be executable: %v %v", fi, err)
+	}
+	tab := fr.stdins[len(fr.stdins)-1]
+	if strings.Count(tab, "\n") != 1 || !strings.HasPrefix(tab, line) {
+		t.Errorf("crontab = %q", tab)
+	}
+
+	// List shows the real command (read from the wrapper), not /bin/sh.
+	delete(fr.fail, "crontab -l")
+	fr.answers["crontab -l"] = tab
+	ents, err := (&Cron{}).List()
+	if err != nil || len(ents) != 1 {
+		t.Fatalf("list = %+v, %v", ents, err)
+	}
+	if e := ents[0]; e.Command != "/opt/100%/flow owner tick-due --with 100% sure" || e.When != "every 1m0s" || e.Source != "flow" || e.Path != script {
+		t.Errorf("entry = %+v", e)
+	}
+
+	// Remove drops the line and the wrapper.
+	rep, err = (&Cron{}).Remove("owner-scheduler", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(script); !os.IsNotExist(err) {
+		t.Errorf("wrapper still there")
+	}
+	if len(rep.Removed) != 2 {
+		t.Errorf("removed = %v", rep.Removed)
+	}
+	if !fr.ran("crontab -r") {
+		t.Errorf("empty crontab must be removed: %v", fr.calls)
+	}
+}
+
+// A hand-written wrapper at the script path is protected like any file.
+func TestCronGuardsHandWrittenWrapper(t *testing.T) {
+	fr := &fakeRunner{fail: map[string]string{"crontab -l": "no crontab for u"}}
+	fr.install(t)
+	logDir := t.TempDir()
+	script := filepath.Join(logDir, "owner-scheduler.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho mine\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Cron{}).Install(ownersSpec(logDir), Options{}); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Errorf("guard: %v", err)
+	}
+	if got := mustRead(t, script); !strings.Contains(got, "echo mine") {
+		t.Errorf("hand-written wrapper replaced")
+	}
+	if _, err := (&Cron{}).Install(ownersSpec(logDir), Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, script); !strings.Contains(got, Marker) {
+		t.Errorf("--force must replace it")
 	}
 }

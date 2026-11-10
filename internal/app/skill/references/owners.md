@@ -135,8 +135,10 @@ Per OS it writes, prints (file + content + commands run) and activates:
   needs a login session; on a headless box `loginctl enable-linger $USER`
   keeps it running after logout).
 - **Linux (cron):** one tagged crontab line (`# flow-schedule:owner-scheduler`)
-  when no systemd user session is reachable, or on `--backend cron`. cron
-  speaks whole minutes/hours only.
+  that runs a short wrapper `$FLOW_ROOT/schedules/owner-scheduler.sh` (env +
+  command + log redirects live there, so a long PATH or a `%` in a path never
+  breaks the crontab), when no systemd user session is reachable, or on
+  `--backend cron`. cron speaks whole minutes/hours only.
 - Logs: `$FLOW_ROOT/schedules/owner-scheduler.{log,err.log}`. `--dry-run`
   shows the plan without touching anything. A file flow did not write is
   never replaced or removed without `--force` (so a hand-written

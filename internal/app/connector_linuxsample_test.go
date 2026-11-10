@@ -61,6 +61,14 @@ func newLinuxHarness(t *testing.T, tools linuxTools) *linuxHarness {
 	// may show a pick list and then a note box), sleep so a non-detached
 	// connector would visibly stall, then answer per the env knobs.
 	fakeDialog := `#!/bin/bash
+# Like GTK in a non-UTF-8 locale: argv that is not plain ASCII is rejected
+# ("Invalid byte sequence in conversion input") unless the locale is UTF-8.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+*[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
+*) if printf '%s' "$*" | LC_ALL=C grep -q "$(printf '[^ -~\t]')"; then
+     echo "zenity: Invalid byte sequence in conversion input" >&2; touch "$FAKE_DIALOG_DONE"; exit 255
+   fi ;;
+esac
 printf '%s\0' "$@" >> "$FAKE_DIALOG_ARGS"
 printf -- '--\0' >> "$FAKE_DIALOG_ARGS"
 sleep 1.5
@@ -237,7 +245,7 @@ func TestLinuxZenityChoiceAndNote(t *testing.T) {
 	eqArgs(t, "flow call", h.flowCall(), []string{"human", "reply", "ab12", "Yes — after lunch"})
 	calls := h.dialogCalls(2)
 	list, note := calls[0], calls[1]
-	if !hasArg(list, "--list") || !hasArg(list, "--title=flow · asker") || !hasArg(list, "--text=ship \"v2\"?\nsecond line — ok") {
+	if !hasArg(list, "--list") || !hasArg(list, "--title=flow - asker") || !hasArg(list, "--text=ship \"v2\"?\nsecond line — ok") {
 		t.Errorf("list dialog argv = %q", list)
 	}
 	if len(list) < 2 || list[len(list)-2] != "Yes" || list[len(list)-1] != "No" {
@@ -295,7 +303,7 @@ func TestLinuxKdialogWhenNoZenity(t *testing.T) {
 	eqArgs(t, "flow call", h.flowCall(), []string{"human", "reply", "ab16", "B — because"})
 	calls := h.dialogCalls(2)
 	combo, note := calls[0], calls[1]
-	if !hasArg(combo, "--combobox") || !hasArg(combo, "--title") || !hasArg(combo, "flow · t") || !hasArg(combo, "pick") {
+	if !hasArg(combo, "--combobox") || !hasArg(combo, "--title") || !hasArg(combo, "flow - t") || !hasArg(combo, "pick") {
 		t.Errorf("combobox argv = %q", combo)
 	}
 	if len(combo) < 3 || strings.Join(combo[len(combo)-3:], ",") != "A,B,C" {
@@ -312,7 +320,7 @@ func TestLinuxNotifyOnlyWhenNoDialogTool(t *testing.T) {
 	h.noFlowCall()
 	n := h.notifyArgv()
 	joined := strings.Join(n, "\n")
-	for _, want := range []string{"flow · deploy", "Ship it?", "Yes | No", "flow inbox"} {
+	for _, want := range []string{"flow - deploy", "Ship it?", "Yes | No", "flow inbox"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("notification lacks %q: %q", want, n)
 		}
@@ -353,7 +361,7 @@ func TestLinuxTestVerbToastsOnly(t *testing.T) {
 	h.mustRun("test", `{"id":"test","from_task":"flow","body":"flow connector test","options":[],"kind":"test"}`)
 	h.noFlowCall()
 	n := h.notifyArgv()
-	if !hasArg(n, "flow · test") || !hasArg(n, "flow connector test") {
+	if !hasArg(n, "flow - test") || !hasArg(n, "flow connector test") {
 		t.Errorf("test notification argv = %q", n)
 	}
 	if _, err := os.Stat(h.dialogArgs); err == nil {
@@ -375,6 +383,30 @@ func TestLinuxRejectsBadInput(t *testing.T) {
 	for verb, payload := range map[string]string{"send": "not json", "bogus": "{}", "test": `{"body":"no id"}`} {
 		if rc, _ := h.run(verb, payload); rc == 0 {
 			t.Errorf("%s %q: exit 0", verb, payload)
+		}
+	}
+}
+
+// A C/POSIX locale (a bare desktop session, a cron-started environment)
+// made zenity reject the title's middle dot and exit without a dialog. The
+// titles are ASCII now and the script forces a UTF-8 locale so a non-ASCII
+// body (an em dash, an accent) still shows.
+func TestLinuxCLocaleStillShowsTheDialog(t *testing.T) {
+	h := newLinuxHarness(t, linuxTools{zenity: true, notify: true, listResult: "Yes", entryResult: "d\u00e9j\u00e0 vu"})
+	h.env = append(h.env, "LC_ALL=C", "LANG=C")
+	h.mustRun("send", `{"id":"ab30","from_task":"asker","body":"ship \u2014 now?","options":["Yes","No"],"kind":"ask"}`)
+	eqArgs(t, "flow call", h.flowCall(), []string{"human", "reply", "ab30", "Yes \u2014 d\u00e9j\u00e0 vu"})
+	list := h.dialogCalls(2)[0]
+	if !hasArg(list, "--title=flow - asker") || !hasArg(list, "--text=ship \u2014 now?") {
+		t.Errorf("list dialog argv = %q", list)
+	}
+	for _, a := range list {
+		if strings.HasPrefix(a, "--title=") {
+			for _, r := range a {
+				if r > 127 {
+					t.Errorf("title must be ASCII: %q", a)
+				}
+			}
 		}
 	}
 }

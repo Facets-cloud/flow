@@ -126,6 +126,16 @@ func scheduleTarget(pos []string) (name string, flowArgs []string, rc int) {
 			fmt.Fprintf(os.Stderr, "error: `playbook` needs a slug\n%s\n", scheduleUsage)
 			return "", nil, 2
 		}
+		if pos[1] == ownerScheduleName {
+			// Same schedule name → same plist/unit/crontab line as the
+			// owner scheduler; a playbook must not overwrite or remove it.
+			fmt.Fprintf(os.Stderr, "error: the schedule name %q is reserved for the owner scheduler (flow schedule install owners); rename the playbook\n", pos[1])
+			return "", nil, 2
+		}
+		if err := schedule.ValidateName(pos[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return "", nil, 2
+		}
 		return pos[1], []string{"run", "playbook", pos[1], "--auto"}, 0
 	}
 	fmt.Fprintf(os.Stderr, "error: unknown schedule target %q (owners | playbook <slug>)\n%s\n", pos[0], scheduleUsage)

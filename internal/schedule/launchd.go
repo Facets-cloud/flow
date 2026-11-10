@@ -52,6 +52,9 @@ func (l *Launchd) Install(s Spec, o Options) (*Report, error) {
 }
 
 func (l *Launchd) Remove(name string, o Options) (*Report, error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
 	p := l.path(name)
 	if _, err := os.Stat(p); err != nil {
 		return nil, fmt.Errorf("no launchd schedule %q (%s)", name, p)
@@ -107,6 +110,13 @@ func xmlEsc(s string) string {
 // renderPlist produces the launchd property list for s. Calendar jobs do
 // not RunAtLoad (that would fire them on every login); interval jobs do,
 // so the first tick happens right after install/login.
+//
+// AbandonProcessGroup: when the job exits, launchd kills whatever is left
+// in the job's process group. flow's jobs fork a detached child (setsid →
+// its own session and process group) and exit, so the sweep never reached
+// the child in practice — the key makes that explicit and keeps a future
+// launcher that forks without setsid from silently losing its runs (the
+// systemd twin of this is KillMode=process).
 func renderPlist(s Spec) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
@@ -133,6 +143,7 @@ func renderPlist(s Spec) string {
 		fmt.Fprintf(&b, "\t<key>StartInterval</key>\n\t<integer>%d</integer>\n", int(s.Every/time.Second))
 		b.WriteString("\t<key>RunAtLoad</key>\n\t<true/>\n")
 	}
+	b.WriteString("\t<key>AbandonProcessGroup</key>\n\t<true/>\n")
 	fmt.Fprintf(&b, "\t<key>StandardOutPath</key>\n\t<string>%s</string>\n", xmlEsc(s.LogPath()))
 	fmt.Fprintf(&b, "\t<key>StandardErrorPath</key>\n\t<string>%s</string>\n", xmlEsc(s.ErrPath()))
 	b.WriteString("</dict>\n</plist>\n")

@@ -22,7 +22,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `flow schedule list` / `remove` manage what is installed. Files flow
   writes carry a marker; a hand-written file is never replaced or removed
   without `--force`. Scheduled playbooks run `--auto` (headless). Windows
-  is not supported yet.
+  is not supported yet. The systemd unit sets `KillMode=process` and the
+  launchd plist `AbandonProcessGroup`: both jobs fork a detached child and
+  exit, and systemd's default would kill that child with the cgroup, so
+  every fire reported success and nothing ran. The cron line only runs a
+  short wrapper `$FLOW_ROOT/schedules/<name>.sh` (Debian cron rejects long
+  lines and reads `%` as a newline), `%` is escaped in unit files, schedule
+  names are validated on remove too (no `x/../other`), and a playbook
+  cannot take the owner scheduler's name.
 - **Linux human connector.** `flow connector add linux` installs a desktop
   counterpart of the macOS dialog: `zenity` (or `kdialog`) shows the ask
   with its options and an optional note, `notify-send` carries the test
@@ -30,7 +37,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   goes back with `flow human reply`. On a box with no display it fails
   clearly (`no display … the ask stays in flow inbox`) so the next
   connector tier is tried and the ask waits in `flow inbox`. Needs `jq` or
-  `python3`.
+  `python3`. Dialog titles are ASCII (`flow - <task>`) and the script forces
+  a UTF-8 locale, so a C/POSIX locale no longer makes zenity reject the
+  text and exit without a dialog.
 
 ### Fixed
 

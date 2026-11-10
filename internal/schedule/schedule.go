@@ -61,10 +61,22 @@ type Spec struct {
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
+// ValidateName accepts the names a schedule may have: lowercase letters,
+// digits, '.', '_' and '-', starting with a letter or digit, at most 64
+// bytes. Every backend builds file paths and unit labels from the name,
+// so Install AND Remove check it first: "x/../victim" must never resolve
+// to another file (and --force must not be able to delete it).
+func ValidateName(name string) error {
+	if !nameRe.MatchString(name) {
+		return fmt.Errorf("schedule name %q must be lowercase letters, digits, '.', '_' or '-' (max 64)", name)
+	}
+	return nil
+}
+
 // Validate checks the spec is complete and self-consistent.
 func (s Spec) Validate() error {
-	if !nameRe.MatchString(s.Name) {
-		return fmt.Errorf("schedule name %q must be lowercase letters, digits, '.', '_' or '-'", s.Name)
+	if err := ValidateName(s.Name); err != nil {
+		return err
 	}
 	if len(s.Args) == 0 {
 		return errors.New("schedule has no command")
@@ -259,7 +271,9 @@ func newPlan(backend string, o Options) *plan {
 	return &plan{rep: &Report{Backend: backend}, dry: o.DryRun}
 }
 
-func (p *plan) write(path, content string) error {
+func (p *plan) write(path, content string) error { return p.writeMode(path, content, 0o644) }
+
+func (p *plan) writeMode(path, content string, mode os.FileMode) error {
 	p.rep.Writes = append(p.rep.Writes, Write{Path: path, Content: content})
 	if p.dry {
 		return nil
@@ -267,7 +281,12 @@ func (p *plan) write(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		return err
+	}
+	// WriteFile keeps an existing file's mode; a re-install must still
+	// leave the wrapper executable.
+	return os.Chmod(path, mode)
 }
 
 func (p *plan) remove(path string) error {

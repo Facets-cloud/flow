@@ -276,9 +276,17 @@ func TestScheduleSystemdAndCronBackends(t *testing.T) {
 	if rc, out := scheduleRC(t, "install", "owners", "--backend", "cron"); rc != 0 {
 		t.Fatalf("cron rc=%d out=%s", rc, out)
 	}
-	for _, want := range []string{"* * * * * ", "PATH='/opt/test/bin:/usr/bin:/bin'", "FLOW_ROOT='" + root + "'", "'/opt/test/bin/flow' owner tick-due", "# flow-schedule:owner-scheduler"} {
-		if !strings.Contains(fr.tab, want) {
-			t.Errorf("crontab lacks %q: %q", want, fr.tab)
+	wrapper := filepath.Join(root, "schedules", "owner-scheduler.sh")
+	if want := "* * * * * /bin/sh '" + wrapper + "' # flow-schedule:owner-scheduler\n"; fr.tab != want {
+		t.Errorf("crontab = %q, want %q", fr.tab, want)
+	}
+	wb, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"export PATH='/opt/test/bin:/usr/bin:/bin'", "export FLOW_ROOT='" + root + "'", "exec '/opt/test/bin/flow' owner tick-due >>'" + filepath.Join(root, "schedules", "owner-scheduler.log") + "'"} {
+		if !strings.Contains(string(wb), want) {
+			t.Errorf("wrapper lacks %q: %q", want, wb)
 		}
 	}
 	// cron cannot do 90s.
@@ -303,6 +311,9 @@ func TestScheduleSystemdAndCronBackends(t *testing.T) {
 	}
 	if rc, out := scheduleRC(t, "remove", "owners", "--backend", "cron"); rc != 0 || strings.Contains(fr.tab, "flow-schedule:") {
 		t.Errorf("cron remove rc=%d out=%s tab=%q", rc, out, fr.tab)
+	}
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Errorf("cron remove must delete the wrapper too")
 	}
 	if rc, out := scheduleRC(t, "remove", "owners", "--backend", "cron"); rc != 1 {
 		t.Errorf("second remove rc=%d out=%s", rc, out)
@@ -364,4 +375,60 @@ func mustReadSkill(t *testing.T, rel string) []byte {
 		t.Fatalf("read %s: %v", rel, err)
 	}
 	return b
+}
+
+// A playbook slugged like the owner scheduler would overwrite (or remove)
+// the owner scheduler's timer: the name is reserved.
+func TestScheduleRefusesReservedPlaybookSlug(t *testing.T) {
+	root, home := setupScheduleEnv(t)
+	fr := fakeScheduleRunner(t)
+	insertPlaybook(t, root, ownerScheduleName)
+	if rc, out := scheduleRC(t, "install", "owners", "--backend", "launchd"); rc != 0 {
+		t.Fatalf("owners rc=%d out=%s", rc, out)
+	}
+	p := filepath.Join(home, "Library", "LaunchAgents", "cloud.facets.flow.owner-scheduler.plist")
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr.calls = nil
+	rc, out := scheduleRC(t, "install", "playbook", ownerScheduleName, "--at", "09:00", "--backend", "launchd")
+	if rc != 2 || !strings.Contains(out, "reserved") {
+		t.Errorf("install reserved slug rc=%d out=%s", rc, out)
+	}
+	if after, _ := os.ReadFile(p); string(after) != string(before) {
+		t.Errorf("owner scheduler plist was replaced by a playbook schedule")
+	}
+	if rc, out := scheduleRC(t, "remove", "playbook", ownerScheduleName, "--backend", "launchd"); rc != 2 || !strings.Contains(out, "reserved") {
+		t.Errorf("remove reserved slug rc=%d out=%s", rc, out)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Errorf("owner scheduler plist removed via playbook: %v", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("nothing may run for a reserved slug: %v", fr.calls)
+	}
+}
+
+// `remove playbook 'x/../victim' --force` must not reach another file.
+func TestScheduleRemoveValidatesName(t *testing.T) {
+	_, home := setupScheduleEnv(t)
+	fr := fakeScheduleRunner(t)
+	victim := filepath.Join(home, "Library", "LaunchAgents", "victim.plist")
+	if err := os.MkdirAll(filepath.Dir(victim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(victim, []byte("<plist/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rc, out := scheduleRC(t, "remove", "playbook", "x/../victim", "--force", "--backend", "launchd")
+	if rc == 0 || !strings.Contains(out, "schedule name") {
+		t.Errorf("rc=%d out=%s", rc, out)
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Errorf("victim deleted: %v", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("nothing may run: %v", fr.calls)
+	}
 }

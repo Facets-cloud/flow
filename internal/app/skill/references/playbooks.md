@@ -238,6 +238,7 @@ launchd on macOS, a systemd --user timer on Linux (cron when no user
 session is reachable, or `--backend cron`); `--dry-run` prints the file
 and commands without installing; logs land in
 `$FLOW_ROOT/schedules/<slug>.{log,err.log}`. The slug must be an existing
-playbook. A hand-written plist/unit with the same name is only replaced
-with `--force`. Each fire is a normal run-task (`flow list runs <slug>`).
+playbook (and not `owner-scheduler`, which is the owner scheduler's name). A
+hand-written plist/unit with the same name is only replaced with `--force`.
+Each fire is a normal run-task (`flow list runs <slug>`).
 

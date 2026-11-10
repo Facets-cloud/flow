@@ -30,6 +30,27 @@ log() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# zenity, kdialog and notify-send read argv in the locale's charset. Under
+# C/POSIX (a bare session, anything started by cron or a systemd unit) every
+# non-ASCII byte — an em dash or an accent in the body — is "Invalid byte
+# sequence in conversion input" and the dialog never appears, while this
+# script has long exited 0. Force a UTF-8 locale when the current one is not.
+# (Titles are plain ASCII for the same reason.)
+ensure_utf8() {
+	case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+	*[Uu][Tt][Ff]-8* | *[Uu][Tt][Ff]8*) return 0 ;;
+	esac
+	local l
+	for l in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+		if locale -a 2>/dev/null | grep -qix "$l"; then
+			export LC_ALL="$l"
+			return 0
+		fi
+	done
+	export LC_ALL=C.UTF-8
+}
+ensure_utf8
+
 has_display() { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }
 
 # dialog_tool prints zenity or kdialog (zenity preferred), or nothing.
@@ -80,8 +101,8 @@ dialog() {
 	local mode="$1" id="$2" from="$3" body="$4" urgent="$5"
 	shift 5
 	local title="flow"
-	[ -n "$from" ] && title="flow · $from"
-	[ "$mode" = "test" ] && title="flow · test"
+	[ -n "$from" ] && title="flow - $from"
+	[ "$mode" = "test" ] && title="flow - test"
 	[ "$urgent" = "1" ] && body="URGENT: $body"
 	local tool
 	tool="$(dialog_tool)"
@@ -193,13 +214,13 @@ if [ -z "$tool" ] && [ -z "$notify" ]; then
 fi
 
 title="flow"
-[ -n "$from" ] && title="flow · $from"
+[ -n "$from" ] && title="flow - $from"
 urgency=normal
 [ "$urgent" = "1" ] && urgency=critical
 
 if [ "$verb" = "test" ]; then
 	if [ -n "$notify" ]; then
-		notify-send --app-name=flow -u "$urgency" "flow · test" "$body" >/dev/null 2>&1 || {
+		notify-send --app-name=flow -u "$urgency" "flow - test" "$body" >/dev/null 2>&1 || {
 			echo "notify-send failed" >&2
 			exit 1
 		}

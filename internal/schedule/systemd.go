@@ -56,6 +56,9 @@ func (s *Systemd) Install(sp Spec, o Options) (*Report, error) {
 }
 
 func (s *Systemd) Remove(name string, o Options) (*Report, error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
 	tp, svp := s.timerPath(name), s.servicePath(name)
 	if _, err := os.Stat(tp); err != nil {
 		return nil, fmt.Errorf("no systemd schedule %q (%s)", name, tp)
@@ -134,9 +137,17 @@ func (s *Systemd) List() ([]Entry, error) {
 	return out, nil
 }
 
+// unitEsc escapes a literal for a unit-file value: '%' introduces a
+// specifier (%h, %u …) in ExecStart=, Environment= and the Standard*=
+// paths, so a literal percent is "%%". A path like /home/u/100%/.flow
+// would otherwise be rewritten (or rejected) by systemd while install
+// reports success.
+func unitEsc(s string) string { return strings.ReplaceAll(s, "%", "%%") }
+
 // execQuote quotes one ExecStart argument the systemd way (double quotes,
-// backslash escapes) when it needs it.
+// backslash escapes) when it needs it, and escapes '%' as "%%".
 func execQuote(a string) string {
+	a = unitEsc(a)
 	if a != "" && !strings.ContainsAny(a, " \t\"'\\$;") {
 		return a
 	}
@@ -144,11 +155,12 @@ func execQuote(a string) string {
 	return `"` + r.Replace(a) + `"`
 }
 
-// unquoteExec undoes execQuote for display: drops quotes around arguments.
+// unquoteExec undoes execQuote for display: drops quotes around arguments
+// and turns "%%" back into '%'.
 func unquoteExec(line string) string {
 	var out []string
 	var cur strings.Builder
-	inQ, esc := false, false
+	inQ, esc, pct := false, false, false
 	flush := func() {
 		if cur.Len() > 0 {
 			out = append(out, cur.String())
@@ -160,6 +172,12 @@ func unquoteExec(line string) string {
 		case esc:
 			cur.WriteRune(c)
 			esc = false
+		case c == '%':
+			if pct {
+				cur.WriteRune('%')
+			}
+			pct = !pct
+			continue
 		case inQ && c == '\\':
 			esc = true
 		case c == '"':
@@ -169,28 +187,44 @@ func unquoteExec(line string) string {
 		default:
 			cur.WriteRune(c)
 		}
+		pct = false
 	}
 	flush()
 	return strings.Join(out, " ")
 }
 
 // renderService is the oneshot unit the timer activates.
+//
+// KillMode=process is load-bearing: both jobs (`flow owner tick-due`,
+// `flow run playbook --auto`) fork a detached child (setsid) and exit at
+// once. setsid leaves the session, not the cgroup, and systemd's default
+// KillMode=control-group kills everything left in the cgroup when
+// ExecStart exits — so every fire logged "Launched autonomous run",
+// status=0/SUCCESS, and the harness never started. With KillMode=process
+// systemd only reaps the main process and the child runs to completion
+// (systemd notes "Unit process N remains running after unit stopped",
+// which is exactly the point). Chosen over `systemd-run --user --scope`
+// around the child because it is one declarative line in the unit flow
+// already writes (visible in install output and --dry-run), needs no
+// systemd-specific branch or D-Bus round-trip in the launchers that macOS,
+// cron and plain shells share, and has no fallback path to get wrong.
 func renderService(sp Spec) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s: flow schedule remove %s\n", Marker, sp.Name)
 	fmt.Fprintf(&b, "[Unit]\nDescription=flow schedule %s (%s)\n\n", sp.Name, sp.When())
 	b.WriteString("[Service]\nType=oneshot\n")
+	b.WriteString("# flow forks a detached child and exits; do not kill the child with the cgroup.\nKillMode=process\n")
 	for _, k := range sp.sortedEnvKeys() {
 		// systemd wants the whole VAR=value in one quoted token; the value
 		// may hold spaces but PATH-style values never hold quotes.
-		fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", k, strings.ReplaceAll(sp.Env[k], `"`, `\"`))
+		fmt.Fprintf(&b, "Environment=\"%s=%s\"\n", k, unitEsc(strings.ReplaceAll(sp.Env[k], `"`, `\"`)))
 	}
 	args := make([]string, 0, 1+len(sp.Args))
 	for _, a := range append([]string{sp.FlowBin}, sp.Args...) {
 		args = append(args, execQuote(a))
 	}
 	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(args, " "))
-	fmt.Fprintf(&b, "StandardOutput=append:%s\nStandardError=append:%s\n", sp.LogPath(), sp.ErrPath())
+	fmt.Fprintf(&b, "StandardOutput=append:%s\nStandardError=append:%s\n", unitEsc(sp.LogPath()), unitEsc(sp.ErrPath()))
 	return b.String()
 }
 

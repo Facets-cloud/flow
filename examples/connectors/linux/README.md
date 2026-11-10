@@ -51,7 +51,7 @@ keychain on Linux).
 | no options | your message and a text field. The reply is your text; an empty reply marks the ask seen. |
 | options | a pick list of the options, then a note box ("Add a note (optional)"). The reply is `<option> — <note>`, or just `<option>`. |
 
-- The dialog title is `flow · <task>`. Urgent asks get the prefix `URGENT:`.
+- The dialog title is `flow - <task>`. Urgent asks get the prefix `URGENT:`.
 - **Cancel** (or closing a dialog) does nothing, and the mail stays unread in
   `flow inbox`.
 - Dialogs never auto-dismiss. flow sends one ping per task until you've seen
