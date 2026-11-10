@@ -262,6 +262,23 @@ func cmdDo(args []string) int {
 		}
 	}
 
+	// Mint the session id BEFORE taking the write lock. For probing
+	// harnesses (Codex) NewSessionID is a full model round-trip — often
+	// 10-40s — and holding BEGIN IMMEDIATE across it stalled every other
+	// flow writer past busy_timeout (parallel `flow auto` launches died
+	// with SQLITE_BUSY). If a racer binds the task first, the in-tx
+	// re-read below resumes its session and this id is simply unused.
+	var minted string
+	if (!task.SessionID.Valid || task.SessionID.String == "" || *fresh) &&
+		(task.Status != "done" || injectionText != "") {
+		id, err := h.NewSessionID(task.WorkDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
+			return 1
+		}
+		minted = id
+	}
+
 	// Step 2: atomic status flip inside a transaction. Captures preSessionID
 	// and other fields for later steps. Per spec §6 this commit is the
 	// durability boundary — even if bootstrap or iTerm spawn fails below,
@@ -308,12 +325,17 @@ func cmdDo(args []string) int {
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
 	if needsBootstrap {
-		id, err := h.NewSessionID(task.WorkDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
-			return 1
+		if minted == "" {
+			// Rare: the session was cleared between the pre-read and
+			// this tx. Mint now (under the lock) rather than fail.
+			id, err := h.NewSessionID(task.WorkDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
+				return 1
+			}
+			minted = id
 		}
-		sessionID = id
+		sessionID = minted
 	} else {
 		sessionID = curSessionID.String
 	}
