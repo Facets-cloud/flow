@@ -19,6 +19,7 @@ a container, a server) the linux sample's `send` exits 1 with `no display …
 the ask stays in flow inbox`: dispatch logs it, tries the next tier, and the
 human reads the ask with `flow inbox --as user`. Its `add` fails its test
 there for the same reason — install it where there is a desktop.
+Hub/webhook-style connectors work the same on both OSes.
 
 ```
 agent: flow message user "q" --options "A|B"      (returns at once)
