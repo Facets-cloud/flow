@@ -3,28 +3,30 @@
 //
 // Selection priority (highest first):
 //
+//	$FLOW_TERM=<valid backend>                     → that backend (explicit user choice)
 //	$ZELLIJ set                                    → internal/zellij
 //	$TMUX set                                      → internal/tmux
 //	$REX_SESSION set or TERM_PROGRAM=rex           → internal/rex
 //	$KITTY_WINDOW_ID set or $TERM=xterm-kitty      → internal/kitty
-//	$FLOW_TERM=<valid backend>                     → that backend (user override)
 //	TERM_PROGRAM=WarpTerminal                      → internal/warp
 //	TERM_PROGRAM=Apple_Terminal                    → internal/terminal
 //	TERM_PROGRAM=iTerm.app                         → internal/iterm
 //	TERM_PROGRAM=ghostty                           → internal/ghostty
 //	anything else (or unset)                       → internal/iterm  (historical default)
 //
-// $ZELLIJ, $TMUX, Rex's and kitty's per-terminal markers win over $FLOW_TERM
-// because if the user is inside a session-manager terminal, that's where
-// their workflow lives — the host terminal is a substrate detail. tmux
-// and zellij are the only backends that work on Linux and macOS alike;
-// the osascript backends are macOS-only and SpawnTab returns an error
+// An explicit $FLOW_TERM outranks every ambient marker: $ZELLIJ, $TMUX,
+// Rex's and kitty's variables describe the environment flow happens to
+// be running in, while $FLOW_TERM is the user saying which backend they
+// want (tmux inside iTerm but tabs in iTerm; a shell script; Hyper,
+// wezterm, …). Among the ambient markers the session managers win over
+// $TERM_PROGRAM because if the user is inside one, that's where their
+// workflow lives — the host terminal is a substrate detail. tmux and
+// zellij are the only backends that work on Linux and macOS alike; the
+// osascript backends are macOS-only and SpawnTab returns an error
 // wrapping ErrNoTerminal when one is selected elsewhere, so callers can
-// fall back (print the command, point at --here / --auto). $FLOW_TERM
-// lets users on non-standard hosts (tmux inside Warp, shell-script
-// invocations, Hyper, wezterm, etc.) opt into a specific backend
-// without relying on TERM_PROGRAM. Unknown values silently fall
-// through to TERM_PROGRAM detection.
+// fall back (print the command, point at --here / --auto). Unknown
+// $FLOW_TERM values (including bg, which IsBackground handles) are
+// ignored and detection proceeds as if it were unset.
 //
 // The Override var lets tests pin the backend deterministically without
 // having to set env vars via t.Setenv.
@@ -97,6 +99,14 @@ func Detect() Backend {
 	if Override != "" {
 		return Override
 	}
+	// Explicit user choice first — see the package comment.
+	if v := os.Getenv("FLOW_TERM"); v != "" {
+		switch Backend(v) {
+		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty, BackendRex, BackendTmux:
+			return Backend(v)
+		}
+		// Unknown value falls through to ambient detection.
+	}
 	if os.Getenv("ZELLIJ") != "" {
 		return BackendZellij
 	}
@@ -108,13 +118,6 @@ func Detect() Backend {
 	}
 	if os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("TERM") == "xterm-kitty" {
 		return BackendKitty
-	}
-	if v := os.Getenv("FLOW_TERM"); v != "" {
-		switch Backend(v) {
-		case BackendITerm, BackendTerminal, BackendZellij, BackendKitty, BackendWarp, BackendGhostty, BackendRex, BackendTmux:
-			return Backend(v)
-		}
-		// Unknown value falls through to TERM_PROGRAM detection.
 	}
 	switch os.Getenv("TERM_PROGRAM") {
 	case "Apple_Terminal":

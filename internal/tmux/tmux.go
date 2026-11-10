@@ -5,20 +5,40 @@
 //
 // Mechanism:
 //
-//  1. tmux new-window -P -F '#{pane_id}' -n <title> -c <cwd>
+//  1. Write a self-deleting per-spawn script to os.TempDir() (mode
+//  0700. whose last line is `exec env <vars> <command>`.
+//  2. tmux new-window -P -F '#{pane_id}' -n <title> -c <cwd>
 //     (creates + selects the window, prints the new pane's id, e.g. %7)
-//  2. tmux send-keys -t <pane> -l " <env-prefix><flattened-command>"
-//  3. tmux send-keys -t <pane> Enter
+//  3. tmux send-keys -t <pane> -l " sh '<script-path>'"
+//  4. tmux send-keys -t <pane> Enter
 //
-// Step 1 returns the pane id so steps 2–3 target it explicitly instead
-// of "whatever pane is focused by now". Step 2 uses `-l` so tmux types
+// Step 2 returns the pane id so steps 3–4 target it explicitly instead
+// of "whatever pane is focused by now". Step 3 uses `-l` so tmux types
 // the bytes literally (no key-name parsing of "Enter", "Space", …);
 // the leading space triggers histignorespace on shells that have it
-// on, matching the other backends. Step 3 submits the line.
+// on, matching the other backends. Step 4 submits the line.
 //
-// Newline handling: send-keys writes raw bytes to the pane's PTY, so
-// embedded `\n` would submit partial lines. Same flattening rule as
-// the zellij and kitty backends.
+// Why a script instead of typing the command (the way the zellij and
+// kitty backends do): send-keys writes raw bytes to the pane's PTY, and
+// the bytes land before the new window's shell has finished starting.
+// Until an interactive shell switches the tty to raw mode, the tty is
+// in canonical mode and buffers at most MAX_CANON bytes per line —
+// 1024 on macOS (4096 on Linux). A full launch line (harness binary +
+// `--session-id` + the quoted bootstrap prompt) is well over 1 KB, so
+// on macOS with zsh it was cut inside the quoted prompt, the window sat
+// at `quote>`, and the task was left in-progress with a session id
+// that never started. The typed line is now a few dozen bytes no
+// matter how long the prompt or env block is. The command is still run
+// by the window's own interactive shell (so the user's rc PATH applies
+// and the window stays open after the harness exits), and `exec`
+// keeps the harness a direct child of that shell so the ps-based
+// FocusSession keeps matching pane ttys. Passing the command to
+// `new-window` directly would have skipped the user's shell (rc PATH
+// lost — the usual "claude: command not found" on Debian) and closed
+// the window with the harness.
+//
+// The script deletes itself (`rm -- "$0"`) as its first action, same
+// as internal/warp. A write-then-tmux failure removes it explicitly.
 //
 // This is the first terminal backend that works on Linux and macOS
 // alike; it is also the one `flow do` recommends when no supported
@@ -30,8 +50,12 @@
 package tmux
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -61,43 +85,109 @@ var PSRunner = func() ([]byte, error) {
 	return exec.Command("ps", "-axo", "pid,tty,command").Output()
 }
 
+// WriteScript writes the per-spawn script body to a private temp file
+// (os.TempDir()/flow-tmux-<id>.sh, mode 0700) and returns its path.
+// Tests override this to avoid touching the real filesystem.
+var WriteScript = func(body string) (string, error) {
+	path, err := tempScriptPath()
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		return "", fmt.Errorf("write tmux launch script: %w", err)
+	}
+	return path, nil
+}
+
+// removeScript deletes the temp script on the error path. The happy
+// path leaves cleanup to the script's own `rm -- "$0"` first line.
+// Tests override to observe error-path cleanup.
+var removeScript = func(path string) error {
+	return os.Remove(path)
+}
+
 // SpawnTab opens a new tmux window in the current session, names it,
-// sets its cwd, and types `command` into the new pane's PTY.
+// sets its cwd, and starts `command` in it via a short typed line that
+// runs a per-spawn script (see the package comment for why).
 //
-// envVars are attached as an inline shell prefix to `command` only —
-// they are present in the command's environment but do NOT persist
-// in the window's shell after the command exits.
+// `command` is interpolated raw into the script as `exec env … <command>`
+// — it MUST already be a valid, shell-safe command line (callers quote
+// arguments with ShellQuote). Embedded newlines are preserved: they sit
+// inside the caller's quotes in a script file, not on a typed line.
+//
+// envVars are attached as an `exec env` prefix inside the script — they
+// are present in the command's environment but do NOT persist in the
+// window's shell after the command exits.
 func SpawnTab(title, cwd, command string, envVars map[string]string) error {
+	scriptPath, err := WriteScript(buildScript(command, envVars))
+	if err != nil {
+		return err
+	}
 	out, err := RunnerOutput([]string{
 		"new-window", "-P", "-F", "#{pane_id}", "-n", title, "-c", cwd,
 	})
 	if err != nil {
+		_ = removeScript(scriptPath)
 		return fmt.Errorf("tmux new-window: %w (is a tmux server running and $TMUX set?)", err)
 	}
 	paneID := strings.TrimSpace(string(out))
 	if paneID == "" {
+		_ = removeScript(scriptPath)
 		return fmt.Errorf("tmux new-window returned an empty pane id")
 	}
 
-	envPrefix := ""
-	if len(envVars) > 0 {
-		keys := make([]string, 0, len(envVars))
-		for k := range envVars {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(envVars))
-		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
-		}
-		envPrefix = strings.Join(parts, " ") + " "
-	}
-	flat := strings.ReplaceAll(command, "\n", " ")
-	line := " " + envPrefix + flat
+	line := " sh " + ShellQuote(scriptPath)
 	if err := Runner([]string{"send-keys", "-t", paneID, "-l", line}); err != nil {
+		_ = removeScript(scriptPath)
 		return err
 	}
-	return Runner([]string{"send-keys", "-t", paneID, "Enter"})
+	if err := Runner([]string{"send-keys", "-t", paneID, "Enter"}); err != nil {
+		_ = removeScript(scriptPath)
+		return err
+	}
+	return nil
+}
+
+// buildScript produces the sh script body the typed line runs:
+//
+//	#!/bin/sh
+//	rm -- "$0"
+//	exec env FOO='bar' BAZ='qux' <command>
+//
+// Env vars are sorted alphabetically for stable output; with none the
+// last line is a bare `exec <command>`. cwd and title are not in the
+// script — new-window's -c and -n already set them.
+func buildScript(command string, envVars map[string]string) string {
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString(`rm -- "$0"`)
+	b.WriteString("\n")
+	if len(envVars) == 0 {
+		fmt.Fprintf(&b, "exec %s\n", command)
+		return b.String()
+	}
+	keys := make([]string, 0, len(envVars))
+	for k := range envVars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(envVars))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, ShellQuote(envVars[k])))
+	}
+	fmt.Fprintf(&b, "exec env %s %s\n", strings.Join(parts, " "), command)
+	return b.String()
+}
+
+// tempScriptPath returns os.TempDir()/flow-tmux-<id>.sh with a 16-byte
+// random hex id — plenty for concurrent spawns, and short enough that
+// the typed line stays far below any tty line limit.
+func tempScriptPath() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("generate tmux script id: %w", err)
+	}
+	return filepath.Join(os.TempDir(), "flow-tmux-"+hex.EncodeToString(buf[:])+".sh"), nil
 }
 
 // sessionUUIDRowRe matches a `ps` line carrying a session UUID via

@@ -248,13 +248,13 @@ handles the rest.
 ## How it works under the hood
 
 `flow do <task>` selects the task's pinned harness, records its session
-identifier, and spawns a tab in zellij (when `$ZELLIJ` is set), a tmux
-window (when `$TMUX` is set), Rex (when `$REX_SESSION` is set or
-`$TERM_PROGRAM=rex`), kitty (when `$KITTY_WINDOW_ID` is set or
-`$TERM=xterm-kitty`), the backend named in `$FLOW_TERM` (when set), or
-Warp / iTerm2 / stock Terminal.app (auto-detected from `$TERM_PROGRAM`) —
-chosen in that priority order, with iTerm as the historical fallback on
-macOS. On Linux, when none of these is available, flow reports
+identifier, and spawns a tab in the backend named in `$FLOW_TERM` (when
+set — an explicit choice beats every auto-detected marker), else zellij
+(when `$ZELLIJ` is set), a tmux window (when `$TMUX` is set), Rex (when
+`$REX_SESSION` is set or `$TERM_PROGRAM=rex`), kitty (when
+`$KITTY_WINDOW_ID` is set or `$TERM=xterm-kitty`), or Warp / iTerm2 /
+stock Terminal.app (auto-detected from `$TERM_PROGRAM`) — chosen in that
+priority order, with iTerm as the historical fallback on macOS. On Linux, when none of these is available, flow reports
 "no supported terminal detected", keeps the task bound, and prints the
 command to start the session yourself (or use `flow do --here` /
 `flow do --auto`). Claude sessions use

@@ -1,5 +1,7 @@
 #!/bin/sh
-# Linux smoke test for flow (also runs on macOS with tmux installed).
+# Linux smoke test for flow. Also runs on macOS when a tmux binary is on
+# PATH (CI only runs it on Linux; macOS is covered by hand with
+# `PATH=<tmux-dir>:$PATH sh scripts/smoke-linux.sh`).
 #
 # What it proves, end to end, in a throwaway $HOME:
 #   1. install.sh installs from a local mirror (FLOW_BASE_URL) and verifies SHA256
@@ -41,6 +43,7 @@ mkdir -p "$HOME" "$WORK/bin" "$WORK/mirror" "$WORK/repo"
 unset ZELLIJ TMUX REX_SESSION KITTY_WINDOW_ID FLOW_TERM TERM_PROGRAM CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID CODEX_HOME 2>/dev/null || true
 
 case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) fail "unsupported OS" ;; esac
+command -v tmux >/dev/null 2>&1 || fail "tmux is required (step 8 spawns a window in a throwaway tmux server)"
 case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;; *) fail "unsupported arch" ;; esac
 asset="flow-$os-$arch"
 
@@ -132,7 +135,15 @@ for rc in .profile .bashrc .bash_profile .zshrc .zprofile; do
   printf '%s\n' "$rc_lines" > "$HOME/$rc"
 done
 tmux -L "$SOCK" new-session -d -s smoke -x 160 -y 40
-tmux -L "$SOCK" send-keys -t smoke "export PATH='$PATH' HOME='$HOME' FLOW_ROOT='$FLOW_ROOT' CLAUDE_STUB_LOG='$CLAUDE_STUB_LOG'; flow do smoke-tmux > '$WORK/do.out' 2>&1; echo rc=\$? >> '$WORK/do.out'" Enter
+# Drive the control window through a short typed line that runs a script:
+# a tty in canonical mode takes at most MAX_CANON bytes per line (1024 on
+# macOS) before the shell has gone raw, and the inlined export+flow line
+# is far longer than that on a Mac with a long PATH.
+cat > "$WORK/drive-do.sh" <<DRIVE
+export PATH='$PATH' HOME='$HOME' FLOW_ROOT='$FLOW_ROOT' CLAUDE_STUB_LOG='$CLAUDE_STUB_LOG'
+flow do smoke-tmux > '$WORK/do.out' 2>&1; echo rc=\$? >> '$WORK/do.out'
+DRIVE
+tmux -L "$SOCK" send-keys -t smoke "sh '$WORK/drive-do.sh'" Enter
 i=0
 until grep -q '^rc=' "$WORK/do.out" 2>/dev/null; do
   i=$((i+1)); [ $i -lt 60 ] || fail "flow do inside tmux did not finish: $(cat "$WORK/do.out" 2>/dev/null)"
@@ -166,7 +177,12 @@ grep -q "running elsewhere" "$WORK/do2.out" || fail "second flow do failed for a
 
 step "9b. from inside tmux, flow do focuses the window that already runs the session"
 tmux -L "$SOCK" select-window -t smoke:0
-tmux -L "$SOCK" send-keys -t smoke:0 "flow do smoke-tmux > '$WORK/do3.out' 2>&1; echo rc=\$? >> '$WORK/do3.out'" Enter
+# Same env as drive-do.sh: each driver runs in its own sh, nothing persists.
+cat > "$WORK/drive-focus.sh" <<DRIVE
+export PATH='$PATH' HOME='$HOME' FLOW_ROOT='$FLOW_ROOT' CLAUDE_STUB_LOG='$CLAUDE_STUB_LOG'
+flow do smoke-tmux > '$WORK/do3.out' 2>&1; echo rc=\$? >> '$WORK/do3.out'
+DRIVE
+tmux -L "$SOCK" send-keys -t smoke:0 "sh '$WORK/drive-focus.sh'" Enter
 i=0
 until grep -q '^rc=' "$WORK/do3.out" 2>/dev/null; do
   i=$((i+1)); [ $i -lt 60 ] || fail "flow do (focus) inside tmux did not finish: $(cat "$WORK/do3.out" 2>/dev/null)"
