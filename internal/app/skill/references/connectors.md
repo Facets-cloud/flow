@@ -172,6 +172,12 @@ dispatch <id>   (detached; never blocks the sender)
   silently) stops the fallback.
 - `dispatch.log` records the path, e.g. `bc93f2bf flowhub fail → macos ok`
   or `bc93f2bf escalate → macos ok`, plus one line per connector.
+- Each escalation wait is logged before it starts:
+  `bc93f2bf escalate armed 10m0s → macos`. It is normally followed by
+  `escalate → …` or `escalate stop: seen`. An `escalate armed` line with
+  neither after it means the dispatcher died during the wait (reboot,
+  sleep, a flow upgrade) and that escalation was dropped. The wait lives
+  only in that process; nothing resumes it.
 - A broken `config.json` never silences pings: dispatch logs it and falls
   back to all at once. `flow connector list` shows each priority, the
   resulting order, and the escalation setting. `remove` drops the

@@ -179,7 +179,8 @@ func driverDelegationBlock() string {
 		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
 		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
 		"the child messages you, verify its result (it names its update note) before reporting " +
-		"to the user. Children cannot spawn grandchildren. Recipe: flow skill references/delegation.md."
+		"to the user. Children cannot spawn grandchildren. Recipe: flow skill references/delegation.md." +
+		childHarnessesLine()
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart

@@ -1,6 +1,8 @@
 package app
 
 import (
+	"database/sql"
+	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/harness"
 	"fmt"
@@ -79,18 +81,27 @@ func cmdDone(args []string) int {
 		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
 		return 0
 	}
+	beforeDoneFlip()
 	now := flowdb.NowISO()
-	res, err := db.Exec(
-		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=? AND status != 'done'`,
+	// RETURNING reads the auto-run columns in the same statement as the
+	// flip, so the deferral decision below sees the row as it was at the
+	// flip — not the copy loaded earlier, which a supervisor may have
+	// finalized since. SQLite serializes this with the supervisor's
+	// conditional finalize (finalizeAutoRunUnlessDone): if the run is
+	// still 'running' here, that finalize has not happened, will now see
+	// status='done', and the supervisor takes the done path (and sweeps).
+	err = db.QueryRow(
+		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=? AND status != 'done'
+		 RETURNING auto_run_status, auto_run_pid`,
 		now, now, task.Slug,
-	)
+	).Scan(&task.AutoRunStatus, &task.AutoRunPID)
+	if errors.Is(err, sql.ErrNoRows) {
+		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: mark done: %v\n", err)
 		return 1
-	}
-	if affected, _ := res.RowsAffected(); affected == 0 {
-		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
-		return 0
 	}
 	if err := flowdb.CleanupTaskBus(db, task.Slug); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
@@ -118,6 +129,10 @@ func cmdDone(args []string) int {
 	}
 	return 0
 }
+
+// beforeDoneFlip is a test seam: it runs between loading the task and
+// flipping it to done, where a supervisor can finalize its run.
+var beforeDoneFlip = func() {}
 
 // closeoutDeferred reports whether the task's auto-run supervisor will run
 // the close-out sweep, so this `flow done` must not (one sweeper). That is

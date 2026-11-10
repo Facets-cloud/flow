@@ -232,6 +232,28 @@ func TestDispatchEscalation(t *testing.T) {
 	}
 }
 
+// Arming an escalation logs "<id> escalate armed <dur> → <next tier>"
+// BEFORE the sleep, so an "armed" line with no later "escalate → …" or
+// "escalate stop" line means the dispatcher died mid-wait.
+func TestDispatchEscalationArmedLogged(t *testing.T) {
+	dir := prioSetup(t)
+	markerConnector(t, dir, "flowhub", `"ask"`, 0)
+	markerConnector(t, dir, "slackish", `"ask"`, 0)
+	markerConnector(t, dir, "macos", `"ask"`, 0)
+	setConfig(t, connector.Config{Priority: map[string]int{"flowhub": 1, "slackish": 2, "macos": 2}, EscalateAfter: "10m"})
+	m := askRow(t, "q-armed")
+	var during string
+	stubDispatchSleep(t, func() { during = readDispatchLog(t) })
+	dispatch(t, m.ID)
+	want := m.ID + " escalate armed 10m0s → macos, slackish"
+	if !strings.Contains(during, want) {
+		t.Errorf("armed line not logged before the sleep; want %q in:\n%s", want, during)
+	}
+	if n := strings.Count(readDispatchLog(t), " escalate armed "); n != 1 {
+		t.Errorf("armed logged %d times, want 1:\n%s", n, readDispatchLog(t))
+	}
+}
+
 // No priorities set: one tier, no escalation even if configured — the
 // pre-priority behavior.
 func TestDispatchNoPrioritiesIsParallel(t *testing.T) {
@@ -275,7 +297,8 @@ func TestDispatchCorruptConfigFallsBack(t *testing.T) {
 func TestPriorityDocs(t *testing.T) {
 	ref := strings.Join(strings.Fields(readSkillFile(t, "references/connectors.md")), " ")
 	for _, want := range []string{"## Priority and fallback", "flow connector priority <name> <n>",
-		"flow connector escalate <dur>|off", "config.json", "a human can actually see it", "24h", "urgent"} {
+		"flow connector escalate <dur>|off", "config.json", "a human can actually see it", "24h", "urgent",
+		"escalate armed", "the dispatcher died"} {
 		if !strings.Contains(ref, want) {
 			t.Errorf("references/connectors.md lacks %q", want)
 		}
@@ -288,7 +311,7 @@ func TestPriorityDocs(t *testing.T) {
 	}
 	for file, wants := range map[string][]string{
 		"../../README.md":    {"flow connector priority flowhub 1", "flow connector escalate 10m"},
-		"../../CHANGELOG.md": {"flow connector priority", "flow connector escalate"},
+		"../../CHANGELOG.md": {"flow connector priority", "flow connector escalate", "escalate armed"},
 	} {
 		b, err := os.ReadFile(file)
 		if err != nil {
