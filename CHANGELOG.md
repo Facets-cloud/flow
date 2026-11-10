@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.36] — 2026-11-10
+
 ### Added
 
 - **Pick a child's harness by preference.** When both Claude Code and
