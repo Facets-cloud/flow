@@ -722,6 +722,7 @@ func cmdConnectorDispatch(args []string) int {
 	if m.IsPeerInbound() {
 		p.FromPeer = m.Peer
 	}
+	p.FromConnector = fromConnector(m)
 
 	var cfg connector.Config
 	if root, err := connectorsRoot(); err == nil {

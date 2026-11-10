@@ -9,6 +9,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Connectors can notify the human.** A connector process (no bound task)
+  holding its `FLOW_CONNECTOR_TOKEN` may now run `flow message user
+  [--fyi|--urgent] "<text>"`. The row is human mail from
+  `connector:<name>` — `flow inbox` labels it "connector <name>" and the
+  ping payload carries `from_connector` — with normal ping rules. Only
+  `user` is addressable this way (tasks, peers, other names exit 2) and
+  `--options` is refused. Without a valid token the "your own queue"
+  refusal is unchanged.
 - **Peer hubs v0.** Flow homes can now message each other, so agents can
   reach beyond one machine. A peer is a local nickname for an endpoint on a
   role-`"peer"` connector: `flow peer add <name> --via <connector> --at

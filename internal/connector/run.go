@@ -30,6 +30,9 @@ type Payload struct {
 	// FromPeer names the peer hub the message came from ("" for mail
 	// from this hub's own tasks).
 	FromPeer string `json:"from_peer"`
+	// FromConnector names the connector that sent this notice to the
+	// human ("" for mail from a task or peer), so a dialog can label it.
+	FromConnector string `json:"from_connector"`
 }
 
 // Timeout is how long one connector invocation may run before it (and

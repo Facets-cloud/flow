@@ -72,13 +72,15 @@ stdin for `send`:
  "options":["Yes","No"],"urgent":false,"kind":"ask",
  "created_at":"2026-11-06T10:00:00+05:30",
  "reply_hint":"\"$FLOW_BIN\" human reply 7983227a \"<answer>\"  (or: \"$FLOW_BIN\" human seen 7983227a)",
- "from_peer":""}
+ "from_peer":"","from_connector":""}
 ```
 
 `options` is always an array (`[]` when the ask has none). `from_task` is
 `""` for an ask that came from no task. `from_peer` names the peer hub a
 message came from, and is `""` for mail from this hub's own tasks. Answering
 peer mail with `human reply` sends the answer back to that peer.
+`from_connector` names the connector that sent the notice (see below), and is
+`""` otherwise — label the dialog with it.
 
 Environment (the connector's whole environment is the caller's, minus the
 harness session variables, plus these):
@@ -110,9 +112,11 @@ Rules:
 |---|---|
 | `"$FLOW_BIN" human reply <id> "<text>"` | Records the human's answer (seen + answered) and delivers `<text>` to `user/<from_task>` with `reply_to=<id>`. Idempotent: a repeat does nothing. If the asking task is gone or closed, the answer is still recorded and a warning printed (exit 0). Text can be up to 4000 chars. |
 | `"$FLOW_BIN" human seen <id>` | Marks the mail seen without answering. |
+| `"$FLOW_BIN" message user [--fyi\|--urgent] "<text>"` | Notifies the human (e.g. "alice wants to pair: run flow-p2p accept alice"). The row is human mail from `connector:<name>` (`flow inbox` shows "connector <name>: …"); normal ping rules apply (`--fyi` never pings, default pings, `--urgent` allowed). Only `user` is addressable this way — tasks, peers and other names exit 2 — and `--options` is refused (a connector notifies, it cannot ask). |
 
 Without a token that matches an installed connector, both exit 1 ("not a
-connector"). That is why an agent can never answer for the human. If the
+connector"); `message user` without one is the usual "your own queue" refusal
+(exit 2). That is why an agent can never answer for the human. If the
 human dismisses ("Later"), call nothing: the mail stays unread in `flow
 inbox`.
 
@@ -235,5 +239,7 @@ file under `$FLOW_ROOT/secrets/` and never touches the keychain.
    (the note is optional). When they only acknowledge:
    `"$FLOW_BIN" human seen "$id"`.
 4. `run test`: show a harmless sample and do not call back.
-5. `flow connector add ./<name>`, then `flow message user "hi?" --options "Yes|No"`
+5. Document your connector's own CLI (pairing, status, …) in its README;
+   humans and agents find it via `flow connector list`.
+6. `flow connector add ./<name>`, then `flow message user "hi?" --options "Yes|No"`
    from a task session to try it end to end.

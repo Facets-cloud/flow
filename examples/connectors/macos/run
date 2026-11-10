@@ -1,7 +1,7 @@
 #!/bin/bash
 # flow human connector (contract 2, role "human"): a native macOS dialog.
 #
-#   run send   stdin: {"id","from_task","from_peer","body","options":[...],"urgent",...}
+#   run send   stdin: {"id","from_task","from_peer","from_connector","body","options":[...],"urgent",...}
 #   run test   stdin: same shape, id "test" — shows an OK-only dialog
 #
 # Mail from a peer hub (from_peer set) gets an EXAMPLE third button,
@@ -29,13 +29,13 @@ log() {
 	printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$HERE/state/dialog.log" 2>/dev/null
 }
 
-# JXA: JSON on argv[0] → id US from_task US body US urgent US from_peer US options... US END
+# JXA: JSON on argv[0] → id US from (from_task, else "connector <from_connector>") US body US urgent US from_peer US options... US END
 PARSE_JS='function run(argv) {
   var j = JSON.parse(argv[0]);
   if (j === null || typeof j !== "object") throw new Error("payload is not a JSON object");
   var opts = Array.isArray(j.options) ? j.options.map(String) : [];
   var s = function (v) { return (v === undefined || v === null) ? "" : String(v); };
-  return [s(j.id), s(j.from_task), s(j.body), j.urgent ? "1" : "0", s(j.from_peer)].concat(opts).concat(["END"]).join(String.fromCharCode(31));
+  return [s(j.id), s(j.from_task) || (j.from_connector ? "connector " + s(j.from_connector) : ""), s(j.body), j.urgent ? "1" : "0", s(j.from_peer)].concat(opts).concat(["END"]).join(String.fromCharCode(31));
 }'
 
 # AppleScript dialog. argv: title body mode later-label options...

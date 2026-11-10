@@ -137,6 +137,23 @@ func cmdMessage(args []string) int {
 	}
 	defer db.Close()
 
+	// A connector process (no bound task, holding its installed secret in
+	// FLOW_CONNECTOR_TOKEN) may notify the human — and only the human.
+	s := currentBusSender()
+	if s.TaskSlug == "" {
+		if name := callingConnector(); name != "" {
+			if canonicalAssignee(addr) != busUser {
+				fmt.Fprintf(os.Stderr, "error: a connector may only notify the human (flow message user ...), not %q\n", addr)
+				return 2
+			}
+			if haveOptions {
+				fmt.Fprintln(os.Stderr, "error: a connector notifies, it cannot ask — drop --options (an answer would have nowhere to go)")
+				return 2
+			}
+			s = busSender{Assignee: connectorSenderPrefix + name}
+		}
+	}
+
 	// A bare name that is a peer goes to that hub; <peer>/<task> is never
 	// valid (another hub's task names are unknowable).
 	if i := strings.IndexByte(addr, '/'); i >= 0 {
@@ -145,7 +162,7 @@ func cmdMessage(args []string) int {
 			return 2
 		}
 	} else if p, _ := flowdb.GetPeer(db, addr); p != nil {
-		return sendToPeer(db, p, currentBusSender(), body, urgent, fyi, options, replyTo)
+		return sendToPeer(db, p, s, body, urgent, fyi, options, replyTo)
 	}
 
 	toAssignee, toSlug, err := parseBusAddress(db, addr)
@@ -157,7 +174,6 @@ func cmdMessage(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --options/--fyi are for human-addressed mail only (flow message user ...), not a task's session")
 		return 2
 	}
-	s := currentBusSender()
 	if toSlug != "" && toSlug == s.TaskSlug {
 		fmt.Fprintf(os.Stderr, "error: %s/%s is THIS session's own inbox — you are the one who would pop it. Message `user` for the human, or another task's address.\n", toAssignee, toSlug)
 		return 2
@@ -327,9 +343,24 @@ func deliverableTask(t *flowdb.Task) error {
 	return nil
 }
 
+// connectorSenderPrefix marks from_assignee on mail a connector sent the
+// human: "connector:<name>".
+const connectorSenderPrefix = "connector:"
+
+// fromConnector returns the connector that sent m, or "".
+func fromConnector(m *flowdb.BusMessage) string {
+	if m.FromTaskSlug == "" && strings.HasPrefix(m.FromAssignee, connectorSenderPrefix) {
+		return strings.TrimPrefix(m.FromAssignee, connectorSenderPrefix)
+	}
+	return ""
+}
+
 func busFrom(m *flowdb.BusMessage) string {
 	if m.FromTaskSlug != "" {
 		return m.FromTaskSlug
+	}
+	if c := fromConnector(m); c != "" {
+		return "connector " + c
 	}
 	return m.FromAssignee
 }

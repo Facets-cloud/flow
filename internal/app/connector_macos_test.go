@@ -341,3 +341,12 @@ func TestMacosLocalAskHasNoHandToAgent(t *testing.T) {
 	}
 	h.noFlowCall()
 }
+
+// A notice a connector sent the human (from_connector set) is labelled
+// with that connector in the dialog title.
+func TestMacosConnectorNoticeTitle(t *testing.T) {
+	h := newMacosHarness(t, "Reply"+us)
+	h.run("send", `{"id":"ef56","from_task":"","from_peer":"","from_connector":"flow-p2p","body":"alice wants to pair","options":[],"urgent":false,"kind":"ask","created_at":"x","reply_hint":"x"}`)
+	eqArgs(t, "flow call", h.flowCall(), []string{"human", "seen", "ef56"})
+	eqArgs(t, "dialog argv", h.dialogArgs()[2:], []string{"flow · connector flow-p2p", "alice wants to pair", "ask", "Later"})
+}
