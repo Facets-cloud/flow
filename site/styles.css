@@ -908,3 +908,150 @@ pre code {
 }
 
 html { scroll-behavior: smooth; }
+
+/* ───────────────────────────── homepage (hybrid A+B) ─────────────────────────────
+   Page-level layout for site/index.html. All colours come from the tokens
+   above so the page flips with the theme; the Slack card and scene use the
+   paper surfaces, the install block reuses .terminal-frame (always dark). */
+.hy { font-size: 17px; line-height: 1.6; }
+.hy q { quotes: "\201C" "\201D"; }
+.hy-wrap { max-width: 860px; margin: 0 auto; padding: 0 20px; }
+
+/* the daily fragment (site/built-with-flow.html) expects this container */
+.brief__inner { max-width: 860px; margin: 0 auto; }
+
+.hy-nav {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg-deep);
+  background: color-mix(in srgb, var(--bg-deep) 85%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.hy-nav__inner { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+.hy-nav__brand { border-bottom: 0; display: inline-flex; }
+.hy-nav__brand img { height: 30px; width: auto; }
+.hy-nav__links a {
+  margin-left: 22px;
+  color: var(--fg-soft);
+  font-size: 15px;
+  border-bottom: 0;
+}
+
+.hy-section { padding: 72px 0; border-bottom: 1px solid var(--rule-soft); }
+.hy a:not(.btn) { color: var(--grad-3); border-bottom: 0; }
+.hy a:not(.btn):hover { text-decoration: underline; color: var(--grad-3); }
+
+/* scene */
+.hy-scene {
+  background: var(--bg-paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  padding: 28px 28px 22px;
+  box-shadow: var(--shadow-card);
+}
+.hy-row { display: grid; grid-template-columns: 92px 1fr; gap: 14px; margin: 0 0 16px; }
+.hy-t { color: var(--fg-muted); font-size: 15px; padding-top: 3px; }
+.hy-say { font-size: 19px; }
+.hy-result { color: var(--fg-soft); }
+.hy-slack {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  font-size: 15px;
+  color: var(--fg-soft);
+  overflow-wrap: anywhere;
+}
+.hy-slack__hdr { color: var(--fg-muted); font-size: 12px; margin-bottom: 6px; letter-spacing: .04em; text-transform: uppercase; }
+.hy-slack b { color: var(--fg); }
+.hy-slack__opts { margin-top: 8px; color: var(--grad-3); }
+.hy-video {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 808 / 588;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule);
+  display: block;
+  margin-top: 18px;
+  background: #000;
+}
+.hy-fine { color: var(--fg-dim); font-size: 14px; margin: 14px 0 0; }
+
+/* the idea */
+.hy-lead { font-size: 21px; line-height: 1.55; color: var(--fg); margin: 0 0 22px; }
+.hy-leash { font-size: 17px; color: var(--fg-soft); margin: 0 0 30px; }
+.hy-verbs {
+  display: flex;
+  gap: 34px;
+  font-size: 24px;
+  font-weight: 600;
+  justify-content: center;
+  color: var(--fg);
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+/* second night: a <details> whose <summary> is the row */
+.hy-second {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule-soft);
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+.hy-second__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 18px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+.hy-second__row::-webkit-details-marker { display: none; }
+.hy-second__row::marker { content: ""; }
+.hy-second__row:focus-visible { outline: 2px solid var(--grad-2); outline-offset: 4px; border-radius: 6px; }
+.hy-second__text { color: var(--fg-soft); }
+.hy-second__text b { color: var(--fg); }
+.hy-second__btn { font-family: var(--font-sans); font-size: 15px; white-space: normal; }
+.hy-play::before { content: "▶ "; }
+.hy-second[open] .hy-play::before { content: "▼ "; }
+.hy-second[open] .hy-video { margin-top: 20px; }
+
+/* install */
+.hy-sayit {
+  background: var(--bg-paper);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 20px 22px;
+  font-size: 18px;
+}
+.hy-sayit__line { margin: 0; }
+.hy-install .terminal-frame--code { margin-top: 14px; }
+.hy-install .codeblock {
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.hy-then { margin: 22px 0 6px; }
+.hy-install .hy-fine { margin-bottom: 14px; }
+.hy-install .btn { font-family: var(--font-sans); font-size: 15px; white-space: normal; }
+
+/* footer */
+.hy-footer { padding: 36px 0 60px; color: var(--fg-dim); font-size: 14px; }
+.hy-footer p { margin: 0; }
+.hy-footer__logo { height: 22px; width: auto; opacity: .7; display: block; margin-bottom: 12px; }
+
+@media (max-width: 640px) {
+  .hy-wrap { padding: 0 16px; }
+  .hy-section { padding: 52px 0; }
+  .hy-scene { padding: 20px 16px 16px; }
+  .hy-row { grid-template-columns: 1fr; gap: 4px; }
+  .hy-say { font-size: 18px; }
+  .hy-verbs { gap: 18px; font-size: 20px; }
+  .hy-second { padding: 16px; }
+  .hy-second__row { grid-template-columns: 1fr; }
+  .hy-sayit { padding: 16px; font-size: 17px; }
+}

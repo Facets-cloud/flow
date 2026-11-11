@@ -6,6 +6,7 @@ on:
     paths:
       - 'site/**'
       - 'docs/demo/**'
+      - 'scripts/build_site.py'
       - '.github/workflows/pages.yml'
   workflow_dispatch: {}
 
@@ -24,23 +25,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Assemble publish tree
+        # scripts/build_site.py: copies site/ to out/, replaces the demo/
+        # symlink with docs/demo/, splices site/built-with-flow.html into
+        # index.html at the <!-- built-with-flow --> marker, adds .nojekyll.
+        # `make site` runs the same script locally.
         run: |
           set -euo pipefail
-          rm -rf out
-          mkdir -p out
-
-          # Site files at root.
-          cp -R site/. out/
-
-          # The site links demos via the symlinked `demo/` path; replace
-          # the symlink with the real files so Pages serves them.
-          rm -f out/demo
-          mkdir -p out/demo
-          cp -R docs/demo/. out/demo/
-
-          # Add a .nojekyll so GitHub Pages serves files starting with _ verbatim
-          touch out/.nojekyll
-
+          python3 -m unittest discover -s scripts
+          python3 scripts/build_site.py out
           echo "--- publish tree ---"
           find out -maxdepth 2 -print
 
