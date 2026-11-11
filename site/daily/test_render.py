@@ -195,8 +195,12 @@ class RenderTest(unittest.TestCase):
 
     def test_output_contains_flow_tasks_and_counts(self):
         html, data = self.render_ok()
-        for slug in ("launch-driver", "child-readme", "child-dead", "child-pr"):
+        for slug in ("child-readme", "child-dead", "child-pr"):
             self.assertIn(slug, html)
+        # launch-driver is in progress with no refs, no dead run and no notes:
+        # it is counted but not a table row (see TableCapTest).
+        self.assertNotIn("launch-driver", html)
+        self.assertIn("and 1 more task this week", html)
         self.assertEqual(data["counts"]["tasks"], 4)
         self.assertEqual(data["counts"]["children"], 3)
         self.assertEqual(data["counts"]["done"], 2)
@@ -313,7 +317,10 @@ class RenderTest(unittest.TestCase):
             m = re.search(r'data-count="%s">(\d+)<' % key, html)
             self.assertIsNotNone(m, msg="no counter for " + key)
             self.assertEqual(int(m.group(1)), c[key], msg=key)
-        self.assertEqual(len(re.findall(r'class="bwf-slug"', html)), len(data["tasks"]))
+        shown = [t for t in data["tasks"] if t["shown"]]
+        self.assertEqual(len(re.findall(r'class="bwf-slug"', html)), len(shown))
+        self.assertEqual(data["shown"], len(shown))
+        self.assertLessEqual(data["shown"], render.TABLE_CAP)
 
     def test_missing_denylist_exits_nonzero_with_no_output(self):
         os.remove(self.fx.denylist)
@@ -359,6 +366,141 @@ class RenderTest(unittest.TestCase):
             capture_output=True, text=True)
         self.assertEqual(rc.returncode, 0, msg=rc.stderr)
         self.assertIn("leak checks passed", rc.stdout)
+
+
+class TableCapTest(unittest.TestCase):
+    """The table shows at most TABLE_CAP rows; counts cover the full set."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(os.path.join(self.tmp.name, "flow-root"))
+        self.out = os.path.join(self.tmp.name, "site")
+        os.makedirs(self.out)
+
+    def tearDown(self):
+        self.fx.con.close()
+        self.tmp.cleanup()
+
+    def stamp(self, hour, minute=0):
+        return "2026-11-%02dT%02d:%02d:00+05:30" % (5 + hour // 24, hour % 24, minute)
+
+    def touch(self, slug, updated):
+        self.fx.con.execute("UPDATE tasks SET updated_at=? WHERE slug=?", (updated, slug))
+        self.fx.con.commit()
+
+    def build_many(self):
+        # 20 done tasks with a note each, updated at distinct, increasing times
+        for i in range(20):
+            slug = "done-%02d" % i
+            self.fx.task(slug, status="done", auto="completed", created=self.stamp(1 + i))
+            self.fx.note(slug, "2026-11-10-n.md", "worked on it\n")
+        # the oldest-updated tasks carry the signal that must always be shown
+        self.fx.task("has-ref", status="done", auto="completed", created=self.stamp(0))
+        self.fx.note("has-ref", "2026-11-10-n.md", "Opened PR #120 in Facets-cloud/flow.\n")
+        self.fx.task("is-dead", status="in-progress", auto="dead", created=self.stamp(0))
+        self.fx.auto_log("is-dead", "finished: dead\n")
+        # rows without any signal: backlog, never run, no notes
+        for i in range(3):
+            self.fx.task("help-%d" % i, status="backlog", auto=None, created=self.stamp(50 + i))
+        # an in-progress task with notes but no ref: counted, not shown
+        self.fx.task("busy", status="in-progress", auto="running", created=self.stamp(60))
+        self.fx.note("busy", "2026-11-10-n.md", "still going\n")
+
+    def render_ok(self):
+        rc, out, err = run_render(self.fx, self.out)
+        self.assertEqual(rc, 0, msg="stderr: " + err)
+        html = read(os.path.join(self.out, "built-with-flow.html"))
+        data = json.loads(read(os.path.join(self.out, "data", "this-week.json")))
+        return html, data
+
+    def rows(self, html):
+        return re.findall(r'class="bwf-slug">([^<]+)<', html)
+
+    def test_cap_holds_and_signal_rows_always_included(self):
+        self.build_many()
+        html, data = self.render_ok()
+        rows = self.rows(html)
+        self.assertEqual(len(rows), render.TABLE_CAP)
+        self.assertEqual(render.TABLE_CAP, 12)
+        self.assertIn("has-ref", rows)
+        self.assertIn("is-dead", rows)
+        # then the most recently updated done tasks fill the remaining slots
+        expected_done = ["done-%02d" % i for i in range(19, 9, -1)]   # 10 newest
+        self.assertEqual(sorted(set(rows) - {"has-ref", "is-dead"}), sorted(expected_done))
+        self.assertNotIn("done-00", rows)
+        self.assertNotIn("busy", rows)
+
+    def test_dead_rows_survive_when_refs_alone_exceed_the_cap(self):
+        for i in range(15):
+            slug = "ref-%02d" % i
+            self.fx.task(slug, status="done", auto="completed", created=self.stamp(1 + i))
+            self.fx.note(slug, "2026-11-10-n.md", "Opened PR #120 in Facets-cloud/flow.\n")
+        self.fx.task("is-dead", status="in-progress", auto="dead", created=self.stamp(0))
+        self.fx.auto_log("is-dead", "finished: dead\n")
+        html, data = self.render_ok()
+        rows = self.rows(html)
+        self.assertEqual(len(rows), render.TABLE_CAP)
+        self.assertIn("is-dead", rows)
+        self.assertEqual(sorted(set(rows) - {"is-dead"}), ["ref-%02d" % i for i in range(4, 15)])
+
+    def test_counts_cover_full_set_and_more_line_is_exact(self):
+        self.build_many()
+        html, data = self.render_ok()
+        self.assertEqual(data["counts"]["tasks"], 26)      # 20 + 2 + 3 + 1
+        self.assertEqual(data["counts"]["done"], 21)
+        self.assertEqual(data["counts"]["dead"], 1)
+        self.assertEqual(data["counts"]["running"], 1)
+        self.assertEqual(data["counts"]["notes"], 22)
+        self.assertIn("and 14 more tasks this week", html)
+        self.assertEqual(int(re.search(r'data-count="tasks">(\d+)<', html).group(1)), 26)
+
+    def test_json_lists_full_set_with_shown_flag(self):
+        self.build_many()
+        html, data = self.render_ok()
+        slugs = {t["slug"] for t in data["tasks"]}
+        self.assertEqual(len(slugs), 26)
+        shown = {t["slug"] for t in data["tasks"] if t["shown"]}
+        self.assertEqual(shown, set(self.rows(html)))
+        self.assertEqual(data["shown"], 12)
+        for t in data["tasks"]:
+            self.assertIn("shown", t)
+            self.assertIsInstance(t["shown"], bool)
+
+    def test_no_signal_backlog_rows_are_dropped_but_counted(self):
+        self.build_many()
+        html, data = self.render_ok()
+        for slug in ("help-0", "help-1", "help-2"):
+            self.assertNotIn(slug, html)
+        by_slug = {t["slug"]: t for t in data["tasks"]}
+        for slug in ("help-0", "help-1", "help-2"):
+            self.assertIn(slug, by_slug)
+            self.assertFalse(by_slug[slug]["shown"])
+        self.assertEqual(data["counts"]["tasks"], 26)
+        # a backlog task is no-signal even when fewer than TABLE_CAP rows exist
+        for slug in ("done-%02d" % i for i in range(20)):
+            self.fx.con.execute("DELETE FROM tasks WHERE slug=?", (slug,))
+        self.fx.con.commit()
+        html, data = self.render_ok()
+        self.assertEqual(len(self.rows(html)), 2)
+        for slug in ("help-0", "help-1", "help-2"):
+            self.assertNotIn(slug, html)
+        self.assertEqual(data["counts"]["tasks"], 6)
+        self.assertIn("and 4 more tasks this week", html)
+
+    def test_no_more_line_when_everything_is_shown(self):
+        self.fx.task("only-ref", status="done", auto="completed")
+        self.fx.note("only-ref", "2026-11-10-n.md", "Opened PR #120 in Facets-cloud/flow.\n")
+        html, data = self.render_ok()
+        self.assertEqual(self.rows(html), ["only-ref"])
+        self.assertNotIn("more task", html)
+        self.assertEqual(data["shown"], 1)
+
+    def test_tile_grid_is_four_columns_desktop_two_on_phone(self):
+        self.fx.task("only-ref", status="done", auto="completed")
+        html, data = self.render_ok()
+        self.assertIn(".bwf .bwf-stats{display:grid;grid-template-columns:repeat(4,1fr)", html)
+        self.assertRegex(html, r"@media \(max-width:640px\)\{[^}]*\.bwf-stats\{grid-template-columns:repeat\(2,1fr\)")
+        self.assertNotIn("auto-fit", html)
 
 
 class DenylistMatchTest(unittest.TestCase):

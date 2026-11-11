@@ -33,6 +33,7 @@ PROJECT_SLUGS = ("flow",)                # allowlist; flow-p2p joins when it is 
 REPO = "Facets-cloud/flow"
 REPO_URL = "https://github.com/" + REPO
 DEFAULT_DAYS = 7
+TABLE_CAP = 12                           # rows in the task table; counts cover the full set
 
 # ---- fixed vocabularies ------------------------------------------------------
 # Dead auto-runs are classified by matching the log against fixed patterns; the
@@ -231,6 +232,28 @@ def classify_dead(log_text):
     return "unclassified"
 
 
+def has_signal(t):
+    """A backlog task that never ran and left no notes says nothing; it is
+    counted but never gets a table row."""
+    return not (t["status"] == "backlog" and not t["auto_run_status"] and t["notes"] == 0)
+
+
+def choose_rows(tasks):
+    """Pick at most TABLE_CAP tasks for the table: every task with a dead run
+    or a resolved ref first (dead runs ahead of refs, then most recently
+    updated first), then the most recently updated done tasks until the cap.
+    Counts are never affected."""
+    newest = lambda t: t["_updated"]
+    candidates = [t for t in tasks if has_signal(t)]
+    first = sorted((t for t in candidates if t["refs"] or t["auto_run_status"] == "dead"), key=newest, reverse=True)
+    first.sort(key=lambda t: t["auto_run_status"] != "dead")      # stable: dead rows first
+    chosen = first[:TABLE_CAP]
+    picked = {t["slug"] for t in chosen}
+    rest = sorted((t for t in candidates if t["slug"] not in picked and t["status"] == "done"), key=newest, reverse=True)
+    chosen += rest[:max(0, TABLE_CAP - len(chosen))]
+    return chosen
+
+
 def collect(root, con, queries, denylist, now, days, resolver):
     since = now - timedelta(days=days)
     private = {r["task_slug"] for r in run_query(con, queries, "private_tags")}
@@ -327,7 +350,13 @@ def collect(root, con, queries, denylist, now, days, resolver):
             "notes": len(updates),
             "refs": sorted(refs),
             "dead_reason": dead_reason,
+            "shown": False,
+            "_updated": r["updated_at"] or r["created_at"] or "",
         })
+    for t in choose_rows(tasks_out):
+        t["shown"] = True
+    for t in tasks_out:
+        del t["_updated"]
 
     counts = {
         "tasks": len(tasks_out),
@@ -352,6 +381,8 @@ def collect(root, con, queries, denylist, now, days, resolver):
         "repo": REPO,
         "counts": counts,
         "dead_reasons": dead_reasons,
+        "table_cap": TABLE_CAP,
+        "shown": sum(1 for t in tasks_out if t["shown"]),
         "tasks": tasks_out,
         "leaves_behind": sorted(leaves.values(), key=lambda e: (-e["tasks"], e["name"])),
     }
@@ -360,7 +391,8 @@ def collect(root, con, queries, denylist, now, days, resolver):
 # ---- rendering --------------------------------------------------------------------
 CSS = """
 <style>
-.bwf .bwf-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin:20px 0 28px}
+.bwf .bwf-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0 28px}
+@media (max-width:640px){.bwf .bwf-stats{grid-template-columns:repeat(2,1fr)}}
 .bwf .bwf-stat{background:var(--bg-paper);border:1px solid var(--rule-soft);border-radius:var(--r-md);padding:14px 16px}
 .bwf .bwf-stat__n{display:block;font:600 28px/1.1 var(--font-mono);color:var(--fg)}
 .bwf .bwf-stat__l{display:block;margin-top:6px;font:13px/1.3 var(--font-sans);color:var(--fg-muted)}
@@ -435,12 +467,18 @@ def render_html(data):
     parts.append('      <thead><tr><th>task</th><th>status</th><th>headless run</th><th>notes</th><th>refs</th></tr></thead>')
     parts.append('      <tbody>')
     for t in data["tasks"]:
+        if not t["shown"]:
+            continue
         marker = ' <span class="bwf-child">child</span>' if t["child"] else ""
         parts.append('        <tr><td><span class="bwf-slug">%s</span>%s</td><td>%s</td><td>%s</td>'
                      '<td>%d</td><td>%s</td></tr>' % (esc(t["slug"]), marker, status_cell(t), auto_cell(t),
                                                       t["notes"], refs_cell(t)))
     parts.append('      </tbody>')
     parts.append('    </table>')
+    more = data["counts"]["tasks"] - data["shown"]
+    if more > 0:
+        parts.append('    <p class="bwf-foot bwf-more" data-more="%d">and %d more %s this week</p>'
+                     % (more, more, "task" if more == 1 else "tasks"))
     if data["dead_reasons"]:
         parts.append('    <p class="bwf-foot">Why children died: ' + ", ".join(
             "%s &times;%d" % (esc(k), v) for k, v in sorted(data["dead_reasons"].items())) + '.</p>')
@@ -483,7 +521,13 @@ def run_checks(html_text, json_text, data, denylist):
         m = re.search(r'data-count="%s">(\d+)<' % key, html_text)
         if not m or int(m.group(1)) != data["counts"][key]:
             raise CheckFailed("json_html_parity")
-    if len(re.findall(r'class="bwf-slug"', html_text)) != len(data["tasks"]):
+    if len(re.findall(r'class="bwf-slug"', html_text)) != data["shown"]:
+        raise CheckFailed("json_html_parity")
+    if data["shown"] != sum(1 for t in data["tasks"] if t["shown"]) or data["shown"] > TABLE_CAP:
+        raise CheckFailed("json_html_parity")
+    more = data["counts"]["tasks"] - data["shown"]
+    m = re.search(r'data-more="(\d+)"', html_text)
+    if (int(m.group(1)) if m else 0) != more:
         raise CheckFailed("json_html_parity")
     passed.append("json_html_parity")
     for t in data["tasks"]:
@@ -533,7 +577,8 @@ def main(argv=None):
         passed = run_checks(html_text, json_text, data, denylist)
         write_atomic(os.path.join(args.out, "built-with-flow.html"), html_text)
         write_atomic(os.path.join(args.out, "data", "this-week.json"), json_text)
-        print("ok: site-daily rendered %d tasks, leak checks passed: %s" % (data["counts"]["tasks"], ", ".join(passed)))
+        print("ok: site-daily rendered %d tasks (%d in the table), leak checks passed: %s"
+              % (data["counts"]["tasks"], data["shown"], ", ".join(passed)))
         return 0
     except CheckFailed as e:
         print("check failed: %s" % e.name, file=sys.stderr)
