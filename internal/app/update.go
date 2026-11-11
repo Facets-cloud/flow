@@ -161,11 +161,31 @@ func cmdUpdateTask(args []string) int {
 		return 1
 	}
 
-	if *status == "done" && !*noSweep {
-		// Refuse before touching any field, not halfway through.
+	// Refuse before touching any field, not halfway through: a status the
+	// task cannot take must not leave the other flags half applied.
+	// --status done goes through the same close path as `flow done` (run
+	// last, after the other fields land) so the close-out sweep is never
+	// skipped by accident; --no-sweep keeps the old status-only flip.
+	closeViaDone := *status == "done" && !*noSweep
+	if closeViaDone {
+		if rc := closeSessionRefusal(task); rc != 0 {
+			return rc
+		}
 		if rc := sweepSandboxRefusal(task); rc != 0 {
 			return rc
 		}
+	} else if *status != "" && *status != "backlog" && (!task.SessionID.Valid || task.SessionID.String == "") {
+		// Session-id invariant: any non-backlog status requires a
+		// session_id. Enforced at the DB level via CHECK, but we error
+		// here with a friendly pointer instead of letting the user see
+		// a raw constraint violation.
+		fmt.Fprintf(os.Stderr,
+			"error: cannot set status to %q without a session_id.\n"+
+				"  to start work on this task, run one of:\n"+
+				"    flow do %s          (spawns a new Claude session in a new tab)\n"+
+				"    flow do --here %s   (binds this Claude session to the task)\n",
+			*status, task.Slug, task.Slug)
+		return 1
 	}
 
 	now := flowdb.NowISO()
@@ -228,24 +248,7 @@ func cmdUpdateTask(args []string) int {
 		}
 		fmt.Printf("work_dir → %s\n", absWorkDir)
 	}
-	// --status done goes through the same close path as `flow done` (run
-	// last, after the other fields land) so the close-out sweep is never
-	// skipped by accident; --no-sweep keeps the old status-only flip.
-	closeViaDone := *status == "done" && !*noSweep
 	if *status != "" && !closeViaDone {
-		// Session-id invariant: any non-backlog status requires a
-		// session_id. Enforced at the DB level via CHECK, but we error
-		// here with a friendly pointer instead of letting the user see
-		// a raw constraint violation.
-		if *status != "backlog" && (!task.SessionID.Valid || task.SessionID.String == "") {
-			fmt.Fprintf(os.Stderr,
-				"error: cannot set status to %q without a session_id.\n"+
-					"  to start work on this task, run one of:\n"+
-					"    flow do %s          (spawns a new Claude session in a new tab)\n"+
-					"    flow do --here %s   (binds this Claude session to the task)\n",
-				*status, task.Slug, task.Slug)
-			return 1
-		}
 		if _, err := db.Exec(
 			`UPDATE tasks SET status=?,
 			 status_changed_at = CASE WHEN status != ? THEN ? ELSE status_changed_at END,
@@ -364,13 +367,16 @@ func cmdUpdateTask(args []string) int {
 	}
 	announceDriverChange(db, task, wasDriver)
 	if closeViaDone {
-		fmt.Println("status → done (routed through `flow done`: runs the close-out sweep; --no-sweep to skip)")
 		fresh, err := flowdb.GetTask(db, task.Slug)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: re-read task: %v\n", err)
 			return 1
 		}
-		return closeTask(db, fresh)
+		// Announce the flip only once it happened: an already-done task
+		// or a refused close must not read as "status → done".
+		return closeTaskThen(db, fresh, func() {
+			fmt.Println("status → done (routed through `flow done`: runs the close-out sweep; --no-sweep to skip)")
+		})
 	}
 	return 0
 }

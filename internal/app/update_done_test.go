@@ -76,3 +76,81 @@ func TestUpdateStatusDoneNoSweep(t *testing.T) {
 		t.Errorf("status=%q, want done", task.Status)
 	}
 }
+
+// Review note 2 on #132: on a task that never had a session, `--status
+// done` used to write the other fields, print "status → done", and only
+// then fail. The session check now runs before any field is written.
+func TestUpdateStatusDoneSessionlessWritesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"sweep", []string{"fresh", "--priority", "high", "--tag", "zz", "--status", "done"}},
+		{"no-sweep", []string{"fresh", "--priority", "high", "--tag", "zz", "--status", "done", "--no-sweep"}},
+		{"in-progress", []string{"fresh", "--priority", "high", "--tag", "zz", "--status", "in-progress"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupFlowRoot(t)
+			calls := stubClaudeRunner(t, nil)
+			seedTask(t, "fresh")
+			db := openFlowDB(t)
+			defer db.Close()
+			before, err := flowdb.GetTask(db, "fresh")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var rc int
+			out := captureStdout(t, func() { rc = cmdUpdateTask(tc.args) })
+			if rc != 1 {
+				t.Fatalf("rc=%d, want 1; out=%s", rc, out)
+			}
+			if strings.Contains(out, "status →") || strings.Contains(out, "priority →") || strings.Contains(out, "tag +") {
+				t.Errorf("output claims a change that did not stick: %q", out)
+			}
+			if !strings.Contains(out, "session_id") {
+				t.Errorf("error does not explain the missing session: %q", out)
+			}
+			after, err := flowdb.GetTask(db, "fresh")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Status != before.Status || after.Priority != before.Priority || after.UpdatedAt != before.UpdatedAt {
+				t.Errorf("task changed: status %q→%q priority %q→%q updated_at %q→%q",
+					before.Status, after.Status, before.Priority, after.Priority, before.UpdatedAt, after.UpdatedAt)
+			}
+			tags, err := flowdb.GetTaskTags(db, "fresh")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tags) != 0 {
+				t.Errorf("tags written despite the failure: %v", tags)
+			}
+			if len(*calls) != 0 {
+				t.Errorf("sweep ran %d time(s) for a task that never closed", len(*calls))
+			}
+		})
+	}
+}
+
+// The "routed through flow done" line is printed once the status really
+// flipped — never for a task that was already done.
+func TestUpdateStatusDoneRoutedLineOnlyAfterFlip(t *testing.T) {
+	setupFlowRoot(t)
+	stubClaudeRunner(t, nil)
+	seedStartedTask(t, "flipper")
+
+	var rc int
+	out := captureStdout(t, func() { rc = cmdUpdateTask([]string{"flipper", "--status", "done"}) })
+	if rc != 0 {
+		t.Fatalf("rc=%d out=%s", rc, out)
+	}
+	marked, routed := strings.Index(out, "Marked flipper as done"), strings.Index(out, "status → done")
+	if marked < 0 || routed < 0 || routed < marked {
+		t.Errorf("want the routed line after the flip, got: %q", out)
+	}
+	out = captureStdout(t, func() { rc = cmdUpdateTask([]string{"flipper", "--status", "done"}) })
+	if rc != 0 || strings.Contains(out, "status → done") {
+		t.Errorf("already-done task: rc=%d, must not claim a flip: %q", rc, out)
+	}
+}

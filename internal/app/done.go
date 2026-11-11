@@ -63,20 +63,14 @@ func cmdDone(args []string) int {
 // auto-run supervisor). Shared by `flow done` and `flow update task
 // --status done` so no close path skips the sweep.
 func closeTask(db *sql.DB, task *flowdb.Task) int {
-	// Done implies a session existed and produced learnings. A backlog
-	// task that was never started has nothing to sweep. The task-table
-	// CHECK constraint would reject the UPDATE with a cryptic error;
-	// we surface the right verbs here instead.
-	if task.Status == "backlog" && (!task.SessionID.Valid || task.SessionID.String == "") {
-		fmt.Fprintf(os.Stderr,
-			"error: task %q has no session_id — flow done requires at least one prior `flow do` (or `flow do --here`) to have attached a session whose transcript the sweep can read.\n"+
-				"  options:\n"+
-				"    - if you've been working on this task in the current Claude session, bind it now and retry close-out:\n"+
-				"        flow do --here %s   (then re-run: flow done %s)\n"+
-				"    - if it was never worked on and isn't relevant, archive it instead:\n"+
-				"        flow archive %s\n",
-			task.Slug, task.Slug, task.Slug, task.Slug)
-		return 1
+	return closeTaskThen(db, task, nil)
+}
+
+// closeTaskThen is closeTask with a callback that runs right after the
+// status flip (and only if this call did the flip), before the sweep.
+func closeTaskThen(db *sql.DB, task *flowdb.Task, afterFlip func()) int {
+	if rc := closeSessionRefusal(task); rc != 0 {
+		return rc
 	}
 
 	// Idempotent: a task that is already done keeps its status_changed_at
@@ -121,6 +115,9 @@ func closeTask(db *sql.DB, task *flowdb.Task) int {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
+	if afterFlip != nil {
+		afterFlip()
+	}
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		h, lookupErr := harnessForTask(task)
@@ -142,6 +139,26 @@ func closeTask(db *sql.DB, task *flowdb.Task) int {
 		}
 	}
 	return 0
+}
+
+// closeSessionRefusal refuses (rc 1) to close a task that never had a
+// session. Done implies a session existed and produced learnings; a
+// backlog task that was never started has nothing to sweep. The
+// task-table CHECK constraint would reject the UPDATE with a cryptic
+// error; we surface the right verbs here instead. 0 otherwise.
+func closeSessionRefusal(task *flowdb.Task) int {
+	if task.Status != "backlog" || (task.SessionID.Valid && task.SessionID.String != "") {
+		return 0
+	}
+	fmt.Fprintf(os.Stderr,
+		"error: task %q has no session_id — flow done requires at least one prior `flow do` (or `flow do --here`) to have attached a session whose transcript the sweep can read.\n"+
+			"  options:\n"+
+			"    - if you've been working on this task in the current Claude session, bind it now and retry close-out:\n"+
+			"        flow do --here %s   (then re-run: flow done %s)\n"+
+			"    - if it was never worked on and isn't relevant, archive it instead:\n"+
+			"        flow archive %s\n",
+		task.Slug, task.Slug, task.Slug, task.Slug)
+	return 1
 }
 
 // sweepSandboxRefusal refuses (rc 1) when closing task would run the
