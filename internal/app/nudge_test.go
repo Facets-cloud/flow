@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,8 +29,9 @@ func seedDoneTasks(t *testing.T, n, archivedN int) {
 }
 
 // closeFreshTask adds a task, gives it a session id and runs `flow done`
-// on it, returning the exit code.
-func closeFreshTask(t *testing.T, slug string) int {
+// on it, returning the exit code and what done printed to STDOUT only
+// (the agent reads stdout; warnings go to stderr and must not be there).
+func closeFreshTask(t *testing.T, slug string) (int, string) {
 	t.Helper()
 	if rc := cmdAdd([]string{"task", slug, "--slug", slug}); rc != 0 {
 		t.Fatalf("add %s rc=%d", slug, rc)
@@ -41,30 +43,81 @@ func closeFreshTask(t *testing.T, slug string) int {
 	); err != nil {
 		t.Fatal(err)
 	}
-	return cmdDone([]string{slug})
+	var rc int
+	out := captureStdoutOnly(t, func() { rc = cmdDone([]string{slug}) })
+	return rc, out
 }
 
-// starNudges returns the human's mail from the star-nudge sender.
-func starNudges(t *testing.T) []*flowdb.BusMessage {
+// captureStdoutOnly redirects os.Stdout (not stderr) during f.
+func captureStdoutOnly(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	f()
+	w.Close()
+	os.Stdout = old
+	return <-done
+}
+
+// busRowCount is the total number of bus rows: the nudge must write none.
+func busRowCount(t *testing.T) int {
 	t.Helper()
 	db := openFlowDB(t)
-	all, err := flowdb.AllForHuman(db, flowdb.BusUser)
-	if err != nil {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bus_messages`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	var out []*flowdb.BusMessage
-	for _, m := range all {
-		if m.FromAssignee == starNudgeSender && m.FromTaskSlug == "" {
-			out = append(out, m)
-		}
-	}
-	return out
+	return n
 }
 
 func starMarkerExists(t *testing.T, root string) bool {
 	t.Helper()
 	_, err := os.Stat(filepath.Join(root, starNudgeMarker))
 	return err == nil
+}
+
+const (
+	starURL      = "https://github.com/Facets-cloud/flow"
+	starOnlyTime = "This is the only time flow will say this."
+	starHeader   = "note for the user (relay once, in your own words is fine):"
+)
+
+func assertStarBlock(t *testing.T, out string) {
+	t.Helper()
+	for _, want := range []string{starHeader, starURL, starOnlyTime} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	// The block comes last, after all of done's own output, preceded by a
+	// blank line.
+	if i, j := strings.Index(out, "Marked "), strings.Index(out, "\n\n"+starHeader); j < 0 || j < i {
+		t.Errorf("block must follow done's output after one blank line:\n%s", out)
+	}
+	if !strings.HasSuffix(out, starOnlyTime+"\n") {
+		t.Errorf("block must be the last thing on stdout:\n%s", out)
+	}
+	if strings.Count(out, starHeader) != 1 {
+		t.Errorf("block printed %d times, want 1", strings.Count(out, starHeader))
+	}
+}
+
+func assertNoStarBlock(t *testing.T, out string) {
+	t.Helper()
+	for _, bad := range []string{starHeader, starURL, "only time"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("stdout must not contain %q:\n%s", bad, out)
+		}
+	}
 }
 
 func TestStarNudgeThreshold(t *testing.T) {
@@ -76,7 +129,7 @@ func TestStarNudgeThreshold(t *testing.T) {
 		wantNudge bool
 	}{
 		{name: "24th done: nothing", preDone: 23, wantNudge: false},
-		{name: "25th done: one FYI", preDone: 24, wantNudge: true},
+		{name: "25th done: prints the block", preDone: 24, wantNudge: true},
 		{name: "upgrade case: 40 done, marker absent", preDone: 39, wantNudge: true},
 		{name: "archived done tasks do not count", preDone: 24, archived: 1, wantNudge: false},
 		{name: "FLOW_QUIET=1 suppresses", preDone: 30, quiet: "1", wantNudge: false},
@@ -87,38 +140,28 @@ func TestStarNudgeThreshold(t *testing.T) {
 			stubClaudeRunner(t, nil)
 			t.Setenv("FLOW_QUIET", tc.quiet)
 			seedDoneTasks(t, tc.preDone, tc.archived)
+			busBefore := busRowCount(t)
 
-			if rc := closeFreshTask(t, "under-test"); rc != 0 {
+			rc, out := closeFreshTask(t, "under-test")
+			if rc != 0 {
 				t.Fatalf("done rc=%d", rc)
 			}
-			got := starNudges(t)
+			if !strings.Contains(out, "Marked under-test as done") {
+				t.Errorf("normal done output missing:\n%s", out)
+			}
 			if tc.wantNudge {
-				if len(got) != 1 {
-					t.Fatalf("want exactly 1 star nudge, got %d", len(got))
-				}
-				m := got[0]
-				if !strings.Contains(m.Body, "https://github.com/Facets-cloud/flow") {
-					t.Errorf("body lacks repo URL: %q", m.Body)
-				}
-				if !m.FYI {
-					t.Errorf("nudge must be FYI (never pinged)")
-				}
-				if m.Ping {
-					t.Errorf("nudge must not ping connectors")
-				}
-				if m.Kind != "message" || m.ToAssignee != flowdb.BusUser || m.ToTaskSlug != "" {
-					t.Errorf("nudge must be a message to the human: kind=%q to=%q/%q", m.Kind, m.ToAssignee, m.ToTaskSlug)
-				}
+				assertStarBlock(t, out)
 				if !starMarkerExists(t, root) {
 					t.Errorf("marker %s not written", starNudgeMarker)
 				}
 			} else {
-				if len(got) != 0 {
-					t.Fatalf("want no star nudge, got %d: %q", len(got), got[0].Body)
-				}
+				assertNoStarBlock(t, out)
 				if starMarkerExists(t, root) {
-					t.Errorf("marker must not exist when no nudge was sent")
+					t.Errorf("marker must not exist when nothing was printed")
 				}
+			}
+			if n := busRowCount(t); n != busBefore {
+				t.Errorf("nudge must write no bus row: bus_messages went %d -> %d", busBefore, n)
 			}
 		})
 	}
@@ -130,37 +173,28 @@ func TestStarNudgeOnlyOnce(t *testing.T) {
 	t.Setenv("FLOW_QUIET", "")
 	seedDoneTasks(t, 24, 0)
 
-	if rc := closeFreshTask(t, "twenty-fifth"); rc != 0 {
+	rc, out := closeFreshTask(t, "twenty-fifth")
+	if rc != 0 {
 		t.Fatalf("done rc=%d", rc)
 	}
-	if n := len(starNudges(t)); n != 1 {
-		t.Fatalf("after 25th: want 1 nudge, got %d", n)
-	}
+	assertStarBlock(t, out)
 	if !starMarkerExists(t, root) {
 		t.Fatal("marker missing after first nudge")
 	}
-	// 26th and 27th: marker present, nothing new — even after the human
-	// popped the first one.
-	if rc := closeFreshTask(t, "twenty-sixth"); rc != 0 {
-		t.Fatalf("done rc=%d", rc)
-	}
-	db := openFlowDB(t)
-	for _, m := range starNudges(t) {
-		if err := flowdb.DeleteBusMessage(db, m.ID); err != nil {
-			t.Fatal(err)
+	for _, slug := range []string{"twenty-sixth", "twenty-seventh"} {
+		rc, out := closeFreshTask(t, slug)
+		if rc != 0 {
+			t.Fatalf("done %s rc=%d", slug, rc)
 		}
+		assertNoStarBlock(t, out)
 	}
-	db.Close()
-	if rc := closeFreshTask(t, "twenty-seventh"); rc != 0 {
-		t.Fatalf("done rc=%d", rc)
-	}
-	if n := len(starNudges(t)); n != 0 {
-		t.Fatalf("after pop + 27th: want 0 new nudges, got %d", n)
+	if n := busRowCount(t); n != 0 {
+		t.Errorf("nudge must write no bus row, found %d", n)
 	}
 }
 
-// A nudge that cannot be recorded must never fail `flow done`: the status
-// flip is the contract, the nudge is best-effort.
+// A nudge whose marker cannot be claimed must never fail `flow done`, and
+// must not print the block (the next done would print it again).
 func TestStarNudgeFailureDoesNotFailDone(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("read-only dir not enforceable here")
@@ -179,9 +213,11 @@ func TestStarNudgeFailureDoesNotFailDone(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(stateDir, 0o755) })
 
-	if rc := closeFreshTask(t, "under-test"); rc != 0 {
-		t.Fatalf("done must exit 0 even when the nudge cannot be written; rc=%d", rc)
+	rc, out := closeFreshTask(t, "under-test")
+	if rc != 0 {
+		t.Fatalf("done must exit 0 even when the marker cannot be written; rc=%d", rc)
 	}
+	assertNoStarBlock(t, out)
 	db := openFlowDB(t)
 	task, err := flowdb.GetTask(db, "under-test")
 	if err != nil {
@@ -190,7 +226,7 @@ func TestStarNudgeFailureDoesNotFailDone(t *testing.T) {
 	if task.Status != "done" {
 		t.Errorf("status: got %q, want done", task.Status)
 	}
-	if n := len(starNudges(t)); n > 1 {
-		t.Errorf("at most one nudge ever, got %d", n)
+	if n := busRowCount(t); n != 0 {
+		t.Errorf("nudge must write no bus row, found %d", n)
 	}
 }

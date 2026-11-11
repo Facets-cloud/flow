@@ -10,11 +10,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Added
 
 - **One star nudge, ever.** When `flow done` leaves 25 or more closed tasks
-  behind, flow sends the human exactly one FYI (sender `flow`) asking for a
-  GitHub star, then drops `state/nudge-star-25` under the flow root so it
-  never asks again. Installs already past 25 get it on their next `flow
-  done`. `FLOW_QUIET=1` suppresses it; a nudge that cannot be written never
-  fails `flow done`.
+  behind, it prints one `note for the user:` block asking for a GitHub star,
+  relayed by your agent, then drops `state/nudge-star-25` under the flow
+  root so it never says it again. Installs already past 25 see it on their
+  next `flow done`. `FLOW_QUIET=1` suppresses it; nothing is written to the
+  bus, and a nudge that cannot be recorded never fails `flow done`.
 - **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
   opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
   `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an

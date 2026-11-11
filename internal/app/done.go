@@ -107,7 +107,6 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
-	maybeStarNudge(db) // one-time star FYI to the human; never fails done (nudge.go)
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		h, lookupErr := harnessForTask(task)
@@ -128,6 +127,9 @@ func cmdDone(args []string) int {
 			}
 		}
 	}
+	// Last, after all of done's own output: the one-time star note on
+	// stdout for the agent to relay (nudge.go). Never fails done.
+	maybeStarNudge(db)
 	return 0
 }
 
