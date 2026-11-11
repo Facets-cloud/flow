@@ -226,6 +226,10 @@ It is not built for that, and I will not pretend it is.
 **Do I have to learn a CLI?** No. The agent runs it. The commands exist for
 scripts and for the curious; I use two of them a month.
 
+**Will it nag me?** Once. When your 25th task closes, flow drops one FYI in
+your inbox asking for a GitHub star, then never again; `FLOW_QUIET=1` turns
+even that off.
+
 **Why should I believe you?** You should not. Read the next two sections.
 
 ## Works with, does not work with
