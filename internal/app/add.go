@@ -26,6 +26,9 @@ Open questions.
 
 // cmdAdd dispatches `flow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
+	if groupHelp("add", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: add requires 'project', 'task', or 'playbook'")
 		return 2

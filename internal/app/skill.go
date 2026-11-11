@@ -197,6 +197,9 @@ func maybeAutoUpgradeSkill() {
 
 // cmdSkill dispatches `flow skill install|uninstall|update`.
 func cmdSkill(args []string) int {
+	if groupHelp("skill", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: skill requires a subcommand (install|uninstall|update)")
 		return 2

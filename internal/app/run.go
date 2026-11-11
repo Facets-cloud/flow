@@ -14,6 +14,9 @@ import (
 
 // cmdRun handles `flow run <subcommand>`. Currently only `run playbook <slug>` is supported.
 func cmdRun(args []string) int {
+	if groupHelp("run", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: run requires a subcommand (playbook)")
 		return 2
@@ -33,7 +36,7 @@ func cmdRunPlaybook(args []string) int {
 	fs := flagSet("run playbook")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness (ignored when --here is set)")
 	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
-	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via `flow done`")
+	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via flow done")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
 	if err := fs.Parse(flagArgs); err != nil {

@@ -415,6 +415,10 @@ func cmdConnectorAdd(args []string) int {
 }
 
 func cmdConnectorList(args []string) int {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stderr, "usage: flow connector list [--available]")
+		return 0
+	}
 	if len(args) == 1 && args[0] == "--available" {
 		fmt.Println("built-in sample connectors (install: flow connector add <name>):")
 		for _, n := range availableSamples() {
@@ -540,6 +544,10 @@ func cmdConnectorRemove(args []string) int {
 // connectors/config.json (the user's routing, not the connector's).
 func cmdConnectorPriority(args []string) int {
 	const usage = "usage: flow connector priority <name> <n>|--clear   (n ≥ 1; lower n is pinged first)"
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stderr, usage)
+		return 0
+	}
 	if len(args) != 2 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 2
@@ -596,8 +604,13 @@ func cmdConnectorPriority(args []string) int {
 
 // cmdConnectorEscalate sets the global escalation delay (or off).
 func cmdConnectorEscalate(args []string) int {
+	const usage = "usage: flow connector escalate <dur>|off   (e.g. 10m; max 24h)"
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stderr, usage)
+		return 0
+	}
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: flow connector escalate <dur>|off   (e.g. 10m; max 24h)")
+		fmt.Fprintln(os.Stderr, usage)
 		return 2
 	}
 	d, err := connector.ParseEscalate(args[0])

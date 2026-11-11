@@ -57,6 +57,9 @@ func normalizeTags(in stringSliceFlag) []string {
 
 // cmdList dispatches `flow list tasks|projects|playbooks|runs|tags|owners`.
 func cmdList(args []string) int {
+	if groupHelp("list", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', 'runs', 'tags', or 'owners'")
 		return 2

@@ -16,6 +16,9 @@ import (
 
 // cmdWorkdir dispatches `flow workdir list|add|remove|scan`.
 func cmdWorkdir(args []string) int {
+	if groupHelp("workdir", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: workdir requires a subcommand (list|add|remove|scan)")
 		return 2

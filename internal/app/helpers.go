@@ -67,7 +67,13 @@ func isHelpArg(a string) bool {
 // rest is all of args, so the caller still runs fs.Parse(rest) (which
 // prints usage and returns flag.ErrHelp for -h/--help) before reporting
 // the missing positional.
+//
+// A leading "--" is the escape: the argument after it is the positional
+// whatever it starts with (`flow add task -- "-5 degrees fix"`).
 func splitPositional(args []string) (pos string, rest []string, missing bool) {
+	if len(args) >= 2 && args[0] == "--" && args[1] != "" {
+		return args[1], args[2:], false
+	}
 	if len(args) == 0 || args[0] == "" || strings.HasPrefix(args[0], "-") {
 		return "", args, true
 	}

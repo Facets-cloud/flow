@@ -27,6 +27,9 @@ import (
 //     in time); inform-only, announced once per message. Everything else
 //     (unbound, nothing new) is a no-op.
 func cmdHook(args []string) int {
+	if groupHelp("hook", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit|pre-tool-use|stop)")
 		return 2

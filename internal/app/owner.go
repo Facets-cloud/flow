@@ -28,6 +28,9 @@ This owner's operating manual. Edit freely or via a flow skill session.
 
 // cmdOwner dispatches `flow owner list|show|start|pause`.
 func cmdOwner(args []string) int {
+	if groupHelp("owner", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: owner requires a subcommand (list, show, start, pause, tick, next, retire)")
 		return 2
@@ -472,7 +475,7 @@ func addOwner(args []string) int {
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	workDir := fs.String("work-dir", "", "absolute path to the owner's work directory (required)")
 	project := fs.String("project", "", "parent project slug (optional)")
-	every := fs.String("every", "", "fallback/max tick interval (heartbeat floor), e.g. 1h, 24h; default 24h — ticks self-pace via `flow owner next`")
+	every := fs.String("every", "", "fallback/max tick interval (heartbeat floor), e.g. 1h, 24h; default 24h — ticks self-pace via flow owner next")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
 	if err := fs.Parse(flagArgs); err != nil {
 		return flagParseRC(err)

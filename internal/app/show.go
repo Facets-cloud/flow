@@ -14,6 +14,9 @@ import (
 
 // cmdShow dispatches `flow show task|project|playbook|owner`. Per spec §5.4.
 func cmdShow(args []string) int {
+	if groupHelp("show", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: show requires 'task', 'project', 'playbook', or 'owner'")
 		return 2

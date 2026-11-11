@@ -15,6 +15,9 @@ import (
 // setters (priority, due-date, waiting) that used to have their own
 // top-level mini-commands.
 func cmdUpdate(args []string) int {
+	if groupHelp("update", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: update requires 'task' or 'project' and a ref")
 		return 2
@@ -64,7 +67,7 @@ func cmdUpdateTask(args []string) int {
 	clearTags := fs.Bool("clear-tags", false, "remove all tags from the task")
 	project := fs.String("project", "", "move the task into this project (work_dir is unchanged)")
 	clearProject := fs.Bool("clear-project", false, "detach the task from its project (make it floating)")
-	noSweep := fs.Bool("no-sweep", false, "with --status done: flip the status only, skipping the close-out sweep `flow done` runs (for scripted bulk edits)")
+	noSweep := fs.Bool("no-sweep", false, "with --status done: flip the status only, skipping the close-out sweep that flow done runs (for scripted bulk edits)")
 	if err := fs.Parse(flagArgs); err != nil {
 		return flagParseRC(err)
 	}
