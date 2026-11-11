@@ -1,4 +1,18 @@
-# flow
+<p align="center">
+  <img src="assets/flow-logo.svg" alt="flow" width="480">
+</p>
+
+<p align="center">
+  <a href="https://facets-cloud.github.io/flow/"><strong>Website</strong></a> ·
+  <a href="#try-it-in-ten-minutes">Install</a> ·
+  <a href="#watch-one-happen">Demo</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status">
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
+</p>
 
 You run Claude Code or Codex. You say "let's pick up the billing migration"
 and the session for that work opens where it stopped, with its notes read.
