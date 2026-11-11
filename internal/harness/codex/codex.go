@@ -167,8 +167,14 @@ func parseThreadID(out []byte) (string, error) {
 }
 
 // Flags may sit between `resume` and the id: AutoRunArgv emits
-// `codex exec resume --dangerously-bypass-approvals-and-sandbox -o <file> <id> ...`.
-var runningSessionRe = regexp.MustCompile(`\bresume(?:\s+--?[A-Za-z][\w-]*(?:\s+[^-\s]\S*)?)*?\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b`)
+// `codex exec resume --dangerously-bypass-approvals-and-sandbox -o <file> <id> ...`
+// and interactiveResume emits `--add-dir <path>`. ps prints argv unquoted,
+// so a flag value with whitespace (a flow root like `/tmp/flow root`) is
+// several tokens: anything may sit between the first flag and the id. The
+// id is the first standalone UUID token after `resume`; text before it
+// must start with a flag, so prose like "resume work on <id>" in some
+// other command's prompt is not a session.
+var runningSessionRe = regexp.MustCompile(`\bresume(?:\s+-\S*(?:\s+\S+)*?)?\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\s|$)`)
 
 func (c *codex) LiveSessionIDs() (map[string]int, error) {
 	out, err := PSRunner()
@@ -180,13 +186,9 @@ func (c *codex) LiveSessionIDs() (map[string]int, error) {
 		if !strings.Contains(strings.ToLower(line), "codex") {
 			continue
 		}
-		seen := map[string]bool{}
-		for _, m := range runningSessionRe.FindAllStringSubmatch(line, -1) {
-			id := strings.ToLower(m[1])
-			if !seen[id] {
-				live[id]++
-				seen[id] = true
-			}
+		// First match only: everything after the id is the prompt.
+		if m := runningSessionRe.FindStringSubmatch(line); m != nil {
+			live[strings.ToLower(m[1])]++
 		}
 	}
 	return live, nil

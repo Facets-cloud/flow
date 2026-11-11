@@ -137,6 +137,33 @@ func TestLiveSessionIDsSeesAutoRunArgv(t *testing.T) {
 	}
 }
 
+// ps prints argv unquoted, so a flow root with a space turns the
+// `--add-dir` value into several tokens. The guard must still find the
+// thread id, or `flow do` starts a second `codex resume` on a live thread.
+func TestLiveSessionIDsSeesAddDirWithWhitespace(t *testing.T) {
+	orig := PSRunner
+	t.Cleanup(func() { PSRunner = orig })
+	other := "22222222-2222-4222-8222-222222222222"
+	PSRunner = func() ([]byte, error) {
+		return []byte(strings.Join([]string{
+			"300 codex resume -s workspace-write -a on-request --add-dir /tmp/flow root " + testThreadID,
+			"301 codex resume -s workspace-write -a on-request --add-dir /tmp/my flow root --add-dir /x y " + testThreadID + " keep going on " + other,
+			// Prose after a non-resume codex command is not a session.
+			"302 codex exec please resume work on " + other,
+		}, "\n")), nil
+	}
+	live, err := New().LiveSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live[testThreadID] != 2 {
+		t.Errorf("live=%v, want both whitespace-path codex processes detected", live)
+	}
+	if live[other] != 0 {
+		t.Errorf("live=%v, an id in the prompt text must not count as a live session", live)
+	}
+}
+
 func TestRenderJSONL(t *testing.T) {
 	input := strings.Join([]string{
 		`{"type":"session_meta","payload":{"id":"` + testThreadID + `"}}`,
