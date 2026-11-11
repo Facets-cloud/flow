@@ -3,32 +3,32 @@
     "asks_to_human": 7,
     "children": 72,
     "dead": 1,
-    "done": 64,
-    "messages_between_tasks": 176,
-    "notes": 72,
+    "done": 65,
+    "messages_between_tasks": 177,
+    "notes": 74,
     "refs": 33,
     "running": 2,
-    "tasks": 74
+    "tasks": 75
   },
   "dead_reasons": {
     "exited without closing": 1
   },
-  "generated_at": "2026-11-11T15:41:51+05:30",
+  "generated_at": "2026-11-11T15:45:06+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 74
+      "tasks": 75
     },
     {
-      "items": 72,
+      "items": 74,
       "name": "updates/",
-      "tasks": 74
+      "tasks": 75
     },
     {
-      "items": 67,
+      "items": 68,
       "name": "auto-runs/",
-      "tasks": 65
+      "tasks": 66
     },
     {
       "items": 14,
@@ -58,19 +58,34 @@
   "tasks": [
     {
       "auto_run_status": "running",
-      "child": true,
+      "child": false,
       "dead_reason": null,
       "notes": 0,
       "refs": [],
-      "slug": "mesh-html-review",
+      "slug": "site-daily--2026-11-11-10-12",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "mesh-html-review",
+      "status": "done"
     },
     {
       "auto_run_status": "running",
       "child": true,
       "dead_reason": null,
-      "notes": 0,
-      "refs": [],
+      "notes": 1,
+      "refs": [
+        1,
+        4,
+        5,
+        11,
+        17
+      ],
       "slug": "site-daily-playbook",
       "status": "in-progress"
     },
