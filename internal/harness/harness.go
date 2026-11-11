@@ -347,3 +347,22 @@ func DefersCloseoutInAutoRun(h Harness) bool {
 	d, ok := h.(CloseoutDeferrer)
 	return ok && d.DefersCloseoutInAutoRun()
 }
+
+// SessionLocator is an optional capability for harnesses that key a
+// session's on-disk transcript by the directory the session was started
+// in (claude). ValidateSession answers "is the transcript where workDir
+// says it should be"; LocateSession answers the question a resume has
+// when that check fails: does the session exist at all, and if so where
+// was it started.
+//
+// A task can end up with a session that is not keyed under its work_dir
+// (GH #59: a `flow do --here` bind made before the bind-time gate
+// existed). Every resume path consults this before deciding the session
+// has no history.
+type SessionLocator interface {
+	// LocateSession reports whether a transcript for sessionID exists
+	// anywhere on disk (found), and the directory that session was
+	// started in (cwd). cwd is "" when the session is found but its
+	// start directory can't be established from the transcript.
+	LocateSession(sessionID string) (cwd string, found bool)
+}
