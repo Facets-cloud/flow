@@ -91,9 +91,12 @@ const (
 	starHeader   = "note for the user (relay once, in your own words is fine):"
 )
 
-func assertStarBlock(t *testing.T, out string) {
+// assertStarBlock checks the block is present once, last, and names the
+// real done count (never a fixed 25 for an install already past it).
+func assertStarBlock(t *testing.T, out string, wantCount int) {
 	t.Helper()
-	for _, want := range []string{starHeader, starURL, starOnlyTime} {
+	countLine := fmt.Sprintf("flow has closed %d tasks for you.", wantCount)
+	for _, want := range []string{starHeader, countLine, starURL, starOnlyTime} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
@@ -108,6 +111,9 @@ func assertStarBlock(t *testing.T, out string) {
 	}
 	if strings.Count(out, starHeader) != 1 {
 		t.Errorf("block printed %d times, want 1", strings.Count(out, starHeader))
+	}
+	if wantCount != 25 && strings.Contains(out, "25 tasks") {
+		t.Errorf("block must not claim a fixed 25 when the count is %d:\n%s", wantCount, out)
 	}
 }
 
@@ -127,10 +133,11 @@ func TestStarNudgeThreshold(t *testing.T) {
 		archived  int // of preDone, how many are archived (do not count)
 		quiet     string
 		wantNudge bool
+		wantCount int // done count the block must name
 	}{
 		{name: "24th done: nothing", preDone: 23, wantNudge: false},
-		{name: "25th done: prints the block", preDone: 24, wantNudge: true},
-		{name: "upgrade case: 40 done, marker absent", preDone: 39, wantNudge: true},
+		{name: "25th done: prints the block", preDone: 24, wantNudge: true, wantCount: 25},
+		{name: "upgrade case: 40 done, marker absent", preDone: 39, wantNudge: true, wantCount: 40},
 		{name: "archived done tasks do not count", preDone: 24, archived: 1, wantNudge: false},
 		{name: "FLOW_QUIET=1 suppresses", preDone: 30, quiet: "1", wantNudge: false},
 	}
@@ -150,7 +157,7 @@ func TestStarNudgeThreshold(t *testing.T) {
 				t.Errorf("normal done output missing:\n%s", out)
 			}
 			if tc.wantNudge {
-				assertStarBlock(t, out)
+				assertStarBlock(t, out, tc.wantCount)
 				if !starMarkerExists(t, root) {
 					t.Errorf("marker %s not written", starNudgeMarker)
 				}
@@ -177,7 +184,7 @@ func TestStarNudgeOnlyOnce(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("done rc=%d", rc)
 	}
-	assertStarBlock(t, out)
+	assertStarBlock(t, out, 25)
 	if !starMarkerExists(t, root) {
 		t.Fatal("marker missing after first nudge")
 	}
