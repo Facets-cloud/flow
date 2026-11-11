@@ -85,3 +85,9 @@ jobs:
           GOOS="${MATRIX_TARGET%/*}" GOARCH="${MATRIX_TARGET#*/}" CGO_ENABLED=0 go build -o /dev/null .
         env:
           MATRIX_TARGET: ${{ matrix.target }}
+
+  site-daily:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -v site/daily

@@ -1,0 +1,808 @@
+{
+  "counts": {
+    "asks_to_human": 7,
+    "children": 72,
+    "dead": 1,
+    "done": 64,
+    "messages_between_tasks": 176,
+    "notes": 72,
+    "refs": 33,
+    "running": 2,
+    "tasks": 74
+  },
+  "dead_reasons": {
+    "exited without closing": 1
+  },
+  "generated_at": "2026-11-11T15:41:51+05:30",
+  "leaves_behind": [
+    {
+      "items": 0,
+      "name": "brief.md",
+      "tasks": 74
+    },
+    {
+      "items": 72,
+      "name": "updates/",
+      "tasks": 74
+    },
+    {
+      "items": 67,
+      "name": "auto-runs/",
+      "tasks": 65
+    },
+    {
+      "items": 14,
+      "name": "other files",
+      "tasks": 9
+    },
+    {
+      "items": 16,
+      "name": "scratch/",
+      "tasks": 2
+    },
+    {
+      "items": 9,
+      "name": "verify/",
+      "tasks": 1
+    },
+    {
+      "items": 0,
+      "name": "workspace/",
+      "tasks": 1
+    }
+  ],
+  "projects": [
+    "flow"
+  ],
+  "repo": "Facets-cloud/flow",
+  "tasks": [
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "mesh-html-review",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "site-daily-playbook",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "prep-public",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "mesh-native-gates",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        59,
+        135
+      ],
+      "slug": "verify-pr135",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "mesh-gating-sender",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "mesh-gating",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "mesh-onboarding",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-mesh-v1",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        132
+      ],
+      "slug": "review-notes-132",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-pain-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-usage-playbooks",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        1,
+        4,
+        11,
+        17,
+        39,
+        62,
+        63,
+        65,
+        81,
+        83,
+        94,
+        99,
+        105,
+        119,
+        120,
+        123,
+        133
+      ],
+      "slug": "flow-git-evolution",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        28,
+        35,
+        71,
+        87,
+        108
+      ],
+      "slug": "flow-usage-skoop",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "since-today-tz",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        127,
+        131
+      ],
+      "slug": "pr127-checkname",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131,
+        132
+      ],
+      "slug": "pr132-merge-main",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131,
+        132
+      ],
+      "slug": "pr132-rebase",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        130
+      ],
+      "slug": "flow-schedule-fix",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        127
+      ],
+      "slug": "flow-tmux-fix",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131
+      ],
+      "slug": "attach-prune-race",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "help-15",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "p2p-desk-resume",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "codex-driver-fixes",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "p2p-desk-project",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "help-14",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "help-13",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "spike-bg-desk",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131
+      ],
+      "slug": "flow-desk-primitives",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-p2p-desks",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "conn-notify",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-p2p-v01",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        127
+      ],
+      "slug": "flow-linux-core",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-linux-schedule-notify",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        129
+      ],
+      "slug": "multi-harness-choice",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "dead-auto-ping",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-positioning-stress",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        108,
+        109,
+        120
+      ],
+      "slug": "flow-golden-moments",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "hand-agent-live",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-readme-launch",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-install-linux",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-articulate",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-landscape",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flow-growth-audit",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "reason-conn",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "escalate-armed-log",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        1,
+        120
+      ],
+      "slug": "supervisor-done-race",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "inbox-followups",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "exited without closing",
+      "notes": 1,
+      "refs": [],
+      "slug": "people-v0",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        5,
+        123
+      ],
+      "slug": "connector-priority",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flowhub-live-tab",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        120
+      ],
+      "slug": "codex-interactive-inbox",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        120
+      ],
+      "slug": "sweep-races",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        120
+      ],
+      "slug": "listener-wording",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        120
+      ],
+      "slug": "install-all-harness",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "people-plan",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flowhub-connector-build",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        120
+      ],
+      "slug": "codex-parity",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 3,
+      "refs": [
+        124,
+        125
+      ],
+      "slug": "flowhub-connector",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "bg-banner",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        120
+      ],
+      "slug": "codex-sweep-defer",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "bg-deprecate",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "codex-core-pr",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [
+        120,
+        125,
+        129,
+        131,
+        132
+      ],
+      "slug": "codex-fixes",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "codex-auto",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "connectors-pkg",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "connectors-mvp",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "bus-fixes",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "bus-review",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "hc-plan",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "hc-builder-check",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": false,
+      "dead_reason": null,
+      "notes": 4,
+      "refs": [],
+      "slug": "flow-enterprise",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "slug": "flowhub-graph-ui",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": false,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "slug": "flowhub-graph-view",
+      "status": "done"
+    }
+  ],
+  "window_days": 7
+}
