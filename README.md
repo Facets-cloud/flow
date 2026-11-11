@@ -338,6 +338,46 @@ One person, one laptop. An existence proof, not a benchmark.
 - You never want an agent running with permissions skipped on your machine.
   Level 1 never does; level 3 always does.
 
+## Reference, for the curious
+
+You will not type these. The agent does. They are here so the words on
+this page match the binary, and because three tests in the repo insist.
+
+### Human connectors
+
+When a task needs your decision and you are away, it asks on the bus and
+moves on. Without a connector the ask waits in your inbox. With one, flow
+pings you through it; a macOS dialog ships built in, and the Slack one in
+the video is a sample.
+
+```bash
+flow message user "deploy-v2: ship to prod now?" --options "Yes|No"
+flow message user "imports 3/5 done" --fyi        # progress: stored, never pings
+flow connector add macos                          # built in, shows a test dialog
+flow connector list --available                   # built-in samples
+flow connector priority flowhub 1                 # tried first
+flow connector priority macos 2                   # fallback tier
+flow connector escalate 10m                       # unseen 10m after delivery, next tier
+```
+
+The contract to write your own is in
+[`internal/app/skill/references/connectors.md`](internal/app/skill/references/connectors.md).
+Each connector gets its own secret, so an agent can never answer for you.
+
+### Peer hubs
+
+Two flow homes can message each other through a connector with the peer
+role. It is mail between two laptops, not a shared board.
+
+```bash
+flow connector add peer-local                     # testing-only sample, same machine
+flow peer add bob --via peer-local --at /path/to/bobs/flow-root
+flow message bob "ship v2?" --options "Yes|No"    # from a task session, to bob's human
+```
+
+Details, including how a hub hands inbound mail to a task:
+[`internal/app/skill/references/peers.md`](internal/app/skill/references/peers.md).
+
 ## Status
 
 Alpha. Daily use since April; the data model has not broken under me since
