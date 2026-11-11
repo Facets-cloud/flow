@@ -1,39 +1,39 @@
 {
   "counts": {
-    "asks_to_human": 7,
-    "children": 72,
+    "asks_to_human": 6,
+    "children": 68,
     "dead": 1,
-    "done": 65,
-    "messages_between_tasks": 177,
-    "notes": 74,
-    "refs": 33,
-    "running": 2,
-    "tasks": 75
+    "done": 62,
+    "messages_between_tasks": 49,
+    "notes": 66,
+    "refs": 36,
+    "running": 1,
+    "tasks": 70
   },
   "dead_reasons": {
     "exited without closing": 1
   },
-  "generated_at": "2026-11-11T15:45:06+05:30",
+  "generated_at": "2026-11-11T16:20:15+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 75
+      "tasks": 70
     },
     {
-      "items": 74,
+      "items": 66,
       "name": "updates/",
-      "tasks": 75
+      "tasks": 70
     },
     {
-      "items": 68,
+      "items": 64,
       "name": "auto-runs/",
-      "tasks": 66
+      "tasks": 62
     },
     {
-      "items": 14,
+      "items": 11,
       "name": "other files",
-      "tasks": 9
+      "tasks": 8
     },
     {
       "items": 16,
@@ -55,14 +55,17 @@
     "flow"
   ],
   "repo": "Facets-cloud/flow",
+  "shown": 12,
+  "table_cap": 12,
   "tasks": [
     {
       "auto_run_status": "running",
-      "child": false,
+      "child": true,
       "dead_reason": null,
       "notes": 0,
       "refs": [],
-      "slug": "site-daily--2026-11-11-10-12",
+      "shown": false,
+      "slug": "site-polish",
       "status": "in-progress"
     },
     {
@@ -71,11 +74,38 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
-      "slug": "mesh-html-review",
+      "shown": false,
+      "slug": "feedback-outreach-list",
       "status": "done"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        136,
+        138,
+        139
+      ],
+      "shown": true,
+      "slug": "site-hybrid-page",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        138
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-11-10-12",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
       "notes": 1,
@@ -86,25 +116,8 @@
         11,
         17
       ],
+      "shown": true,
       "slug": "site-daily-playbook",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "slug": "prep-public",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "slug": "mesh-native-gates",
       "status": "done"
     },
     {
@@ -116,43 +129,8 @@
         59,
         135
       ],
+      "shown": true,
       "slug": "verify-pr135",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "slug": "mesh-gating-sender",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "slug": "mesh-gating",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "slug": "mesh-onboarding",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "slug": "flow-mesh-v1",
       "status": "done"
     },
     {
@@ -163,6 +141,7 @@
       "refs": [
         132
       ],
+      "shown": true,
       "slug": "review-notes-132",
       "status": "done"
     },
@@ -172,6 +151,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-pain-research",
       "status": "done"
     },
@@ -181,6 +161,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-usage-playbooks",
       "status": "done"
     },
@@ -208,6 +189,7 @@
         123,
         133
       ],
+      "shown": true,
       "slug": "flow-git-evolution",
       "status": "done"
     },
@@ -223,6 +205,7 @@
         87,
         108
       ],
+      "shown": true,
       "slug": "flow-usage-skoop",
       "status": "done"
     },
@@ -232,6 +215,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "since-today-tz",
       "status": "done"
     },
@@ -244,6 +228,7 @@
         127,
         131
       ],
+      "shown": true,
       "slug": "pr127-checkname",
       "status": "done"
     },
@@ -256,6 +241,7 @@
         131,
         132
       ],
+      "shown": true,
       "slug": "pr132-merge-main",
       "status": "done"
     },
@@ -268,6 +254,7 @@
         131,
         132
       ],
+      "shown": true,
       "slug": "pr132-rebase",
       "status": "done"
     },
@@ -279,6 +266,7 @@
       "refs": [
         130
       ],
+      "shown": true,
       "slug": "flow-schedule-fix",
       "status": "done"
     },
@@ -290,6 +278,7 @@
       "refs": [
         127
       ],
+      "shown": false,
       "slug": "flow-tmux-fix",
       "status": "done"
     },
@@ -301,6 +290,7 @@
       "refs": [
         131
       ],
+      "shown": false,
       "slug": "attach-prune-race",
       "status": "done"
     },
@@ -310,6 +300,7 @@
       "dead_reason": null,
       "notes": 0,
       "refs": [],
+      "shown": false,
       "slug": "help-15",
       "status": "backlog"
     },
@@ -319,6 +310,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "p2p-desk-resume",
       "status": "done"
     },
@@ -328,6 +320,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "codex-driver-fixes",
       "status": "done"
     },
@@ -337,6 +330,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "p2p-desk-project",
       "status": "done"
     },
@@ -346,6 +340,7 @@
       "dead_reason": null,
       "notes": 0,
       "refs": [],
+      "shown": false,
       "slug": "help-14",
       "status": "backlog"
     },
@@ -355,6 +350,7 @@
       "dead_reason": null,
       "notes": 0,
       "refs": [],
+      "shown": false,
       "slug": "help-13",
       "status": "backlog"
     },
@@ -364,6 +360,7 @@
       "dead_reason": null,
       "notes": 0,
       "refs": [],
+      "shown": false,
       "slug": "spike-bg-desk",
       "status": "in-progress"
     },
@@ -375,6 +372,7 @@
       "refs": [
         131
       ],
+      "shown": false,
       "slug": "flow-desk-primitives",
       "status": "done"
     },
@@ -384,6 +382,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-p2p-desks",
       "status": "done"
     },
@@ -393,6 +392,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "conn-notify",
       "status": "done"
     },
@@ -402,6 +402,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-p2p-v01",
       "status": "done"
     },
@@ -413,6 +414,7 @@
       "refs": [
         127
       ],
+      "shown": false,
       "slug": "flow-linux-core",
       "status": "done"
     },
@@ -422,6 +424,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-linux-schedule-notify",
       "status": "done"
     },
@@ -433,6 +436,7 @@
       "refs": [
         129
       ],
+      "shown": false,
       "slug": "multi-harness-choice",
       "status": "done"
     },
@@ -442,6 +446,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "dead-auto-ping",
       "status": "done"
     },
@@ -451,6 +456,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-positioning-stress",
       "status": "done"
     },
@@ -464,6 +470,7 @@
         109,
         120
       ],
+      "shown": false,
       "slug": "flow-golden-moments",
       "status": "done"
     },
@@ -473,6 +480,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "hand-agent-live",
       "status": "done"
     },
@@ -482,6 +490,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-readme-launch",
       "status": "done"
     },
@@ -491,6 +500,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-install-linux",
       "status": "done"
     },
@@ -500,6 +510,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-articulate",
       "status": "done"
     },
@@ -509,6 +520,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-landscape",
       "status": "done"
     },
@@ -518,6 +530,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flow-growth-audit",
       "status": "done"
     },
@@ -527,6 +540,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "reason-conn",
       "status": "done"
     },
@@ -536,6 +550,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "escalate-armed-log",
       "status": "done"
     },
@@ -548,6 +563,7 @@
         1,
         120
       ],
+      "shown": false,
       "slug": "supervisor-done-race",
       "status": "done"
     },
@@ -557,6 +573,7 @@
       "dead_reason": null,
       "notes": 0,
       "refs": [],
+      "shown": false,
       "slug": "inbox-followups",
       "status": "backlog"
     },
@@ -566,6 +583,7 @@
       "dead_reason": "exited without closing",
       "notes": 1,
       "refs": [],
+      "shown": true,
       "slug": "people-v0",
       "status": "in-progress"
     },
@@ -578,6 +596,7 @@
         5,
         123
       ],
+      "shown": false,
       "slug": "connector-priority",
       "status": "done"
     },
@@ -587,6 +606,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flowhub-live-tab",
       "status": "done"
     },
@@ -598,6 +618,7 @@
       "refs": [
         120
       ],
+      "shown": false,
       "slug": "codex-interactive-inbox",
       "status": "done"
     },
@@ -609,6 +630,7 @@
       "refs": [
         120
       ],
+      "shown": false,
       "slug": "sweep-races",
       "status": "done"
     },
@@ -620,6 +642,7 @@
       "refs": [
         120
       ],
+      "shown": false,
       "slug": "listener-wording",
       "status": "done"
     },
@@ -631,6 +654,7 @@
       "refs": [
         120
       ],
+      "shown": false,
       "slug": "install-all-harness",
       "status": "done"
     },
@@ -640,6 +664,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "people-plan",
       "status": "done"
     },
@@ -649,6 +674,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flowhub-connector-build",
       "status": "done"
     },
@@ -660,6 +686,7 @@
       "refs": [
         120
       ],
+      "shown": false,
       "slug": "codex-parity",
       "status": "done"
     },
@@ -672,6 +699,7 @@
         124,
         125
       ],
+      "shown": false,
       "slug": "flowhub-connector",
       "status": "done"
     },
@@ -681,6 +709,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "bg-banner",
       "status": "done"
     },
@@ -692,6 +721,7 @@
       "refs": [
         120
       ],
+      "shown": false,
       "slug": "codex-sweep-defer",
       "status": "done"
     },
@@ -701,6 +731,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "bg-deprecate",
       "status": "done"
     },
@@ -710,6 +741,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "codex-core-pr",
       "status": "done"
     },
@@ -720,11 +752,9 @@
       "notes": 0,
       "refs": [
         120,
-        125,
-        129,
-        131,
         132
       ],
+      "shown": false,
       "slug": "codex-fixes",
       "status": "in-progress"
     },
@@ -734,6 +764,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "codex-auto",
       "status": "done"
     },
@@ -743,6 +774,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "connectors-pkg",
       "status": "done"
     },
@@ -752,6 +784,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "connectors-mvp",
       "status": "done"
     },
@@ -761,6 +794,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "bus-fixes",
       "status": "done"
     },
@@ -770,6 +804,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "bus-review",
       "status": "done"
     },
@@ -779,6 +814,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "hc-plan",
       "status": "done"
     },
@@ -788,17 +824,9 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "hc-builder-check",
       "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": false,
-      "dead_reason": null,
-      "notes": 4,
-      "refs": [],
-      "slug": "flow-enterprise",
-      "status": "in-progress"
     },
     {
       "auto_run_status": "completed",
@@ -806,6 +834,7 @@
       "dead_reason": null,
       "notes": 1,
       "refs": [],
+      "shown": false,
       "slug": "flowhub-graph-ui",
       "status": "done"
     },
@@ -815,6 +844,7 @@
       "dead_reason": null,
       "notes": 0,
       "refs": [],
+      "shown": false,
       "slug": "flowhub-graph-view",
       "status": "done"
     }

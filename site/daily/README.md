@@ -32,6 +32,12 @@ file names under a task directory with counts, PR/issue numbers that
 resolve to `Facets-cloud/flow`, and phrases from fixed tables in
 `render.py` (`DEAD_PHRASES`, `STAT_LABELS`). No brief, note or message text.
 
+The task table shows at most `TABLE_CAP` (12) rows: every task with a dead
+run or a resolved ref first, then the most recently updated done tasks.
+Backlog tasks that never ran and left no notes get no row. Counts always
+cover the full set; the line under the table says how many rows were left
+out, and `data/this-week.json` lists every task with a `shown` flag.
+
 ## Privacy model (allowlist, not redaction)
 
 1. **Scope.** `PROJECT_SLUGS = ("flow",)`. Only tasks whose `project_slug`

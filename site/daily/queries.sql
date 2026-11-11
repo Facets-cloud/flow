@@ -10,7 +10,7 @@
 -- name: scoped_tasks
 -- Every task that belongs to an allowed project. Children inherit project_slug,
 -- so they are selected here too; nothing outside the allowlist can be selected.
-SELECT slug, status, kind, parent_slug, auto_run_status, created_at, status_changed_at, archived_at
+SELECT slug, status, kind, parent_slug, auto_run_status, created_at, updated_at, status_changed_at, archived_at
 FROM tasks
 WHERE project_slug IN ({projects})
   AND deleted_at IS NULL;
