@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"os"
 	"syscall"
+	"time"
 )
 
 // schemaRevision must be bumped by any migration that does NOT also change
@@ -48,23 +49,36 @@ func schemaIsCurrent(db *sql.DB) (bool, error) {
 	return v == schemaFingerprint(), nil
 }
 
+// migrationLockTimeout bounds the wait for the migration lock. A migration
+// pass takes well under a second; the bound only exists so an opener
+// behind a stuck migrator fails with a message instead of hanging.
+var migrationLockTimeout = 2 * time.Minute
+
 // lockMigrations takes an exclusive advisory lock on <db>.migrate.lock so
 // concurrent openers (separate processes or goroutines) migrate one at a
-// time. Blocks until acquired; the returned func releases it.
+// time. Waits up to migrationLockTimeout; the returned func releases it.
 func lockMigrations(dbPath string) (func(), error) {
-	f, err := os.OpenFile(dbPath+".migrate.lock", os.O_RDWR|os.O_CREATE, 0o644)
+	lockPath := dbPath + ".migrate.lock"
+	f, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open migration lock: %w", err)
 	}
+	deadline := time.Now().Add(migrationLockTimeout)
 	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-		if err != syscall.EINTR {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
 			break
 		}
-	}
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("lock migrations: %w", err)
+		if err != syscall.EINTR && err != syscall.EWOULDBLOCK {
+			f.Close()
+			return nil, fmt.Errorf("lock migrations: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("lock migrations: timed out after %s waiting for another flow process to finish migrating the database (lock file: %s); retry once it exits",
+				migrationLockTimeout, lockPath)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	return func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

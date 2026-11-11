@@ -145,6 +145,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   the typed line is a few dozen bytes however long the prompt is. Linux
   (`MAX_CANON` 4096) was unaffected. `scripts/smoke-linux.sh` drives its
   control window the same way, so it passes on macOS too.
+- **Codex live-session guard handles a flow root with a space.** `ps`
+  prints `--add-dir /tmp/flow root <id>` unquoted, so the guard missed the
+  thread id and `flow do` could start a second `codex resume` on a thread
+  that was already open. It now finds the id whatever the flag values are.
+- **`flow update task --status …` checks the session before writing
+  anything.** On a task that never had a session, `--priority high --tag zz
+  --status done` wrote the priority and tag, printed `status → done`, then
+  failed. It now refuses up front with nothing changed, and the "routed
+  through flow done" line is printed only after the status flipped.
+- **`--help` gaps closed.** `flow connector list|escalate|priority --help`
+  and the group level `flow add|run|show|list|update|owner|workdir|skill|hook
+  --help` print usage and exit 0. `flow add task -- "-5 degrees fix"`
+  creates a name that starts with a dash. Help text no longer renders
+  `-no-sweep flow done` / `-auto flow done`.
+- **A skipped migration is no longer stamped as done.** If probing a
+  column failed, the backfill was skipped silently and the schema version
+  was recorded anyway, so nothing retried it. The open now fails and the
+  next one retries.
+- **The migration lock times out.** An opener waiting on a stuck migrator
+  fails after 2 minutes with an error naming the lock file instead of
+  hanging.
 
 ## [0.1.0-alpha.36] — 2026-11-10
 
