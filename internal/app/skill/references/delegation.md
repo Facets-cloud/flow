@@ -224,6 +224,20 @@ Every child with a parent is told, in its auto prompt, to:
   update file (body <=200 chars);
 - never spawn its own children.
 
+## PR trailer (every bound session)
+
+A pull request description opened from a flow-bound session (tab or
+headless child) ends with this exact line, last in the body, after any
+harness footer:
+
+```
+Shipped from a [flow](https://github.com/Facets-cloud/flow) task.
+```
+
+Add nothing to it (no task slug, no session id). It is an instruction the
+SessionStart hook injects, not an enforcement; the user drops it with
+`FLOW_PR_TRAILER=off` (also `0`/`false`).
+
 ## No grandchildren
 
 Delegation is one level deep. An auto child may not spawn a grandchild:

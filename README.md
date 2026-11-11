@@ -230,6 +230,10 @@ scripts and for the curious; I use two of them a month.
 one note with your real count asking for a GitHub star and your agent relays
 it, then never again; `FLOW_QUIET=1` turns even that off.
 
+**Why is there a flow line on my PRs?** Sessions bound to a flow task are told
+to end a PR description with "Shipped from a flow task." It is an instruction
+to the agent, not a rewrite of your command; `FLOW_PR_TRAILER=off` drops it.
+
 **Why should I believe you?** You should not. Read the next two sections.
 
 ## Works with, does not work with

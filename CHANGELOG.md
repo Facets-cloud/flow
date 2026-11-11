@@ -16,6 +16,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   Installs already past 25 see it on their next `flow done`. `FLOW_QUIET=1`
   suppresses it; nothing is written to the bus, and a nudge that cannot be
   recorded never fails `flow done`.
+- **PR trailer for flow-bound sessions.** The SessionStart hook now tells
+  every bound session (tab or headless child) to end a pull request
+  description with the line `Shipped from a [flow](https://github.com/Facets-cloud/flow) task.`
+  after any harness footer. An instruction in context, not an enforcement:
+  no command rewriting, no PreToolUse check, nothing added to the line.
+  `FLOW_PR_TRAILER=off` (also `0`/`false`) drops it; unbound sessions never
+  see it.
 - **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
   opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
   `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an
