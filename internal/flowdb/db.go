@@ -302,16 +302,24 @@ func migrate(db *sql.DB) error {
 	if err := migrateBusSelfToUser(db); err != nil {
 		return fmt.Errorf("migrate bus assignee: %w", err)
 	}
+	// A failed column probe is an error, never "skip": OpenDB stamps the
+	// schema fingerprint only after migrate returns nil, and a stamped DB
+	// is not migrated again.
+	//
 	// bus_nudges.attempts arrived after the table shipped; backfill it
 	// on databases created in between.
-	if has, err := columnExists(db, "bus_nudges", "attempts"); err == nil && !has {
+	if has, err := columnExists(db, "bus_nudges", "attempts"); err != nil {
+		return fmt.Errorf("migrate bus_nudges.attempts: %w", err)
+	} else if !has {
 		if _, err := db.Exec(`ALTER TABLE bus_nudges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("migrate bus_nudges.attempts: %w", err)
 		}
 	}
 	// bus_messages.reply_to arrived with `flow message --reply-to`; backfill
 	// it on databases created before the column shipped (nullable, no data).
-	if has, err := columnExists(db, "bus_messages", "reply_to"); err == nil && !has {
+	if has, err := columnExists(db, "bus_messages", "reply_to"); err != nil {
+		return fmt.Errorf("migrate bus_messages.reply_to: %w", err)
+	} else if !has {
 		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN reply_to TEXT`); err != nil {
 			return fmt.Errorf("migrate bus_messages.reply_to: %w", err)
 		}
@@ -319,7 +327,9 @@ func migrate(db *sql.DB) error {
 	// bus_messages.consumed_by_{identity,session} record who consumed a
 	// row; nullable, no backfill (old consumers are unknowable).
 	for _, col := range []string{"consumed_by_identity", "consumed_by_session"} {
-		if has, err := columnExists(db, "bus_messages", col); err == nil && !has {
+		if has, err := columnExists(db, "bus_messages", col); err != nil {
+			return fmt.Errorf("migrate bus_messages.%s: %w", col, err)
+		} else if !has {
 			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
 				return fmt.Errorf("migrate bus_messages.%s: %w", col, err)
 			}
@@ -335,7 +345,9 @@ func migrate(db *sql.DB) error {
 		{"notified_at", "ALTER TABLE bus_messages ADD COLUMN notified_at TEXT"},
 		{"answered_at", "ALTER TABLE bus_messages ADD COLUMN answered_at TEXT"},
 	} {
-		if has, err := columnExists(db, "bus_messages", c.col); err == nil && !has {
+		if has, err := columnExists(db, "bus_messages", c.col); err != nil {
+			return fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
+		} else if !has {
 			if _, err := db.Exec(c.ddl); err != nil {
 				return fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
 			}
@@ -345,7 +357,9 @@ func migrate(db *sql.DB) error {
 	// unread until a human has seen it. On first add, stamp every existing
 	// human row seen — the old mail is left behind rather than resurfaced
 	// as a backlog of stale asks and broadcasts.
-	if has, err := columnExists(db, "bus_messages", "seen_at"); err == nil && !has {
+	if has, err := columnExists(db, "bus_messages", "seen_at"); err != nil {
+		return fmt.Errorf("migrate bus_messages.seen_at: %w", err)
+	} else if !has {
 		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`); err != nil {
 			return fmt.Errorf("migrate bus_messages.seen_at: %w", err)
 		}
@@ -776,7 +790,10 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 	return nil
 }
 
-func columnExists(db *sql.DB, table, column string) (bool, error) {
+// columnExists is a var so tests can inject a probe failure.
+var columnExists = queryColumnExists
+
+func queryColumnExists(db *sql.DB, table, column string) (bool, error) {
 	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
 	if err != nil {
 		return false, fmt.Errorf("pragma table_info(%s): %w", table, err)
