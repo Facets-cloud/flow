@@ -7,8 +7,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-## [0.1.0-alpha.37] — 2026-11-12
-
 ### Added
 
 - **Harness wake: bus mail reaches a bound session with no listener.**
@@ -43,6 +41,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   once ("an earlier version"). Dev builds (`Version=dev`) skip it.
 - **`flow inbox wait`** — the non-acking wait: returns when unannounced
   mail lands in this session's inbox, leaves it unread.
+
+### Changed
+
+- **No more inbox Monitor.** With harness wake on, SessionStart tells a
+  bound Claude session not to arm a listener; the Monitor recipe left the
+  SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
+  kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
+
+## [0.1.0-alpha.37] — 2026-11-12
+
+### Added
 
 - **flow upgrades itself.** When the SessionStart hook finds a newer
   release, flow downloads it in the background after a command, checks
@@ -125,11 +134,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `flow message <peer> --reply-to <id>` and then `flow done`.
 
 ### Changed
-
-- **No more inbox Monitor.** With harness wake on, SessionStart tells a
-  bound Claude session not to arm a listener; the Monitor recipe left the
-  SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
-  kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
 
 - **Regular Codex sessions run sandboxed, with flow's commands allow-listed.**
   `flow do` and `flow run playbook` now open and resume interactive Codex
