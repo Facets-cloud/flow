@@ -248,6 +248,13 @@ one-shot `flow inbox pop` in the foreground, repeat until empty, and act
 on it. `flow watch` still works: watched reports arrive the same way. An
 idle Codex session does not wake on mail; it sees it on its next turn.
 
+**Codex sandbox: run flow BARE.** A regular Codex session runs in
+`workspace-write`, where flow.db is read-only. `$CODEX_HOME/rules/flow.rules`
+(written by `flow skill install`) lets `flow message|inbox|broadcast|watch|
+show|list|transcript` out with no prompt — but only as a bare top-level
+command. `VAR=… flow`, `cd … && flow` or a wrapper script stays sandboxed
+and fails with "readonly database". Other flow commands need Codex approval.
+
 **Safety net (Claude and Codex):** a PreToolUse hook also surfaces any
 just-arrived unread item — directed message OR broadcast — right before a
 tool runs, so a mid-turn "stop, don't do X" reaches you before the action
