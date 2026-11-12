@@ -91,13 +91,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
-- **Regular Codex sessions launch unsandboxed.** `flow do` and `flow run
-  playbook` now open and resume interactive Codex sessions with
-  `--dangerously-bypass-approvals-and-sandbox` even without
-  `--dangerously-skip-permissions`. A sandboxed session could not reach
-  local sockets, so `codex queue` and flow's message bus failed with
-  "Operation not permitted". Interactive launches still keep Codex's
-  hook-trust prompt. Headless paths and Claude are unchanged.
+- **Regular Codex sessions run sandboxed, with flow's commands allow-listed.**
+  `flow do` and `flow run playbook` now open and resume interactive Codex
+  sessions with `-s workspace-write -a on-request` instead of inheriting
+  whatever sandbox the read-only thread-minting probe left behind.
+  `--dangerously-skip-permissions` still passes
+  `--dangerously-bypass-approvals-and-sandbox`; headless paths and Claude are
+  unchanged. `flow skill install`/`update` now also writes a flow-owned Codex
+  exec-policy file, `$CODEX_HOME/rules/flow.rules` (default `~/.codex`), that
+  lets bare `flow message`, `inbox`, `broadcast`, `watch`, `show`, `list` and
+  `transcript` run outside the sandbox with no prompt, so the message bus
+  works from a sandboxed session. Every other flow command goes through
+  Codex's approval prompt. `flow skill uninstall` removes the file. Codex
+  matches only a bare top-level command, so the Codex SessionStart context
+  now says to run flow commands without env prefixes, `cd … &&` or wrapper
+  scripts.
 
 - **`FLOW_TERM` now outranks every ambient terminal marker.** An explicit,
   valid `FLOW_TERM` beats `$TMUX`, `$ZELLIJ` and Rex's and kitty's

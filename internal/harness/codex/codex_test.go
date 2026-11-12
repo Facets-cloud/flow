@@ -47,7 +47,7 @@ func TestNewSessionIDRejectsMissingOrInvalidThread(t *testing.T) {
 
 func TestCommands(t *testing.T) {
 	h := New()
-	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex --dangerously-bypass-approvals-and-sandbox resume "+testThreadID+" 'work'"; got != want {
+	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex -s workspace-write -a on-request resume "+testThreadID+" 'work'"; got != want {
 		t.Errorf("LaunchCmd=%q, want %q", got, want)
 	}
 	if got := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}); !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume ") {
@@ -216,5 +216,65 @@ func TestAutoRunArgvLastMessagePath(t *testing.T) {
 	}
 	if live[testThreadID] != 1 {
 		t.Errorf("live=%v, want the -o auto run detected", live)
+	}
+}
+
+// flow skill install writes a flow-owned exec-policy rules file into
+// $CODEX_HOME/rules/flow.rules so a workspace-write Codex session can run
+// flow's bus + read commands outside the sandbox. Exactly this set: never a
+// bare ["flow"], never anything that spawns agents or rewrites config.
+func TestInstallSkillWritesFlowRules(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	h := New()
+	rulesPath := filepath.Join(codexHome, "rules", "flow.rules")
+	// A stale/edited file is overwritten: flow owns it.
+	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rulesPath, []byte(`prefix_rule(pattern=["flow"], decision="allow")`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(codexHome, "rules", "user.rules")
+	if err := os.WriteFile(other, []byte("# user's own\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.InstallSkill(os.DirFS(t.TempDir())); err != nil {
+		t.Fatalf("InstallSkill: %v", err)
+	}
+	raw, err := os.ReadFile(rulesPath)
+	if err != nil {
+		t.Fatalf("flow.rules not written: %v", err)
+	}
+	got := string(raw)
+	if !strings.HasPrefix(got, "#") || !strings.Contains(got, "flow owns this file") {
+		t.Errorf("flow.rules missing ownership header:\n%s", got)
+	}
+	var rules []string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "prefix_rule(") {
+			rules = append(rules, line)
+		}
+	}
+	var want []string
+	for _, sub := range []string{"message", "inbox", "broadcast", "watch", "show", "list", "transcript"} {
+		want = append(want, `prefix_rule(pattern=["flow", "`+sub+`"], decision="allow")`)
+	}
+	if strings.Join(rules, "\n") != strings.Join(want, "\n") {
+		t.Errorf("flow.rules rules =\n%s\nwant\n%s", strings.Join(rules, "\n"), strings.Join(want, "\n"))
+	}
+	if err := h.UninstallSkill(); err != nil {
+		t.Fatalf("UninstallSkill: %v", err)
+	}
+	if _, err := os.Stat(rulesPath); !os.IsNotExist(err) {
+		t.Errorf("flow.rules survived uninstall (err=%v)", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("uninstall touched the user's own rules file: %v", err)
+	}
+	// Uninstall with no rules file present is fine.
+	if err := h.UninstallSkill(); err != nil {
+		t.Errorf("second UninstallSkill: %v", err)
 	}
 }

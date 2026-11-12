@@ -401,7 +401,7 @@ X", or a bare `flow do --auto X`.
 1. **Ask session mode first** via AskUserQuestion (skip if the user
    already stated one — "with skip permissions", "normally", "run
    autonomously"):
-   - **Regular** — tool-approval prompts (Codex runs unsandboxed).
+   - **Regular** — normal session with tool-approval prompts (safer).
    - **Skip permissions** — `--dangerously-skip-permissions` (faster).
    - **Autonomous (background)** — `flow do --auto`: headless, no tab, no
      human; does the work and self-completes via `flow done`. Implies

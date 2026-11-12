@@ -55,28 +55,36 @@ func TestInteractiveLaunchKeepsHookTrust(t *testing.T) {
 	}
 }
 
-// Regular (non-skip-permissions) interactive Codex sessions launch
-// unsandboxed too: a sandboxed session cannot reach local sockets
-// (`codex queue`, flow's bus) and fails with "Operation not permitted".
-// The flag is unconditional for interactive launch + resume.
-func TestInteractiveCommandsAlwaysUnsandboxed(t *testing.T) {
+// Regular (non-skip-permissions) interactive Codex sessions run in
+// Codex's workspace-write sandbox with on-request approvals; flow's own
+// bus/read commands escape it through the flow-owned exec-policy rules
+// file (see flowRules). Skip-permissions keeps the full bypass. Neither
+// --add-dir CODEX_HOME (lets the sandbox rewrite its own config) nor
+// --add-dir FLOW_ROOT (unneeded with the rules file) may appear.
+func TestInteractiveCommandsSandboxedUnlessSkip(t *testing.T) {
 	h := New()
+	const sandboxed = "codex -s workspace-write -a on-request resume "
 	const bypass = "codex --dangerously-bypass-approvals-and-sandbox resume "
-	for name, cmd := range map[string]string{
-		"LaunchCmd regular":   h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}),
-		"LaunchCmd skip":      h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}),
-		"ResumeCmd regular":   h.ResumeCmd(testThreadID, harness.LaunchOpts{}),
-		"ResumeCmd skip":      h.ResumeCmd(testThreadID, harness.LaunchOpts{SkipPermissions: true}),
-		"ResumeCmd injection": h.ResumeCmd(testThreadID, harness.LaunchOpts{Inject: "follow up"}),
+	for name, tc := range map[string]struct {
+		cmd, prefix string
+	}{
+		"LaunchCmd regular":   {h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), sandboxed},
+		"LaunchCmd skip":      {h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}), bypass},
+		"ResumeCmd regular":   {h.ResumeCmd(testThreadID, harness.LaunchOpts{}), sandboxed},
+		"ResumeCmd skip":      {h.ResumeCmd(testThreadID, harness.LaunchOpts{SkipPermissions: true}), bypass},
+		"ResumeCmd injection": {h.ResumeCmd(testThreadID, harness.LaunchOpts{Inject: "follow up"}), sandboxed},
 	} {
-		if !strings.HasPrefix(cmd, bypass) {
-			t.Errorf("%s = %q, want prefix %q", name, cmd, bypass)
+		if !strings.HasPrefix(tc.cmd, tc.prefix) {
+			t.Errorf("%s = %q, want prefix %q", name, tc.cmd, tc.prefix)
 		}
-		if strings.Count(cmd, "--dangerously-bypass-approvals-and-sandbox") != 1 {
-			t.Errorf("%s carries the bypass flag %d times, want 1: %q", name, strings.Count(cmd, "--dangerously-bypass-approvals-and-sandbox"), cmd)
+		if tc.prefix == sandboxed && strings.Contains(tc.cmd, "--dangerously-bypass-approvals-and-sandbox") {
+			t.Errorf("%s: regular session must not bypass the sandbox: %q", name, tc.cmd)
+		}
+		if strings.Contains(tc.cmd, "--add-dir") {
+			t.Errorf("%s: must not widen the sandbox with --add-dir: %q", name, tc.cmd)
 		}
 	}
-	if got, want := h.ResumeCmd(testThreadID, harness.LaunchOpts{}), bypass+testThreadID; got != want {
+	if got, want := h.ResumeCmd(testThreadID, harness.LaunchOpts{}), sandboxed+testThreadID; got != want {
 		t.Errorf("ResumeCmd=%q, want %q", got, want)
 	}
 }
