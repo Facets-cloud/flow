@@ -117,9 +117,9 @@ judgment calls from the user mid-way:
    `--harness`. It refuses with no brief, or a blank one.
 3. Tell the user in one line: `spawning auto child: <slug>`. Do not ask
    permission first, and keep working on the main thread.
-4. Keep your inbox Monitor armed (§4.18; Codex has none: pop in the
-   foreground when a flow-bus notice says mail landed): the child reports
-   with `flow message user/<driver>`.
+4. The child reports with `flow message user/<driver>`; harness wake
+   brings each report to you (§4.18): pop in the foreground when a
+   flow-bus notice says mail landed. No listener to arm.
 5. When the child says it is done, open the update note it names
    (`flow show task <slug>` lists it), verify the result yourself, then
    report to the user. Do not relay a child's claim unverified.

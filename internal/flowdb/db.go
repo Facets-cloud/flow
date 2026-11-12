@@ -264,6 +264,10 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply bus schema: %w", err)
 	}
+	if _, err := db.Exec(wakeDDL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply wake schema: %w", err)
+	}
 	if err := migrateBusSelfToUser(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate bus assignee: %w", err)

@@ -1128,7 +1128,7 @@ func cmdDoHere(query string, force bool) int {
 
 // printParentListenerReminder tells whoever launched an auto run of a
 // spawned child whether the parent session is subscribed to it, and that
-// the child's reports only wake the parent through an armed inbox Monitor.
+// how the child's reports reach the parent.
 func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 	if !task.ParentSlug.Valid || task.ParentSlug.String == "" {
 		return
@@ -1151,13 +1151,18 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 	fmt.Println(parentListenerReminder())
 }
 
-// parentListenerReminder is the last line of the parent reminder: arm a
-// Monitor in Claude; in Codex (no Monitor, background jobs are killed)
-// the child's reports surface as flow-bus notices instead.
+// parentListenerReminder is the last line of the parent reminder: in
+// Codex (no Monitor, background jobs are killed) and whenever harness wake
+// is on, the child's reports surface as flow-bus notices; only a Claude
+// parent with wake off (FLOW_NO_WAKE) still arms a Monitor.
 func parentListenerReminder() string {
 	if isCodexSession(nil) {
 		return "  Codex parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
 			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
+	}
+	if wakeActive() {
+		return "  The child's reports wake the parent session automatically (flow harness wake) — no inbox " +
+			"listener needed; when a flow-bus notice says mail landed, run a one-shot `flow inbox pop` in the foreground."
 	}
 	return "  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop + "'); re-arm it when it expires."
 }
