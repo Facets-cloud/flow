@@ -117,6 +117,9 @@ func cmdHookSessionStart(args []string) int {
 	// Claude socket push: only this hook process sees the session's
 	// socket token, so record it on every start/resume/compaction.
 	recordClaudeEndpoint(currentSessionID())
+	// The session (re)loads the current skill now: record its version
+	// silently so the prompt/tool hooks don't announce an upgrade.
+	recordSessionVersion()
 
 	bound := lookupBoundTask()
 	if bound != nil && !isAutoRunSession(bound) {
@@ -340,10 +343,10 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if t != nil && !isAutoRunSession(t) {
 		markSessionState(t.Slug, flowdb.SessionBusy)
 	}
-	pageCtx := busPromptSubmitContext()
+	pageCtx := busPromptSubmitContext() + upgradeNoticeContext(t)
 	if t == nil {
 		// Unbound — page-bus context (an unbound session can still have
-		// paged the user) is the only possible payload.
+		// paged the user) and the upgrade notice are the only payloads.
 		if pageCtx == "" {
 			return 0
 		}
@@ -380,7 +383,7 @@ func cmdHookPreToolUse(args []string) int {
 		return 2
 	}
 	readHookPayload()
-	ctx := busPreToolUseContext()
+	ctx := busPreToolUseContext() + upgradeNoticeContext(nil)
 	if ctx == "" {
 		return 0
 	}

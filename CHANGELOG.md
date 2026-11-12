@@ -31,6 +31,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   pop`" tagged `[flow-bus wake]`, never taken for the human typing.
   `flow message` / `flow broadcast` now print `woke <slug>` or `stored:
   <reason>`. `FLOW_NO_WAKE=1` turns it off.
+- **Upgrade notice for running sessions.** When the flow binary changes
+  while a Claude or Codex session is running, that session's next prompt
+  or tool call carries one `[flow-upgrade]` notice: flow was upgraded
+  (old → new), re-load the flow skill, and read the installed
+  `references/upgrade-notes.md` for what changed. SessionStart records
+  the session's version silently; the UserPromptSubmit and PreToolUse
+  hooks compare-and-set it per session id (new `session_versions` table),
+  so concurrent hooks announce it once and every later version change
+  announces again. Sessions that started before this release are told
+  once ("an earlier version"). Dev builds (`Version=dev`) skip it.
 - **`flow inbox wait`** — the non-acking wait: returns when unannounced
   mail lands in this session's inbox, leaves it unread.
 
