@@ -10,8 +10,11 @@ import (
 
 // githubLatestReleaseURL is the canonical endpoint for the most-recent
 // public release of flow. The SessionStart hook calls this at most
-// once per cacheTTL to surface upgrade availability to Claude.
-const githubLatestReleaseURL = "https://api.github.com/repos/Facets-cloud/flow/releases/latest"
+// once per cacheTTL to surface upgrade availability to Claude. It is a
+// var only so an end-to-end check can build a binary against a local
+// release server (-ldflags -X flow/internal/app.githubLatestReleaseURL=...);
+// nothing changes it at run time.
+var githubLatestReleaseURL = "https://api.github.com/repos/Facets-cloud/flow/releases/latest"
 
 // versionCacheTTL is how long a cached lookup is considered fresh.
 // 24h is a deliberate trade-off: long enough that we don't hit

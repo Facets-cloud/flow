@@ -16,7 +16,6 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
-	"testing"
 	"time"
 
 	"golang.org/x/mod/semver"
@@ -47,7 +46,19 @@ const (
 	selfUpgradeTimeout = 5 * time.Minute
 	// selfUpgradeTempPattern names the download beside the binary.
 	selfUpgradeTempPattern = ".flow-upgrade-*"
+	// selfUpgradeStaleTemp is the age after which a download left by a
+	// killed upgrade is removed.
+	selfUpgradeStaleTemp = time.Hour
+	// selfUpgradePrevSuffix names the binary an upgrade replaced, kept
+	// beside it for a rollback: `mv flow.prev flow`.
+	selfUpgradePrevSuffix = ".prev"
+	// selfUpgradeSmokeTimeout bounds the `--version` run of a download.
+	selfUpgradeSmokeTimeout = 10 * time.Second
 )
+
+// selfUpgradeDisabledForTests stops a test binary from starting an
+// upgrade of itself. A _test.go file sets it.
+var selfUpgradeDisabledForTests bool
 
 // releaseTagRe matches a release tag such as v0.1.0-alpha.29. A
 // `git describe` build (v0.1.0-alpha.24-1-g7ad6e4e) does not match,
@@ -136,6 +147,12 @@ func selfUpgradeOffReason(execPath string) string {
 	case os.Getenv("CI") != "":
 		// A CI job pins its version.
 		return "ci"
+	case inCodexSandboxForUpgrade():
+		// The Codex sandbox blocks the network, so every attempt fails.
+		return "sandbox"
+	case os.Getenv(autoRunEnvVar) != "":
+		// Never swap the binary in the middle of a headless run.
+		return "auto-run"
 	case selfUpgradeGOOS != "darwin" && selfUpgradeGOOS != "linux":
 		// Releases hold macOS and Linux builds only.
 		return "platform"
@@ -227,7 +244,7 @@ func takeClaim(path string, now time.Time) bool {
 // startDetachedSelfUpgrade starts `flow __self-upgrade` from execPath in
 // its own session, with its output in the log file, and does not wait.
 func startDetachedSelfUpgrade(execPath, root string) error {
-	if testing.Testing() {
+	if selfUpgradeDisabledForTests {
 		// A test binary must never replace itself.
 		return errors.New("self-upgrade is off in tests")
 	}
@@ -258,6 +275,15 @@ func cmdSelfUpgrade() int {
 
 	rel, err := fetchLatestRelease()
 	if err != nil {
+		// Record the failure so the next commands back off for
+		// selfUpgradeRetryAfter and the stale-version hint comes back.
+		// The target is the release the version cache named, the one
+		// maybeSelfUpgrade and selfUpgradeHandles compare against.
+		target, _ := readCachedVersion(filepath.Join(root, ".version-cache.json"))
+		st := selfUpgradeState{From: Version, Target: target, Result: "failed", Error: err.Error(), At: nowForVersion().UTC()}
+		if serr := writeSelfUpgradeState(root, st); serr != nil {
+			fmt.Fprintln(os.Stderr, "error:", serr)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
@@ -344,7 +370,9 @@ func fetchLatestRelease() (*githubRelease, error) {
 }
 
 // replaceSelf downloads the build of rel for this OS and CPU beside execPath,
-// checks its SHA-256 and renames it over execPath.
+// checks its SHA-256, checks that it runs and reports rel's version, keeps
+// the current binary as execPath+".prev", and renames the download over
+// execPath.
 func replaceSelf(execPath string, rel *githubRelease) error {
 	url, want, err := assetFor(rel)
 	if err != nil {
@@ -354,6 +382,7 @@ func replaceSelf(execPath string, rel *githubRelease) error {
 	if err != nil {
 		return err
 	}
+	removeStaleDownloads(filepath.Dir(execPath), nowForVersion())
 	tmp, err := os.CreateTemp(filepath.Dir(execPath), selfUpgradeTempPattern)
 	if err != nil {
 		return err
@@ -374,8 +403,86 @@ func replaceSelf(execPath string, rel *githubRelease) error {
 	if err := os.Chmod(tmpPath, info.Mode().Perm()); err != nil {
 		return err
 	}
+	if err := smokeTest(tmpPath, rel.TagName); err != nil {
+		return err
+	}
+	if err := keepPrevious(execPath); err != nil {
+		return fmt.Errorf("keep the current binary as %s: %w", execPath+selfUpgradePrevSuffix, err)
+	}
 	return os.Rename(tmpPath, execPath)
 }
+
+// smokeTest runs `path --version` and requires it to print tag. A build
+// that matches its checksum can still be for another CPU, crash on start,
+// or carry the wrong version; none of those may replace the binary.
+func smokeTest(path, tag string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), selfUpgradeSmokeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	// The new build must not start an upgrade of its own or touch the
+	// user's flow root while it is only being checked.
+	cmd.Env = append(os.Environ(), selfUpgradeEnv+"=1")
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("the download of %s does not run (`--version`: %v)", tag, err)
+	}
+	if got := strings.TrimSpace(string(out)); got != tag {
+		return fmt.Errorf("the download of %s reports %q on `--version`", tag, got)
+	}
+	return nil
+}
+
+// keepPrevious keeps execPath as execPath+".prev" (a hard link, so
+// execPath stays in place until the rename over it). A filesystem
+// without hard links gets a copy.
+func keepPrevious(execPath string) error {
+	prev := execPath + selfUpgradePrevSuffix
+	if err := os.Remove(prev); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Link(execPath, prev); err == nil {
+		return nil
+	}
+	return copyFile(execPath, prev)
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	return out.Close()
+}
+
+// removeStaleDownloads removes downloads in dir that a killed upgrade
+// left behind. A younger one may belong to a live upgrade, so it stays.
+func removeStaleDownloads(dir string, now time.Time) {
+	matches, _ := filepath.Glob(filepath.Join(dir, selfUpgradeTempPattern))
+	for _, m := range matches {
+		if info, err := os.Stat(m); err == nil && now.Sub(info.ModTime()) > selfUpgradeStaleTemp {
+			os.Remove(m)
+		}
+	}
+}
+
+// inCodexSandboxForUpgrade reports whether flow runs inside the Codex
+// sandbox. It matches inCodexSandbox of #132 (CODEX_SANDBOX set); fold
+// the two together once #132 is on main.
+func inCodexSandboxForUpgrade() bool { return os.Getenv("CODEX_SANDBOX") != "" }
 
 // assetFor returns the download URL and the SHA-256 of the build of rel
 // for this OS and CPU.
