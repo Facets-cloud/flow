@@ -47,7 +47,7 @@ func TestNewSessionIDRejectsMissingOrInvalidThread(t *testing.T) {
 
 func TestCommands(t *testing.T) {
 	h := New()
-	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex resume "+testThreadID+" 'work'"; got != want {
+	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex --dangerously-bypass-approvals-and-sandbox resume "+testThreadID+" 'work'"; got != want {
 		t.Errorf("LaunchCmd=%q, want %q", got, want)
 	}
 	if got := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}); !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume ") {

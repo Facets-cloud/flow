@@ -35,7 +35,7 @@ func cmdRunPlaybook(args []string) int {
 	}
 	slug := args[0]
 	fs := flagSet("run playbook")
-	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness (ignored when --here is set)")
+	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness (Codex sessions are always unsandboxed) (ignored when --here is set)")
 	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
 	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via `flow done`")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")

@@ -72,7 +72,7 @@ stop.
      switch). Implicitly skips the `--dangerously-skip-permissions` question
      — there's no claude spawn to forward it to.
    - **New tab — regular** — runs `flow run playbook <slug>`. Spawns a
-     fresh tab with tool-approval prompts.
+     fresh tab with tool-approval prompts (Codex: unsandboxed, no prompts).
    - **New tab — skip permissions** — runs `flow run playbook <slug>
      --dangerously-skip-permissions`. Spawns a fresh tab without
      approval prompts (faster).

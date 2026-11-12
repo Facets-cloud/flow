@@ -59,23 +59,22 @@ func (c *codex) ValidateSessionID(s string) error {
 // Codex stores transcripts by globally unique thread id, rather than cwd.
 func (c *codex) ValidateSession(workDir, sessionID string) error { return nil }
 
+// interactiveCmd prefixes every interactive Codex launch and resume,
+// regular and skip-permissions alike. Codex's sandbox blocks local
+// sockets ("Operation not permitted"), so a sandboxed session cannot use
+// `codex queue` or flow's message bus. Interactive launches still keep
+// Codex's hook-trust prompt (see hookTrustBypass).
+const interactiveCmd = "codex --dangerously-bypass-approvals-and-sandbox"
+
 func (c *codex) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) string {
 	if opts.Inject != "" {
 		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	cmd := "codex"
-	if opts.SkipPermissions {
-		cmd += " --dangerously-bypass-approvals-and-sandbox"
-	}
-	return cmd + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
+	return interactiveCmd + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
 }
 
 func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := "codex"
-	if opts.SkipPermissions {
-		cmd += " --dangerously-bypass-approvals-and-sandbox"
-	}
-	cmd += " resume " + sessionID
+	cmd := interactiveCmd + " resume " + sessionID
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}

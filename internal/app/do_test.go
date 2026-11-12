@@ -250,8 +250,10 @@ func TestCmdDoExplicitHarnessSelectsCodexForNewTask(t *testing.T) {
 	if task.Harness.String != "codex" || task.SessionID.String != sid {
 		t.Errorf("task = harness=%q session=%q, want codex/%q", task.Harness.String, task.SessionID.String, sid)
 	}
-	if !strings.Contains(script(), "codex resume "+sid) {
-		t.Errorf("spawn script did not resume Codex: %q", script())
+	// A regular (no --dangerously-skip-permissions) Codex launch is still
+	// unsandboxed, so the session can reach local sockets (codex queue, bus).
+	if !strings.Contains(script(), "codex --dangerously-bypass-approvals-and-sandbox resume "+sid) {
+		t.Errorf("spawn script did not resume Codex unsandboxed: %q", script())
 	}
 }
 

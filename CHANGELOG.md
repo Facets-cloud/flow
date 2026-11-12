@@ -91,6 +91,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- **Regular Codex sessions launch unsandboxed.** `flow do` and `flow run
+  playbook` now open and resume interactive Codex sessions with
+  `--dangerously-bypass-approvals-and-sandbox` even without
+  `--dangerously-skip-permissions`. A sandboxed session could not reach
+  local sockets, so `codex queue` and flow's message bus failed with
+  "Operation not permitted". Interactive launches still keep Codex's
+  hook-trust prompt. Headless paths and Claude are unchanged.
+
 - **`FLOW_TERM` now outranks every ambient terminal marker.** An explicit,
   valid `FLOW_TERM` beats `$TMUX`, `$ZELLIJ` and Rex's and kitty's
   variables, not just `TERM_PROGRAM`: those describe where flow happens to

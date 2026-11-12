@@ -44,12 +44,40 @@ func TestSkipPermissionsRunArgvBypassesHookTrust(t *testing.T) {
 func TestInteractiveLaunchKeepsHookTrust(t *testing.T) {
 	h := New()
 	for _, cmd := range []string{
+		h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}),
 		h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}),
+		h.ResumeCmd(testThreadID, harness.LaunchOpts{}),
 		h.ResumeCmd(testThreadID, harness.LaunchOpts{SkipPermissions: true}),
 	} {
 		if strings.Contains(cmd, "hook-trust") {
 			t.Errorf("interactive command bypasses hook trust: %q", cmd)
 		}
+	}
+}
+
+// Regular (non-skip-permissions) interactive Codex sessions launch
+// unsandboxed too: a sandboxed session cannot reach local sockets
+// (`codex queue`, flow's bus) and fails with "Operation not permitted".
+// The flag is unconditional for interactive launch + resume.
+func TestInteractiveCommandsAlwaysUnsandboxed(t *testing.T) {
+	h := New()
+	const bypass = "codex --dangerously-bypass-approvals-and-sandbox resume "
+	for name, cmd := range map[string]string{
+		"LaunchCmd regular":   h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}),
+		"LaunchCmd skip":      h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}),
+		"ResumeCmd regular":   h.ResumeCmd(testThreadID, harness.LaunchOpts{}),
+		"ResumeCmd skip":      h.ResumeCmd(testThreadID, harness.LaunchOpts{SkipPermissions: true}),
+		"ResumeCmd injection": h.ResumeCmd(testThreadID, harness.LaunchOpts{Inject: "follow up"}),
+	} {
+		if !strings.HasPrefix(cmd, bypass) {
+			t.Errorf("%s = %q, want prefix %q", name, cmd, bypass)
+		}
+		if strings.Count(cmd, "--dangerously-bypass-approvals-and-sandbox") != 1 {
+			t.Errorf("%s carries the bypass flag %d times, want 1: %q", name, strings.Count(cmd, "--dangerously-bypass-approvals-and-sandbox"), cmd)
+		}
+	}
+	if got, want := h.ResumeCmd(testThreadID, harness.LaunchOpts{}), bypass+testThreadID; got != want {
+		t.Errorf("ResumeCmd=%q, want %q", got, want)
 	}
 }
 
