@@ -9,6 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **flow upgrades itself.** When the SessionStart hook finds a newer
+  release, flow downloads it in the background after a command, checks
+  its SHA-256 against the release, and renames it over the binary. The
+  next command refreshes the skill. `FLOW_NO_AUTO_UPGRADE=1` stops it.
+  Source builds, CI, root, and a binary folder that flow cannot write
+  are skipped. Works on macOS and Linux.
+- **`flow upgrade [--check] [--force]`** installs the latest release now.
 - **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
   opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
   `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an
@@ -95,6 +102,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- The stale-version hint fired when the latest tag only differed from the
+  running version. It now fires only when the latest release is newer, by
+  semantic version order.
 - **`flow do` inside tmux on macOS now actually starts the harness.** The
   tmux backend typed the whole launch line (over 1 KB) into the new window
   before its shell had switched the tty to raw mode. A macOS tty in
