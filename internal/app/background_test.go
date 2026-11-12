@@ -230,6 +230,9 @@ func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 	if !pairArg(c.lastResume, "--resume", bgFullSID) {
 		t.Errorf("resume must --resume the OLD id; argv: %v", c.lastResume)
 	}
+	if !pairArg(c.lastResume, "--name", "bgt") {
+		t.Errorf("resume must keep the spawn display name (--name bgt); argv: %v", c.lastResume)
+	}
 	db := openFlowDB(t)
 	task, err := flowdb.GetTask(db, "bgt")
 	if err != nil {

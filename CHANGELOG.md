@@ -7,6 +7,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **A resumed background Claude session keeps its name.** When a
+  `FLOW_TERM=bg` task's session had exited, `flow do` resumed it with
+  `claude --bg --resume <id>` and no `--name`, so Claude named the new
+  session after the injected prompt. Resume now passes the same
+  `--name <title>` that spawn uses.
+
 ## [0.1.0-alpha.37] — 2026-11-12
 
 ### Added
