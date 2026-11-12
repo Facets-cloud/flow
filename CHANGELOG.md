@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.37] — 2026-11-12
+
 ### Added
 
 - **flow upgrades itself.** When the SessionStart hook finds a newer
