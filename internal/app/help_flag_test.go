@@ -42,6 +42,7 @@ func TestHelpFlagPrintsUsageWithoutSideEffects(t *testing.T) {
 		{"do"},
 		{"show", "task"},
 		{"show", "project"},
+		{"upgrade"},
 	}
 	for _, base := range cmds {
 		for _, tail := range [][]string{

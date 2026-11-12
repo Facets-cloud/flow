@@ -166,8 +166,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   through flow done" line is printed only after the status flipped.
 - **`--help` gaps closed.** `flow connector list|escalate|priority --help`
   and the group level `flow add|run|show|list|update|owner|workdir|skill|hook
-  --help` print usage and exit 0. `flow add task -- "-5 degrees fix"`
-  creates a name that starts with a dash. Help text no longer renders
+  --help` print usage and exit 0, as does `flow upgrade --help`. `flow add
+  task -- "-5 degrees fix"` creates a name that starts with a dash. Help text no longer renders
   `-no-sweep flow done` / `-auto flow done`.
 - **A skipped migration is no longer stamped as done.** If probing a
   column failed, the backfill was skipped silently and the schema version
