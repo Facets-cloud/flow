@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -30,6 +31,11 @@ func TestMain(m *testing.M) {
 	// environment: default the whole app package to NON-background so
 	// cmdDo tests exercise the terminal path. bg tests opt in via
 	// stubBGMode (which saves/restores this override).
+	// Hermetic harness presence: no harness binary counts as on PATH and
+	// $CODEX_HOME never points at the developer's real Codex state, so
+	// install tests only see harnesses their sandbox creates.
+	harnessLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	os.Unsetenv("CODEX_HOME")
 	notBG := false
 	spawner.BackgroundOverride = &notBG
 	os.Exit(m.Run())

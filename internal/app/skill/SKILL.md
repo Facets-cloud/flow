@@ -128,7 +128,7 @@ flags.
 ```
 Setup
   flow init                                 create ~/.flow/, init DB, install skill
-  flow skill install [--force]              (re)install the skill file
+  flow skill install [--force]              (re)install skill+hooks, all harnesses
   flow skill uninstall                      remove the skill
   flow skill update                         install --force after upgrading the binary
 
@@ -298,6 +298,10 @@ section is unclear, ask; if the user says "I don't know yet", write
    "Yes, create it" / "No, I'll fix the path") if the path doesn't exist.
 4. **Priority** — AskUserQuestion "High" / "Medium (Recommended)" / "Low",
    default Medium. Skip if already stated.
+5. **Driver?** — AskUserQuestion "How should this task run?":
+   "Driver (Recommended)" (owns it end to end, spawns `flow auto`
+   children) / "Regular" (this session only). Recommend Driver for
+   multi-part goals; on Driver add `--tag driver`. Never skip.
 
 Also, before saving: **project attachment** — AskUserQuestion with one
 option per existing project (label = slug, desc = name) plus "None
@@ -408,13 +412,11 @@ X", or a bare `flow do --auto X`.
 3. On "no task matching", ask the user to clarify or offer `flow add task`.
 4. Pass `--fresh` ONLY if the user explicitly asked ("start over", "fresh
    session"). Never on your own.
-5. **Harness selection:** if the user explicitly asks to open an
-   unbootstrapped task in another harness (for example, "open auth in
-   Codex" while speaking from Claude Code), pass `--harness codex`.
-   Without that flag, flow selects the active harness automatically. This is
-   a first-session choice only: never offer `--harness` for a task that
-   already has a session or is in progress, because its harness is pinned to
-   preserve its transcript and resume path.
+5. **Harness selection:** pass `--harness codex` only when the user
+   explicitly asks to open an *unbootstrapped* task in the other harness
+   ("open auth in Codex" from Claude Code); otherwise flow picks the active
+   harness. Never offer `--harness` for a task that already has a session —
+   its harness is pinned to its transcript.
 
 **Autonomous mode (`--auto`):** launches a detached headless run instead
 of a tab, returns immediately, does the work end-to-end and calls `flow
@@ -428,19 +430,20 @@ dead` + a log under `tasks/<slug>/auto-runs/`; `flow list tasks` has an
 `completed` = finished and closed itself. After launch, report it and
 stop — do NOT poll, tail the log, or peek at its separate session.
 
-**After `flow do` succeeds** it already spawned the tab and exported env
-vars. Report "opened tab: <title>" and stop. Do NOT: run diagnostics
-(`pgrep`, `osascript`) to verify the tab; spawn a tab
-yourself; re-run `flow do` unless asked; or peek into the new session (you
-have no access). If `flow do` errored (rc≠0), relay it and stop — no
-workarounds.
+**After `flow do` succeeds** it already spawned the tab. Report "opened
+tab: <title>" and stop — no diagnostics (`pgrep`, `osascript`, `tmux ls`),
+no spawning a tab yourself, no re-running `flow do`, no peeking into the
+new session. If it printed `no supported terminal detected` (Linux outside
+tmux/zellij/kitty), relay the printed command and the `--here` / `--auto`
+options verbatim. If it errored (rc≠0), relay it and stop — no workarounds.
 
 #### `flow do` edge cases & surgical instructions
 
 Read **references/do-advanced.md** when any of these apply:
 - `flow do` errors with the **live-session guard** (the task's session is
   already running in another tab).
-- `flow do` errors asking for **macOS Accessibility** (Terminal.app backend).
+- `flow do` errors asking for **macOS Accessibility** (Terminal.app), or
+  prints the Linux **no supported terminal** handoff.
 - The user wants to fire a one-off instruction at a task without opening the
   tab: `--with "<instruction>"` or `--with-file <path>` (also works on
   `flow run playbook`).
@@ -452,17 +455,17 @@ other harness" — for a task that ALREADY has a session (harness pinned, so
 `--harness` is rejected). Read **references/harness-transfer.md** and follow
 it: progress note → `flow transcript` handoff file → un-pin via the scoped
 sqlite UPDATE → `flow do --harness <h> --with-file <handoff>`.
-### 4.4a Driver delegation (auto children)
+### 4.4a Driver tasks & delegation (auto children)
 
-In a bound, human-driven session (the hook prints `flow driver
-delegation`), carve deterministic subtasks (scan, audit, fact-finding,
-repro debug, bulk/mechanical pass, fix + PR + test) off to headless
-children: `flow auto "<name>" --slug <s> --brief <file|->`. No §4.2
-interview and no §4.4 mode question; announce `spawning auto child:
-<slug>` and keep going. Design, decisions, quick answers and live/prod
-applies stay inline with the user. Auto children never spawn
-grandchildren. Brief template, result contract, examples → read
-**references/delegation.md**. §4.4 launch defaults are unchanged.
+A task tagged `driver` (list `◆driver`, show `role: driver`, anchor
+`[driver]`) owns its outcome end to end: hand ANY self-contained work
+(implementation, research, debug, fix+PR, scans) to `flow auto "<name>"
+--slug <s> --brief <file|->` children, never harness subagents; keep talk,
+decisions, verifying results, live/prod applies inline. Other bound
+sessions delegate lightly. No §4.2/§4.4 asks;
+announce `spawning auto child: <slug>`. Make one mid-session: `flow
+update task <bound> --tag driver` (prints the block). No grandchildren.
+Habits, brief template → **references/delegation.md**.
 
 ### 4.5 Save a progress note
 
@@ -665,10 +668,7 @@ the `<current-slug>` and the one-line drift):
 - **Later** — offer a drift note (AskUserQuestion "Yes, save a drift
   note" / "No, just continue") on the current task, then continue.
 
-This lives in the skill, not the hook, because detection needs
-session state (edits, debug topics) that only exists in the running
-conversation. Note "the bootstrapped task" includes playbook-run tasks —
-same triggers and recipe.
+Note "the bootstrapped task" includes playbook-run tasks.
 
 ### 4.12–4.13 Playbooks (add · run · capture-back)
 
@@ -681,10 +681,7 @@ follow it:
 - persisting in-run procedural adjustments back to the live playbook brief.
 - first-run capture-back (the first run crystallizes the real procedure).
 
-**Do not auto-fire `flow run playbook`** — manual trigger only, even if a
-playbook is named in passing. Do not propose scheduling during playbook
-intake. "The bootstrapped task" for drift/close-out purposes includes
-playbook-run tasks.
+Never auto-fire or propose scheduling (§8).
 ### 4.14 Substantive-unrelated-work check (passive, ongoing)
 
 A **passive workflow** alongside every other: it fires when substantive
@@ -735,7 +732,7 @@ moving into design / implementation / debugging. Re-evaluate on every turn.
 version am I on", a bare `flow --version`, or a SessionStart
 `flow-version-stale:` signal. flow upgrades itself after a command; the
 signal means it could not. Run `flow upgrade` (ask before `--force`), then
-`flow --version`. The manual fallback and failure causes live in
+`flow --version`. The install.sh fallback and failure causes live in
 **references/upgrade.md**.
 ### 4.16a Tagging tasks
 
@@ -770,11 +767,12 @@ consumed, then **read**. Two purposes — pick the verb by intent:
 1. **Reach out to the user / get instructions.** `flow message user
    "<ask>"` when the user is AFK and you need a decision, a permission
    only they can grant, or a long task they're waiting on is done. Stays
-   unread until answered (never expires); `--urgent` for truly blocking.
-   NOT for routine progress, and not when they're clearly active here.
-   ONE per wait — NEVER re-send. Their reply in this session acks it (a
-   hook injects how long you waited — re-verify stale state after a long
-   wait).
+   unread until answered; `--urgent` for truly blocking. A decision →
+   `--options "A|B"`: the answer lands in your inbox (`reply_to`) — never
+   block on it. Progress → `--fyi` (never pings). ONE per wait — NEVER
+   re-send. Opt-in pings: references/connectors.md. Another flow hub's
+   human: `flow message <peer> "…"` (never `<peer>/<task>`) →
+   references/peers.md.
 2. **Collaborate with peers.** `flow message <assignee>/<task-slug> "<what
    to DO>"` hands context to that task's session (no interruption). Add
    `--reply-to <id>` so a routed reply carries lineage (the bus doesn't
@@ -783,31 +781,31 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    if someone must act, message them too. You can NEVER message your own
    address (flow rejects it).
 
-**Auto-mode exception:** a `flow do --auto` agent runs unwatched: it posts
-progress via `flow broadcast`, and if its task has a parent its prompt
-says to `flow message user/<parent>` at milestones and when done/blocked,
-put its result in an update note it names, and spawn no children (§4.4a).
+**Auto mode, one rule:** a parented child reports to `user/<parent>`
+(milestones, done, blocked); parent closed → update note + `flow message
+user "FYI: …" --fyi`; no parent → the human only at done/blocked. Result goes
+in an update note it names; no children (§4.4a).
 
 Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
 **Consuming.** `flow inbox` lists unread; `--all` lists everything
 retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
-the oldest. `--as user` drains the human queue. At
-session start arm ONE inbox **Monitor** (a deferred tool: load it with
-ToolSearch `select:Monitor` first). It has no `persistent` param;
-`timeout_ms` is REQUIRED (max 1800000):
+the oldest. Never touch the human's mail (pop skips it). Only a BOUND
+session arms ONE inbox **Monitor** at start (never unbound; never in an
+auto run or Codex: those pop in the foreground). Load via ToolSearch
+`select:Monitor`; `timeout_ms` REQUIRED (max 1800000):
 
 - **Consumer** (default; `pop` acks as it goes): `Monitor(description:
   "flow inbox", timeout_ms: 1800000, command: 'while true; do flow inbox
-  pop --wait --timeout 300 --json || true; done')`
+  pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc
+  -ne 0 ] && sleep 5; done')` (3 = task closed)
 - **Reader / relay** (must NOT ack): same call with `pop --wait
-  --keep-unread`; plain `pop` would silently ack mail you only forward.
+  --keep-unread` (plain `pop` acks mail you only forward).
 
-Each message wakes you as an event. On expiry you get a notice: re-arm it
-immediately. No Monitor: background Bash `flow inbox pop --wait`, re-arm
-per wake. `flow watch <task|project|assignee>` subscribes you; tasks you
-create from a bound session are auto-watched. No notification UI; hooks
-NEVER consume.
+Each message wakes you. On expiry, re-arm it immediately. No Monitor
+(Codex): no listener; a notice says mail landed → one-shot pop. `flow watch
+<task|project|assignee>` subscribes you; tasks you create from a bound
+session are auto-watched. Hooks NEVER consume.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 

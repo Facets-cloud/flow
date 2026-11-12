@@ -22,26 +22,43 @@ cannot run or its last attempt failed. The log is
 `~/.flow/self-upgrade.log`; the last result is
 `~/.flow/.self-upgrade.json`.
 
-**Recipe:**
+**Recipe (same on macOS and Linux):**
 
-1. Run `flow --version` to capture the currently-installed version.
-2. Run `flow upgrade --check` to see the latest release.
-3. Run `flow upgrade`. It downloads the build for this Mac, checks
-   its SHA-256, and replaces the binary.
+1. Run `flow --version` to capture the currently-installed version,
+   and `command -v flow` to see where the binary lives.
+2. Run `flow upgrade --check` to see the latest release, then
+   `flow upgrade`. It downloads the build for this OS/arch, checks its
+   SHA-256, and replaces the binary.
    - If it says the binary is a **development build**, the user built
      flow from source. Ask before you run `flow upgrade --force`,
-     which replaces it with the release.
+     which replaces it with the release (or `git pull && make install`
+     in their checkout, if they want to stay on source).
    - If it says flow **cannot write to the folder** of the binary
-     (for example, `/usr/local/bin` that root owns), offer to move
-     flow to `~/.local/bin`, or use the manual fallback below.
+     (for example, `/usr/local/bin` that root owns), use the
+     install.sh fallback below.
+3. **install.sh fallback.** The canonical install/upgrade procedure is
+   `INSTALL.md` in the repo
+   (`https://raw.githubusercontent.com/Facets-cloud/flow/main/INSTALL.md`).
+   Read it with `WebFetch`/`Read`; do not invent download URLs. The
+   short version: re-running the one-line installer upgrades in place:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/Facets-cloud/flow/main/install.sh | sh
+   ```
+   It picks the OS/arch, verifies SHA256, installs to `~/.local/bin`
+   (override with `FLOW_INSTALL_DIR`; pin with `FLOW_VERSION=vX.Y.Z`).
+   For `/usr/local/bin/flow` or another root-owned path, re-run it
+   with `FLOW_INSTALL_DIR=<that dir>`; it needs `sudo`, so say so and
+   let the user run it (or move to `~/.local/bin` and fix PATH, which
+   also lets flow upgrade itself from then on).
 4. Run `flow skill update` to refresh the embedded skill on disk and
-   re-wire the supported hooks in the active harness configuration
-   (`~/.claude/settings.json` or `~/.codex/hooks.json`). (The next
-   `flow` command runs the same refresh, but explicit is better and
+   re-wire the supported hooks for every present harness
+   (`~/.claude/settings.json` and/or `$CODEX_HOME/hooks.json`, default
+   `~/.codex`; `--harness claude|codex` limits it to one). (The auto-upgrade path runs the same
+   refresh on the next `flow` invocation, but explicit is better and
    surfaces any errors immediately.)
 5. Run `flow --version` again and confirm the version changed. If it
-   did not change, the binary on `$PATH` is not the one that was
-   replaced — check `which flow`.
+   did not change, the binary on `$PATH` is still the old one —
+   check `command -v flow` against the path you wrote to.
 
 **Why flow did not upgrade itself** — tell the user the cause:
 
@@ -52,22 +69,25 @@ cannot run or its last attempt failed. The log is
 - The last attempt failed; flow waits 24 hours before it tries the
   same release again. Read `~/.flow/self-upgrade.log`.
 
-**Manual fallback** (only when `flow upgrade` cannot run): the
-canonical procedure lives in the README at
-`https://github.com/Facets-cloud/flow`. Read its **Install** section
-for the binary download URL and the architecture (`arm64` for Apple
-Silicon, `amd64` for Intel). Replace the binary, then run
-`xattr -d com.apple.quarantine <path>` on it — Gatekeeper refuses a
-downloaded unsigned binary otherwise.
+**Platform notes:**
+
+- macOS: `flow upgrade` and install.sh do not leave a quarantine
+  attribute. Only a hand-downloaded binary needs
+  `xattr -d com.apple.quarantine <path>` before it will run.
+- Linux: there is no quarantine step. Nothing else differs.
 
 **Anti-patterns:**
 
-- **Do not invent download URLs.** Read them from the README at
+- **Do not invent download URLs.** Read INSTALL.md (or the README) at
   `https://github.com/Facets-cloud/flow`. Releases are at
-  `/releases/latest/download/`; the README has the exact form.
+  `/releases/latest/download/`; install.sh already knows the exact form.
 - **Do not run `flow skill install` on an existing install** — it
   errors. Use `flow skill update` for the refresh path.
 - **Do not run `flow upgrade --force` without asking** — it replaces
   a binary the user built on purpose.
 - **Do not set `FLOW_NO_AUTO_UPGRADE`** unless the user asks to stop
   automatic upgrades.
+- **Do not reach for `sudo` by default.** The default install dir is
+  user-writable; sudo is only for a root-owned `FLOW_INSTALL_DIR`.
+- **Do not run `xattr` on Linux** (it is not there) and do not skip it
+  on a hand-downloaded macOS binary.

@@ -178,11 +178,18 @@ func addTask(args []string) int {
 	var slug string
 	if *slugFlag != "" {
 		slug = *slugFlag
+		if isReservedBusName(slug) {
+			fmt.Fprintf(os.Stderr, "error: task slug %q is reserved — it is the human's bus address (flow message user); pick another --slug\n", slug)
+			return 2
+		}
 	} else {
 		baseSlug, err := Slugify(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 2
+		}
+		if isReservedBusName(baseSlug) {
+			baseSlug += "-task"
 		}
 		slug, err = uniqueSlug(db, "tasks", baseSlug)
 		if err != nil {

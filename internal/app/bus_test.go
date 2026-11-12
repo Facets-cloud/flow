@@ -55,12 +55,17 @@ func TestMessageHumanLifecycle(t *testing.T) {
 		t.Errorf("send output: %s", out)
 	}
 
-	// The user replying in the sender session acks + reports the wait.
-	out = captureStdout(t, func() {
-		if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
-			t.Fatalf("ups hook rc != 0")
-		}
+	// The user replying (a human-typed prompt) in the sender session acks
+	// + reports the wait.
+	t.Setenv("FLOW_AUTO_RUN", "")
+	withHookStdin(t, `{"session_id":"sid-msg-1","prompt":"approved"}`, func() {
+		out = captureStdout(t, func() {
+			if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
+				t.Fatalf("ups hook rc != 0")
+			}
+		})
 	})
+	hookSessionID, hookPrompt, hookPromptKnown = "", "", false
 	ctx := busHookContext(t, out)
 	if !strings.Contains(ctx, "answered after") || !strings.Contains(ctx, "need release approval") {
 		t.Errorf("ack context: %s", ctx)
@@ -78,36 +83,38 @@ func TestInboxPopConsumesOneAtATime(t *testing.T) {
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-p", "sid-p")
 
+	// Another assignee's queue (a transport worker drains it with --as);
+	// the local human's own queue is never popped (F2).
 	captureStdout(t, func() {
-		if rc := cmdMessage([]string{"user", "first"}); rc != 0 {
+		if rc := cmdMessage([]string{"shashwat", "first"}); rc != 0 {
 			t.Fatal("msg1")
 		}
-		if rc := cmdMessage([]string{"user", "second"}); rc != 0 {
+		if rc := cmdMessage([]string{"shashwat", "second"}); rc != 0 {
 			t.Fatal("msg2")
 		}
 	})
 
 	out := captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--as", "shashwat"}); rc != 0 {
 			t.Fatalf("pop rc != 0")
 		}
 	})
 	if !strings.Contains(out, "first") || strings.Contains(out, "second") {
 		t.Errorf("pop should consume exactly the oldest: %s", out)
 	}
-	// Popping a human-directed message ACKS it.
-	s, _ := flowdb.GetBusStats(db, "user")
+	// Popping a directed message to a person's queue ACKS it.
+	s, _ := flowdb.GetBusStats(db, "shashwat")
 	if s.Acked != 1 || s.Pending != 1 {
 		t.Errorf("after one pop: %+v", s)
 	}
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--as", "shashwat"}); rc != 0 {
 			t.Fatalf("pop2 rc != 0")
 		}
 	})
 	// Empty inbox: exit 1 (script/Monitor friendly).
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 1 {
+		if rc := cmdInbox([]string{"pop", "--as", "shashwat"}); rc != 1 {
 			t.Errorf("empty pop should exit 1")
 		}
 	})
@@ -127,10 +134,14 @@ func TestInboxAllListsReadAndUnread(t *testing.T) {
 			t.Fatal("msg2")
 		}
 	})
-	// Consume the oldest (acks it).
+	// The human reads the oldest from their own terminal (acks it).
+	var first string
+	_ = db.QueryRow(`SELECT id FROM bus_messages WHERE body='first msg'`).Scan(&first)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("FLOW_AUTO_RUN", "")
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--as", "user"}); rc != 0 {
-			t.Fatal("pop")
+		if rc := cmdInbox([]string{"read", first}); rc != 0 {
+			t.Fatal("read")
 		}
 	})
 	// Default inbox shows only the remaining unread one.
@@ -187,7 +198,9 @@ func TestInboxReadByID(t *testing.T) {
 	}
 	id := rows[0].ID
 
-	// read <id> marks it read out of pop order.
+	// read <id> from the human's own terminal marks it read out of pop order.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("FLOW_AUTO_RUN", "")
 	out = captureStdout(t, func() {
 		if rc := cmdInbox([]string{"read", id}); rc != 0 {
 			t.Fatal("read rc != 0")
@@ -223,13 +236,13 @@ func TestInboxPopKeepUnread(t *testing.T) {
 	mkBusTask(t, db, "task-ku", "sid-ku")
 
 	captureStdout(t, func() {
-		if rc := cmdMessage([]string{"user", "forward me"}); rc != 0 {
+		if rc := cmdMessage([]string{"shashwat", "forward me"}); rc != 0 {
 			t.Fatal("msg")
 		}
 	})
 	// pop --keep-unread returns the message WITHOUT acking it.
 	out := captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 0 {
+		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "shashwat"}); rc != 0 {
 			t.Fatal("keep-unread pop rc != 0")
 		}
 	})
@@ -237,26 +250,26 @@ func TestInboxPopKeepUnread(t *testing.T) {
 		t.Errorf("keep-unread output: %s", out)
 	}
 	// It must NOT be acked (not answered): a reader only forwarded it.
-	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 0 {
+	if s, _ := flowdb.GetBusStats(db, "shashwat"); s.Acked != 0 {
 		t.Errorf("keep-unread acked the message: %+v", s)
 	}
 	// It's now delivered → a second keep-unread pop won't re-return it (no
 	// hot loop for the relay), and plain inbox no longer lists it as unread.
 	captureStdout(t, func() {
-		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "user"}); rc != 1 {
+		if rc := cmdInbox([]string{"pop", "--keep-unread", "--as", "shashwat"}); rc != 1 {
 			t.Errorf("delivered message was re-returned by keep-unread")
 		}
 	})
 	// But it survives in --all and can still be answered by id.
-	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--as", "user", "--json"}) })
+	out = captureStdout(t, func() { _ = cmdInbox([]string{"--all", "--as", "shashwat", "--json"}) })
 	var all []busMsgJSON
 	if err := json.Unmarshal([]byte(out), &all); err != nil || len(all) != 1 {
 		t.Fatalf("--all after keep-unread: %v %v", all, err)
 	}
-	if _, _, err := flowdb.ReadMessageByID(db, all[0].ID, "read"); err != nil {
+	if _, _, err := flowdb.ReadMessageByID(db, all[0].ID, flowdb.Consumer{By: "read"}); err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := flowdb.GetBusStats(db, "user"); s.Acked != 1 {
+	if s, _ := flowdb.GetBusStats(db, "shashwat"); s.Acked != 1 {
 		t.Errorf("forwarded message could not be answered by id: %+v", s)
 	}
 }
@@ -282,7 +295,7 @@ func TestMessageReplyToLineage(t *testing.T) {
 
 	// Reply routed to a task session, stamped with the parent id.
 	out := captureStdout(t, func() {
-		if rc := cmdMessage([]string{"task-b", "us-east-1", "--reply-to", parentID}); rc != 0 {
+		if rc := cmdMessage([]string{"user/task-b", "us-east-1", "--reply-to", parentID}); rc != 0 {
 			t.Fatal("reply rc != 0")
 		}
 	})
@@ -305,7 +318,7 @@ func TestMessageReplyToLineage(t *testing.T) {
 
 	// Unknown parent id is rejected at send time.
 	out = captureStdout(t, func() {
-		if rc := cmdMessage([]string{"task-b", "orphan", "--reply-to", "deadbeef"}); rc != 2 {
+		if rc := cmdMessage([]string{"user/task-b", "orphan", "--reply-to", "deadbeef"}); rc != 2 {
 			t.Errorf("reply to missing parent should rc=2")
 		}
 	})
@@ -345,7 +358,7 @@ func TestBroadcastFanoutToWatchers(t *testing.T) {
 
 	// Direct message to a task: bare slug is sugar for self/<slug>.
 	captureStdout(t, func() {
-		if rc := cmdMessage([]string{"task-b", "state file moved"}); rc != 0 {
+		if rc := cmdMessage([]string{"user/task-b", "state file moved"}); rc != 0 {
 			t.Fatalf("message task rc != 0")
 		}
 	})
@@ -413,8 +426,8 @@ func TestInboxAsAssigneeAndJSON(t *testing.T) {
 	if m.To.Assignee != "shashwat" || m.Kind != "message" || m.Body == "" {
 		t.Errorf("json roundtrip: %+v", m)
 	}
-	if m.Status != "pending" { // rendered row is pre-claim snapshot
-		t.Logf("status field: %s", m.Status)
+	if m.Status != "acked" { // pop renders the real post-claim status (F10)
+		t.Errorf("status field: %s, want acked", m.Status)
 	}
 
 	// list --as --json for a fresh message to shashwat.
@@ -521,6 +534,7 @@ func stopHookOnce(t *testing.T, active bool) string {
 
 func TestHookStopNudgesPostOnlyWithWatchers(t *testing.T) {
 	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "") // auto runs never get the nudge (F8)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-a", "sid-a")
@@ -818,13 +832,13 @@ func TestMessageParsingToleratesFlagOrderAndBodyFlag(t *testing.T) {
 		return rc
 	}
 
-	if rc := send("tgt", "--urgent", "flag first body"); rc != 0 {
+	if rc := send("user/tgt", "--urgent", "flag first body"); rc != 0 {
 		t.Fatalf("flag-first rc=%d", rc)
 	}
-	if rc := send("tgt", "--body", "named flag body"); rc != 0 {
+	if rc := send("user/tgt", "--body", "named flag body"); rc != 0 {
 		t.Fatalf("--body rc=%d", rc)
 	}
-	if rc := send("tgt", "positional body", "--urgent"); rc != 0 {
+	if rc := send("user/tgt", "positional body", "--urgent"); rc != 0 {
 		t.Fatalf("positional rc=%d", rc)
 	}
 
@@ -848,7 +862,7 @@ func TestMessageParsingToleratesFlagOrderAndBodyFlag(t *testing.T) {
 
 	// unknown flag errors and stores nothing new
 	before, _ := flowdb.PendingForTask(db, "tgt")
-	if rc := send("tgt", "--nope", "x"); rc == 0 {
+	if rc := send("user/tgt", "--nope", "x"); rc == 0 {
 		t.Fatalf("unknown flag should error, not send")
 	}
 	after, _ := flowdb.PendingForTask(db, "tgt")

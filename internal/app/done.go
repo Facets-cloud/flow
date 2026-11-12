@@ -1,7 +1,10 @@
 package app
 
 import (
+	"database/sql"
+	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"fmt"
 	"os"
 )
@@ -69,17 +72,35 @@ func cmdDone(args []string) int {
 		return 1
 	}
 
+	// Idempotent: a task that is already done keeps its status_changed_at
+	// and gets no second sweep — two sweeps would rewrite kb/*.md
+	// concurrently and the last writer would win. The flip is conditional
+	// on status, so of two concurrent `flow done` calls exactly one wins
+	// the flip (and the sweep); the other lands here.
+	if task.Status == "done" {
+		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
+		return 0
+	}
+	beforeDoneFlip()
 	now := flowdb.NowISO()
-	res, err := db.Exec(
-		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=?`,
+	// RETURNING reads the auto-run columns in the same statement as the
+	// flip, so the deferral decision below sees the row as it was at the
+	// flip — not the copy loaded earlier, which a supervisor may have
+	// finalized since. SQLite serializes this with the supervisor's
+	// conditional finalize (finalizeAutoRunUnlessDone): if the run is
+	// still 'running' here, that finalize has not happened, will now see
+	// status='done', and the supervisor takes the done path (and sweeps).
+	err = db.QueryRow(
+		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=? AND status != 'done'
+		 RETURNING auto_run_status, auto_run_pid`,
 		now, now, task.Slug,
-	)
+	).Scan(&task.AutoRunStatus, &task.AutoRunPID)
+	if errors.Is(err, sql.ErrNoRows) {
+		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: mark done: %v\n", err)
-		return 1
-	}
-	if affected, _ := res.RowsAffected(); affected == 0 {
-		fmt.Fprintf(os.Stderr, "error: task %q not updated\n", task.Slug)
 		return 1
 	}
 	if err := flowdb.CleanupTaskBus(db, task.Slug); err != nil {
@@ -88,26 +109,56 @@ func cmdDone(args []string) int {
 	fmt.Printf("Marked %s as done\n", task.Slug)
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
-		fmt.Print("updating kbs, project updates...")
-		projectSlug := ""
-		if task.ProjectSlug.Valid {
-			projectSlug = task.ProjectSlug.String
-		}
 		h, lookupErr := harnessForTask(task)
 		if lookupErr != nil {
 			// Task pinned to an unsupported harness — skip the
 			// sweep but keep the status flip (the flip is the
 			// contract; the sweep is best-effort).
-			fmt.Println()
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
-		} else if err := h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug)); err != nil {
-			fmt.Println()
-			fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+		} else if closeoutDeferred(h, task) {
+			fmt.Println("close-out sweep deferred: the auto-run supervisor runs it after the harness exits")
 		} else {
-			fmt.Println(" done")
+			fmt.Print("updating kbs, project updates...")
+			if err := runCloseoutSweep(h, task); err != nil {
+				fmt.Println()
+				fmt.Fprintf(os.Stderr, "warning: close-out sweep failed: %v\n", err)
+			} else {
+				fmt.Println(" done")
+			}
 		}
 	}
 	return 0
+}
+
+// beforeDoneFlip is a test seam: it runs between loading the task and
+// flipping it to done, where a supervisor can finalize its run.
+var beforeDoneFlip = func() {}
+
+// closeoutDeferred reports whether the task's auto-run supervisor will run
+// the close-out sweep, so this `flow done` must not (one sweeper). That is
+// the case on a harness that defers (can't host a nested sweep) when
+// either this `flow done` runs inside the task's own auto run, or the
+// task has a live auto run — e.g. a human closing it mid-run. The
+// supervisor sweeps after the harness exits if the task is done.
+func closeoutDeferred(h harness.Harness, task *flowdb.Task) bool {
+	if !harness.DefersCloseoutInAutoRun(h) {
+		return false
+	}
+	if os.Getenv(autoRunEnvVar) == task.Slug {
+		return true
+	}
+	return task.AutoRunStatus.Valid && task.AutoRunStatus.String == "running" &&
+		task.AutoRunPID.Valid && processAlive(int(task.AutoRunPID.Int64))
+}
+
+// runCloseoutSweep runs the headless close-out sweep for task via h.
+// Shared by the inline `flow done` path and the deferred supervisor path.
+func runCloseoutSweep(h harness.Harness, task *flowdb.Task) error {
+	projectSlug := ""
+	if task.ProjectSlug.Valid {
+		projectSlug = task.ProjectSlug.String
+	}
+	return h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug))
 }
 
 // buildCloseoutSweepPrompt composes the headless prompt that drives
@@ -149,9 +200,9 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 		"You are running an automated close-out sweep for completed flow task %q.\n\n"+
 			"%s"+
 			"## Steps\n\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
+			"1. "+flowSkillStep()+". This loads §4.10 (KB rules) and §4.5 (update-file shape).\n\n"+
 			"2. Run: flow transcript %s\n"+
-			"   This prints the conversation transcript from the task's Claude session. Read it carefully end to end.\n\n"+
+			"   This prints the conversation transcript from the task's agent session. Read it carefully end to end.\n\n"+
 			"3. KB sweep — strict bar, distill the essence.\n\n"+
 			"   For each of these five files, ask: across the WHOLE transcript, is there a durable fact about the user, their org, products, processes, or business that belongs there per §4.10's bucket table AND meets ALL three bars below?\n"+
 			"     - %s/kb/user.md\n"+
@@ -162,7 +213,7 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 			"   The three bars (ALL must be met):\n"+
 			"     a. **Durable** — still true / still relevant in three months. Not 'today I felt X', not 'we tried approach Y for this one PR'.\n"+
 			"     b. **Surprising or non-obvious** — not derivable from the code, the README, or what a sibling task would already know.\n"+
-			"     c. **Future-relevant** — a future Claude session would change a decision because of it. If you can't picture that, skip.\n\n"+
+			"     c. **Future-relevant** — a future agent session would change a decision because of it. If you can't picture that, skip.\n\n"+
 			"   Most task transcripts contribute nothing to the KB. Mechanical work, narrow bug fixes, local refactors, routine debugging — these almost never produce KB entries. The expected answer for most files on most tasks is 'no'. Don't reach.\n\n"+
 			"4. Writing KB entries — INTERPRET the essence; do not transcribe.\n\n"+
 			"   This is the close-out mode of §4.10 and is DIFFERENT from real-time scoop. In real-time scoop you capture what the user just said, mostly verbatim, because it's a single fresh fact. Here you've read the whole conversation — your job is to SYNTHESIZE: pull out the durable insight in compact paraphrase, in your own words, capturing the essence and (where helpful) the why. Avoid quote dumps. One concise dated bullet per insight.\n\n"+

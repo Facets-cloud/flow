@@ -279,6 +279,9 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		fmt.Printf("assignee:      %s\n", t.Assignee.String)
 	}
 
+	if isDriverTask(db, t.Slug) {
+		fmt.Printf("role:          driver (owns the outcome; delegates to flow auto children)\n")
+	}
 	if tags, err := flowdb.GetTaskTags(db, t.Slug); err == nil && len(tags) > 0 {
 		parts := make([]string, len(tags))
 		for i, tg := range tags {
@@ -349,6 +352,9 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		fmt.Printf("auto_run:              %s\n", line)
 		if t.AutoRunLog.Valid && t.AutoRunLog.String != "" {
 			fmt.Printf("auto_run_log:          %s\n", t.AutoRunLog.String)
+			if last := autoRunLastMessagePath(t.AutoRunLog.String); statOK(last) {
+				fmt.Printf("auto_run_last:         %s\n", last)
+			}
 		}
 	}
 
@@ -748,3 +754,5 @@ func temporalSummary(t *flowdb.Task, now time.Time) string {
 
 	return strings.Join(parts, ", ")
 }
+
+func statOK(p string) bool { _, err := os.Stat(p); return err == nil }

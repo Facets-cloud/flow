@@ -26,7 +26,7 @@ import (
 // hook caches the latest tag at most once a day (release.go). After a
 // command, flow reads only that cache. When the cache names a newer
 // release, flow starts a detached `flow __self-upgrade` and does not
-// wait for it. That process downloads the build for this Mac, checks
+// wait for it. That process downloads the build for this OS and CPU, checks
 // its SHA-256 against the release, and renames it over the binary. It
 // never writes into the running file: on Apple silicon, a write into a
 // signed binary gets the next runs killed. The next flow run sees the
@@ -136,8 +136,8 @@ func selfUpgradeOffReason(execPath string) string {
 	case os.Getenv("CI") != "":
 		// A CI job pins its version.
 		return "ci"
-	case selfUpgradeGOOS != "darwin":
-		// Releases hold macOS builds only.
+	case selfUpgradeGOOS != "darwin" && selfUpgradeGOOS != "linux":
+		// Releases hold macOS and Linux builds only.
 		return "platform"
 	case selfUpgradeAsRoot():
 		// sudo keeps HOME on macOS, so root would own the files it writes there.
@@ -343,7 +343,7 @@ func fetchLatestRelease() (*githubRelease, error) {
 	return &rel, nil
 }
 
-// replaceSelf downloads the build of rel for this Mac beside execPath,
+// replaceSelf downloads the build of rel for this OS and CPU beside execPath,
 // checks its SHA-256 and renames it over execPath.
 func replaceSelf(execPath string, rel *githubRelease) error {
 	url, want, err := assetFor(rel)
@@ -378,7 +378,7 @@ func replaceSelf(execPath string, rel *githubRelease) error {
 }
 
 // assetFor returns the download URL and the SHA-256 of the build of rel
-// for this Mac.
+// for this OS and CPU.
 func assetFor(rel *githubRelease) (url, sha string, err error) {
 	name := "flow-" + runtime.GOOS + "-" + runtime.GOARCH
 	for _, a := range rel.Assets {

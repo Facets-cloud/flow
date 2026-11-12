@@ -1,0 +1,7 @@
+{
+  "name": "peer-local",
+  "contract": 2,
+  "roles": ["peer"],
+  "exec": "./run",
+  "capabilities": ["send"]
+}

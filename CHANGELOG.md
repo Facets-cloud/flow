@@ -14,14 +14,375 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   its SHA-256 against the release, and renames it over the binary. The
   next command refreshes the skill. `FLOW_NO_AUTO_UPGRADE=1` stops it.
   Source builds, CI, root, and a binary folder that flow cannot write
-  are skipped.
+  are skipped. Works on macOS and Linux.
 - **`flow upgrade [--check] [--force]`** installs the latest release now.
+- **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
+  opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
+  `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an
+  already-open session. When no supported terminal is detected (Linux
+  outside tmux/zellij/kitty) `flow do` no longer dead-ends: it keeps the
+  reserved session, prints the exact command to run by hand and points at
+  `--here` / `--auto`. With `FLOW_TERM` unset, the macOS selection order
+  is unchanged for everyone not already inside tmux.
+- **Prompt-based install.** A root `INSTALL.md` tells a coding agent how to
+  install flow on macOS or Linux from one pasted line: detect OS/arch, run
+  `install.sh`, fix PATH, `flow init`, verify. The skill's upgrade
+  reference follows the same path on both OSes, and the skill text now
+  scopes osascript/xattr/launchd advice to macOS.
+- **CI runs the full suite on macOS and Linux**, plus a Linux smoke job
+  (`scripts/smoke-linux.sh`) that installs from a local mirror with
+  `install.sh`, inits, adds a task, binds with `--here`, spawns inside tmux
+  with a stub `claude`, closes with `flow done`, and round-trips a message.
+  The same script runs on macOS when a tmux binary is on PATH.
+- **Peer desk primitives.** `flow peer deliver --to <task>` lets the
+  receiving connector route inbound peer mail to a local task it chooses
+  (it must be open; else exit 1, nothing stored). A reply whose asking
+  task has closed lands in the `--to` task with `reply_to` kept; task mail
+  never pings the human. flow keeps no peer→task mapping. Messages to a
+  peer may now carry 4000 chars (local bus stays 500). Attachments:
+  `flow message <to> --attach <file>` (repeatable) and
+  `flow peer deliver --attach <path>` copy files into
+  `$FLOW_ROOT/attachments/<id>/` and record `{name,size,sha256}` in a new
+  additive `bus_messages.attachments` column; caps 25 MiB/file, 100
+  MiB/message, 20 files, regular files only. Inbox views show absolute
+  paths, `--json` carries `attachments:[{name,size,sha256,path}]`, and the
+  peer `run send` payload gains `attachments` (`[]` when none). The
+  peer-local sample verifies each sha256 and carries the files.
+- **Connectors can notify the human.** A connector process (no bound task)
+  holding its `FLOW_CONNECTOR_TOKEN` may now run `flow message user
+  [--fyi|--urgent] "<text>"`. The row is human mail from
+  `connector:<name>` — `flow inbox` labels it "connector <name>" and the
+  ping payload carries `from_connector` — with normal ping rules. Only
+  `user` is addressable this way (tasks, peers, other names exit 2) and
+  `--options` is refused. Without a valid token the "your own queue"
+  refusal is unchanged.
+- **Peer hubs v0.** Flow homes can now message each other, so agents can
+  reach beyond one machine. A peer is a local nickname for an endpoint on a
+  role-`"peer"` connector: `flow peer add <name> --via <connector> --at
+  <endpoint>`, plus `flow peer list | show | rm | block | unblock`.
+  `flow message <peer> "…"` (with `--options`, `--urgent`, `--fyi` and
+  `--reply-to`) stores an outbound row and sends it through the peer's
+  connector. Its delivery state goes from `dispatched` to `sent` or
+  `failed`, with no auto-retry. `<peer>/<task>` is refused with exit 2.
+  Inbound messages enter only through the connector-only
+  `flow peer deliver`. That command checks the connector token, rejects
+  unknown endpoints (logged to `connectors/inbound.log`) and blocked peers,
+  and ignores duplicates. An answer to one of your messages lands in the
+  asking task's inbox; if that task has closed, it goes to your mail with
+  an "answer to <id>" label. Everything else is human mail, pinged as
+  usual. Answering a peer's message (`flow human reply`, or
+  `flow message <peer> --reply-to <id>`) sends the answer back to that peer.
+  Threading uses message ids only (`origin_ref` / `reply_to_ref`). See the
+  skill reference `references/peers.md`.
+- **Connector contract 2.** `connector.json` gains `"contract": 2` and
+  `"roles": ["human"] | ["peer"] | ["human","peer"]`. A contract-1
+  manifest means role human and keeps working. Human pings (priority
+  tiers, escalation) only go to role human. The human-ping payload gains
+  `from_peer`.
+- **`peer-local` sample connector** (`flow connector add peer-local`). It
+  links two flow homes on one machine, using only POSIX sh and awk. It
+  backs a real-binary two-home end-to-end test that runs in CI.
+- **`FLOW_SECRET_STORE=file`** (testing only) keeps connector secrets in
+  0600 files under `$FLOW_ROOT/secrets/` and never touches the keychain.
+- The `macos` sample moves to contract 2 and gains an example
+  **Hand to agent** button for peer mail. It marks the mail seen, then starts
+  `flow auto` with a brief that tells the agent to reply with
+  `flow message <peer> --reply-to <id>` and then `flow done`.
+
+### Changed
+
+- **`FLOW_TERM` now outranks every ambient terminal marker.** An explicit,
+  valid `FLOW_TERM` beats `$TMUX`, `$ZELLIJ` and Rex's and kitty's
+  variables, not just `TERM_PROGRAM`: those describe where flow happens to
+  run, `FLOW_TERM` is the user saying which backend they want. Until now a
+  tmux-inside-iTerm user who had always got iTerm tabs got tmux windows the
+  moment the tmux backend landed, and `FLOW_TERM=iterm` could not opt out.
+  With `FLOW_TERM` unset the order is unchanged: zellij, tmux, Rex, kitty,
+  then `TERM_PROGRAM`.
 
 ### Fixed
 
 - The stale-version hint fired when the latest tag only differed from the
   running version. It now fires only when the latest release is newer, by
   semantic version order.
+- **`flow do` inside tmux on macOS now actually starts the harness.** The
+  tmux backend typed the whole launch line (over 1 KB) into the new window
+  before its shell had switched the tty to raw mode. A macOS tty in
+  canonical mode takes at most 1024 bytes per line (`MAX_CANON`), so under
+  zsh the line was cut inside the quoted bootstrap prompt, the window sat
+  at `quote>`, and `flow do` still reported `Spawned` (rc 0) with a task
+  left in-progress on a session that never started. The launch command now
+  lives in a per-spawn, self-deleting script (as the Warp backend does) and
+  the typed line is a few dozen bytes however long the prompt is. Linux
+  (`MAX_CANON` 4096) was unaffected. `scripts/smoke-linux.sh` drives its
+  control window the same way, so it passes on macOS too.
+
+## [0.1.0-alpha.36] — 2026-11-10
+
+### Added
+
+- **Pick a child's harness by preference.** When both Claude Code and
+  Codex are installed, the SessionStart driver and delegation blocks add
+  one line: `harnesses available for children: claude, codex (flow auto …
+  --harness <name>; follow the user's preference)`. With one harness the
+  blocks are unchanged. The skill's delegation reference now says how to
+  choose: use the user's stated preference, else ask once and save it to
+  `kb/user.md`, else (headless) the caller's harness. When a child dies
+  on a Claude or Codex usage limit, the driver reports the limit and its
+  reset time and offers to re-run the same brief on the other harness as
+  a new child. No usage reading, no automatic switching, no re-pinning.
+- `dispatch.log` now records when a connector escalation is armed:
+  `<id> escalate armed <dur> → <next tier>`, written before the wait. An
+  armed line with no later `escalate → …` or `escalate stop` line means
+  the detached dispatcher died mid-wait (reboot, sleep, upgrade) and the
+  escalation was dropped, which used to leave no trace.
+
+### Fixed
+
+- **A dead parentless auto run no longer fails silently.** When a
+  `flow do --auto` / `flow auto` run (or a playbook run) with no parent task
+  ends dead — exited without `flow done`, or its supervisor was killed and
+  the run is settled dead on the next read — flow now sends the human a
+  normal, pinging message naming the task, its slug, the first line of its
+  brief and the auto-run log path, with how to reopen it. Sent once per
+  dead transition. Parented runs keep the existing parent notice; tasks
+  tagged `owner:<slug>` are left to their owner's next tick.
+- **A `flow done` that lands while an auto run is winding down is no
+  longer lost.** The auto-run supervisor read the task status once after
+  the harness exited, but `flow done` keeps deferring its close-out sweep
+  to the supervisor for as long as that pid is alive. A done that landed
+  after the read (a human closing the task, or a late backgrounded `flow
+  done`) was neither swept nor counted: the run finalized `dead` and the
+  parent got a dead-child notice for a finished task. The supervisor now
+  finalizes `dead` only while the task is still not done (one conditional
+  UPDATE) and otherwise takes the done path (sweep, `completed`); `flow
+  done` decides whether to defer from the row as it was at the status
+  flip (`UPDATE … RETURNING`), not from the copy it loaded earlier, so a
+  supervisor that already finalized makes it sweep inline. (#120
+  follow-up.)
+
+## [0.1.0-alpha.35] — 2026-11-09
+
+### Added
+
+- **Connector priority, fallback and escalation.** With more than one
+  human connector installed, every ask used to ping all of them at once.
+  `flow connector priority <name> <n>` now orders them: the lowest tier is
+  tried first (same number = one tier, in parallel), and the next tier
+  only if every connector in it failed. `flow connector escalate <dur>|off`
+  (default off, max 24h) pings the next tier when an ask is still unseen
+  that long after delivery. `--urgent` asks still go to all at once, and
+  with no priorities set nothing changes. The settings live in
+  `$FLOW_ROOT/connectors/config.json`; `flow connector list` shows the
+  order and `dispatch.log` records the path taken (e.g. `flowhub fail →
+  macos ok`).
+
+### Fixed
+
+- `flow init` now installs the PreToolUse hook too. It used to install
+  only three of the four hooks that `flow skill install` installs.
+- **Codex harness.** The live-session guard now sees Codex auto runs
+  (`codex exec resume <flags> <id>`), so `flow do` no longer opens a second
+  writer on a thread a headless run is driving. `flow transcript` honours
+  `$CODEX_HOME`. The thread-minting probe runs in the task's work_dir instead
+  of the caller's cwd.
+- **Codex auto runs no longer log "failed to record rollout items: thread
+  … not found".** A Codex auto run's own `flow done` now defers the
+  close-out sweep, and the `flow __auto-exec` supervisor runs it once the
+  harness process has exited. Before, the sweep ran as a nested `codex exec`
+  inside the live run. Claude and interactive `flow done` still sweep inline.
+  Root cause, confirmed live: Codex's shell tool backgrounds `flow done`
+  after ~10s, the agent ends its turn, and the exiting run kills the
+  sweep. An inline sweep (plain or `--ephemeral`) cannot survive that.
+- **Race fixes around the deferred close-out sweep.** The supervisor sweeps
+  after the harness exits and before it records the run's outcome. During
+  that window the task is `done`, the auto run is `running` and the
+  supervisor pid is alive. Three races in that window are fixed:
+  - If the supervisor dies mid-sweep, a done task is reconciled to
+    `completed`, not `dead`. A done child that exits non-zero is also
+    `completed`, so its parent never gets a crash notice.
+  - Only one sweep runs. `flow done` on a task that is already done exits
+    0 and skips the sweep. The status flip is conditional, so of two
+    concurrent `flow done` calls only one sweeps. A `flow done` while the
+    task's Codex auto run is alive (for example a human closing it mid-run)
+    leaves the sweep to the supervisor.
+  - A stale supervisor no longer overwrites a newer run. It finalizes only
+    while the row still carries its own pid. If `flow do --auto --force`
+    started a newer run, the old supervisor logs that the newer run took
+    over. It writes no status and sends no dead-child notice.
+- **Codex Stop hook output.** In Codex sessions the watcher broadcast
+  nudge is emitted as `{"decision":"block","reason":…}`. Codex's Stop
+  schema rejects `hookSpecificOutput`.
+- **Codex `$CODEX_HOME`.** The flow skill and `hooks.json` install under
+  `$CODEX_HOME` when it is set (default `~/.codex`), where Codex reads them.
+- **Auto runs no longer lose mail to a background inbox listener.** An
+  auto run is bound, so it was told to arm an inbox listener. Codex has no
+  Monitor and took the fallback: a background `flow inbox pop --wait` loop.
+  Each message sent to the child was acked into output nobody read and lost
+  when the run exited. Auto runs now get the opposite rule, in the
+  SessionStart hook and in the auto prompt: no Monitor, no `pop --wait`, no
+  `flow watch`. When the PreToolUse notice says mail landed, and before each
+  report, the child runs a one-shot `flow inbox pop` in the foreground and
+  acts on it. `flow inbox pop --wait` refuses under `FLOW_AUTO_RUN` (exit 3,
+  so a stray listener loop stops) and leaves the message unread.
+- **Interactive Codex sessions no longer lose mail to a background inbox
+  listener.** With no Monitor tool, a bound Codex session took the
+  "background Bash `flow inbox pop --wait`" fallback. Measured live on
+  codex-cli 0.166: Codex kills a backgrounded child under 0.5s after the
+  shell command returns, so the listener never listened. Mail already
+  pending when it was armed was acked at once into a log file the model
+  never read, and was lost. A Codex session now gets a no-listener rule at
+  SessionStart: when a flow-bus notice says mail landed or is pending, run a
+  one-shot `flow inbox pop` in the foreground. `flow watch` still works.
+  The pending-count and PreToolUse notices say "pop in the foreground"
+  instead of pointing at a Monitor. `flow inbox pop --wait` refuses in a
+  Codex shell (`$CODEX_THREAD_ID`, exit 3) and leaves the message unread.
+  `flow do --auto` from a Codex parent no longer prints a Monitor recipe.
+  The driver blocks and the delegation child template no longer promise an
+  inbox listener. Claude's Monitor recipe is unchanged.
+- **Harness-neutral SessionStart text.** The hook no longer says "This
+  Claude session", "resumes Claude sessions" or "invoke the flow skill via
+  the Skill tool". It uses the same wording as the prompts below, names
+  `CLAUDE.md / AGENTS.md`, and asks to use AskUserQuestion only if the
+  harness has it.
+- **Harness-neutral session prompts.** The bootstrap, auto-run, close-out
+  sweep and owner-tick prompts no longer assume Claude. They say to use the
+  Skill tool if the harness has one, or else read the flow `SKILL.md` (the
+  real Codex path is spelled out), and they name `CLAUDE.md / AGENTS.md`.
+- **`FLOW_TERM=bg` spawns no longer fail on newer `claude --bg` output.**
+  Newer Claude Code prints a `Starting background service…` line before
+  the `backgrounded · <id> · <name>` banner. flow only read the first
+  line, so it failed with "no background banner in output" even though
+  the session had started. flow now checks every line for the banner,
+  with or without ANSI color, and still reports a clear error when no
+  banner line appears.
+
+### Added
+
+- **Install for every present harness.** `flow init`, `flow skill
+  install` and `flow skill update` now install the skill and all four
+  hooks (SessionStart, UserPromptSubmit, PreToolUse, Stop) for every
+  harness on the machine, not just the ambient one. A harness is present
+  when its binary is on `PATH` or its config home exists (`~/.claude`;
+  `$CODEX_HOME`, else `~/.codex`); with none found, Claude is the
+  fallback. `flow skill uninstall` removes the skill from every harness
+  that has it. All four take `--harness claude|codex` to act on one
+  harness; an unknown name is a usage error that lists the valid names,
+  and a named harness that isn't detected is installed anyway. Output is
+  prefixed per harness (`claude: …`, `codex: …`).
+- The post-upgrade skill refresh now checks every harness, each against
+  its own `VERSION` sidecar, and refreshes only harnesses that already
+  have the skill, so a harness you removed it from stays opted out.
+- Codex auto runs write the session's final message (`codex exec -o`) to
+  `auto-runs/<run>.last.txt` next to the run log; `flow show task` lists it
+  as `auto_run_last:` once it exists.
+- **Codex hooks.** `flow skill install` now installs the UserPromptSubmit,
+  PreToolUse and Stop hooks for Codex too (Codex 0.166 fires them; before,
+  only SessionStart was installed). The entries have no matcher, because
+  Codex tool names differ from Claude's.
+- **Hooks fire in headless Codex runs.** Auto runs, the close-out sweep and
+  owner ticks pass `--dangerously-bypass-hook-trust`, so hooks fire without
+  a one-time interactive trust approval, as they do under Claude. Interactive
+  launches keep Codex's trust prompt.
+
+## [0.1.0-alpha.34] — 2026-11-06
+
+### Added
+
+- **Human connectors (opt-in).** An agent asks with `flow message user
+  "<q>" --options "A|B"` and returns at once. If a connector is
+  installed, flow pings the human through it, and the answer comes back
+  to the asking task's inbox as a reply (`reply_to=<id>`). Nothing pings
+  unless a connector is installed.
+  - `flow message user` gains `--options "A|B|C"` (stored and shown in
+    `flow inbox`) and `--fyi` (stored and listed, never pinged). Both are
+    only for mail to the human. Broadcasts never ping.
+  - The ping decision is made at send time: one ping per sender task
+    while a pinged ask is still unseen, `--urgent` always pings, and a
+    detached `flow connector dispatch` runs each matching connector's
+    `send` (30s timeout each, in parallel, logged to
+    `connectors/dispatch.log`, `notified_at` stamped).
+  - `flow connector add|list|remove|test`. Each connector gets a random
+    secret in the macOS keychain (service `flow-connector-<name>`,
+    account `flow-<hash of the resolved FLOW_ROOT>`, so two flow homes on
+    one Mac never share or overwrite a connector's secret), or a 0600
+    file under `$FLOW_ROOT/secrets/` where there is no keychain.
+  - `flow human reply <id> "<text>"` / `flow human seen <id>` work only
+    with a connector's `FLOW_CONNECTOR_TOKEN`, so agents can't answer for
+    the human. A reply records `answered_at` and delivers the text to the
+    asking task. Repeats are idempotent.
+  - Contract v1 is documented in the skill's `references/connectors.md`.
+    `examples/connectors/macos` is a stock-macOS dialog connector. It is
+    built into the binary, so `flow connector add macos` works without a
+    repo checkout (`flow connector list --available` lists the built-in
+    samples; an existing directory argument still installs from that path).
+  - flow's own FYIs to the human (the closed-parent report in the auto
+    prompt, the dead-child notice) are sent as `--fyi`.
+
+## [0.1.0-alpha.33] — 2026-11-06
+
+### Fixed
+
+- **Agents no longer swallow the human's mail.** `flow inbox pop` never
+  claims, acks or returns mail addressed to `user` (asks and broadcasts),
+  in any mode (`--keep-unread`, `--wait`, `--as user` included), and an
+  agent's `flow inbox read <id>` on it is display-only. Only bound
+  sessions arm an inbox Monitor (the skill said every session should, so
+  dispatch sessions drained the human's queue as `user`).
+- **Human mail stays unread until a human has seen it.** A new
+  `seen_at` drives one unread predicate for `flow inbox --as user`, the
+  counts and the read/unread label, so mail a reader left `delivered` no
+  longer disappears. Notices read "N ask(s) await you · M FYI" and list
+  the top items by id. Existing human mail is marked seen on upgrade.
+- **Only a prompt the human types counts.** Human mail a SessionStart
+  hook surfaced is marked seen on the next human-typed prompt in that
+  session, and an ask is "answered" only by one. `--with` injections,
+  auto runs, owner ticks, `/loop` and wakeup firings, and flow's own
+  bootstrap prompts never count.
+- **Who consumed a message is recorded.** Every claim, ack and seen
+  stores the consumer's bus identity and session id; `flow inbox --all`
+  shows "by <identity> (<session>)" and `--json` a `consumed_by` object.
+- **`user` and `self` are reserved.** `flow add task --slug user|self`
+  exits 2; a bare address is always an assignee (sessions are
+  `user/<slug>` only), so a task slugged after a person can't capture
+  their mail; `self` is an alias for `user` (`--as self` now reads the
+  human's queue). Messages no longer tell agents to `flow message self`.
+- **`flow inbox read <id>` respects the recipient.** Only the message's
+  addressee changes its state; anyone else gets a read-only display
+  (`--as <assignee>` reads as a person's queue).
+- **One child-reporting rule.** A parented auto child reports to
+  `user/<parent>`; if the parent is closed it writes its update note and
+  sends the human an `FYI:` message (the dead-child notice falls back the
+  same way); a parentless child messages the human only when done or
+  blocked. Auto runs get no Stop broadcast nudge (progress no longer
+  reaches the parent twice).
+- **The inbox Monitor loop backs off and stops.** `pop` exits 3 when
+  the caller's bound task is done or archived, and the recipe sleeps 5s
+  after a failed pop and breaks on 3:
+  `while true; do flow inbox pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc -ne 0 ] && sleep 5; done`.
+- **`pop --json` reports the real status** (`acked`/`delivered`) of the
+  row it just consumed instead of `pending`/`unread`.
+
+## [0.1.0-alpha.32] — 2026-11-06
+
+### Added
+
+- **Driver tasks.** Tag a task `driver` (offered as an intake question,
+  or `flow update task <slug> --tag driver` mid-session) and it owns its
+  outcome end to end: its session gets a stronger `flow DRIVER task`
+  block that hands any self-contained work (implementation, research,
+  debugging, fix + PR, scans) to `flow auto` children instead of harness
+  subagents, keeps decisions with the user, never idles, and ends turns
+  with a numbered "Needs from you" list. Regular bound tasks keep the
+  light delegation block. Drivers show as `◆driver` in `flow list`
+  (`"driver": true` in json), `role: driver` in `flow show task`, and
+  `[driver]` in the per-prompt anchor.
+- **`flow do --here` prints the role block**, so a session bound
+  mid-flight (missed SessionStart) gets the driver or delegation context
+  immediately. Tagging/untagging the bound task as driver does the same.
+- **Dead children notify their driver.** When a parented auto run ends
+  `dead`, flow posts a crash notice to the parent's inbox; previously a
+  crashed child went silent.
 
 ## [0.1.0-alpha.31] — 2026-11-02
 

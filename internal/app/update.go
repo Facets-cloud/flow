@@ -315,6 +315,7 @@ func cmdUpdateTask(args []string) int {
 		}
 		fmt.Println("due_date cleared")
 	}
+	wasDriver := isDriverTask(db, task.Slug)
 	if *clearTags {
 		if err := flowdb.ClearTaskTags(db, task.Slug); err != nil {
 			fmt.Fprintf(os.Stderr, "error: clear tags: %v\n", err)
@@ -346,7 +347,24 @@ func cmdUpdateTask(args []string) int {
 		}
 		fmt.Printf("tag + %s\n", t)
 	}
+	announceDriverChange(db, task, wasDriver)
 	return 0
+}
+
+// announceDriverChange switches THIS session's role immediately when the
+// driver tag is added to or removed from the task it is bound to — the
+// SessionStart block already went by, so the update output carries it.
+func announceDriverChange(db *sql.DB, task *flowdb.Task, wasDriver bool) {
+	isDriver := isDriverTask(db, task.Slug)
+	if isDriver == wasDriver || lookupBoundTaskSlug() != task.Slug || isAutoRunSession(task) {
+		return
+	}
+	if isDriver {
+		fmt.Println(strings.TrimSpace(driverRoleBlock()))
+		return
+	}
+	fmt.Printf("%s is no longer a driver; back to regular delegation:\n", task.Slug)
+	fmt.Println(strings.TrimSpace(driverDelegationBlock()))
 }
 
 // stringSliceFlag adapts a *[]string into a flag.Value so the same

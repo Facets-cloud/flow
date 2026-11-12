@@ -201,11 +201,11 @@ type TaskFilter struct {
 	Status          string
 	Project         string
 	Priority        string
-	Kind            string // "regular" (default), "playbook_run", or "" for all
-	PlaybookSlug    string // optional; filter to runs of one playbook
+	Kind            string   // "regular" (default), "playbook_run", or "" for all
+	PlaybookSlug    string   // optional; filter to runs of one playbook
 	Tag             string   // optional; only tasks carrying this tag (already normalized)
 	Tags            []string // optional; tasks must carry ALL of these (intersection; already normalized)
-	Since           string // RFC3339 or "" for no lower bound
+	Since           string   // RFC3339 or "" for no lower bound
 	IncludeArchived bool
 	ExcludeDone     bool // hide status=done; ignored if Status is set explicitly
 }
@@ -283,6 +283,52 @@ func OpenDB(path string) (*sql.DB, error) {
 			db.Close()
 			return nil, fmt.Errorf("migrate bus_messages.reply_to: %w", err)
 		}
+	}
+	// bus_messages.consumed_by_{identity,session} record who consumed a
+	// row; nullable, no backfill (old consumers are unknowable).
+	for _, col := range []string{"consumed_by_identity", "consumed_by_session"} {
+		if has, err := columnExists(db, "bus_messages", col); err == nil && !has {
+			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate bus_messages.%s: %w", col, err)
+			}
+		}
+	}
+	// Human-connector columns: ask options (JSON array), the --fyi flag and
+	// the send-time ping decision, when a connector accepted the ping, and
+	// when a connector recorded the human's answer.
+	for _, c := range []struct{ col, ddl string }{
+		{"options", "ALTER TABLE bus_messages ADD COLUMN options TEXT"},
+		{"fyi", "ALTER TABLE bus_messages ADD COLUMN fyi INTEGER NOT NULL DEFAULT 0"},
+		{"ping", "ALTER TABLE bus_messages ADD COLUMN ping INTEGER NOT NULL DEFAULT 0"},
+		{"notified_at", "ALTER TABLE bus_messages ADD COLUMN notified_at TEXT"},
+		{"answered_at", "ALTER TABLE bus_messages ADD COLUMN answered_at TEXT"},
+	} {
+		if has, err := columnExists(db, "bus_messages", c.col); err == nil && !has {
+			if _, err := db.Exec(c.ddl); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
+			}
+		}
+	}
+	// bus_messages.seen_at arrived with the human-mail fixes: human mail is
+	// unread until a human has seen it. On first add, stamp every existing
+	// human row seen — the old mail is left behind rather than resurfaced
+	// as a backlog of stale asks and broadcasts.
+	if has, err := columnExists(db, "bus_messages", "seen_at"); err == nil && !has {
+		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate bus_messages.seen_at: %w", err)
+		}
+		if _, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE to_task_slug IS NULL AND to_assignee=?`,
+			NowISO(), BusUser); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("stamp legacy seen_at: %w", err)
+		}
+	}
+	if err := migratePeers(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate peers: %w", err)
 	}
 	return db, nil
 }

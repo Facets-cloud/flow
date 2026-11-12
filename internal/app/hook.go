@@ -56,11 +56,20 @@ func cmdHook(args []string) int {
 // ("" outside a hook). currentSessionID prefers it over the env var.
 var hookSessionID string
 
+// hookPrompt is the prompt text from a UserPromptSubmit payload;
+// hookPromptKnown is true only when a payload was actually decoded.
+// isHumanPrompt reads them.
+var (
+	hookPrompt      string
+	hookPromptKnown bool
+)
+
 // hookPayload is the subset of the JSON that Claude Code and Codex write to
 // a hook's stdin that flow reads.
 type hookPayload struct {
 	SessionID      string `json:"session_id"`
 	StopHookActive bool   `json:"stop_hook_active"`
+	Prompt         string `json:"prompt"`
 }
 
 // readHookPayload decodes the hook's stdin payload and records its
@@ -69,7 +78,7 @@ type hookPayload struct {
 // saw an unbound session. ok=false when stdin is a terminal or holds no
 // JSON object; hookSessionID is then "" and the env var applies.
 func readHookPayload() (p hookPayload, ok bool) {
-	hookSessionID = ""
+	hookSessionID, hookPrompt, hookPromptKnown = "", "", false
 	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice != 0 {
 		return p, false
 	}
@@ -77,6 +86,7 @@ func readHookPayload() (p hookPayload, ok bool) {
 		return p, false
 	}
 	hookSessionID = p.SessionID
+	hookPrompt, hookPromptKnown = p.Prompt, true
 	return p, true
 }
 
@@ -115,7 +125,11 @@ func cmdHookSessionStart(args []string) int {
 	// Only the human-driven driver session may delegate. An auto child
 	// never sees this block, so delegation cannot recurse.
 	if !isAutoRunSession(bound) {
-		pageCtx += driverDelegationBlock()
+		if isDriverSlug(slug) {
+			pageCtx += driverRoleBlock()
+		} else {
+			pageCtx += driverDelegationBlock()
+		}
 	}
 
 	instructions := fmt.Sprintf(
@@ -123,16 +137,16 @@ func cmdHookSessionStart(args []string) int {
 			"Before doing anything else in this turn, re-load your task context — "+
 			"the brief and update files may have been edited since your previous "+
 			"session. Do these in order: "+
-			"(1) invoke the `flow` skill via the Skill tool. That skill is your "+
+			"(1) load the `flow` skill — "+flowSkillHow()+". That skill is your "+
 			"operating manual for this session: it defines the bootstrap contract, "+
 			"the workflows for starting/saving/logging/archiving work, KB scoop "+
 			"discipline, and the scope-creep detection that keeps unrelated work "+
 			"from landing in the wrong task. "+
-			"(2) run `flow show task` and use your Read tool on the file at the "+
+			"(2) run `flow show task` and read the file at the "+
 			"`brief:` path AND every file listed under `updates:`; "+
 			"(3) if a project is listed on the task, run `flow show project <that-slug>` "+
-			"and Read its brief and updates too; "+
-			"(4) Read `CLAUDE.md` in your work_dir and any nested CLAUDE.md under "+
+			"and read its brief and updates too; "+
+			"(4) read "+repoInstructionFiles+" in your work_dir and any nested ones under "+
 			"subdirectories you plan to modify. "+
 			"Only then proceed with the user's request. "+
 			"If any brief section is blank or unclear, ASK — do not infer. "+
@@ -155,17 +169,18 @@ func cmdHookSessionStart(args []string) int {
 // auto children instead of waiting to be told "flow auto" each time.
 // Full recipe: skill references/delegation.md.
 func driverDelegationBlock() string {
-	return " flow driver delegation: you are the DRIVER session for this task. Carve smaller " +
+	return " flow driver delegation: you may carve smaller " +
 		"deterministic subtasks off to headless auto children instead of doing them inline: " +
 		"scans, audits, fact-finding, repro debugging, bulk/mechanical passes, fix + PR + test " +
 		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
 		"answers. Live/prod changes: the child plans and gates only; you apply them with the user. " +
-		"How: write a brief (goal, where, Done when, gates, report via flow message, do not wait " +
-		"on its own inbox) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
+		"How: write a brief (goal, where, Done when, gates, report via flow message, never block waiting " +
+		"for a reply (it reaches your inbox; pop it when a flow-bus notice or your listener surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
 		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
 		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
 		"the child messages you, verify its result (it names its update note) before reporting " +
-		"to the user. Children cannot spawn grandchildren. Recipe: flow skill references/delegation.md."
+		"to the user. Children cannot spawn grandchildren. Recipe: flow skill references/delegation.md." +
+		childHarnessesLine()
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
@@ -241,17 +256,17 @@ func emitAmbientSkillHint() int {
 	if r, err := flowRoot(); err == nil {
 		root = r
 	}
-	hint := "This Claude session is not bound to a flow task — this hint IS the " +
+	hint := "This session is not bound to a flow task — this hint IS the " +
 		"binding answer. Do NOT re-probe binding with `flow show task` (no arg) " +
 		"until you've actually bound this session via `flow do --here <slug>`; " +
 		"until then it will error and waste a tool call. The user already tracks " +
 		"their work and knowledge in flow — a personal task and session manager that " +
-		"captures work as briefs, logs progress notes, resumes Claude sessions across " +
+		"captures work as briefs, logs progress notes, resumes agent sessions across " +
 		"days, and maintains a central knowledge base of durable facts about them, " +
 		"their org, and their work. Their tasks, projects, and KB already exist. " +
-		"Invoke the `flow` skill via the Skill tool now and let it run alongside the " +
+		"Load the `flow` skill now — " + flowSkillHow() + " — and let it run alongside the " +
 		"conversation. When the user starts any work in this session, before doing it, " +
-		"confirm with them via AskUserQuestion: is this part of an existing flow task, " +
+		"confirm with them (AskUserQuestion if your harness has it, else ask in chat): is this part of an existing flow task, " +
 		"or should we create a new one? The user's work belongs in flow — don't " +
 		"silently proceed in an unbound transcript. The skill knows how to list " +
 		"candidates, run intake, and `flow do` the chosen task. " +
@@ -324,11 +339,15 @@ func cmdHookUserPromptSubmit(args []string) int {
 		}
 		return emitHookContext("UserPromptSubmit", strings.TrimSpace(pageCtx))
 	}
+	role := ""
+	if isDriverSlug(t.Slug) {
+		role = " [driver]"
+	}
 	anchor := fmt.Sprintf(
-		"flow session → task %q (%s). Per §4.11/§4.7: if this prompt is "+
+		"flow session → task %q (%s)%s. Per §4.11/§4.7: if this prompt is "+
 			"unrelated work, offer a new task; if it signals the task is done, "+
 			"offer to close it out. Else proceed silently.",
-		t.Name, t.Slug,
+		t.Name, t.Slug, role,
 	)
 	return emitHookContext("UserPromptSubmit", anchor+pageCtx)
 }

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -308,7 +309,7 @@ func cmdDo(args []string) int {
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
 	if needsBootstrap {
-		id, err := h.NewSessionID()
+		id, err := h.NewSessionID(task.WorkDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
 			return 1
@@ -454,13 +455,15 @@ func cmdDo(args []string) int {
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
 	}
-	if needsBootstrap {
-		// Fresh bootstrap path. For pre-allocating harnesses (claude),
-		// PrepareSpawn already minted the sessionID and the status flip
-		// above committed it, so the harness can embed it in the spawn
-		// command (e.g. `--session-id <uuid>`) for deterministic
-		// transcript paths. For self-allocating harnesses sessionID will
-		// be empty — the SessionStart hook completes the binding later.
+	// bootstrapCmd builds the first-start command. For pre-allocating
+	// harnesses (claude), PrepareSpawn already minted the sessionID and
+	// the status flip above committed it, so the harness can embed it in
+	// the spawn command (e.g. `--session-id <uuid>`) for deterministic
+	// transcript paths. For self-allocating harnesses sessionID will be
+	// empty — the SessionStart hook completes the binding later. A closure
+	// because the no-terminal handoff needs it again for a session that
+	// was reserved but never started.
+	bootstrapCmd := func() string {
 		playbookSlug := ""
 		isFirstRun := false
 		if task.PlaybookSlug.Valid {
@@ -478,7 +481,10 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
-		command = h.LaunchCmd(sessionID, prompt, launchOpts)
+		return h.LaunchCmd(sessionID, prompt, launchOpts)
+	}
+	if needsBootstrap {
+		command = bootstrapCmd()
 	} else {
 		// Resume path: the UUID we already have in the DB is what the
 		// harness used when it first wrote its transcript.
@@ -499,34 +505,52 @@ func cmdDo(args []string) int {
 	if project != nil && project.TerminalGroup.Valid {
 		group = project.TerminalGroup.String
 	}
+	handedOff := false
 	if err := spawner.SpawnTabIn(group, buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
-		if needsBootstrap {
-			// Spawn failed before claude could write its jsonl. Undo
-			// both the session_id pre-allocation AND the status flip
-			// so the next `flow do` retries bootstrap fresh. The
-			// session-id invariant (in-progress requires session_id)
-			// makes "preserve status, drop session_id" illegal —
-			// rolling status back to backlog is the only consistent
-			// recovery. The user's next `flow do` will flip fresh.
+		if errors.Is(err, spawner.ErrNoTerminal) {
+			// No supported terminal on this host (Linux outside
+			// tmux/zellij/kitty). Not a failure: the binding above
+			// stands — the printed command carries the same session
+			// id, so running it by hand lands in a bound session via
+			// the SessionStart hook. Rolling back would orphan that id.
 			//
-			// The WHERE clause guards against a concurrent `flow do`
-			// having mutated session_id between commit and now —
-			// only roll back if we still own the session.
-			if _, undoErr := db.Exec(
-				`UPDATE tasks SET
-					session_id        = NULL,
-					session_started   = NULL,
-					status            = 'backlog',
-					status_changed_at = NULL,
-					updated_at        = ?
-				 WHERE slug=? AND session_id=?`,
-				flowdb.NowISO(), task.Slug, sessionID,
-			); undoErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+			// A session reserved by an earlier handoff but never started
+			// has no transcript yet; `--resume` would be refused, so hand
+			// out the bootstrap command (same id) again.
+			if !needsBootstrap && h.ValidateSession(cwd, sessionID) != nil {
+				command = bootstrapCmd()
 			}
+			printNoTerminalHandoff(task.Slug, cwd, command, spawnEnv)
+			handedOff = true
+		} else {
+			if needsBootstrap {
+				// Spawn failed before claude could write its jsonl. Undo
+				// both the session_id pre-allocation AND the status flip
+				// so the next `flow do` retries bootstrap fresh. The
+				// session-id invariant (in-progress requires session_id)
+				// makes "preserve status, drop session_id" illegal —
+				// rolling status back to backlog is the only consistent
+				// recovery. The user's next `flow do` will flip fresh.
+				//
+				// The WHERE clause guards against a concurrent `flow do`
+				// having mutated session_id between commit and now —
+				// only roll back if we still own the session.
+				if _, undoErr := db.Exec(
+					`UPDATE tasks SET
+						session_id        = NULL,
+						session_started   = NULL,
+						status            = 'backlog',
+						status_changed_at = NULL,
+						updated_at        = ?
+					 WHERE slug=? AND session_id=?`,
+					flowdb.NowISO(), task.Slug, sessionID,
+				); undoErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
 	}
 
 	// Post-spawn bookkeeping, outside the main tx.
@@ -547,12 +571,42 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
 	}
 
-	if needsBootstrap {
+	switch {
+	case handedOff:
+		// printNoTerminalHandoff already said what to do.
+	case needsBootstrap:
 		fmt.Printf("Spawned %s (session %s)\n", task.Slug, sessionID)
-	} else {
+	default:
 		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
 	}
 	return 0
+}
+
+// printNoTerminalHandoff is the no-dead-end path for hosts where flow
+// cannot open a tab (no tmux/zellij/kitty on Linux). It prints the exact
+// command the tab would have run — cwd and env included — so the user can
+// paste it into any terminal, plus the two tab-free alternatives.
+func printNoTerminalHandoff(slug, cwd, command string, envVars map[string]string) {
+	envPrefix := ""
+	if len(envVars) > 0 {
+		keys := make([]string, 0, len(envVars))
+		for k := range envVars {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+"="+spawner.ShellQuote(envVars[k]))
+		}
+		envPrefix = strings.Join(parts, " ") + " "
+	}
+	fmt.Printf("%s: no supported terminal detected on this host, so no tab was opened.\n", slug)
+	fmt.Printf("The session is reserved for you — run this in any terminal to start it:\n\n")
+	fmt.Printf("  cd %s && %s%s\n\n", spawner.ShellQuote(cwd), envPrefix, strings.ReplaceAll(command, "\n", " "))
+	fmt.Printf("Or skip the tab:\n")
+	fmt.Printf("  flow do --here %s   bind the harness session you are already in\n", slug)
+	fmt.Printf("  flow do --auto %s   run it headless in the background\n", slug)
+	fmt.Printf("Tabs open automatically inside tmux, zellij or kitty (or set FLOW_TERM=tmux|zellij|kitty).\n")
 }
 
 // harnessForExplicitSpawn applies `flow do --harness <name>` to an
@@ -811,10 +865,10 @@ func buildBootstrapPromptForKindV2(slug, kind, playbookSlug string, isFirstRun b
 func buildTaskBootstrapPrompt(slug string) string {
 	return fmt.Sprintf(
 		"You are the execution session for flow task %s. Do ALL of the following in order before touching code:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
+			"1. "+flowSkillStep()+". This loads the operating manual that governs how this session works: workflows, bootstrap contract, KB discipline, and scope-creep detection.\n"+
 			"2. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files listed under other: are sidecar references — load on demand when relevant, not eagerly.\n"+
 			"3. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief AND every file under updates:. Files under other: are on-demand references.\n"+
-			"4. Read CLAUDE.md in your work_dir and any nested CLAUDE.md files under subdirectories you will modify. These override any assumption from the brief.\n"+
+			"4. Read "+repoInstructionFiles+" in your work_dir and any nested ones under subdirectories you will modify. These override any assumption from the brief.\n"+
 			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
 	)
@@ -828,11 +882,11 @@ func buildTaskBootstrapPrompt(slug string) string {
 func buildPlaybookRunBootstrapPrompt(runSlug, playbookSlug string, isFirstRun bool) string {
 	base := fmt.Sprintf(
 		"You are running playbook `%s` as run `%s`. Do ALL of the following in order before executing anything:\n"+
-			"1. Invoke the flow skill via the Skill tool. This loads the operating manual that governs how this session works.\n"+
+			"1. "+flowSkillStep()+". This loads the operating manual that governs how this session works.\n"+
 			"2. Run: flow show playbook %s. This shows the playbook's definition and recent runs — context only, not your instructions. Note any files listed under other: — they're sidecar references you can Read on demand if relevant; do not eagerly load them.\n"+
 			"3. Run: flow show task. Read the file at the brief: path AND every file listed under updates:. Files under other: are references for THIS run; load on demand when relevant. The brief is your authoritative instructions for this run — it was snapshotted from the playbook at the moment this run started. Execute against this, not the live playbook brief.\n"+
 			"4. If a project is listed on the task, run: flow show project <that-project-slug>. Read its brief and every file under updates:. Files under other: are on-demand references.\n"+
-			"5. Read CLAUDE.md in your work_dir.\n"+
+			"5. Read "+repoInstructionFiles+" in your work_dir.\n"+
 			"6. Only then begin executing your brief.\n"+
 			"\n"+
 			"While executing: if the user adjusts the playbook's procedure during this run (e.g. 'let's always do X', 'change the approach for...', 'this step should also...'), pause and ask via AskUserQuestion whether to persist the change to the playbook's live brief.md so future runs benefit. Options: 'Persist to playbook' (Edit playbooks/%s/brief.md), 'Just this run' (no change to live playbook), 'Both — persist + log a note in playbooks/%s/updates/'. The run's own brief.md is a frozen snapshot — never edit it to change future behavior; that's what the live playbook brief is for. See flow skill §4.13 for the full pattern.",
@@ -1064,6 +1118,11 @@ func cmdDoHere(query string, force bool) int {
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	// A session bound mid-flight missed SessionStart, so hand it the
+	// role block now (driver or light delegation).
+	if blk := roleBlockFor(db, task); blk != "" {
+		fmt.Println(strings.TrimSpace(blk))
+	}
 	return 0
 }
 
@@ -1089,5 +1148,16 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 	} else {
 		fmt.Printf("  %s is NOT watching %s; from the parent session run: flow watch %s\n", watcher, task.Slug, task.Slug)
 	}
-	fmt.Println("  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: 'while true; do flow inbox pop --wait --timeout 300 --json || true; done'); re-arm it when it expires.")
+	fmt.Println(parentListenerReminder())
+}
+
+// parentListenerReminder is the last line of the parent reminder: arm a
+// Monitor in Claude; in Codex (no Monitor, background jobs are killed)
+// the child's reports surface as flow-bus notices instead.
+func parentListenerReminder() string {
+	if isCodexSession(nil) {
+		return "  Codex parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
+			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
+	}
+	return "  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop + "'); re-arm it when it expires."
 }

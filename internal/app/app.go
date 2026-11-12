@@ -31,7 +31,7 @@ func Run(args []string) int {
 		maybeAutoUpgradeSkill()
 	}
 
-	rc := dispatch(cmd, rest)
+	rc := runCommand(cmd, rest)
 	// Upgrade the binary after the command, so the command never waits.
 	// See maybeSelfUpgrade.
 	if selfUpgradeTrigger(cmd) {
@@ -40,8 +40,8 @@ func Run(args []string) int {
 	return rc
 }
 
-// dispatch runs the subcommand cmd and returns its exit code.
-func dispatch(cmd string, rest []string) int {
+// runCommand runs the subcommand cmd and returns its exit code.
+func runCommand(cmd string, rest []string) int {
 	switch cmd {
 	case "--version", "-v", "version":
 		fmt.Println(Version)
@@ -98,6 +98,12 @@ func dispatch(cmd string, rest []string) int {
 		return cmdHook(rest)
 	case "message", "msg":
 		return cmdMessage(rest)
+	case "connector":
+		return cmdConnector(rest)
+	case "human":
+		return cmdHuman(rest)
+	case "peer":
+		return cmdPeer(rest)
 	case "inbox":
 		return cmdInbox(rest)
 	case "broadcast", "post":
@@ -117,10 +123,11 @@ func printUsage() {
 	fmt.Println(`flow — personal task and agent-session manager
 
 Setup:
-  flow init
-  flow skill install [--force]
-  flow skill uninstall
-  flow skill update
+  flow init [--harness claude|codex]
+  flow skill install [--force] [--harness claude|codex]
+  flow skill uninstall [--harness claude|codex]
+  flow skill update [--harness claude|codex]
+  (default: every present harness — binary on PATH or config home exists)
   flow upgrade [--check] [--force]             (install the latest release now; flow also upgrades
                                                 itself after a command — FLOW_NO_AUTO_UPGRADE=1 stops that)
 
@@ -163,11 +170,13 @@ Edit / mutate:
   flow unarchive <ref>
 
 Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
-  flow message <assignee>[/<task-slug>] "<body>" [--urgent]
+  flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--options "A|B"] [--fyi] [--attach <file>]
                                      (message a human — "user" is the local human — or the
                                       session bound to a task; never your own address; alias: msg.
                                       Flags may come in any order; the body is positional or
-                                      --body "<text>". Only --urgent/--body/--reply-to are flags.)
+                                      --body "<text>". --options = answer choices, --fyi = never
+                                      ping; both only for mail to the human. --attach copies a
+                                      file in, repeatable: 25 MiB/file, 100 MiB, 20 files.)
   flow broadcast "<one-liner>"       (fan out to whoever watches this task/project/assignee; alias: post)
   flow inbox [--as <assignee>] [--json]           (what's pending; --as user = the human's queue)
   flow inbox pop [--wait] [--timeout <s>] [--as <assignee>] [--json]
@@ -175,6 +184,27 @@ Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
                                       delivers, clears; loop it freely; --wait blocks until mail)
   flow inbox stats                   (wait-time metrics)
   flow watch <task|project|assignee> [--as <assignee>] | --list | --rm <target>
+
+Human connectors (opt-in pings for asks to the human — skill references/connectors.md):
+  flow connector add <dir|sample>    (validate, install, store its secret, send a test notification;
+                                      <sample> = a built-in name such as macos — no checkout needed)
+  flow connector list
+  flow connector list --available    (built-in sample connectors)
+  flow connector remove <name>       (delete the connector and its secret)
+  flow connector test [<name>]
+  flow connector priority <name> <n>|--clear   (ping order: lower n first, next tier only on failure)
+  flow connector escalate <dur>|off  (unseen after <dur> → ping the next tier; max 24h)
+  flow human reply <id> "<text>"     (connectors only, FLOW_CONNECTOR_TOKEN: answer → asking task's inbox)
+  flow human seen <id>               (connectors only: mark seen without answering)
+
+Peer hubs (other flow homes, via a role-"peer" connector — skill references/peers.md):
+  flow peer add <name> --via <connector> --at <endpoint>
+  flow peer list | show <name> | rm <name> | block <name> | unblock <name>
+  flow message <peer> "<body>" [--options "A|B"] [--urgent] [--fyi] [--reply-to <id>] [--attach <file>]
+                                     (to another hub's human, ≤4000 chars; never <peer>/<task>)
+  flow peer deliver --at <endpoint> --ref <their-id> [--reply-to-ref <our-id>] [--to <task>]
+                    [--kind ask|fyi] [--options "A|B"] [--attach <file>] "<body>"   (connectors only;
+                                      --to = the local task this mail lands in)
 
 Workdirs:
   flow workdir list

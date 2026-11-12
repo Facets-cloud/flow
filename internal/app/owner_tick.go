@@ -83,7 +83,7 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 	if err != nil {
 		return err
 	}
-	sid, err := h.NewSessionID()
+	sid, err := h.NewSessionID(o.WorkDir)
 	if err != nil {
 		return fmt.Errorf("new session id: %w", err)
 	}
@@ -506,7 +506,7 @@ func buildOwnerTickPromptInteractive(slug, ownerDir string) string {
 			"  - ONE-TIME work → a TASK: `flow add task \"<what>\" --tag owner:%s`, then `flow do --auto <task>`.\n"+
 			"  - A decision for the user → just ASK them (you're interactive), or park a QUESTION task (`--tag question --tag owner:%s`) for later.\n\n"+
 			"Do these in order:\n"+
-			"1. Invoke the flow skill via the Skill tool.\n"+
+			"1. "+flowSkillStep()+".\n"+
 			"2. Read your charter at %s/charter.md (absolute path — your charter and journal live under $FLOW_ROOT, NOT your work_dir).\n"+
 			"3. Read recent notes under %s/updates/ (your journal), then review what you own with `flow owner show %s` (tasks, playbook runs, and questions with status). Don't duplicate tracked work or re-spawn an in-progress run.\n"+
 			"4. Observe per the charter and, together with the user, DISPATCH the needed playbook-runs / tasks / questions.\n"+
@@ -528,7 +528,7 @@ func buildOwnerTickPrompt(slug, ownerDir string) string {
 			"  - ONE-TIME work → a TASK. Create it: `flow add task \"<what to do>\" --tag owner:%s`, then run it headlessly: `flow do --auto <task>`. It self-`flow done`s, firing the close-out sweep that captures learnings.\n"+
 			"  - A decision only the HUMAN can make → a QUESTION task: `flow add task \"<the question>\" --tag question --tag owner:%s`, then move on.\n\n"+
 			"Do these in order:\n"+
-			"1. Invoke the flow skill via the Skill tool.\n"+
+			"1. "+flowSkillStep()+".\n"+
 			"2. Read your charter at %s/charter.md — your operating manual (what you own, how to observe, when to ask, when to escalate). This is an ABSOLUTE path: your charter and journal live under $FLOW_ROOT, NOT your work_dir — do not create an `owners/` directory in the repo.\n"+
 			"3. Catch up on yourself: read the most recent note(s) under %s/updates/ — that is your JOURNAL from prior ticks (what you dispatched, what you were waiting on, what to check now). Then review everything you own with `flow owner show %s` — it lists your in-flight tasks, playbook runs, AND open questions with their current status (do NOT use `flow list tasks`, which hides playbook runs). Advance or check on what's there; never duplicate work already tracked and never re-spawn a run that is still in progress.\n"+
 			"4. Observe the world per your charter, then DISPATCH what needs doing as playbook-runs / tasks / questions per the rule above. Keep the tick SHORT — spin work out, never perform it inline.\n"+
