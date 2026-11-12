@@ -17,6 +17,7 @@ import (
 //	flow inbox [--all] [--as <assignee>] [--json]
 //	flow inbox pop [--wait] [--timeout <s>] [--keep-unread] [--as <assignee>] [--json]
 //	flow inbox read <id> [--json]
+//	flow inbox wait [--timeout <s>]   (non-acking; see wake.go)
 //	flow inbox stats [--as <assignee>]
 //
 // Mail model: `flow inbox` lists unread (pending); `--all` lists the whole
@@ -49,6 +50,8 @@ func cmdInbox(args []string) int {
 	switch sub {
 	case "pop":
 		return inboxPop(rest)
+	case "wait":
+		return cmdInboxWait(rest)
 	case "read":
 		return inboxRead(rest)
 	case "stats":

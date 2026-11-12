@@ -11,6 +11,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Harness wake: bus mail reaches a bound session with no listener.**
+  After every bus insert (`flow message`, watched `flow broadcast`, child
+  reports, dead-child pings, driver notices, attachments) flow checks the
+  recipient task's session. Idle → it pushes a short notice that starts a
+  turn: Claude through the session's cross-session socket (recorded by the
+  SessionStart hook, 0600 under `$FLOW_ROOT/wake/`), with an asyncRewake
+  waiter (`flow inbox wait --rewake`, SessionStart + Stop) as the
+  fallback; Codex through `codex queue --thread <id>` into the live TUI.
+  Busy → the session's own hooks deliver: PreToolUse before the next tool
+  call, and a new Stop-hook check that blocks the turn's end with the
+  notice when mail landed after the last tool call. Busy/idle is tracked
+  by flow's hooks (UserPromptSubmit/PreToolUse busy, Stop idle). An
+  Esc-interrupt ends a turn without a Stop hook, so a "busy" session whose
+  hooks are quiet for 30s is cross-checked with `claude agents --json`
+  (Claude), and counts as idle after 2 min when the harness can't tell. Every announcing path claims rows atomically in
+  `bus_surfaced`, so each message is announced once. Never woken: closed
+  tasks, auto runs, the human. The notice is a count + "run `flow inbox
+  pop`" tagged `[flow-bus wake]`, never taken for the human typing.
+  `flow message` / `flow broadcast` now print `woke <slug>` or `stored:
+  <reason>`. `FLOW_NO_WAKE=1` turns it off.
+- **`flow inbox wait`** — the non-acking wait: returns when unannounced
+  mail lands in this session's inbox, leaves it unread.
+
 - **flow upgrades itself.** When the SessionStart hook finds a newer
   release, flow downloads it in the background after a command, checks
   its SHA-256 against the release, and renames it over the binary. The
@@ -92,6 +115,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `flow message <peer> --reply-to <id>` and then `flow done`.
 
 ### Changed
+
+- **No more inbox Monitor.** With harness wake on, SessionStart tells a
+  bound Claude session not to arm a listener; the Monitor recipe left the
+  SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
+  kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
 
 - **Regular Codex sessions run sandboxed, with flow's commands allow-listed.**
   `flow do` and `flow run playbook` now open and resume interactive Codex

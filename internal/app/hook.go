@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
@@ -113,8 +114,14 @@ func cmdHookSessionStart(args []string) int {
 		return 2
 	}
 	readHookPayload()
+	// Claude socket push: only this hook process sees the session's
+	// socket token, so record it on every start/resume/compaction.
+	recordClaudeEndpoint(currentSessionID())
 
 	bound := lookupBoundTask()
+	if bound != nil && !isAutoRunSession(bound) {
+		markSessionState(bound.Slug, flowdb.SessionIdle)
+	}
 	if bound == nil {
 		// Unbound sessions are where the human usually sits — surface
 		// their pending-mail count here too (inform-only).
@@ -175,7 +182,7 @@ func driverDelegationBlock() string {
 		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
 		"answers. Live/prod changes: the child plans and gates only; you apply them with the user. " +
 		"How: write a brief (goal, where, Done when, gates, report via flow message, never block waiting " +
-		"for a reply (it reaches your inbox; pop it when a flow-bus notice or your listener surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
+		"for a reply (it reaches your inbox; pop it when a flow-bus notice surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
 		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
 		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
 		"the child messages you, verify its result (it names its update note) before reporting " +
@@ -329,8 +336,11 @@ func cmdHookUserPromptSubmit(args []string) int {
 		return 2
 	}
 	readHookPayload()
-	pageCtx := busPromptSubmitContext()
 	t := lookupBoundTask()
+	if t != nil && !isAutoRunSession(t) {
+		markSessionState(t.Slug, flowdb.SessionBusy)
+	}
+	pageCtx := busPromptSubmitContext()
 	if t == nil {
 		// Unbound — page-bus context (an unbound session can still have
 		// paged the user) is the only possible payload.
@@ -375,4 +385,15 @@ func cmdHookPreToolUse(args []string) int {
 		return 0
 	}
 	return emitHookContext("PreToolUse", strings.TrimSpace(ctx))
+}
+
+// markSessionState records a hook-observed turn-state change (silent on
+// any error — hooks never fail loud).
+func markSessionState(slug, state string) {
+	db, err := openBusDB()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	_ = flowdb.SetSessionState(db, slug, state, time.Now())
 }

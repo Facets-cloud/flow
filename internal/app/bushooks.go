@@ -35,13 +35,12 @@ import (
 //	                  action it would cancel. Announced once per item
 //	                  (bus_surfaced high-water mark), so the same pending
 //	                  set never re-nudges across a turn's many tool calls.
-//	Stop              cmdHookStop(): broadcast nudge only — watchers
-//	                  exist, no broadcast in 30m, declined-nudge
-//	                  backoff elapsed. Inbox mail is deliberately NOT
-//	                  handled at Stop: an armed Monitor picks it up
-//	                  within seconds, and a listener-less session (auto
-//	                  run, Codex) is informed at its next tool call or
-//	                  prompt.
+//	Stop              cmdHookStop(): marks the session idle, then the
+//	                  wake catch (unannounced mail → block with the
+//	                  notice), then the broadcast nudge.
+//
+// Every announcing path claims through flowdb.ClaimUnsurfaced, so a
+// message is announced once (see wake.go).
 //
 // Hook code must never fail loud — errors degrade to silence.
 
@@ -75,7 +74,7 @@ const autoRunNoListenerRule = " flow-bus, auto run: do NOT arm an inbox listener
 const codexNoListenerRule = " flow-bus, Codex session: do NOT arm an inbox listener — Codex has no " +
 	"Monitor and kills background shell jobs when the command returns, so a background " +
 	"`flow inbox pop --wait` would ack your mail unseen (flow refuses `pop --wait` here). Mail " +
-	"reaches you as flow-bus notices before your tool calls and when the user types. When a notice " +
+	"reaches you as flow-bus notices before your tool calls, at turn end, and (when idle) as a queued prompt. When a notice " +
 	"says mail landed or is pending, run `flow inbox pop` in the foreground (one-shot, never --wait): " +
 	"it shows you one message; repeat until empty and act on what it says. Still subscribe to what " +
 	"this task depends on: `flow watch <task-or-project-slug>` (tasks you create from this session " +
@@ -91,6 +90,15 @@ const codexSandboxRule = " flow in Codex's sandbox: run flow commands BARE — n
 	"flow message/inbox/broadcast/watch/show/list/transcript run without a prompt; other flow " +
 	"commands need approval: run them with escalated permissions so the user gets Codex's prompt."
 
+// wakeNoListenerRule replaces the Monitor discipline in an interactive
+// Claude session while harness wake is on: flow pushes a notice into the
+// session itself (socket, or the asyncRewake fallback), so a listener
+// would only re-arm every 30 minutes for nothing.
+const wakeNoListenerRule = " flow-bus: mail reaches you automatically — don't arm a listener (no Monitor, " +
+	"no background `flow inbox pop --wait`). When a flow-bus notice says mail landed, run `flow inbox pop` in " +
+	"the foreground (one-shot), repeat until empty, and act on each. Subscribe to what this task depends on: " +
+	"`flow watch <task-or-project-slug>` (tasks you create from this session are watched automatically)."
+
 // isCodexSession reports whether the current session runs under Codex:
 // the bound task is pinned to the codex harness, or this process is a
 // Codex tool shell ($CODEX_THREAD_ID). Hooks see only the pin — Codex
@@ -105,9 +113,9 @@ func isCodexSession(bound *flowdb.Task) bool {
 
 // noListenerSession reports whether the session must pop its inbox in
 // the foreground instead of relying on a listener: a headless auto run,
-// or any Codex session.
+// any Codex session, or any session while harness wake is on.
 func noListenerSession(bound *flowdb.Task) bool {
-	return isAutoRunSession(bound) || isCodexSession(bound)
+	return isAutoRunSession(bound) || isCodexSession(bound) || wakeActive()
 }
 
 // busSessionStartContext returns extra SessionStart context (may be "").
@@ -131,6 +139,10 @@ func busSessionStartContext() string {
 		if isCodexSession(t) {
 			b.WriteString(codexNoListenerRule)
 			b.WriteString(codexSandboxRule)
+			return b.String()
+		}
+		if wakeActive() {
+			b.WriteString(wakeNoListenerRule)
 			return b.String()
 		}
 		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
@@ -175,7 +187,8 @@ func busPromptSubmitContext() string {
 				m.ID, m.Body, fmtBusWait(m.WaitedS)))
 		}
 	}
-	if s.TaskSlug != "" {
+	// A wake notice that arrived as this prompt already says it all.
+	if s.TaskSlug != "" && !strings.Contains(hookPrompt, harness.WakeMarker) {
 		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
 	}
 	return b.String()
@@ -205,7 +218,12 @@ func busPreToolUseContext() string {
 	if s.TaskSlug == "" {
 		return ""
 	}
-	msgs, err := flowdb.PendingUnsurfacedForTask(db, s.TaskSlug)
+	// A tool is about to run: the session is mid-turn (busy). This also
+	// covers turns that start without a UserPromptSubmit (a pushed wake).
+	_ = flowdb.TouchSessionActivity(db, s.TaskSlug, time.Now())
+	// Atomic claim: only rows no other path (wake, Stop check, waiter)
+	// announced yet, and never again for these rows.
+	msgs, err := flowdb.ClaimUnsurfaced(db, s.TaskSlug)
 	if err != nil || len(msgs) == 0 {
 		return ""
 	}
@@ -215,21 +233,15 @@ func busPreToolUseContext() string {
 	sort.SliceStable(msgs, func(i, j int) bool {
 		return msgs[i].Urgent && !msgs[j].Urgent
 	})
-	ids := make([]string, len(msgs))
 	urgent := 0
-	for i, m := range msgs {
-		ids[i] = m.ID
+	for _, m := range msgs {
 		if m.Urgent {
 			urgent++
 		}
 	}
-	// Advance the high-water mark before returning: whether or not the
-	// agent acts on this surface, the next tool call must not re-announce
-	// the same messages.
-	_ = flowdb.MarkSurfaced(db, s.TaskSlug, ids)
 
-	// An auto run or a Codex session has no listener: it must pop in the
-	// foreground itself, so don't point it at a Monitor.
+	// A session without a Monitor (auto run, Codex, harness wake on) pops
+	// in the foreground itself, so don't point it at a Monitor.
 	how := " (or your armed Monitor loop delivers it)"
 	if t, _ := flowdb.GetTask(db, s.TaskSlug); noListenerSession(t) {
 		how = " in the foreground now (one-shot, not --wait) and act on it"
@@ -314,6 +326,9 @@ func pendingTaskNotice(db *sql.DB, slug string) string {
 	if err != nil || n == 0 {
 		return ""
 	}
+	// This notice announces the whole pending set: claim it so a wake or
+	// the Stop check does not announce the same rows again.
+	_, _ = flowdb.ClaimUnsurfaced(db, slug)
 	how := " now (or your armed Monitor loop will deliver them)."
 	if t, _ := flowdb.GetTask(db, slug); noListenerSession(t) {
 		how = " in the foreground now (one-shot, not --wait), repeat until empty, and act on them."
@@ -336,23 +351,31 @@ func nudgeBackoffFor(attempts int) time.Duration {
 	return d
 }
 
-// cmdHookStop fires when a turn ends: nudge the agent to broadcast a
-// one-liner if this task has watchers and hasn't broadcast recently.
+// cmdHookStop fires when a turn ends. Two jobs, in order:
 //
-// Loop guard: Claude Code treats any Stop-hook output as blocking the
-// turn from ending, re-invokes the hook on the follow-up stop with
-// stop_hook_active=true in its stdin payload, and force-ends the turn
-// after too many consecutive blocks. A nudge must therefore never fire
-// on a stop that is already part of a hook-driven continuation — check
-// the flag FIRST and stay silent while it's set.
+//  1. Wake catch (harness wake on, not an auto run): record the session
+//     idle, THEN claim any mail no other path announced — mail that landed
+//     after the turn's last tool call, when a sender's wake saw the
+//     session busy and left it to the hooks. If the claim wins anything,
+//     block the stop with the notice so the turn continues and pops it
+//     (the session stays busy). Setting idle before claiming closes the
+//     race with a concurrent sender, which inserts before reading the
+//     state: one of the two always sees the row, and the atomic claim
+//     lets only one announce it. The claim also bounds the loop, so it
+//     runs even on a hook-driven continuation (stop_hook_active): every
+//     block needs mail nobody announced yet.
+//  2. Broadcast nudge: watchers exist, no broadcast in 30m, backoff
+//     elapsed. Never on a continuation — Claude Code and Codex re-invoke
+//     the hook with stop_hook_active=true and force-end after too many
+//     blocks, so a nudge there would loop.
 func cmdHookStop(args []string) int {
 	fs := flagSet("hook stop")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	// A missing or malformed payload counts as active — when in doubt,
-	// don't block.
-	if p, ok := readHookPayload(); !ok || p.StopHookActive {
+	// A missing or malformed payload: when in doubt, don't block.
+	p, ok := readHookPayload()
+	if !ok {
 		return 0
 	}
 	db, err := openBusDB()
@@ -365,6 +388,22 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 	slug := t.Slug
+	if !isAutoRunSession(t) {
+		_ = flowdb.SetSessionState(db, slug, flowdb.SessionIdle, time.Now())
+		if wakeActive() {
+			if won, _ := flowdb.ClaimUnsurfaced(db, slug); len(won) > 0 {
+				_ = flowdb.SetSessionState(db, slug, flowdb.SessionBusy, time.Now())
+				n, _ := flowdb.PendingCountForTask(db, slug)
+				if n < len(won) {
+					n = len(won)
+				}
+				return emitStopBlock(wakeNotice(n))
+			}
+		}
+	}
+	if p.StopHookActive {
+		return 0
+	}
 	// A headless auto run reports through its prompt's one reporting rule
 	// (parent inbox / human at done-blocked); a broadcast nudge on top
 	// would deliver its progress to the parent twice (it auto-watches).
@@ -376,17 +415,16 @@ func cmdHookStop(args []string) int {
 		return 0
 	}
 	if t.Harness.Valid && t.Harness.String == string(harness.NameCodex) {
-		return emitCodexStopBlock(strings.TrimSpace(nudge))
+		return emitStopBlock(strings.TrimSpace(nudge))
 	}
 	return emitHookContext("Stop", strings.TrimSpace(nudge))
 }
 
-// emitCodexStopBlock is the Codex form of the Stop nudge. Codex's Stop
-// output schema is closed and has no hookSpecificOutput: text reaches
-// the agent only as {"decision":"block","reason":...}, which Codex
-// replays as a continuation prompt (the stop_hook_active guard above
-// keeps that from looping).
-func emitCodexStopBlock(reason string) int {
+// emitStopBlock continues the turn with reason as the next prompt:
+// {"decision":"block","reason":...}. Both harnesses accept it; for Codex
+// it is the only way Stop text reaches the agent (its Stop output schema
+// is closed and has no hookSpecificOutput).
+func emitStopBlock(reason string) int {
 	out := map[string]any{"decision": "block", "reason": reason}
 	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
 		fmt.Fprintf(os.Stderr, "error: encode hook json: %v\n", err)
