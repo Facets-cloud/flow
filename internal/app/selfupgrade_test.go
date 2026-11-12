@@ -16,6 +16,9 @@ import (
 
 const testReleaseURL = "https://example.test/flow-new"
 
+// A test binary must never replace itself.
+func init() { selfUpgradeDisabledForTests = true }
+
 // fakeBinary is a temporary file that stands in for the flow binary.
 func fakeBinary(t *testing.T) string {
 	t.Helper()
@@ -33,6 +36,8 @@ func withSelfUpgradeGates(t *testing.T, execPath string) *[]string {
 	withVersion(t, "v0.1.0-alpha.3")
 	t.Setenv(selfUpgradeEnv, "")
 	t.Setenv("CI", "")
+	t.Setenv("CODEX_SANDBOX", "")
+	t.Setenv(autoRunEnvVar, "")
 	oldExec, oldStart, oldRoot, oldGOOS := selfUpgradeExec, startSelfUpgrade, selfUpgradeAsRoot, selfUpgradeGOOS
 	t.Cleanup(func() {
 		selfUpgradeExec, startSelfUpgrade, selfUpgradeAsRoot, selfUpgradeGOOS = oldExec, oldStart, oldRoot, oldGOOS
@@ -87,6 +92,11 @@ func withFakeRelease(t *testing.T, tag, body, digest string) {
 	}
 }
 
+// fakeFlowBuild is a release asset that runs: `--version` prints tag.
+func fakeFlowBuild(tag string) string {
+	return "#!/bin/sh\necho " + tag + "\n"
+}
+
 func TestIsNewerRelease(t *testing.T) {
 	cases := []struct {
 		latest, current string
@@ -124,6 +134,8 @@ func TestSelfUpgradeOffReason(t *testing.T) {
 		{"Linux", func() { selfUpgradeGOOS = "linux" }, bin, ""},
 		{"Windows", func() { selfUpgradeGOOS = "windows" }, bin, "platform"},
 		{"root", func() { selfUpgradeAsRoot = func() bool { return true } }, bin, "root"},
+		{"Codex sandbox", func() { t.Setenv("CODEX_SANDBOX", "seatbelt") }, bin, "sandbox"},
+		{"auto run", func() { t.Setenv(autoRunEnvVar, "some-task") }, bin, "auto-run"},
 		{"no binary", func() {}, "", "folder"},
 		{"folder not writable", func() {}, filepath.Join(t.TempDir(), "missing", "flow"), "folder"},
 	}
@@ -173,6 +185,14 @@ func TestMaybeSelfUpgradeSkips(t *testing.T) {
 			if err := writeSelfUpgradeState(root, st); err != nil {
 				t.Fatal(err)
 			}
+		}},
+		{"Codex sandbox", func(t *testing.T, root string) {
+			writeVersionCache(t, root, "v0.1.0-alpha.29")
+			t.Setenv("CODEX_SANDBOX", "seatbelt")
+		}},
+		{"inside an auto run", func(t *testing.T, root string) {
+			writeVersionCache(t, root, "v0.1.0-alpha.29")
+			t.Setenv(autoRunEnvVar, "some-task")
 		}},
 		{"live claim", func(t *testing.T, root string) {
 			writeVersionCache(t, root, "v0.1.0-alpha.29")
@@ -232,7 +252,7 @@ func TestCmdSelfUpgradeReplacesBinary(t *testing.T) {
 	root := withFlowRoot(t)
 	bin := fakeBinary(t)
 	withSelfUpgradeGates(t, bin)
-	withFakeRelease(t, "v0.1.0-alpha.29", "new binary", "")
+	withFakeRelease(t, "v0.1.0-alpha.29", fakeFlowBuild("v0.1.0-alpha.29"), "")
 	if err := os.WriteFile(filepath.Join(root, selfUpgradeClaimFile), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -240,8 +260,11 @@ func TestCmdSelfUpgradeReplacesBinary(t *testing.T) {
 	if rc := cmdSelfUpgrade(); rc != 0 {
 		t.Fatalf("cmdSelfUpgrade rc = %d, want 0", rc)
 	}
-	if got, _ := os.ReadFile(bin); string(got) != "new binary" {
+	if got, _ := os.ReadFile(bin); string(got) != fakeFlowBuild("v0.1.0-alpha.29") {
 		t.Errorf("binary = %q, want the new build", got)
+	}
+	if got, _ := os.ReadFile(bin + ".prev"); string(got) != "old binary" {
+		t.Errorf("flow.prev = %q, want the old binary kept for a rollback", got)
 	}
 	if info, _ := os.Stat(bin); info.Mode().Perm() != 0o755 {
 		t.Errorf("binary mode = %v, want 0755", info.Mode().Perm())
@@ -315,9 +338,9 @@ func TestCmdUpgrade(t *testing.T) {
 	}{
 		{"up to date", "v0.1.0-alpha.29", nil, 0, "old binary"},
 		{"check only", "v0.1.0-alpha.3", []string{"--check"}, 0, "old binary"},
-		{"upgrade", "v0.1.0-alpha.3", nil, 0, "new binary"},
+		{"upgrade", "v0.1.0-alpha.3", nil, 0, fakeFlowBuild("v0.1.0-alpha.29")},
 		{"source build refused", "v0.1.0-alpha.24-1-g7ad6e4e", nil, 1, "old binary"},
-		{"source build forced", "v0.1.0-alpha.24-1-g7ad6e4e", []string{"--force"}, 0, "new binary"},
+		{"source build forced", "v0.1.0-alpha.24-1-g7ad6e4e", []string{"--force"}, 0, fakeFlowBuild("v0.1.0-alpha.29")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -325,7 +348,7 @@ func TestCmdUpgrade(t *testing.T) {
 			bin := fakeBinary(t)
 			withSelfUpgradeGates(t, bin)
 			Version = c.version
-			withFakeRelease(t, "v0.1.0-alpha.29", "new binary", "")
+			withFakeRelease(t, "v0.1.0-alpha.29", fakeFlowBuild("v0.1.0-alpha.29"), "")
 			if rc := cmdUpgrade(c.args); rc != c.wantRC {
 				t.Errorf("cmdUpgrade rc = %d, want %d", rc, c.wantRC)
 			}
@@ -397,5 +420,137 @@ func assertNoTempFiles(t *testing.T, dir string) {
 	matches, _ := filepath.Glob(filepath.Join(dir, selfUpgradeTempPattern))
 	if len(matches) != 0 {
 		t.Errorf("temporary downloads left behind: %v", matches)
+	}
+}
+
+// Finding 1 of the #113 review: a failed release fetch must back off
+// like any other failure, and must bring the stale hint back.
+func TestSelfUpgradeFetchFailureBacksOff(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		get  func(url string) (*http.Response, error)
+	}{
+		{"offline", func(string) (*http.Response, error) { return nil, errors.New("no network") }},
+		{"rate limited", func(string) (*http.Response, error) {
+			return fakeHTTPResponse(t, 403, `{"message":"API rate limit exceeded"}`), nil
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := withFlowRoot(t)
+			bin := fakeBinary(t)
+			withSelfUpgradeGates(t, bin)
+			writeVersionCache(t, root, "v0.1.0-alpha.29")
+			withFakeHTTP(t, c.get)
+			old := httpGetForUpgrade
+			t.Cleanup(func() { httpGetForUpgrade = old })
+			httpGetForUpgrade = c.get
+			spawns := 0
+			startSelfUpgrade = func(string, string) error {
+				spawns++
+				cmdSelfUpgrade() // the detached run, inline
+				return nil
+			}
+			for i := 0; i < 3; i++ {
+				maybeSelfUpgrade()
+			}
+			if spawns != 1 {
+				t.Errorf("spawns = %d over 3 commands, want 1 (24h backoff after a failed fetch)", spawns)
+			}
+			st, err := readSelfUpgradeState(root)
+			if err != nil || st.Result != "failed" || st.Target != "v0.1.0-alpha.29" || st.Error == "" {
+				t.Errorf("state = %+v (err %v), want a failed attempt at v0.1.0-alpha.29", st, err)
+			}
+			if selfUpgradeHandles("v0.1.0-alpha.29") {
+				t.Error("selfUpgradeHandles = true after a failed fetch, want false so the stale hint shows")
+			}
+			if got, _ := os.ReadFile(bin); string(got) != "old binary" {
+				t.Errorf("binary = %q, want it unchanged", got)
+			}
+		})
+	}
+}
+
+// Finding 2 of the #113 review: a build that does not run, or that
+// reports another version, must never replace the binary.
+func TestCmdSelfUpgradeRefusesBrokenBuild(t *testing.T) {
+	for _, c := range []struct{ name, body string }{
+		{"not an executable", "not an executable"},
+		{"wrong version", fakeFlowBuild("v0.1.0-alpha.28")},
+		{"crashes", "#!/bin/sh\nexit 3\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := withFlowRoot(t)
+			bin := fakeBinary(t)
+			withSelfUpgradeGates(t, bin)
+			withFakeRelease(t, "v0.1.0-alpha.29", c.body, "")
+
+			if rc := cmdSelfUpgrade(); rc != 1 {
+				t.Fatalf("cmdSelfUpgrade rc = %d, want 1", rc)
+			}
+			if got, _ := os.ReadFile(bin); string(got) != "old binary" {
+				t.Errorf("binary = %q, want the old binary kept", got)
+			}
+			if _, err := os.Stat(bin + ".prev"); !os.IsNotExist(err) {
+				t.Errorf("flow.prev exists after a refused upgrade (stat err %v)", err)
+			}
+			st, _ := readSelfUpgradeState(root)
+			if st.Result != "failed" || !strings.Contains(st.Error, "--version") {
+				t.Errorf("state = %+v, want a smoke-test failure", st)
+			}
+			assertNoTempFiles(t, filepath.Dir(bin))
+		})
+	}
+}
+
+// A second upgrade replaces the old flow.prev with the binary it replaces.
+func TestReplaceSelfRotatesPrev(t *testing.T) {
+	bin := fakeBinary(t)
+	if err := os.WriteFile(bin+".prev", []byte("older binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withSelfUpgradeGates(t, bin)
+	withFakeRelease(t, "v0.1.0-alpha.29", fakeFlowBuild("v0.1.0-alpha.29"), "")
+	rel, err := fetchLatestRelease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceSelf(bin, rel); err != nil {
+		t.Fatalf("replaceSelf: %v", err)
+	}
+	if got, _ := os.ReadFile(bin + ".prev"); string(got) != "old binary" {
+		t.Errorf("flow.prev = %q, want the binary this upgrade replaced", got)
+	}
+}
+
+// Nit 10 of the #113 review: a download that a killed upgrade left
+// behind is removed by the next upgrade once it is an hour old.
+func TestReplaceSelfRemovesStaleDownloads(t *testing.T) {
+	bin := fakeBinary(t)
+	dir := filepath.Dir(bin)
+	stale := filepath.Join(dir, ".flow-upgrade-111")
+	fresh := filepath.Join(dir, ".flow-upgrade-222")
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("partial"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	withSelfUpgradeGates(t, bin)
+	withFakeRelease(t, "v0.1.0-alpha.29", fakeFlowBuild("v0.1.0-alpha.29"), "")
+	rel, err := fetchLatestRelease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceSelf(bin, rel); err != nil {
+		t.Fatalf("replaceSelf: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale download still exists (stat err %v)", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh download removed (stat err %v); it may belong to a live upgrade", err)
 	}
 }

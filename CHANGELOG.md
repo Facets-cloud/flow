@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.37] — 2026-11-12
+
 ### Added
 
 - **Harness wake: bus mail reaches a bound session with no listener.**
@@ -155,6 +157,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   then `TERM_PROGRAM`.
 
 ### Fixed
+
+- **Self-upgrade is safer before it ships to everyone** (follow-up to
+  #113). A failed release check (offline, GitHub rate limit) now records
+  a failed attempt, so flow waits 24 hours instead of starting another
+  background upgrade and API call on every command, and the
+  `flow-version-stale` hint comes back. Before a download replaces the
+  binary, flow runs it with `--version` and requires the release tag; a
+  build that does not run or reports another version is refused and the
+  binary is left alone. The replaced binary stays beside it as
+  `flow.prev` (`mv flow.prev flow` rolls back). No automatic upgrade starts
+  inside the Codex sandbox (`CODEX_SANDBOX`) or inside a headless auto
+  run (`FLOW_AUTO_RUN`), so a binary is never swapped mid-run. Downloads
+  left by a killed upgrade are removed after an hour, and production code
+  no longer imports `testing`.
 
 - The stale-version hint fired when the latest tag only differed from the
   running version. It now fires only when the latest release is newer, by

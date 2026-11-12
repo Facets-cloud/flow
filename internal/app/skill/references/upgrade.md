@@ -15,7 +15,9 @@ you see that signal, proactively offer the upgrade via
 **How flow upgrades itself.** The SessionStart hook checks GitHub
 releases at most once a day. When a newer release exists, flow
 downloads it in the background after a command, checks its SHA-256
-against the release, and renames it over the binary. The next flow
+against the release, runs it with `--version` (it must print the
+release tag), keeps the old binary beside it as `flow.prev`, and
+renames the new one over the binary. The next flow
 command refreshes the skill and the hooks. So the
 `flow-version-stale:` signal appears only when this automatic upgrade
 cannot run or its last attempt failed. The log is
@@ -66,8 +68,29 @@ cannot run or its last attempt failed. The log is
 - The binary is a source build (`make install`, version like
   `v0.1.0-alpha.24-1-g7ad6e4e` or `dev`).
 - flow runs as root, or cannot write to the folder of its binary.
-- The last attempt failed; flow waits 24 hours before it tries the
-  same release again. Read `~/.flow/self-upgrade.log`.
+- It runs inside the Codex sandbox (`CODEX_SANDBOX` is set) or inside a
+  headless auto run (`FLOW_AUTO_RUN` is set); the next ordinary command
+  upgrades.
+- The last attempt failed (no network, a GitHub rate limit, a bad
+  checksum, or a download that does not run or reports another
+  version); flow waits 24 hours before it tries the same release
+  again. Read `~/.flow/self-upgrade.log`.
+
+**Roll back an upgrade.** Every upgrade (automatic or `flow upgrade`)
+keeps the binary it replaced as `flow.prev` in the same folder. If the
+new version misbehaves, put the old one back and stop automatic
+upgrades until a fixed release exists:
+```
+mv "$(dirname "$(command -v flow)")/flow.prev" "$(command -v flow)"
+export FLOW_NO_AUTO_UPGRADE=1   # in the shell profile, until the fix
+flow --version && flow skill update
+```
+Ask before you roll back; tell the user to remove
+`FLOW_NO_AUTO_UPGRADE` once a newer release is out.
+
+**Trust model.** The SHA-256 comes from the same GitHub release as the
+binary, so it proves the download is intact, not who built it. That is
+the same trust install.sh has.
 
 **Platform notes:**
 
