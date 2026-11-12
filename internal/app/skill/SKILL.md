@@ -729,10 +729,9 @@ moving into design / implementation / debugging. Re-evaluate on every turn.
 
 **Triggers:** "update flow", "upgrade flow", "new flow version", "what
 version am I on", a bare `flow --version`, or a SessionStart
-`flow-version-stale:` signal. The procedure — capture `flow --version`,
-follow INSTALL.md at https://github.com/Facets-cloud/flow (re-running
-install.sh upgrades in place on macOS and Linux; never invent download
-URLs), `flow skill update`, re-check version — lives in
+`flow-version-stale:` signal. flow upgrades itself after a command; the
+signal means it could not. Run `flow upgrade` (ask before `--force`), then
+`flow --version`. The install.sh fallback and failure causes live in
 **references/upgrade.md**.
 ### 4.16a Tagging tasks
 

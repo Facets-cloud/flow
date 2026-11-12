@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="https://facets-cloud.github.io/flow/"><strong>Website</strong></a> ·
-  <a href="#install">Install</a> ·
-  <a href="#see-it-in-action">Demo</a> ·
+  <a href="#try-it-in-ten-minutes">Install</a> ·
+  <a href="#watch-one-happen">Demo</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -14,545 +14,377 @@
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
 </p>
 
-> A complete task manager for Claude Code and Codex — and the working memory
-> layer that turns every session from a brilliant new hire into the
-> engineer on your team.
+You run Claude Code or Codex. You say "let's pick up the billing migration"
+and the session for that work opens where it stopped, with its notes read.
+You say "pick up issue 59, I'm going to sleep, find me on Slack if you need a
+decision" and go to sleep. flow is the small local CLI underneath that makes
+those sentences work: each piece of work gets a name, a session, a brief,
+dated notes and a mailbox. SQLite and markdown in `~/.flow`. You talk to the
+agent; the agent runs flow.
 
-## See it in action
+If you run three or more agent sessions a day and lose track of them, keep
+reading. If one session at a time works for you, you do not need this.
 
-A four-act demo of how flow compounds context across days and tasks.
-The work is silly on purpose — Star Trek bridge starships — so the
-mechanic is what you watch, not the code.
+## If you do not care how it works
 
-**Act 1 — Capture the work.** Just talk. flow interviews you for
-what / why / where / done-when, drafts a structured brief, and opens
-a dedicated Claude session for the task in a new tab.
+Skip everything below and try it for a week. It makes the AI you already use
+better and more predictable: your work gets names, your sessions stop
+forgetting, and you ask one place what happened instead of rereading ten
+chats. The first two days are irritating, because it asks you to name
+things and interviews you about them. Around day three it becomes the thing
+you would not give back. If that is not true for you after a week, delete
+`~/.flow` and nothing is left behind.
 
-![Act 1 — task intake](docs/demo/01-task-intake.gif)
+## Watch one happen
 
-**Act 2 — Work, then park.** The session has the brief, the project
-context, and the knowledge base loaded. You build until you hit a
-blocker — here, "Kirk needs to review this" — and tell Claude to
-park it. Status flips to `waiting`. Tab can close.
+![flow demo: one sentence at 11 pm, a Slack reply, a PR in the morning](docs/demo/issue-59.gif)
 
-![Act 2 — execution and park](docs/demo/02-task-execution.gif)
-
-**Act 3 — Resume and close.** A day later you say "Kirk signed off."
-Same session resumes with full memory of where it left off. `flow
-done` flips status and triggers the sweep — Claude re-reads the
-whole transcript and writes durable facts (Kirk approved the design,
-the ship class, the conventions used) into the knowledge base.
-
-![Act 3 — approval and close](docs/demo/03-approval-and-close.gif)
-
-**Act 4 — Months later, a new captain.** New task: "Picard's the new
-boss, he wants the starship as an SVG." Brand new session, but it
-already knows the ship, knows the design choices Kirk approved,
-knows the project conventions — because the KB carried it. Claude
-just gets to work.
-
-![Act 4 — Picard's SVG upgrade](docs/demo/04-picard-svg-upgrade.gif)
-
-That fourth session is what flow is really about. Not the first
-session — the fiftieth.
-
-## Why flow
-
-If you use Claude Code daily, you've felt the ceiling: every session
-is a new hire. Brilliant, capable, ready to help — but with no memory
-of yesterday's decisions, last week's migrations, or the half-finished
-threads in your other tabs. You spend the first ten minutes of every
-session catching it up.
-
-flow changes the relationship. It's a complete task manager —
-projects, tasks, structured briefs, progress notes, playbooks for
-recurring work — *and* a working memory layer that injects all of it
-into every Claude session automatically. Capture once, work with
-Claude on it forever.
-
-The first session feels normal. By session ten, Claude knows your
-codebase quirks, your team, the customer you keep mentioning, and
-the migration you're three steps into. By session fifty, it's the
-engineer on your team — not a new hire you re-explain yourself to
-every morning.
-
-Built for power users who want Claude to *work with them*, not just
-*help them*.
-
-## How context compounds
-
-Every task feeds the same knowledge base. Every closed task makes
-the next one smarter.
+One take, unedited except for speed. Recorded 11 November 2026 on a clean
+flow root, with a real open issue on this repo.
 
 ```
-                                       ┌────────────────────────┐
-                                       │   ~/.flow/kb/          │
-                                       │   user · org · products│
-                                       │   processes · business │
-                                       └─────▲──────────▲───────┘
-                                             │          │
-                  flow do <task>             │ scoop    │ sweep
-   ┌────────┐  ─────────────────▶  ┌─────────┴──────────┴─────┐
-   │  Task  │                      │      Claude session      │
-   │  brief │  ◀──── updates ───── │  loads brief + kb +      │
-   │ +notes │                      │  notes + repo conventions│
-   └────────┘  ─── flow done ───▶  └──────────────────────────┘
-                                       (auto-sweep transcript
-                                        into kb on done)
+ the sentence   "pick up issue-59, skip permissions. I'm going to sleep. if you need
+                 a decision, find me on Slack."
+ 25 minutes     the task reads the issue, reproduces it, writes 8 failing tests, fixes,
+ (shown at 10x) runs the suite. Nobody told it how. The brief was eight lines.
+ the question   on its own it asks, over Slack: "fixed + tested on a local branch,
+                 nothing pushed. Push and open a PR?  Push + open PR | Hold"
+ the reply      typed in Slack: "push and open PR". It reaches the task in seconds.
+ the morning    "what happened with issue 59 while I was asleep?" answered from the
+                 task's note, including two things it could not verify.
+ the result     PR #135 (https://github.com/Facets-cloud/flow/pull/135), CI green,
+                 waiting for a human review. Nothing merged by an agent.
 ```
 
-- **Scoop (live):** during a session the flow skill listens for
-  durable facts you mention — your role, a teammate's name, a
-  product convention — and appends them to the matching kb file
-  on the fly.
-- **Sweep (on `flow done`):** when you close a task, flow spawns
-  a headless Claude pass that re-reads the entire transcript and
-  pulls anything kb-worthy that the live scoop missed. The status
-  flip is the contract; the sweep is best-effort.
-- **Cross-reference:** `flow transcript <sibling-task>` lets a
-  current session read what was decided in a related one — useful
-  when the brief alone doesn't carry enough context.
-
-Net effect: the longer you use flow, the more your knowledge base
-grows, the less you re-explain yourself.
-
-## Playbooks for the work you do on cadence
-
-Some work repeats. Weekly reviews. Daily PR triage. On-call rotations.
-Customer-meeting prep.
-
-A **playbook** is a reusable run definition — a markdown brief that
-describes what a run does. `flow run playbook weekly-review` snapshots
-that brief into a fresh task and spawns a new Claude session against
-it. Every run is reproducible (it executes against a frozen snapshot,
-so editing the playbook later doesn't rewrite history) and contributes
-back to the knowledge base on `flow done` like any other task.
-
-```
-┌──────────┐  flow run playbook weekly-review
-│ Playbook │ ────────▶ snapshot ─────▶ new task ─────▶ new session
-│  brief   │           (frozen for                     (executes
-└──────────┘            reproducibility)                against snapshot)
-```
-
-Same compounding mechanic — your weekly review session two months from
-now will know everything every prior weekly review surfaced.
-
-## Install
-
-flow runs on macOS and Linux (arm64 and x86_64). In any Claude Code or
-Codex session, paste this:
-
-> Install flow from https://github.com/Facets-cloud/flow
-
-Your agent follows [INSTALL.md](INSTALL.md): it detects your OS, installs
-the binary, puts it on your `PATH`, and runs `flow init` — which installs
-the flow skill and SessionStart hook for the active harness so future
-sessions load the skill automatically. Then say **"let's get to work"**
-and follow along.
+Two honest notes on that take. The task could have split the work into
+headless children and chose not to; it judged the fix small. And the Slack
+reply was typed at the top level, not in the thread, which the connector did
+not expect; it does now.
 
 <details>
-<summary>Manual install (install.sh + flow init)</summary>
+<summary><b>Second take: one window as the driver, five children, a Friday launch (2 min)</b></summary>
 
-```bash
-# 1. Install the binary for your OS and CPU into ~/.local/bin (no sudo).
-#    It verifies the download against the release's SHA256SUMS and, on
-#    macOS, clears the quarantine flag on the unsigned binary.
-curl -fsSL https://raw.githubusercontent.com/Facets-cloud/flow/main/install.sh | sh
+![flow demo: one session splits a launch checklist into children, asks in batches, stops one on request](docs/demo/launch-friday.gif)
 
-# Make sure ~/.local/bin is on your PATH (add this to ~/.bashrc or ~/.zshrc).
-export PATH="$HOME/.local/bin:$PATH"
-
-# 2. Initialize. This is required — it creates ~/.flow/, the SQLite
-#    index, the knowledge base, AND installs the skill + hooks for
-#    every agent harness it finds (Claude Code, Codex). Without this
-#    step, your agent can't talk to flow.
-flow init
-```
-
-`flow init` is the step that wires flow into your agent harnesses. It:
-
-- Creates `~/.flow/` (database, kb, projects, tasks, playbooks)
-- Installs for **every present harness**, so a Claude user who also
-  launches Codex background runs gets both. A harness counts as present
-  when its binary is on `PATH` or its config home exists (`~/.claude`;
-  `$CODEX_HOME`, else `~/.codex`). If none is found, it installs for
-  Claude.
-- Writes the flow skill to `~/.claude/skills/flow/SKILL.md` and/or
-  `$CODEX_HOME/skills/flow/SKILL.md`
-- Adds the SessionStart, UserPromptSubmit, PreToolUse and Stop hooks to
-  each harness's config (`~/.claude/settings.json`,
-  `$CODEX_HOME/hooks.json`) so every new session auto-loads the skill
-
-`flow init`, `flow skill install|update|uninstall` all take
-`--harness claude|codex` to act on just one harness. A named harness is
-installed even if it isn't detected yet (you asked for it). Uninstall
-without `--harness` removes the skill from every harness that has it.
-The automatic skill refresh after a binary upgrade only touches
-harnesses that already have the skill, so removing it from one harness
-keeps it removed.
-
-install.sh options: `FLOW_VERSION=vX.Y.Z` pins a release,
-`FLOW_INSTALL_DIR=/some/dir` installs somewhere else (a root-owned
-directory needs `sudo`). If you download a macOS binary by hand instead,
-run `xattr -d com.apple.quarantine <path>` so macOS doesn't refuse to run
-it.
+A fictional Go service with four things left before a Friday launch. One
+sentence binds the session as the driver. On its own it splits the work into
+four headless children, asks five questions in one batch with defaults if you
+stay silent, verifies each child's branch before trusting it, spawns a fifth
+child for bugs it found on the way, stops a slow child when told to and parks
+the real fix in the backlog, dry-merges all six branches in a scratch worktree,
+and closes the task with a note. Nothing pushed. Real time 11 minutes; the
+working stretches run at 30x.
 
 </details>
 
-## Upgrade
+## Written from the user's chair
 
-In any Claude Code session:
+Rohit Raveendran started flow in April 2026 at Facets. He and I (Anshul Sao)
+maintain it now, with contributors. I am its heaviest user, so this README is
+the user's account, not the maker's: the numbers come from my laptop, the
+messages are real, and the rough edges are ones I hit.
 
-> Upgrade flow from https://github.com/Facets-cloud/flow
+The problem, in the words people use for it: you run several sessions and
+keep losing track of them. One sits idle for an hour on a "Should I proceed?"
+you cannot see. Another compacts and asks what you want to work on, so you
+re-explain the task and pay again for the same discovery. Background work says
+"running" until a human notices it died. Overnight runs come back
+half-finished, and the only record is a transcript nobody reads.
 
-Claude re-runs install.sh (same on macOS and Linux) and runs `flow skill
-update` to refresh the skill (for every present harness) and re-wire the SessionStart and
-UserPromptSubmit hooks. Check the running version with
-`flow --version`.
+`claude --resume` gets one conversation back. It does not give the work a
+name, tell the session where its notes are, let it hand work to another
+session, tell you which one needs you, or reach you when you are not looking.
+That is the part flow adds.
 
-## Quickstart
+## Three levels, in the sentences you say
 
-Just open Claude and say **"let's get to work"**. The skill
-handles the rest.
+```
+level 1   names and notes                    nothing runs unattended, nothing is skipped
+  "add a task for the billing migration"     a brief, a folder, a session with a name
+  "let's pick up the billing migration"      the session opens where it stopped, notes read
+  "note that the token expiry is 900s"       a dated note the next session will read
+  "what happened on billing while I was out" answered from the notes, not your memory
+  "what's on my plate"                       every task, which is waiting on whom
 
-## What you get
+level 2   playbooks                          a brief that reruns, and gets better
+  "make this a nightly playbook"             each run is a task with its own session and note
+  a run that learns something proposes an edit to the brief; you approve; the
+  next run starts smarter. Mine today: a daily cloud-cost diff, a Slack channel
+  watch, a nightly production release with a before and after health check,
+  a daily post draft. The post draft has been rewritten five times in a week.
+  The channel watch has run 138 times and never needed a change.
 
-- **One task, one Claude session, one tab.** `flow do <task>`
-  spawns a dedicated tab in iTerm2, Warp, stock macOS Terminal, kitty
-  (requires `allow_remote_control yes` in `kitty.conf`), your current
-  [Rex](https://www.superlogical.com/rex) session, your current
-  zellij session (requires zellij ≥ 0.40), or a new window in your
-  current tmux session — flow picks whichever you launched it from. On
-  Linux, run it inside tmux, zellij or kitty; anywhere else flow prints
-  the exact command to start the session instead. Override with
-  `FLOW_TERM=warp|iterm|terminal|zellij|kitty|rex|tmux` when you're on a
-  non-standard host — or set `FLOW_TERM=bg` to launch the session as a
-  **terminal-free Claude background agent** (Claude Code's Agent View,
-  `claude agents`) with no tab at all. Tomorrow's `flow do <task>`
-  resumes the same conversation either way.
-- **Interview-driven task capture.** No forms. flow asks
-  what / why / where / done-when, then writes a structured brief.
-- **A knowledge base that grows.** Five markdown buckets for
-  durable facts about you, your team, products, processes, and
-  customers. Live-appended during sessions; auto-swept from
-  transcripts on `flow done`.
-- **Per-task progress notes.** Append-only logs. Pick up where
-  you left off, even after a week away.
-- **Playbooks for cadence work.** Weekly reviews, daily triage,
-  on-call rotations — define once, run on demand.
-- **An agent skill that speaks plain English.** "What should I
-  work on", "resume auth", "save a note" — the skill turns intent
-  into flow commands.
-
-## How it works under the hood
-
-`flow do <task>` selects the task's pinned harness, records its session
-identifier, and spawns a tab in the backend named in `$FLOW_TERM` (when
-set — an explicit choice beats every auto-detected marker), else zellij
-(when `$ZELLIJ` is set), a tmux window (when `$TMUX` is set), Rex (when
-`$REX_SESSION` is set or `$TERM_PROGRAM=rex`), kitty (when
-`$KITTY_WINDOW_ID` is set or `$TERM=xterm-kitty`), or Warp / iTerm2 /
-stock Terminal.app (auto-detected from `$TERM_PROGRAM`) — chosen in that
-priority order, with iTerm as the historical fallback on macOS. On Linux, when none of these is available, flow reports
-"no supported terminal detected", keeps the task bound, and prints the
-command to start the session yourself (or use `flow do --here` /
-`flow do --auto`). Claude sessions use
-an allocated UUID; Codex sessions mint a real thread with `codex exec --json`
-before flow opens `codex resume <thread-id>`. Future `flow do` calls resume
-the recorded conversation. A SessionStart hook re-injects the task brief,
-updates, and repository context on every resume.
-
-To start an unbootstrapped task in a different supported harness, choose it
-explicitly: `flow do <task> --harness codex` (or `--harness claude`). This
-only selects the first session. Once a task has a session, its harness remains
-pinned so flow can safely resume the same transcript instead of transferring
-an in-progress task.
-
-When `flow do <task>` is run for a task whose session is already
-live in another tab, flow focuses that tab instead of spawning a
-duplicate. The source tab prints "Already open: `<slug>` — switched
-to existing tab" as an audit line.
-
-The first `flow do` from stock Terminal.app needs macOS Accessibility
-permission for the **app hosting your shell** — not the `flow` binary
-itself. Terminal.app's AppleScript dictionary has no "make new tab"
-verb, so flow drives cmd-T through System Events, and System Events
-checks Accessibility against the responsible parent app. Until that's
-granted, `flow do` errors out with a multi-line explanation pointing at
-System Settings → Privacy & Security → Accessibility (enable the
-toggle for "Terminal" if you launched flow from Terminal.app, "iTerm"
-from iTerm2, "Claude" if Claude Code is the host, etc.; add it via the
-+ button if it's not listed). After the grant the spawn is silent.
-iTerm2 doesn't need this — it has a native `create tab` verb.
-
-### Background agents (`FLOW_TERM=bg`)
-
-If you live in Claude Code's **Agent View** (`claude agents`), set
-`FLOW_TERM=bg` and `flow do <task>` spawns the session as a
-terminal-free background agent instead of opening a tab. flow runs
-`claude --bg --name "<project>/<task>" <prompt>`, reads the short id
-from the launch banner, and resolves the real, full session id with a
-single `claude agents --json --all` lookup — then records *that* id on
-the task. (Background-capable harnesses manage their own session id, so
-flow captures the real one after launch rather than pre-allocating it.)
-
-Re-running `flow do <task>` is idempotent. If the session is still
-**live** in the Agent View (its process is up — running or idle-waiting),
-flow doesn't spawn or resume anything; it just tells you it's open, since
-you continue it from the Agent View (`claude agents`). If the session is
-**not running** (stopped, failed, or finished) or has been removed
-entirely, flow brings the conversation back as a background agent:
-`claude --bg --resume <id>` starts a fresh process seeded from the saved
-transcript. Because `--bg` manages its own id it does **not** preserve
-`--resume`'s id (plain `claude --resume` would keep the id but wouldn't be
-a background agent, so it can't be used here) — so flow captures and
-re-records the new id, carrying the prior conversation forward while never
-leaving the task pointed at a dead session. `flow show` and `flow list`
-surface each bg task's live status (busy / idle, working / blocked / done,
-pid) from a `claude agents --json --all` query, and `flow transcript
-<task>` finds the jsonl by globbing the session id (so it resolves even
-when a bg session relocates into a git worktree). The bg session is
-launched in the task's `work_dir`. Background mode is Claude-only today —
-pointing `FLOW_TERM=bg` at a task pinned to another harness fails with a
-clear error rather than silently falling back to a tab.
-
-### One-shot instructions with `--with`
-
-`flow do <task> --with "<instruction>"` resumes (or starts) the task's
-session and injects the instruction as the first user message —
-prefixed with `[via flow do --with]` so the model can tell injected
-input from typed input.
-
-`--with-file <path>` is the same idea for longer instructions: instead
-of embedding the file contents, flow injects `read instructions at
-<absolute path>` and the session uses its Read tool to load the file.
-No size limits. The flags are mutually exclusive, and cannot be
-combined with `--here` (there's no spawned session to inject into).
-
-```bash
-# Nudge a parked task without opening the tab.
-flow do auth --with "check if upstream PR merged and update the brief if so"
-
-# --with on a done task auto-rolls it back to in-progress, so playbooks
-# can fire on previously-closed work.
-flow do auth --with "are we still blocked on the security review?"
-
-# Hand the session a longer brief to follow.
-flow do auth --with-file ~/playbooks/triage-checklist.md
+level 3   children and the bus               sessions that work for your session
+  "drive this end to end, use children"      one task you talk to runs several you do not
+  "I'm asleep, find me on Slack"             the task asks when it must; you answer from
+                                             Slack, a dialog, or any session
+  "spawn a child to re-test risk 2"          when you want to decide the split yourself
+  children run with permissions skipped. Brief them with gates.
 ```
 
-This is the lane scheduled playbooks use to fire instructions at
-existing tasks without manual intervention. `flow run playbook <slug>`
-accepts the same flags for ad-hoc per-run instructions.
+Most people install for level 1. Level 3 is where my days now happen.
 
-### Human connectors (opt-in pings)
+## A Tuesday, in five lines
 
-When an agent needs your decision and you've stepped away, it asks you on
-the message bus and moves on:
+Real messages from my logs, 10 November, names changed. Everything I typed is
+a sentence to Claude Code.
+
+```
+10:18  me: "drive this end to end. use children."
+       by 10:22 five children are reading, each with a brief the driver wrote
+
+16:34  child -> driver  "gateway wedged, all calls timing out. My parallel scans
+                         likely saturated it. Stopped them, backing off."
+       driver -> others "Hold ALL gateway calls until I message you."
+
+16:41  child -> driver  "done: PR #133, trust work_dir before launch, tests green"
+       a flow bug I had hit at 11:04, fixed while the day's work kept running
+
+20:14  dialog on my Mac: "OK for the regression check to send 1 real sign-in
+                          link per run? Reply with the recipient address."
+22:07  me:               "go ahead"
+```
+
+What came out of the day: a proposal corrected by mid-afternoon because a
+child found the kickoff assumption was wrong, one flow PR merged, one
+regression check shipped that night, five analysis notes on disk.
+
+## Your first month, honestly
+
+```
+day 1    "add a task for the thing I'm mid-way on". Close the tab. That is all.
+day 2    "let's pick up <that thing>". It opens where you left it, notes read.
+         This is where it clicks or does not.
+week 1   a second task, a third. "what happened on X" becomes a question you
+         ask the task, not your memory. First playbook if you have a chore.
+week 3   "drive this, use children". One task you talk to runs three you do
+         not. You start writing briefs instead of prompts.
+month 1  something runs while you sleep and asks you one question in the
+         morning, with its notes attached. Or it does not, and you are still
+         happy at level 1.
+```
+
+## Three things a chat alone cannot do
+
+From my logs this month, names changed. I cannot link private logs; where a
+public pull request documents the behaviour, it is linked.
+
+**Two siblings settled a schema in one minute, with nobody watching.**
+
+```
+worker-a -> worker-b  "I'll add FixNote{Change,Note,By,At} as Finding.FixNotes,
+                       bson 'fix_notes', array, $push. Please use the same so
+                       the UI reads it. OK?"
+worker-b -> worker-a  "OK. I'll define the identical struct in my branch too,
+                       same text so the rebase is trivial."
+worker-a -> worker-b  "FYI: detector/judge/sweeper ReplaceOne whole docs and
+                       would wipe fix_notes. I'm switching to $set; you only
+                       need $push."
+```
+
+**A one-line steer reached a running child in five minutes.**
+
+```
+me:              "dont sequencilize work merging deployment u can"
+driver -> child  "CHANGE (from the human: don't sequence): release main NOW,
+                  don't wait for #10. Keep polling main and release again
+                  whenever it moves. Report each release."
+```
+
+Four releases followed in the next hour. Driver tasks exist because I typed
+"status" about sixty times on an earlier 42-child task
+([#117](https://github.com/Facets-cloud/flow/pull/117)).
+
+**An owner called a production incident correctly.**
+
+For 52 days this summer an owner swept one production service roughly hourly:
+460 graded sweeps, 161 issues and PRs filed, 71 fix tasks of which 51 closed.
+How many of the 161 were noise I cannot tell you from the record. On 30 July
+its sweep read: "MongoDB lost quorum at 14:49:42Z and writes were blocked for
+6m34s. For the first time in this ledger's history the replica set fell to 1
+of 3 with no PRIMARY." It was right. I paused it on 31 July and never wrote
+down why.
+
+## The questions you are already asking
+
+**Isn't this just `claude --resume`?** For level 1, mostly, plus a name, a
+brief, notes the next session reads, and a record that outlives the
+transcript. Levels 2 and 3 are the part resume does not have.
+
+**Isn't this just subagents?** Subagents live inside one chat and die with it.
+flow tasks outlive the chat, have names, and talk to each other.
+
+**Isn't this a memory product?** No. Memory tools write facts behind your back
+and you cannot see what loaded. flow keeps work: a brief you wrote, notes you
+can read, a transcript you can open. When a session says it knows where you
+left off, you can see the note it read.
+
+**Isn't this Jira for agents?** No. Nothing here is for a team. It is one
+person's laptop. Some people stretch it across a team and the issues show it.
+It is not built for that, and I will not pretend it is.
+
+**Do I have to learn a CLI?** No. The agent runs it. The commands exist for
+scripts and for the curious; I use two of them a month.
+
+**Why should I believe you?** You should not. Read the next two sections.
+
+## Works with, does not work with
+
+```
+works with      Claude Code and Codex as the session harness. Terminals: iTerm,
+                Terminal.app, Warp, kitty, Ghostty, zellij, tmux. No terminal:
+                headless, resume by name.
+Codex           parity shipped in alpha.35. Honesty: all 479 of my tasks in the
+                last fortnight ran on Claude. The Codex path is tested by
+                contributors, not by my daily use.
+a colleague     an opt-in peer link lets your flow message a colleague's flow
+                and their human. Mail between two laptops, not a shared board.
+does not        Jira, Linear, GitHub Issues: no integration, none planned.
+                Teams: no shared state. Windows: no.
+scheduling      not in flow today. My playbooks fire from launchd plists I
+                copied by hand. flow schedule (launchd, systemd, cron) is in
+                review ([#130](https://github.com/Facets-cloud/flow/pull/130)).
+reaching you    connectors are small scripts: a macOS dialog ships with flow, the
+                Slack one in the video is 60 lines of bash and will ship as a
+                sample. Without one, asks wait in your inbox until you look.
+```
+
+## What breaks, what it costs
+
+As of 11 November 2026, on the current alpha.
+
+- **Absence looks like silence.** Mail to a session that already exited sits
+  pending forever and never bounces. A "dead" notice can be wrong: two children
+  marked dead last week finished fine. A scheduled run that fails to start
+  writes one log line and nothing else. My nightly release job failed to start
+  for 53 nights in a row before anyone noticed. The flag that caused it is gone;
+  the gap that let it hide is not.
+- **3% of headless runs die.** 12 of 381 this fortnight. The harness killed a
+  child's own monitors; a cloud login expired mid-run; two were me. In June it
+  was 22%. There is no retry. The research child that helped write this README
+  died twice: once waiting on background subagents, once on a network error
+  overnight.
+- **Unattended means re-authenticating.** 111 of my headless logs carry the
+  harness warning that the sign-in can end at any time.
+- **Owners do not stop themselves.** One owner spent 289 wakes confirming a DNS
+  switch that was already confirmed on wake one, because its charter said keep
+  going and I never answered its question about cadence. Only a human stops an
+  owner, and this human mostly clicked Skip.
+- **Before alpha.32, agents ate the human's mail.** I had answered 0 of 28
+  messages sent to me, because agent sessions popped them first
+  ([#118](https://github.com/Facets-cloud/flow/pull/118)). Fixed.
+- **There is no stop verb.** "Stop all children" meant kill by pid.
+- **No search.** Project, tag, task tree, or grep `~/.flow`.
+- **Transcripts get pruned** by the harness after some weeks, not by flow. The
+  notes survive. Nine of my eighteen September sessions are gone; their notes
+  are not.
+- **Tokens.** Every session loads the 54 KB skill (about 13k tokens) plus a
+  4 KB hook at start. A child is a full session. A Slack check that makes one
+  API call costs a 60 KB transcript. In July users measured flow at about a
+  fifth of their weekly Claude usage; the skill was halved then. I have not
+  measured a per-day dollar figure and will not invent one.
+- **The newest parts are two weeks old.** Children, the bus, dialogs and peer
+  hubs shipped in six alphas over nine days. 97% of all the mail my flow has
+  ever carried is from this fortnight. The core (names, sessions, notes) has
+  seven months behind it.
+- **macOS and Linux.** Linux merged this week
+  ([#127](https://github.com/Facets-cloud/flow/pull/127)); the first Linux
+  build is pending, and until it is cut the Linux install command 404s.
+  No Windows.
+
+## Try it in ten minutes
+
+```
+curl -fsSL https://raw.githubusercontent.com/Facets-cloud/flow/main/install.sh | sh
+flow init
+```
+
+Or open [INSTALL.md](INSTALL.md) in Claude Code or Codex and let the agent
+install it. `flow init` installs a skill and a session-start hook into your
+harness. That is how the agent knows what "pick up the billing migration"
+means. Those two commands are the last ones you need to type.
+
+1. In Claude Code, mid-way on something: "bind this session to a task called
+   <name>". The conversation you already have is now a task. Starting fresh:
+   "add a task for <thing>". You get interviewed; it is annoying once.
+2. Close the tab. Tomorrow: "let's pick up <name>". A tab opens where you
+   left off (or it runs headless if you have no supported terminal).
+3. Children, playbooks and the bus make sense after three or four tasks. Not
+   before.
+
+flow upgrades itself: after a command, it installs a newer release in the
+background (checksum-verified). `flow upgrade` does it now;
+`FLOW_NO_AUTO_UPGRADE=1` turns it off. Source builds, CI, root and a binary
+folder flow cannot write are skipped; the same install command works there.
+Uninstall by deleting the binary and `~/.flow`.
+
+## Numbers, for the record
+
+```
+last 15 days, current alpha   479 tasks      287 children     126 playbook runs
+                              381 headless   12 died          1,005 messages
+
+seven months                  2,210 tasks    one session resumed over four months
+                              one driver that ran 42 children in two days
+                              one owner that filed 161 issues and PRs in 52 days
+
+the repo                      114 commits    34 alpha releases   18 people have landed PRs
+```
+
+One person, one laptop. An existence proof, not a benchmark.
+
+## Do not install this if
+
+- One session at a time works for you.
+- You want a shared board for a team.
+- You are on Windows.
+- You never want an agent running with permissions skipped on your machine.
+  Level 1 never does; level 3 always does.
+
+## Reference, for the curious
+
+You will not type these. The agent does. They are here so the words on
+this page match the binary, and because three tests in the repo insist.
+
+### Human connectors
+
+When a task needs your decision and you are away, it asks on the bus and
+moves on. Without a connector the ask waits in your inbox. With one, flow
+pings you through it; a macOS dialog ships built in, and the Slack one in
+the video is a sample.
 
 ```bash
 flow message user "deploy-v2: ship to prod now?" --options "Yes|No"
-flow message user "imports 3/5 done" --fyi   # progress: stored and listed, never pings
+flow message user "imports 3/5 done" --fyi        # progress: stored, never pings
+flow connector add macos                          # built in, shows a test dialog
+flow connector list --available                   # built-in samples
+flow connector priority flowhub 1                 # tried first
+flow connector priority macos 2                   # fallback tier
+flow connector escalate 10m                       # unseen 10m after delivery, next tier
 ```
 
-By default an ask just waits in `flow inbox`. Install a **connector** and
-flow pings you through it. flow ships a native macOS dialog connector,
-built into the binary (the source is `examples/connectors/macos`):
-
-```bash
-flow connector add macos                 # no checkout needed; shows a test dialog
-flow connector list --available          # built-in samples
-flow connector add ./my-connector        # or install your own folder
-flow connector list
-flow connector remove macos
-```
-
-You click an option, and can add a note. The answer arrives in the asking
-task's inbox as a reply (`reply_to=<id>`), and the agent picks it up from
-there. flow pings once per task until you've seen it (`--urgent` always
-pings), broadcasts and `--fyi` never ping, and nothing pings unless you
-installed a connector. Connectors are any executable that follows a small
-JSON contract (`run send` / `run test`, answering with `flow human reply`).
-Each one gets its own secret, kept in the macOS keychain (scoped to the
-flow home, so two `FLOW_ROOT`s never share one), so an agent can't
-answer for you.
-
-With more than one connector, order them instead of pinging all at once.
-flow tries the lowest tier first and falls back only if every connector in
-it fails; with escalation on, an ask still unseen after the delay goes to
-the next tier too (`--urgent` asks still go to all at once):
-
-```bash
-flow connector priority flowhub 1        # tried first
-flow connector priority macos 2          # fallback (same number = same tier, in parallel)
-flow connector escalate 10m              # unseen 10m after delivery → next tier (off by default)
-```
-
-The contract (contract 2 adds roles; contract-1 connectors keep working),
-with enough detail to write your own:
+The contract to write your own is in
 [`internal/app/skill/references/connectors.md`](internal/app/skill/references/connectors.md).
+Each connector gets its own secret, so an agent can never answer for you.
 
-### Peer hubs (messaging another flow home)
+### Peer hubs
 
-A **peer** is another flow home in your contact book: a nickname for an
-endpoint on a connector with role `"peer"`. An agent asks the other hub's
-human with `flow message <peer> "…"`. The answer comes back into the
-asking task's inbox as a reply, just like a local human answer. Task names
-never cross hubs: `<peer>/<task>` is refused. Each hub's human stays in the
-loop on their own hub.
+Two flow homes can message each other through a connector with the peer
+role. It is mail between two laptops, not a shared board.
 
 ```bash
+flow connector add peer-local                     # testing-only sample, same machine
 flow peer add bob --via peer-local --at /path/to/bobs/flow-root
-flow peer list | show bob | block bob | unblock bob | rm bob
-flow message bob "ship v2?" --options "Yes|No"     # from a task session
-flow message bob "here you go" --reply-to <id>     # answer bob's message
+flow message bob "ship v2?" --options "Yes|No"    # from a task session, to bob's human
 ```
 
-flow ships no transport of its own, only the ability and two samples. The
-`peer-local` sample links two homes on one machine
-(`flow connector add peer-local`; both homes run with the testing-only
-`FLOW_SECRET_STORE=file`).
-The `macos` sample adds an example **Hand to agent** button for peer mail,
-which hands the question to a headless `flow auto` agent. Details:
+Details, including how a hub hands inbound mail to a task:
 [`internal/app/skill/references/peers.md`](internal/app/skill/references/peers.md).
 
-### `flow stats`
+## Status
 
-Show usage & ROI analytics derived from your own flow history — how many
-times flow recalled stored context for you, tokens processed, tasks done,
-automation runs, and estimated time/$ saved.
+Alpha. Daily use since April; the data model has not broken under me since
+May; the CLI surface still moves. If you try it and bounce, open an issue and
+say at which step. We read them.
 
-    flow stats                      # all-time terminal report
-    flow stats --since 30d          # last 30 days
-    flow stats --project <slug>     # scope to one project
-    flow stats --card               # write a shareable HTML card to ~/.flow/stats-card.html
-    flow stats --card --out card.html   # ...or to a path you choose
-
-Savings figures are estimates driven by `~/.flow/stats.json` — optional;
-built-in defaults apply when it's absent, so create it only to override
-them. Ground-truth counts are exact. `~/.flow/stats-cache.json` is a
-derived cache — safe to delete, and should be gitignored if you track
-`~/.flow` in git.
-
-## Your data — local, portable, yours
-
-Everything flow stores lives under `~/.flow/` (override with
-`$FLOW_ROOT`). No server, no cloud, no telemetry. Plain markdown
-beside a SQLite index — readable in any editor, versionable in git.
-
-```
-~/.flow/
-  flow.db                          # SQLite — projects, tasks, playbooks index
-  kb/
-    user.md  org.md  products.md
-    processes.md  business.md      # 5 markdown buckets, append-only
-  projects/<slug>/
-    brief.md
-    updates/YYYY-MM-DD-*.md
-  tasks/<slug>/
-    brief.md
-    updates/YYYY-MM-DD-*.md
-  playbooks/<slug>/
-    brief.md
-    updates/YYYY-MM-DD-*.md
-```
-
-The SQLite database is an *index*, not the source of truth — every
-task and project has its real content in the markdown files next to
-it. You could delete `flow.db` and rebuild it from the markdown if
-you had to.
-
-### Backup & sync
-
-Pick whichever fits your workflow:
-
-- **Git (recommended for single-user history).**
-  ```bash
-  cd ~/.flow && git init && git add . && git commit -m "initial"
-  ```
-  Commit periodically. The SQLite file is binary, so diffs aren't
-  useful, but each commit is a clean snapshot. **If you push to a
-  shared remote**, add `kb/` to `.gitignore` first — kb files often
-  contain personal or org-sensitive notes you don't want public.
-
-- **Time Machine / system backup.** Just works, no setup.
-
-- **iCloud Drive / Dropbox / Google Drive.** Symlink `~/.flow` into
-  the synced folder:
-  ```bash
-  mv ~/.flow ~/Library/Mobile\ Documents/com~apple~CloudDocs/flow
-  ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/flow ~/.flow
-  ```
-  ⚠️ **Don't run flow on two machines simultaneously** through a
-  synced folder — SQLite doesn't tolerate concurrent writes from
-  separate hosts and you can corrupt `flow.db`. Use this for backup
-  + occasional second-machine access, not active multi-machine use.
-
-- **Manual rsync.** `rsync -a ~/.flow/ /path/to/backup/flow/` on a
-  schedule. Same caveat about concurrent writes.
-
-To move flow to a new machine: copy `~/.flow/` over, install the
-binary, and run `flow init` once — it'll pick up the existing data
-and reinstall the skill + hook.
-
-## Where flow runs (and where we'd love help)
-
-Today flow runs on **macOS and Linux, with Claude Code and Codex**.
-
-- **macOS:** iTerm2, Warp, stock Terminal.app, kitty, Rex, zellij, tmux,
-  or Claude Code background agents via `FLOW_TERM=bg`. The
-  background-agent backend is platform-agnostic (no terminal, no
-  AppleScript) but Claude-only.
-- **Linux:** tmux, zellij or kitty open tabs; none of them uses macOS
-  APIs. Outside those, flow prints the command to start the session, and
-  `flow do --here` / `flow do --auto` work everywhere. Release binaries
-  for linux-amd64 and linux-arm64 are installed by install.sh.
-
-Kitty needs `allow_remote_control yes` (or
-`socket-only`) in `kitty.conf` so flow can drive `kitty @ launch`
-from inside the running kitty instance. Rex needs no setup: flow
-drives the `rex` CLI that Rex puts on `PATH` in every terminal, and
-opens the new tab in the Rex session you ran `flow do` from — or, if
-the task's project has a terminal group, in that Rex session (created
-if missing):
-
-```
-flow update project tekion-modules --terminal-group tekion
-flow update project sessionm       --terminal-group sessionm
-```
-
-`flow do` on an already-open task finds its tab in any Rex session.
-Bringing a tab into view — a new one or an existing one, in this
-session or another — goes through the Rex app, so turn on **Remote
-Control** in Rex Settings → Rex Server. Without it flow still opens or
-finds the tab, prints a reminder, and leaves the app on its current
-tab.
-
-The architecture is portable — session spawning is one small
-package — but other harnesses (Cursor, plain shell) and other
-terminals (wezterm, Windows Terminal) and Windows itself need contributors
-who run those stacks daily and care enough to wire them in. If that's
-you, [a PR is very welcome](CONTRIBUTING.md).
-
-## Where flow came from
-
-flow started as an internal tool at Facets. We use Claude Code every
-day, and the context-loss problem was eating into how much of the
-tool's capability we could actually use. flow fixed that for us — to
-the point where we couldn't imagine working without it. We're
-open-sourcing it as-is because it might do the same for you.
-
-This is not a Facets product. There's no signup, no cloud, no upsell.
-Just the tool we built for ourselves.
-
-## Docs & contributing
-
-- [Contributing](CONTRIBUTING.md) — bug reports, PRs, dev setup
-- [Changelog](CHANGELOG.md)
-- [Security](SECURITY.md) — how to report issues
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-
-## License
-
-[MIT](LICENSE) — © 2026 Facets Cloud
+MIT.
