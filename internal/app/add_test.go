@@ -21,6 +21,8 @@ func setupFlowRoot(t *testing.T) string {
 	// Likewise a Codex shell's thread id would turn every session into a
 	// Codex one (no listener, pop --wait refused).
 	t.Setenv("CODEX_THREAD_ID", "")
+	// ...and a Codex sandbox marker would make every launch refuse.
+	t.Setenv("CODEX_SANDBOX", "")
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}

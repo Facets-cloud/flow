@@ -47,7 +47,7 @@ func TestNewSessionIDRejectsMissingOrInvalidThread(t *testing.T) {
 
 func TestCommands(t *testing.T) {
 	h := New()
-	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex resume "+testThreadID+" 'work'"; got != want {
+	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex resume -s workspace-write -a on-request "+testThreadID+" 'work'"; got != want {
 		t.Errorf("LaunchCmd=%q, want %q", got, want)
 	}
 	if got := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}); !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume ") {
@@ -60,6 +60,46 @@ func TestCommands(t *testing.T) {
 	want := []string{"codex", "exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", testThreadID, "work"}
 	if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("AutoRunArgv=%q, want %q", argv, want)
+	}
+}
+
+// F1: the probe mints the thread read-only/approval=never and `codex
+// resume` keeps a thread's first-turn settings unless told otherwise, so a
+// sandboxed interactive session must pass its sandbox + approval policy
+// explicitly — and make the flow root writable, or `flow show task` dies
+// with "attempt to write a readonly database".
+func TestInteractiveCommandsAreWorkspaceWriteOnRequest(t *testing.T) {
+	h := New()
+	opts := harness.LaunchOpts{WritableDirs: []string{"/tmp/flow root"}}
+	wantPrefix := "codex resume -s workspace-write -a on-request --add-dir '/tmp/flow root' " + testThreadID
+	if got := h.LaunchCmd(testThreadID, "work", opts); got != wantPrefix+" 'work'" {
+		t.Errorf("LaunchCmd=%q, want %q", got, wantPrefix+" 'work'")
+	}
+	if got := h.ResumeCmd(testThreadID, opts); got != wantPrefix {
+		t.Errorf("ResumeCmd=%q, want %q", got, wantPrefix)
+	}
+	// Skip-permissions is unchanged: bypass, no sandbox/approval/add-dir.
+	skip := harness.LaunchOpts{SkipPermissions: true, WritableDirs: []string{"/tmp/x"}}
+	for _, got := range []string{h.LaunchCmd(testThreadID, "work", skip), h.ResumeCmd(testThreadID, skip)} {
+		if !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume "+testThreadID) {
+			t.Errorf("skip-permissions command changed: %q", got)
+		}
+		if strings.Contains(got, "--add-dir") || strings.Contains(got, " -s ") {
+			t.Errorf("skip-permissions command carries sandbox flags: %q", got)
+		}
+	}
+	// The live-session guard still sees the sandboxed interactive argv.
+	orig := PSRunner
+	t.Cleanup(func() { PSRunner = orig })
+	PSRunner = func() ([]byte, error) {
+		return []byte("300 codex resume -s workspace-write -a on-request --add-dir /tmp/flowroot " + testThreadID + " work"), nil
+	}
+	live, err := h.LiveSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live[testThreadID] != 1 {
+		t.Errorf("live=%v, want sandboxed interactive codex detected", live)
 	}
 }
 
@@ -94,6 +134,33 @@ func TestLiveSessionIDsSeesAutoRunArgv(t *testing.T) {
 	}
 	if live[testThreadID] != 1 {
 		t.Errorf("live=%v, want the auto-run codex process (%q) detected", live, strings.Join(argv, " "))
+	}
+}
+
+// ps prints argv unquoted, so a flow root with a space turns the
+// `--add-dir` value into several tokens. The guard must still find the
+// thread id, or `flow do` starts a second `codex resume` on a live thread.
+func TestLiveSessionIDsSeesAddDirWithWhitespace(t *testing.T) {
+	orig := PSRunner
+	t.Cleanup(func() { PSRunner = orig })
+	other := "22222222-2222-4222-8222-222222222222"
+	PSRunner = func() ([]byte, error) {
+		return []byte(strings.Join([]string{
+			"300 codex resume -s workspace-write -a on-request --add-dir /tmp/flow root " + testThreadID,
+			"301 codex resume -s workspace-write -a on-request --add-dir /tmp/my flow root --add-dir /x y " + testThreadID + " keep going on " + other,
+			// Prose after a non-resume codex command is not a session.
+			"302 codex exec please resume work on " + other,
+		}, "\n")), nil
+	}
+	live, err := New().LiveSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live[testThreadID] != 2 {
+		t.Errorf("live=%v, want both whitespace-path codex processes detected", live)
+	}
+	if live[other] != 0 {
+		t.Errorf("live=%v, an id in the prompt text must not count as a live session", live)
 	}
 }
 

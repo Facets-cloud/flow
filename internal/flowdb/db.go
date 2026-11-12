@@ -252,45 +252,86 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("enable foreign_keys: %w", err)
 	}
-	if _, err := db.Exec(schemaDDL); err != nil {
+	// Fast path: a DB already at the current schema needs no DDL and no
+	// migration writes, so a plain open never queues behind a writer.
+	// (Before this, every open ran write migrations; parallel `flow auto`
+	// launches died with "migrate bus assignee: database is locked".)
+	if current, err := schemaIsCurrent(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, fmt.Errorf("read schema version: %w", err)
+	} else if current {
+		return db, nil
+	}
+	// Slow path, serialized across processes: one opener migrates, the
+	// rest wait on the lock and then find the schema current.
+	unlock, err := lockMigrations(path)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	defer unlock()
+	if current, err := schemaIsCurrent(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("read schema version: %w", err)
+	} else if current {
+		return db, nil
+	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaFingerprint())); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("record schema version: %w", err)
+	}
+	return db, nil
+}
+
+// migrate applies the schema DDL and every idempotent migration. Callers
+// hold the migration lock (see OpenDB).
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(schemaDDL); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
 	}
 	if err := runMigrations(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
+		return fmt.Errorf("migrate: %w", err)
 	}
 	if _, err := db.Exec(busDDL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("apply bus schema: %w", err)
+		return fmt.Errorf("apply bus schema: %w", err)
 	}
 	if err := migrateBusSelfToUser(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate bus assignee: %w", err)
+		return fmt.Errorf("migrate bus assignee: %w", err)
 	}
+	// A failed column probe is an error, never "skip": OpenDB stamps the
+	// schema fingerprint only after migrate returns nil, and a stamped DB
+	// is not migrated again.
+	//
 	// bus_nudges.attempts arrived after the table shipped; backfill it
 	// on databases created in between.
-	if has, err := columnExists(db, "bus_nudges", "attempts"); err == nil && !has {
+	if has, err := columnExists(db, "bus_nudges", "attempts"); err != nil {
+		return fmt.Errorf("migrate bus_nudges.attempts: %w", err)
+	} else if !has {
 		if _, err := db.Exec(`ALTER TABLE bus_nudges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("migrate bus_nudges.attempts: %w", err)
+			return fmt.Errorf("migrate bus_nudges.attempts: %w", err)
 		}
 	}
 	// bus_messages.reply_to arrived with `flow message --reply-to`; backfill
 	// it on databases created before the column shipped (nullable, no data).
-	if has, err := columnExists(db, "bus_messages", "reply_to"); err == nil && !has {
+	if has, err := columnExists(db, "bus_messages", "reply_to"); err != nil {
+		return fmt.Errorf("migrate bus_messages.reply_to: %w", err)
+	} else if !has {
 		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN reply_to TEXT`); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("migrate bus_messages.reply_to: %w", err)
+			return fmt.Errorf("migrate bus_messages.reply_to: %w", err)
 		}
 	}
 	// bus_messages.consumed_by_{identity,session} record who consumed a
 	// row; nullable, no backfill (old consumers are unknowable).
 	for _, col := range []string{"consumed_by_identity", "consumed_by_session"} {
-		if has, err := columnExists(db, "bus_messages", col); err == nil && !has {
+		if has, err := columnExists(db, "bus_messages", col); err != nil {
+			return fmt.Errorf("migrate bus_messages.%s: %w", col, err)
+		} else if !has {
 			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
-				db.Close()
-				return nil, fmt.Errorf("migrate bus_messages.%s: %w", col, err)
+				return fmt.Errorf("migrate bus_messages.%s: %w", col, err)
 			}
 		}
 	}
@@ -304,10 +345,11 @@ func OpenDB(path string) (*sql.DB, error) {
 		{"notified_at", "ALTER TABLE bus_messages ADD COLUMN notified_at TEXT"},
 		{"answered_at", "ALTER TABLE bus_messages ADD COLUMN answered_at TEXT"},
 	} {
-		if has, err := columnExists(db, "bus_messages", c.col); err == nil && !has {
+		if has, err := columnExists(db, "bus_messages", c.col); err != nil {
+			return fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
+		} else if !has {
 			if _, err := db.Exec(c.ddl); err != nil {
-				db.Close()
-				return nil, fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
+				return fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
 			}
 		}
 	}
@@ -315,22 +357,21 @@ func OpenDB(path string) (*sql.DB, error) {
 	// unread until a human has seen it. On first add, stamp every existing
 	// human row seen — the old mail is left behind rather than resurfaced
 	// as a backlog of stale asks and broadcasts.
-	if has, err := columnExists(db, "bus_messages", "seen_at"); err == nil && !has {
+	if has, err := columnExists(db, "bus_messages", "seen_at"); err != nil {
+		return fmt.Errorf("migrate bus_messages.seen_at: %w", err)
+	} else if !has {
 		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("migrate bus_messages.seen_at: %w", err)
+			return fmt.Errorf("migrate bus_messages.seen_at: %w", err)
 		}
 		if _, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE to_task_slug IS NULL AND to_assignee=?`,
 			NowISO(), BusUser); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("stamp legacy seen_at: %w", err)
+			return fmt.Errorf("stamp legacy seen_at: %w", err)
 		}
 	}
 	if err := migratePeers(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate peers: %w", err)
+		return fmt.Errorf("migrate peers: %w", err)
 	}
-	return db, nil
+	return nil
 }
 
 func runMigrations(db *sql.DB) error {
@@ -749,7 +790,10 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 	return nil
 }
 
-func columnExists(db *sql.DB, table, column string) (bool, error) {
+// columnExists is a var so tests can inject a probe failure.
+var columnExists = queryColumnExists
+
+func queryColumnExists(db *sql.DB, table, column string) (bool, error) {
 	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
 	if err != nil {
 		return false, fmt.Errorf("pragma table_info(%s): %w", table, err)

@@ -66,7 +66,7 @@ mini-commands like `flow priority` / `flow due` / `flow waiting` /
 ```
 flow update task <ref>
     [--work-dir <path>] [--mkdir]
-    [--status backlog|in-progress|done]
+    [--status backlog|in-progress|done] [--no-sweep]
     [--priority high|medium|low]
     [--assignee <name>] [--clear-assignee]
     [--due-date <date>]   [--clear-due]
@@ -92,6 +92,9 @@ When to use which flag:
   `flow do --here` — those are the only paths that attach a session,
   and the session-id invariant requires one for any non-backlog
   status. Setting status to a value it already has is a no-op.
+  `--status done` is routed through `flow done` (it runs the close-out
+  sweep, after the other fields apply); `--no-sweep` flips the status
+  only, for scripted bulk edits. To close a task, prefer `flow done`.
 - **`--priority <p>`** — change a task or project priority. Same enum
   as creation: high|medium|low.
 - **`--terminal-group <name>` / `--clear-terminal-group`** (project) —

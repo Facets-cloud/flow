@@ -310,7 +310,7 @@ func cmdAutoExec(args []string) int {
 	withInstr := fs.String("with", "", "one-off instruction to append to the autonomous prompt")
 	lastMsg := fs.String("last-message", "", "file the harness writes the run's final message to")
 	if err := fs.Parse(args[1:]); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	dbPath, err := flowDBPath()

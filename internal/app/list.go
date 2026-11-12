@@ -57,6 +57,9 @@ func normalizeTags(in stringSliceFlag) []string {
 
 // cmdList dispatches `flow list tasks|projects|playbooks|runs|tags|owners`.
 func cmdList(args []string) int {
+	if groupHelp("list", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: list requires 'tasks', 'projects', 'playbooks', 'runs', 'tags', or 'owners'")
 		return 2
@@ -129,7 +132,7 @@ func listTagsCmd(args []string) int {
 	fs := flagSet("list tags")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
@@ -210,7 +213,7 @@ func listTasksCmd(args []string) int {
 	kind := fs.String("kind", "regular", "filter by task kind: regular | playbook_run | all")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
@@ -565,7 +568,7 @@ func listProjectsCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived projects")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
@@ -738,7 +741,7 @@ func listPlaybooksCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
@@ -826,7 +829,7 @@ func listRunsCmd(args []string) int {
 	includeArchived := fs.Bool("include-archived", false, "include archived")
 	opts := addListFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {

@@ -288,7 +288,7 @@ func cmdUpgrade(args []string) int {
 	check := fs.Bool("check", false, "only report whether a newer release exists")
 	force := fs.Bool("force", false, "replace a development or source build too")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	rel, err := fetchLatestRelease()
 	if err != nil {

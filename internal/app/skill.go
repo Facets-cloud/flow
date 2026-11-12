@@ -197,6 +197,9 @@ func maybeAutoUpgradeSkill() {
 
 // cmdSkill dispatches `flow skill install|uninstall|update`.
 func cmdSkill(args []string) int {
+	if groupHelp("skill", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: skill requires a subcommand (install|uninstall|update)")
 		return 2
@@ -225,7 +228,7 @@ func skillInstall(args []string, forceDefault bool) int {
 	skipHook := fs.Bool("skip-hook", false, "don't auto-install the hooks")
 	only := harnessFlag(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	targets, ok := resolveTargets(*only, presentHarnesses)
 	if !ok {
@@ -295,7 +298,7 @@ func skillUninstall(args []string) int {
 	keepHook := fs.Bool("keep-hook", false, "don't remove the hooks")
 	only := harnessFlag(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	targets, ok := resolveTargets(*only, installedHarnesses)
 	if !ok {

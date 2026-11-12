@@ -65,6 +65,13 @@ type LaunchOpts struct {
 	// write the session's final message to this file (codex: -o). Impls
 	// without an equivalent ignore it.
 	LastMessagePath string
+
+	// WritableDirs are extra directories a sandboxed interactive session
+	// must be able to write (flow passes its data root so `flow show
+	// task` / `flow message` work from inside the sandbox). Impls whose
+	// permission model has no notion of writable roots ignore it; codex
+	// maps each to --add-dir. Ignored when SkipPermissions is set.
+	WritableDirs []string
 }
 
 // BackgroundAgent is one entry from a harness's background-agent

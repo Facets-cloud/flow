@@ -15,6 +15,9 @@ import (
 // setters (priority, due-date, waiting) that used to have their own
 // top-level mini-commands.
 func cmdUpdate(args []string) int {
+	if groupHelp("update", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: update requires 'task' or 'project' and a ref")
 		return 2
@@ -45,11 +48,7 @@ func cmdUpdate(args []string) int {
 // $CLAUDE_CODE_SESSION_ID), which prevents wrong-session attachment
 // by construction.
 func cmdUpdateTask(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: update task requires a task ref")
-		return 2
-	}
-	ref := args[0]
+	ref, flagArgs, missing := splitPositional(args)
 	fs := flagSet("update task")
 	workDir := fs.String("work-dir", "", "new absolute work directory")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
@@ -68,7 +67,12 @@ func cmdUpdateTask(args []string) int {
 	clearTags := fs.Bool("clear-tags", false, "remove all tags from the task")
 	project := fs.String("project", "", "move the task into this project (work_dir is unchanged)")
 	clearProject := fs.Bool("clear-project", false, "detach the task from its project (make it floating)")
-	if err := fs.Parse(args[1:]); err != nil {
+	noSweep := fs.Bool("no-sweep", false, "with --status done: flip the status only, skipping the close-out sweep that flow done runs (for scripted bulk edits)")
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: update task requires a task ref")
 		return 2
 	}
 	if *mkdir && *workDir == "" {
@@ -160,6 +164,33 @@ func cmdUpdateTask(args []string) int {
 		return 1
 	}
 
+	// Refuse before touching any field, not halfway through: a status the
+	// task cannot take must not leave the other flags half applied.
+	// --status done goes through the same close path as `flow done` (run
+	// last, after the other fields land) so the close-out sweep is never
+	// skipped by accident; --no-sweep keeps the old status-only flip.
+	closeViaDone := *status == "done" && !*noSweep
+	if closeViaDone {
+		if rc := closeSessionRefusal(task); rc != 0 {
+			return rc
+		}
+		if rc := sweepSandboxRefusal(task); rc != 0 {
+			return rc
+		}
+	} else if *status != "" && *status != "backlog" && (!task.SessionID.Valid || task.SessionID.String == "") {
+		// Session-id invariant: any non-backlog status requires a
+		// session_id. Enforced at the DB level via CHECK, but we error
+		// here with a friendly pointer instead of letting the user see
+		// a raw constraint violation.
+		fmt.Fprintf(os.Stderr,
+			"error: cannot set status to %q without a session_id.\n"+
+				"  to start work on this task, run one of:\n"+
+				"    flow do %s          (spawns a new Claude session in a new tab)\n"+
+				"    flow do --here %s   (binds this Claude session to the task)\n",
+			*status, task.Slug, task.Slug)
+		return 1
+	}
+
 	now := flowdb.NowISO()
 	if *project != "" {
 		p, err := flowdb.GetProject(db, *project)
@@ -220,20 +251,7 @@ func cmdUpdateTask(args []string) int {
 		}
 		fmt.Printf("work_dir → %s\n", absWorkDir)
 	}
-	if *status != "" {
-		// Session-id invariant: any non-backlog status requires a
-		// session_id. Enforced at the DB level via CHECK, but we error
-		// here with a friendly pointer instead of letting the user see
-		// a raw constraint violation.
-		if *status != "backlog" && (!task.SessionID.Valid || task.SessionID.String == "") {
-			fmt.Fprintf(os.Stderr,
-				"error: cannot set status to %q without a session_id.\n"+
-					"  to start work on this task, run one of:\n"+
-					"    flow do %s          (spawns a new Claude session in a new tab)\n"+
-					"    flow do --here %s   (binds this Claude session to the task)\n",
-				*status, task.Slug, task.Slug)
-			return 1
-		}
+	if *status != "" && !closeViaDone {
 		if _, err := db.Exec(
 			`UPDATE tasks SET status=?,
 			 status_changed_at = CASE WHEN status != ? THEN ? ELSE status_changed_at END,
@@ -244,6 +262,9 @@ func cmdUpdateTask(args []string) int {
 			return 1
 		}
 		fmt.Printf("status → %s\n", *status)
+		if *status == "done" && *noSweep {
+			fmt.Fprintf(os.Stderr, "note: close-out sweep skipped (--no-sweep); KB/project distillation for %s will not run\n", task.Slug)
+		}
 	}
 	if *priority != "" {
 		if _, err := db.Exec(
@@ -348,6 +369,18 @@ func cmdUpdateTask(args []string) int {
 		fmt.Printf("tag + %s\n", t)
 	}
 	announceDriverChange(db, task, wasDriver)
+	if closeViaDone {
+		fresh, err := flowdb.GetTask(db, task.Slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: re-read task: %v\n", err)
+			return 1
+		}
+		// Announce the flip only once it happened: an already-done task
+		// or a refused close must not read as "status → done".
+		return closeTaskThen(db, fresh, func() {
+			fmt.Println("status → done (routed through `flow done`: runs the close-out sweep; --no-sweep to skip)")
+		})
+	}
 	return 0
 }
 
@@ -394,16 +427,16 @@ func isValidStatus(s string) bool {
 // field with a real reason to change. Status and other shape edits go
 // through `flow archive` / `flow edit`.
 func cmdUpdateProject(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "error: update project requires a project ref")
-		return 2
-	}
-	ref := args[0]
+	ref, flagArgs, missing := splitPositional(args)
 	fs := flagSet("update project")
 	priority := fs.String("priority", "", "new priority: high|medium|low")
 	terminalGroup := fs.String("terminal-group", "", "where flow do opens this project's task tabs (Rex session label)")
 	clearTerminalGroup := fs.Bool("clear-terminal-group", false, "open task tabs wherever flow do runs from")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: update project requires a project ref")
 		return 2
 	}
 	group := strings.TrimSpace(*terminalGroup)

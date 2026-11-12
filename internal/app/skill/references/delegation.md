@@ -114,7 +114,10 @@ judgment calls from the user mid-way:
    It adds the task (parent = this task, project inherited, this
    session auto-watches it), writes brief.md, and launches
    `flow do --auto`. Optional: `--priority`, `--work-dir`, `--mkdir`,
-   `--harness`. It refuses with no brief, or a blank one.
+   `--harness`. It refuses with no brief, or a blank one. In a
+   sandboxed Codex session it refuses too (no network/keychain there):
+   run `flow auto` (and `flow do`, `flow done`) with escalated
+   permissions from the first try.
 3. Tell the user in one line: `spawning auto child: <slug>`. Do not ask
    permission first, and keep working on the main thread.
 4. Keep your inbox Monitor armed (§4.18; Codex has none: pop in the

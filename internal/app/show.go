@@ -14,6 +14,9 @@ import (
 
 // cmdShow dispatches `flow show task|project|playbook|owner`. Per spec §5.4.
 func cmdShow(args []string) int {
+	if groupHelp("show", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: show requires 'task', 'project', 'playbook', or 'owner'")
 		return 2
@@ -38,7 +41,7 @@ func cmdShow(args []string) int {
 func showTaskCmd(args []string) int {
 	fs := flagSet("show task")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	ref := ""
 	if fs.NArg() > 0 {
@@ -97,7 +100,7 @@ func showTaskCmd(args []string) int {
 func showProjectCmd(args []string) int {
 	fs := flagSet("show project")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	ref := ""
 	if fs.NArg() > 0 {
@@ -157,7 +160,7 @@ func showProjectCmd(args []string) int {
 func showPlaybookCmd(args []string) int {
 	fs := flagSet("show playbook")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	ref := ""
 	if fs.NArg() > 0 {

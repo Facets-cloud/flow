@@ -187,7 +187,7 @@ func inboxList(args []string) int {
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the human listing")
 	all := fs.Bool("all", false, "list everything still retained (read + unread), not just unread")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	db, err := openBusDB()
 	if err != nil {
@@ -402,7 +402,7 @@ func inboxPop(args []string) int {
 	asJSON := fs.Bool("json", false, "emit the popped message as JSON")
 	keepUnread := fs.Bool("keep-unread", false, "reader/relay mode: return the message without acking it (leave it unread)")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	// A headless auto run has no one to wake: a parked listener there
 	// acks each message into output no agent reads, and the message is
@@ -528,7 +528,7 @@ func inboxRead(args []string) int {
 		ids, args = append(ids, args[0]), args[1:]
 	}
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	rest := append(ids, fs.Args()...)
 	if len(rest) != 1 {
@@ -588,7 +588,7 @@ func inboxStats(args []string) int {
 	fs := flagSet("inbox stats")
 	as := consumerFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	db, err := openBusDB()
 	if err != nil {

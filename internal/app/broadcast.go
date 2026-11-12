@@ -21,16 +21,17 @@ import (
 // No watchers = nothing delivered (the durable record of milestones is
 // still a task update file).
 func cmdBroadcast(args []string) int {
-	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
+	body, flagArgs, missing := splitPositional(args)
+	fs := flagSet("broadcast")
+	from := fs.String("from", "", "broadcast as this task slug (default: the bound task)")
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
 		fmt.Fprintln(os.Stderr, `usage: flow broadcast "<one-liner>" [--from <task-slug>]`)
 		return 2
 	}
-	body := strings.TrimSpace(args[0])
-	fs := flagSet("broadcast")
-	from := fs.String("from", "", "broadcast as this task slug (default: the bound task)")
-	if err := fs.Parse(args[1:]); err != nil {
-		return 2
-	}
+	body = strings.TrimSpace(body)
 	if body == "" {
 		fmt.Fprintln(os.Stderr, "error: empty broadcast")
 		return 2

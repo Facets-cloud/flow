@@ -29,13 +29,13 @@ import (
 // A failed sweep (missing claude binary, non-zero exit) only emits a
 // warning — the status flip is the contract; the sweep is best-effort.
 func cmdDone(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "error: done requires a task ref")
-		return 2
-	}
-	query := args[0]
+	query, flagArgs, missing := splitPositional(args)
 	fs := flagSet("done")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: done requires a task ref")
 		return 2
 	}
 
@@ -55,21 +55,22 @@ func cmdDone(args []string) int {
 	if rc != 0 {
 		return rc
 	}
+	return closeTask(db, task)
+}
 
-	// Done implies a session existed and produced learnings. A backlog
-	// task that was never started has nothing to sweep. The task-table
-	// CHECK constraint would reject the UPDATE with a cryptic error;
-	// we surface the right verbs here instead.
-	if task.Status == "backlog" && (!task.SessionID.Valid || task.SessionID.String == "") {
-		fmt.Fprintf(os.Stderr,
-			"error: task %q has no session_id — flow done requires at least one prior `flow do` (or `flow do --here`) to have attached a session whose transcript the sweep can read.\n"+
-				"  options:\n"+
-				"    - if you've been working on this task in the current Claude session, bind it now and retry close-out:\n"+
-				"        flow do --here %s   (then re-run: flow done %s)\n"+
-				"    - if it was never worked on and isn't relevant, archive it instead:\n"+
-				"        flow archive %s\n",
-			task.Slug, task.Slug, task.Slug, task.Slug)
-		return 1
+// closeTask is the one way a task becomes done: the conditional status
+// flip, bus cleanup, and the close-out sweep (inline, or deferred to the
+// auto-run supervisor). Shared by `flow done` and `flow update task
+// --status done` so no close path skips the sweep.
+func closeTask(db *sql.DB, task *flowdb.Task) int {
+	return closeTaskThen(db, task, nil)
+}
+
+// closeTaskThen is closeTask with a callback that runs right after the
+// status flip (and only if this call did the flip), before the sweep.
+func closeTaskThen(db *sql.DB, task *flowdb.Task, afterFlip func()) int {
+	if rc := closeSessionRefusal(task); rc != 0 {
+		return rc
 	}
 
 	// Idempotent: a task that is already done keeps its status_changed_at
@@ -81,8 +82,15 @@ func cmdDone(args []string) int {
 		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
 		return 0
 	}
+	// The sweep runs a headless harness; inside the Codex sandbox it would
+	// fail AFTER the flip, losing the sweep for good (a done task is never
+	// swept again). Refuse before flipping instead.
+	if rc := sweepSandboxRefusal(task); rc != 0 {
+		return rc
+	}
 	beforeDoneFlip()
 	now := flowdb.NowISO()
+	var err error
 	// RETURNING reads the auto-run columns in the same statement as the
 	// flip, so the deferral decision below sees the row as it was at the
 	// flip — not the copy loaded earlier, which a supervisor may have
@@ -107,6 +115,9 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
+	if afterFlip != nil {
+		afterFlip()
+	}
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		h, lookupErr := harnessForTask(task)
@@ -128,6 +139,39 @@ func cmdDone(args []string) int {
 		}
 	}
 	return 0
+}
+
+// closeSessionRefusal refuses (rc 1) to close a task that never had a
+// session. Done implies a session existed and produced learnings; a
+// backlog task that was never started has nothing to sweep. The
+// task-table CHECK constraint would reject the UPDATE with a cryptic
+// error; we surface the right verbs here instead. 0 otherwise.
+func closeSessionRefusal(task *flowdb.Task) int {
+	if task.Status != "backlog" || (task.SessionID.Valid && task.SessionID.String != "") {
+		return 0
+	}
+	fmt.Fprintf(os.Stderr,
+		"error: task %q has no session_id — flow done requires at least one prior `flow do` (or `flow do --here`) to have attached a session whose transcript the sweep can read.\n"+
+			"  options:\n"+
+			"    - if you've been working on this task in the current Claude session, bind it now and retry close-out:\n"+
+			"        flow do --here %s   (then re-run: flow done %s)\n"+
+			"    - if it was never worked on and isn't relevant, archive it instead:\n"+
+			"        flow archive %s\n",
+		task.Slug, task.Slug, task.Slug, task.Slug)
+	return 1
+}
+
+// sweepSandboxRefusal refuses (rc 1) when closing task would run the
+// close-out sweep inline from inside the Codex sandbox. 0 otherwise.
+func sweepSandboxRefusal(task *flowdb.Task) int {
+	if task.Status == "done" || !task.SessionID.Valid || task.SessionID.String == "" {
+		return 0
+	}
+	h, err := harnessForTask(task)
+	if err != nil || closeoutDeferred(h, task) {
+		return 0
+	}
+	return refuseInCodexSandbox("flow done (its close-out sweep)")
 }
 
 // beforeDoneFlip is a test seam: it runs between loading the task and

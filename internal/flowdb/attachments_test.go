@@ -51,6 +51,7 @@ func TestBusAttachmentsMigrate(t *testing.T) {
 		VALUES ('old00001', ?, 'message', 'user', 'user', 'old row')`, NowISO()); err != nil {
 		t.Fatal(err)
 	}
+	markPreFingerprint(t, db)
 	db.Close()
 	db, err = OpenDB(path)
 	if err != nil {

@@ -63,23 +63,31 @@ func (c *codex) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) str
 	if opts.Inject != "" {
 		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	cmd := "codex"
-	if opts.SkipPermissions {
-		cmd += " --dangerously-bypass-approvals-and-sandbox"
-	}
-	return cmd + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
+	return interactiveResume(sessionID, opts) + " " + spawner.ShellQuote(prompt)
 }
 
 func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := "codex"
-	if opts.SkipPermissions {
-		cmd += " --dangerously-bypass-approvals-and-sandbox"
-	}
-	cmd += " resume " + sessionID
+	cmd := interactiveResume(sessionID, opts)
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
 	return cmd
+}
+
+// interactiveResume is the `codex resume … <id>` prefix shared by LaunchCmd
+// and ResumeCmd. Without skip-permissions it pins the sandbox and approval
+// policy explicitly: the thread was minted by a read-only, approval=never
+// probe and `codex resume` would otherwise keep those first-turn settings,
+// leaving the session unable to write the repo, flow.db, or even ask.
+func interactiveResume(sessionID string, opts harness.LaunchOpts) string {
+	if opts.SkipPermissions {
+		return "codex --dangerously-bypass-approvals-and-sandbox resume " + sessionID
+	}
+	cmd := "codex resume -s workspace-write -a on-request"
+	for _, d := range opts.WritableDirs {
+		cmd += " --add-dir " + spawner.ShellQuote(d)
+	}
+	return cmd + " " + sessionID
 }
 
 func (c *codex) SkipPermissionsRun(prompt string) error { return SkipPermissionsRunner(prompt) }
@@ -159,8 +167,14 @@ func parseThreadID(out []byte) (string, error) {
 }
 
 // Flags may sit between `resume` and the id: AutoRunArgv emits
-// `codex exec resume --dangerously-bypass-approvals-and-sandbox -o <file> <id> ...`.
-var runningSessionRe = regexp.MustCompile(`\bresume(?:\s+--?[A-Za-z][\w-]*(?:\s+[^-\s]\S*)?)*?\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b`)
+// `codex exec resume --dangerously-bypass-approvals-and-sandbox -o <file> <id> ...`
+// and interactiveResume emits `--add-dir <path>`. ps prints argv unquoted,
+// so a flag value with whitespace (a flow root like `/tmp/flow root`) is
+// several tokens: anything may sit between the first flag and the id. The
+// id is the first standalone UUID token after `resume`; text before it
+// must start with a flag, so prose like "resume work on <id>" in some
+// other command's prompt is not a session.
+var runningSessionRe = regexp.MustCompile(`\bresume(?:\s+-\S*(?:\s+\S+)*?)?\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\s|$)`)
 
 func (c *codex) LiveSessionIDs() (map[string]int, error) {
 	out, err := PSRunner()
@@ -172,13 +186,9 @@ func (c *codex) LiveSessionIDs() (map[string]int, error) {
 		if !strings.Contains(strings.ToLower(line), "codex") {
 			continue
 		}
-		seen := map[string]bool{}
-		for _, m := range runningSessionRe.FindAllStringSubmatch(line, -1) {
-			id := strings.ToLower(m[1])
-			if !seen[id] {
-				live[id]++
-				seen[id] = true
-			}
+		// First match only: everything after the id is the prompt.
+		if m := runningSessionRe.FindStringSubmatch(line); m != nil {
+			live[strings.ToLower(m[1])]++
 		}
 	}
 	return live, nil

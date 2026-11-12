@@ -15,7 +15,7 @@ import (
 func cmdEdit(args []string) int {
 	fs := flagSet("edit")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "error: edit requires a ref")

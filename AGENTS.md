@@ -113,4 +113,5 @@ flow/
 
 - `hookCommand` (SessionStart) and `userPromptSubmitHookCommand` (UserPromptSubmit) in `internal/app/skill.go` are the exact strings matched in `~/.claude/settings.json`. Changing either orphans existing installations.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
+- `flowdb.OpenDB` skips DDL + migrations when `PRAGMA user_version` matches `schemaFingerprint()` (a hash of `schemaDDL`/`busDDL`/`indexesPostMigrate`/`peersDDL`/`peerBusIndexDDL` + `peerBusColumns` + `schemaRevision`). A migration that does NOT change that DDL (data backfill, table rebuild) must bump `schemaRevision` in `internal/flowdb/schema_version.go`, or existing DBs never run it. Tests that fake an "old" DB must reset `user_version` to 0.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.

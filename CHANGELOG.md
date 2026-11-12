@@ -102,6 +102,45 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **Interactive Codex sessions can write again.** `flow do` minted the
+  Codex thread with a read-only, approval=never probe, and `codex resume`
+  kept those first-turn settings, so `flow show task` failed with
+  "attempt to write a readonly database" and the agent could neither edit
+  the repo nor ask. Interactive Codex launches and resumes now pass
+  `-s workspace-write -a on-request --add-dir <flow root>` (honoring
+  `$FLOW_ROOT`). Skip-permissions launches are unchanged.
+- **flow refuses to launch harness runs from inside the Codex sandbox.**
+  Under Codex's seatbelt sandbox (`CODEX_SANDBOX` set) a child had no
+  network or keychain: Codex children could not mint a thread, Claude
+  children were "Not logged in", and `flow done`'s close-out sweep failed
+  after the status had already flipped, so the sweep was lost. `flow
+  auto`, `flow do` (including `--auto`), `flow run playbook`, `flow owner
+  tick` and `flow done` (and `update task --status done`) now refuse
+  before any side effect, telling the agent to re-run escalated. `flow do
+  --here` and `--no-sweep` launch nothing and stay allowed.
+- **`--help` never creates anything.** `flow add task --help` used to
+  create a task named "--help". Every command that takes a name or ref
+  before its flags (`add task|project|playbook|owner`, `auto`, `done`,
+  `update`, `run playbook`, `owner …`, `message`, `broadcast`,
+  `connector …`, …) now prints usage and exits 0 on `-h`/`--help`, and
+  a leading dash-argument is never taken as a name.
+- **Parallel `flow auto` launches no longer die with SQLITE_BUSY.** `flow
+  do` minted the Codex thread (a model round-trip) inside its write
+  transaction, holding the DB lock for the whole probe, while every DB
+  open ran write migrations. The session id is now minted before the
+  transaction. The DB records a schema fingerprint in `PRAGMA
+  user_version` and skips DDL and migrations (no write lock) when it is
+  current, and real migrations are serialized across processes with a
+  lock file (`flow.db.migrate.lock`).
+- **`flow update task --status done` runs the close-out sweep.** It now
+  goes through the same close path as `flow done` (after the other
+  fields apply), so a session that closes via `update` no longer skips
+  the KB and project distillation. `--no-sweep` keeps the old
+  status-only flip for scripted bulk edits, with a note on stderr.
+- **Codex sessions are told how to ask and close.** Codex has no
+  AskUserQuestion tool. Its SessionStart context, and the skill, now say:
+  ask in plain chat and wait for the reply, close only with `flow done`
+  after the user says yes, and run flow's launch commands escalated.
 - The stale-version hint fired when the latest tag only differed from the
   running version. It now fires only when the latest release is newer, by
   semantic version order.
@@ -116,6 +155,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   the typed line is a few dozen bytes however long the prompt is. Linux
   (`MAX_CANON` 4096) was unaffected. `scripts/smoke-linux.sh` drives its
   control window the same way, so it passes on macOS too.
+- **Codex live-session guard handles a flow root with a space.** `ps`
+  prints `--add-dir /tmp/flow root <id>` unquoted, so the guard missed the
+  thread id and `flow do` could start a second `codex resume` on a thread
+  that was already open. It now finds the id whatever the flag values are.
+- **`flow update task --status …` checks the session before writing
+  anything.** On a task that never had a session, `--priority high --tag zz
+  --status done` wrote the priority and tag, printed `status → done`, then
+  failed. It now refuses up front with nothing changed, and the "routed
+  through flow done" line is printed only after the status flipped.
+- **`--help` gaps closed.** `flow connector list|escalate|priority --help`
+  and the group level `flow add|run|show|list|update|owner|workdir|skill|hook
+  --help` print usage and exit 0, as does `flow upgrade --help`. `flow add
+  task -- "-5 degrees fix"` creates a name that starts with a dash. Help text no longer renders
+  `-no-sweep flow done` / `-auto flow done`.
+- **A skipped migration is no longer stamped as done.** If probing a
+  column failed, the backfill was skipped silently and the schema version
+  was recorded anyway, so nothing retried it. The open now fails and the
+  next one retries.
+- **The migration lock times out.** An opener waiting on a stuck migrator
+  fails after 2 minutes with an error naming the lock file instead of
+  hanging.
 
 ## [0.1.0-alpha.36] — 2026-11-10
 
