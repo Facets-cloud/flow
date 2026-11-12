@@ -730,10 +730,10 @@ moving into design / implementation / debugging. Re-evaluate on every turn.
 
 **Triggers:** "update flow", "upgrade flow", "new flow version", "what
 version am I on", a bare `flow --version`, or a SessionStart
-`flow-version-stale:` signal. flow upgrades itself after a command; the
-signal means it could not. Run `flow upgrade` (ask before `--force`), then
-`flow --version`. The install.sh fallback and failure causes live in
-**references/upgrade.md**.
+`flow-version-stale:` signal (flow self-upgrade failed). Run `flow
+upgrade` (ask before `--force`), then `flow --version`. Fallback and
+failures: **references/upgrade.md**. A `[flow-upgrade]` notice →
+**references/upgrade-notes.md**.
 ### 4.16a Tagging tasks
 
 Tags are free-form single-string labels for cross-cutting identification
