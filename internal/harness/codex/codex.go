@@ -78,11 +78,11 @@ func (c *codex) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) str
 	if opts.Inject != "" {
 		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	return interactivePrefix(opts) + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
+	return interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
 }
 
 func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := interactivePrefix(opts) + " resume " + sessionID
+	cmd := interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume " + sessionID
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
@@ -105,6 +105,29 @@ func (c *codex) DefersCloseoutInAutoRun() bool { return true }
 // once at the TUI and the trust persists.
 const hookTrustBypass = "--dangerously-bypass-hook-trust"
 
+// trustArgv returns the per-launch config override that marks dir as a
+// trusted project (`-c projects."<dir>".trust_level="trusted"`), or nil.
+// The caller (flow's app layer) only sets LaunchOpts.TrustDir for
+// flow-created work dirs, never user repos. Nothing is persisted to
+// config.toml. A path that can't sit inside a TOML quoted key without
+// escaping (contains `"` or `\`) is skipped rather than risk a malformed
+// override.
+func trustArgv(dir string) []string {
+	if dir == "" || strings.ContainsAny(dir, "\"\\\n") {
+		return nil
+	}
+	return []string{"-c", `projects."` + dir + `".trust_level="trusted"`}
+}
+
+// trustShell is trustArgv rendered for the interactive shell command.
+func trustShell(dir string) string {
+	a := trustArgv(dir)
+	if a == nil {
+		return ""
+	}
+	return " " + a[0] + " " + spawner.ShellQuote(a[1])
+}
+
 func skipPermissionsArgv(prompt string) []string {
 	return []string{"exec", "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass, prompt}
 }
@@ -120,7 +143,10 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	if opts.Inject != "" {
 		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	argv := []string{"codex", "exec", "resume"}
+	// The trust override sits before `resume` (exec accepts -c) so the
+	// `resume … <id>` tail LiveSessionIDs matches never contains a path.
+	argv := append([]string{"codex", "exec"}, trustArgv(opts.TrustDir)...)
+	argv = append(argv, "resume")
 	if opts.SkipPermissions {
 		argv = append(argv, "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass)
 	}

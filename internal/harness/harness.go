@@ -65,6 +65,24 @@ type LaunchOpts struct {
 	// write the session's final message to this file (codex: -o). Impls
 	// without an equivalent ignore it.
 	LastMessagePath string
+
+	// TrustDir, when set, is a flow-created work dir (never a user repo —
+	// the caller decides, see internal/trust) that the harness should
+	// treat as trusted for this launch. Codex: a per-launch
+	// `-c projects."<dir>".trust_level="trusted"` override (nothing is
+	// persisted to config.toml). Claude ignores it — its trust lives in
+	// ~/.claude.json and is persisted via WorkspaceTruster instead.
+	TrustDir string
+}
+
+// WorkspaceTruster is an OPTIONAL harness capability: persistently
+// pre-accept the harness's workspace-trust gate for a flow-owned work
+// dir, so headless/background launches (no TTY for the trust dialog)
+// don't die with "Workspace not trusted". Implementations must refuse
+// anything that is not flow-owned (internal/trust.FlowOwnedRoot) and
+// return changed=false, err=nil for it.
+type WorkspaceTruster interface {
+	TrustWorkspace(flowRoot, workDir string) (changed bool, err error)
 }
 
 // BackgroundAgent is one entry from a harness's background-agent
