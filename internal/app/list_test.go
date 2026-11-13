@@ -172,14 +172,17 @@ func TestCmdListTasksDoneHiddenByDefault(t *testing.T) {
 
 func TestCmdListTasksSinceToday(t *testing.T) {
 	root, db := showListEditDB(t)
+	// Pin the clock to midday so "2h ago" is today regardless of when the
+	// suite runs (it used to fail between local 00:00 and 02:00).
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.Local)
+	withClock(t, time.Local, now)
 	insertTask(t, db, "today-task", "A", "backlog", "high", filepath.Join(root, "x"), nil)
-	// Set it to 12 hours ago so it's still "today" in any reasonable timezone.
-	recent := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
+	recent := now.Add(-2 * time.Hour).Format(time.RFC3339)
 	if _, err := db.Exec(`UPDATE tasks SET updated_at = ? WHERE slug = ?`, recent, "today-task"); err != nil {
 		t.Fatal(err)
 	}
 	insertTask(t, db, "ancient", "B", "backlog", "high", filepath.Join(root, "x"), nil)
-	old := time.Now().Add(-72 * time.Hour).Format(time.RFC3339)
+	old := now.Add(-72 * time.Hour).Format(time.RFC3339)
 	if _, err := db.Exec(`UPDATE tasks SET updated_at = ? WHERE slug = ?`, old, "ancient"); err != nil {
 		t.Fatal(err)
 	}

@@ -917,7 +917,10 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 		args = append(args, t)
 	}
 	if filter.Since != "" {
-		where = append(where, "updated_at >= ?")
+		// Compare instants, not strings: stored timestamps may carry any UTC
+		// offset (local, "Z", a different zone after travel/DST), and RFC3339
+		// strings with different offsets do not sort chronologically.
+		where = append(where, "julianday(updated_at) >= julianday(?)")
 		args = append(args, filter.Since)
 	}
 	if !filter.IncludeArchived {
