@@ -94,6 +94,9 @@ flow message user "deploy-v2: ship to prod now?" --options "Yes|No|After 6pm"
 - **Progress / FYI → `--fyi`:** `flow message user "imports 3/5 done" --fyi`
   is stored and listed but never pings. Use it for anything the human
   doesn't need to act on.
+- When `flow done` prints a `note for the user:` block (once per install, at
+  25 closed tasks), pass it on to the human in the same reply you report the
+  close in — once; never repeat it in later turns.
 - `--options` and `--fyi` are only for mail to the human (exit 2 on a
   task address), and they don't combine with each other or with `--urgent`.
 - How connectors work, and how to write one → read **references/connectors.md**.

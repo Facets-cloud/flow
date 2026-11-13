@@ -9,6 +9,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **One star nudge, ever.** When `flow done` leaves 25 or more closed tasks
+  behind, it prints one `note for the user:` block naming the real count and
+  asking for a GitHub star, relayed by your agent, then drops
+  `state/nudge-star-25` under the flow root so it never says it again.
+  Installs already past 25 see it on their next `flow done`. `FLOW_QUIET=1`
+  suppresses it; nothing is written to the bus, and a nudge that cannot be
+  recorded never fails `flow done`.
+- **PR trailer for flow-bound sessions.** The SessionStart hook now tells
+  every bound session (tab or headless child) to end a pull request
+  description with the line `Shipped from a [flow](https://github.com/Facets-cloud/flow) task.`
+  after any harness footer. An instruction in context, not an enforcement:
+  no command rewriting, no PreToolUse check, nothing added to the line.
+  `FLOW_PR_TRAILER=off` (also `0`/`false`) drops it; unbound sessions never
+  see it.
 - **Harness wake: bus mail reaches a bound session with no listener.**
   After every bus insert (`flow message`, watched `flow broadcast`, child
   reports, dead-child pings, driver notices, attachments) flow checks the

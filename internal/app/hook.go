@@ -141,6 +141,9 @@ func cmdHookSessionStart(args []string) int {
 			pageCtx += driverDelegationBlock()
 		}
 	}
+	// Every bound session, tab or headless child, is told the PR trailer
+	// (an instruction, not an enforcement; FLOW_PR_TRAILER=off drops it).
+	pageCtx += prTrailerBlock()
 
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
