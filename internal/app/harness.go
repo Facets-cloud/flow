@@ -11,6 +11,7 @@ import (
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
 	"flow/internal/harness/codex"
+	"flow/internal/harness/prx"
 	"flow/internal/spawner"
 )
 
@@ -21,6 +22,7 @@ func allHarnesses() []harness.Harness {
 	return []harness.Harness{
 		claude.New(),
 		codex.New(),
+		prx.New(),
 		// gemini.New(),   // wired when the gemini adapter lands
 	}
 }
