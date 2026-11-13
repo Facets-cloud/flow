@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+## v0.1.0-alpha.38
+
 - **Mail reaches you automatically (harness wake).** flow now pushes a
   `[flow-bus wake]` notice into an idle session, and your own hooks surface
   new mail before your next tool call or at turn end. If you armed an inbox

@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.39] — 2026-11-13
+
 ### Fixed
 
 - **A swallowed wake push no longer hides mail.** Wake and the hooks used
