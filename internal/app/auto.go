@@ -361,8 +361,16 @@ func cmdAutoExec(args []string) int {
 		return 1
 	}
 	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
-	// A re-run on a session that already ran must resume it.
-	opts.Resume = h.ValidateSession(task.WorkDir, task.SessionID.String) == nil
+	// A re-run on a session that already ran must resume it, from the
+	// directory it lives in. This process was launched in work_dir and the
+	// harness inherits its cwd, so move there first when they differ.
+	resumeCwd, sessionOnDisk := resumeTarget(h, task, task.SessionID.String)
+	opts.Resume = sessionOnDisk
+	if resumeCwd != task.WorkDir {
+		if err := os.Chdir(resumeCwd); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: chdir %s: %v; resuming from work_dir\n", resumeCwd, err)
+		}
+	}
 	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
