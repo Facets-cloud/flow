@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Skill: report a flow bug.** A new on-demand reference
+  (`references/report-issue.md`, one trigger line in the core) tells agents
+  how to file a GitHub issue about flow (`Facets-cloud/flow`) or a connector
+  (`Facets-cloud/flow-connectors`): gather version/OS/harness/connectors and a
+  minimal repro, redact paths, secrets, names and ids, draft a fixed
+  template, and file with `gh issue create` only after the human says
+  "File it" (headless runs never file). The issue URL is recorded as a
+  task update note.
+
 ### Fixed
 
 - **flow-created work dirs are pre-trusted, so headless spawns no longer die

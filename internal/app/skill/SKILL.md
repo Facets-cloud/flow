@@ -809,6 +809,12 @@ session are auto-watched. Hooks NEVER consume.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 
+### 4.19 Report a flow bug
+
+"file a bug" / "report this" / "open an issue" about flow or a connector, or
+you hit a clear flow bug (offer; never file without a yes) → read
+**references/report-issue.md**.
+
 ## 6. The `work_dir` question — rules
 
 Before asking "where does this task live?", run the informed-question
@@ -1004,8 +1010,7 @@ to find the bound task. Two implications:
   reverse-lookup returns. If `flow show task` errors with
   `not bound to a task`, ask the user which task to attribute it to.
 
-There is no `FLOW_TASK` or `FLOW_PROJECT` env var to read. `flow do`
-no longer injects them; the DB binding is sufficient.
+There is no `FLOW_TASK`/`FLOW_PROJECT` env var; the DB binding is sufficient.
 
 A session is "bound" when some task carries its session_id (set by
 `flow do <slug>` at spawn time, or by `flow do --here <slug>`
@@ -1017,8 +1022,7 @@ retroactively). A session is "dispatch / unbound" when no task does
 Ask. The worst outcome is writing a bad brief or silently
 mis-attributing a progress note. The second-worst outcome is running
 `flow do` on the wrong task. Both are avoided by one clarifying
-question. The user's time budget for a clarifying question is vastly
-lower than their budget for fixing a wrong save after the fact.
+question — far cheaper than fixing a wrong save after the fact.
 
 In a dispatch session (no task bound to this session), also re-check
 §4.14 (substantive-unrelated-work) on every turn. The skill is

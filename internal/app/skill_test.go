@@ -491,6 +491,51 @@ func TestSkillHasUpgradeWorkflow(t *testing.T) {
 	}
 }
 
+// TestSkillHasReportIssueWorkflow pins the "report a flow bug" workflow:
+// the core carries one trigger line pointing at references/report-issue.md,
+// and the reference tells the agent where to file, what to gather, what to
+// redact, and that it must never file without the human's explicit yes.
+func TestSkillHasReportIssueWorkflow(t *testing.T) {
+	core, err := fs.ReadFile(skillFiles(), "SKILL.md")
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+	if !strings.Contains(string(core), "references/report-issue.md") {
+		t.Errorf("SKILL.md missing trigger pointing at references/report-issue.md")
+	}
+	ref, err := fs.ReadFile(skillFiles(), "references/report-issue.md")
+	if err != nil {
+		t.Fatalf("read references/report-issue.md: %v", err)
+	}
+	got := string(ref)
+	for _, want := range []string{
+		"Facets-cloud/flow-connectors",
+		"Facets-cloud/flow",
+		"flow --version",
+		"uname -sr",
+		"flow connector list",
+		"Redact",
+		"flow.db",
+		"AskUserQuestion",
+		"File it",
+		"Don't file",
+		"gh auth status",
+		"gh issue create -R",
+		"--body-file",
+		"### What happened",
+		"### Expected",
+		"### Repro",
+		"### Environment",
+		"### Logs (redacted)",
+		"updates/",
+		"never file",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report-issue reference missing %q", want)
+		}
+	}
+}
+
 // TestSkillEmphasizesCloseOutValue pins §4.7's framing of `flow done`
 // as the load-bearing moment that persists the session's learnings —
 // it triggers the close-out sweep that writes KB + project update.
