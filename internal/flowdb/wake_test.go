@@ -106,21 +106,54 @@ func TestClaimUnsurfacedConcurrent(t *testing.T) {
 	}
 }
 
-// A push that failed releases its claim so a fallback can announce.
-func TestReleaseSurfaced(t *testing.T) {
+// The two records are independent: a wake nudge never hides mail from
+// the hooks, and a hook announcement never hides it from the sender's wake.
+func TestWakeAndHookRecordsIndependent(t *testing.T) {
+	db := wakeTestDB(t)
+	m := putTaskMsg(t, db, "a")
+	got, err := ClaimWakeNudge(db, "a", time.Time{}, false, time.Now())
+	if err != nil || len(got) != 1 || got[0].ID != m.ID {
+		t.Fatalf("wake claim = %v %v", ids(got), err)
+	}
+	// A swallowed push: the hooks still see the row as never shown.
+	if h, _ := ClaimUnsurfaced(db, "a"); len(h) != 1 {
+		t.Fatalf("wake nudge hid the row from the hooks: %v", ids(h))
+	}
+	// Coalescing: the same batch is never nudged twice.
+	if again, _ := ClaimWakeNudge(db, "a", time.Time{}, false, time.Now()); len(again) != 0 {
+		t.Fatalf("re-nudged the same rows: %v", ids(again))
+	}
+	// Hook first, then wake: the sender's wake is not blocked by it.
+	m2 := putTaskMsg(t, db, "a")
+	if h, _ := ClaimUnsurfaced(db, "a"); len(h) != 1 || h[0].ID != m2.ID {
+		t.Fatalf("hook claim = %v", ids(h))
+	}
+	if w, _ := ClaimWakeNudge(db, "a", time.Time{}, false, time.Now()); len(w) != 1 || w[0].ID != m2.ID {
+		t.Fatalf("hook record blocked the sender's wake: %v", ids(w))
+	}
+	// The waiter's form skips rows the hooks already showed in context.
+	putTaskMsg(t, db, "a")
+	_, _ = ClaimUnsurfaced(db, "a")
+	if w, _ := ClaimWakeNudge(db, "a", time.Time{}, true, time.Now()); len(w) != 0 {
+		t.Fatalf("waiter nudged hook-surfaced rows: %v", ids(w))
+	}
+}
+
+// A push that failed releases the wake claim so a fallback can nudge.
+func TestReleaseWakeNudge(t *testing.T) {
 	db := wakeTestDB(t)
 	putTaskMsg(t, db, "a")
-	got, _ := ClaimUnsurfaced(db, "a")
-	if err := ReleaseSurfaced(db, "a", ids(got)); err != nil {
+	got, _ := ClaimWakeNudge(db, "a", time.Time{}, false, time.Now())
+	if err := ReleaseWakeNudge(db, "a", ids(got)); err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := ClaimUnsurfaced(db, "a"); len(again) != 1 {
+	if again, _ := ClaimWakeNudge(db, "a", time.Time{}, false, time.Now()); len(again) != 1 {
 		t.Fatalf("released row not claimable: %v", ids(again))
 	}
 }
 
-// ClaimUnsurfacedOlderThan leaves young rows for the primary push path.
-func TestClaimUnsurfacedOlderThan(t *testing.T) {
+// The cutoff leaves young rows for the sender's immediate push.
+func TestClaimWakeNudgeOlderThan(t *testing.T) {
 	db := wakeTestDB(t)
 	old := &BusMessage{ID: "old1", CreatedAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), Kind: "message",
 		FromAssignee: "user", ToAssignee: "user", ToTaskSlug: "a", Body: "x"}
@@ -128,9 +161,91 @@ func TestClaimUnsurfacedOlderThan(t *testing.T) {
 		t.Fatal(err)
 	}
 	putTaskMsg(t, db, "a") // brand new
-	got, err := ClaimUnsurfacedOlderThan(db, "a", time.Now().Add(-5*time.Second))
+	got, err := ClaimWakeNudge(db, "a", time.Now().Add(-5*time.Second), true, time.Now())
 	if err != nil || len(got) != 1 || got[0].ID != "old1" {
 		t.Fatalf("got %v %v", ids(got), err)
+	}
+}
+
+// A nudged row still unread (and never shown by a hook) after the
+// re-nudge window is re-nudged exactly once.
+func TestClaimWakeRenudgeOncePerBatch(t *testing.T) {
+	db := wakeTestDB(t)
+	m := putTaskMsg(t, db, "a")
+	t0 := time.Now().Add(-time.Minute)
+	if got, _ := ClaimWakeNudge(db, "a", time.Time{}, false, t0); len(got) != 1 {
+		t.Fatal("nudge")
+	}
+	// Too young: not yet.
+	if got, _ := ClaimWakeRenudge(db, "a", t0.Add(-time.Second)); len(got) != 0 {
+		t.Fatalf("re-nudged inside the window: %v", ids(got))
+	}
+	got, err := ClaimWakeRenudge(db, "a", time.Now().Add(-30*time.Second))
+	if err != nil || len(got) != 1 || got[0].ID != m.ID {
+		t.Fatalf("renudge = %v %v", ids(got), err)
+	}
+	if again, _ := ClaimWakeRenudge(db, "a", time.Now()); len(again) != 0 {
+		t.Fatalf("second re-nudge: %v", ids(again))
+	}
+	// Rows a hook showed are never re-nudged; consumed rows neither.
+	m2 := putTaskMsg(t, db, "a")
+	_, _ = ClaimWakeNudge(db, "a", time.Time{}, false, t0)
+	_ = MarkSurfaced(db, "a", []string{m2.ID})
+	m3 := putTaskMsg(t, db, "a")
+	_, _ = ClaimWakeNudge(db, "a", time.Time{}, false, t0)
+	if ok, _ := ClaimDelivered(db, m3.ID, Consumer{By: "pop"}); !ok {
+		t.Fatal("pop")
+	}
+	if got, _ := ClaimWakeRenudge(db, "a", time.Now()); len(got) != 0 {
+		t.Fatalf("re-nudged shown/consumed rows: %v", ids(got))
+	}
+}
+
+// Upgrading an alpha.38 DB (one shared bus_surfaced claim, no wake
+// table): rows wake claimed there may never have reached the session, so
+// the upgrade frees every pending claim — no row stays hidden. Consumed
+// rows keep theirs, and later opens do not clear the hook record again.
+func TestUpgradeFromSharedClaimFreesPendingRows(t *testing.T) {
+	path := t.TempDir() + "/flow.db"
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := putTaskMsg(t, db, "a")
+	done := putTaskMsg(t, db, "a")
+	if err := MarkSurfaced(db, "a", []string{pending.ID, done.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := ClaimDelivered(db, done.ID, Consumer{By: "pop"}); !ok {
+		t.Fatal("pop")
+	}
+	// Roll the DB back to the alpha.38 shape.
+	if _, err := db.Exec(`DROP TABLE bus_wake_nudged`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got, _ := ClaimUnsurfaced(db, "a"); len(got) != 1 || got[0].ID != pending.ID {
+		t.Fatalf("pending row still hidden after upgrade: %v", ids(got))
+	}
+	var n int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_surfaced WHERE message_id=?`, done.ID).Scan(&n)
+	if n != 1 {
+		t.Errorf("consumed row's mark dropped: %d", n)
+	}
+	// A normal reopen keeps the hook record.
+	db.Close()
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ClaimUnsurfaced(db, "a"); len(got) != 0 {
+		t.Fatalf("reopen cleared the hook record: %v", ids(got))
 	}
 }
 
@@ -203,10 +318,17 @@ func TestAfterInsertCallback(t *testing.T) {
 func TestCleanupTaskBusDropsSessionState(t *testing.T) {
 	db := wakeTestDB(t)
 	_ = SetSessionState(db, "a", SessionIdle, time.Now())
+	putTaskMsg(t, db, "a")
+	_, _ = ClaimWakeNudge(db, "a", time.Time{}, false, time.Now())
 	if err := CleanupTaskBus(db, "a"); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := GetSessionState(db, "a"); st.State != "" {
 		t.Fatalf("session state survived cleanup: %+v", st)
+	}
+	var n int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_wake_nudged WHERE task_slug='a'`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("wake record survived cleanup: %d", n)
 	}
 }

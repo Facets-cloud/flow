@@ -7,6 +7,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **A swallowed wake push no longer hides mail.** Wake and the hooks used
+  one shared "announced" claim, so a push that never arrived (Claude socket
+  held/refused or a stale token; `codex queue` printing a Warning with exit
+  0) left the mail invisible to PreToolUse, the Stop check and the waiter.
+  They now keep separate records: hooks track what they showed in context
+  (`bus_surfaced`), wake tracks what it pushed (`bus_wake_nudged`, used
+  only to coalesce). A delivered wake prompt records the hook side, so
+  there is no extra turn. The Claude asyncRewake waiter re-nudges an idle
+  session once per batch when a push is still unread and unshown 30s
+  later. Upgrading frees any pending mail an alpha.38 wake claimed.
+
 ## [0.1.0-alpha.38] — 2026-11-13
 
 ### Added

@@ -23,6 +23,7 @@ type fakeWaker struct {
 	busy    bool
 	known   bool
 	checked int
+	detail  string // returned on success (a Codex queue "Warning:" line)
 }
 
 func (f *fakeWaker) WakeLive(harness.WakeRequest) bool { return f.live }
@@ -31,7 +32,7 @@ func (f *fakeWaker) Wake(r harness.WakeRequest) (string, error) {
 		return "", f.err
 	}
 	f.pushes = append(f.pushes, r)
-	return "", nil
+	return f.detail, nil
 }
 func (f *fakeWaker) SessionBusy(string, time.Duration) (bool, bool) {
 	f.checked++
@@ -102,9 +103,13 @@ func TestWakeIdleLiveSessionPushesNotice(t *testing.T) {
 	if len(f.pushes) != 1 || !strings.Contains(out, "stored: session busy") {
 		t.Errorf("burst re-woke: pushes=%d out=%q", len(f.pushes), out)
 	}
-	// The woken rows are claimed: no other path re-announces them.
-	if got, _ := flowdb.ClaimUnsurfaced(db, "w"); len(got) != 1 || got[0].Body != "second" {
-		t.Errorf("claim after wake = %d rows", len(got))
+	// The push is only the wake record: the hooks still see both rows (a
+	// push may be swallowed), and wake will not push for "hello" again.
+	if got, _ := flowdb.ClaimWakeNudge(db, "w", time.Time{}, false, time.Now()); len(got) != 1 || got[0].Body != "second" {
+		t.Errorf("wake claim after push = %d rows", len(got))
+	}
+	if got, _ := flowdb.ClaimUnsurfaced(db, "w"); len(got) != 2 {
+		t.Errorf("hook record after push = %d rows, want 2", len(got))
 	}
 }
 
@@ -213,8 +218,8 @@ func TestWakePushFailureReleasesClaim(t *testing.T) {
 	if !strings.Contains(out, "stored: push failed") {
 		t.Errorf("out = %q", out)
 	}
-	if got, _ := flowdb.ClaimUnsurfaced(db, "w"); len(got) != 1 {
-		t.Fatal("failed push kept its claim")
+	if got, _ := flowdb.ClaimWakeNudge(db, "w", time.Time{}, false, time.Now()); len(got) != 1 {
+		t.Fatal("failed push kept its wake claim")
 	}
 	if st, _ := flowdb.GetSessionState(db, "w"); st.State == flowdb.SessionBusy {
 		t.Error("failed push must not mark the session busy")
@@ -573,5 +578,143 @@ func TestInboxWaitRewakeQuietBusyCrossChecked(t *testing.T) {
 	rc, _, out := runInboxWait(t, `{"session_id":"sid-w"}`, "--rewake", "--timeout", "3")
 	if rc != 2 || !strings.Contains(out, harness.WakeMarker) {
 		t.Fatalf("rc=%d out=%q", rc, out)
+	}
+}
+
+// shortRenudge shrinks the waiter's re-nudge window for a test.
+func shortRenudge(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := rewakeRenudgeAfter
+	rewakeRenudgeAfter = d
+	t.Cleanup(func() { rewakeRenudgeAfter = orig })
+}
+
+// (a) A swallowed push (Wake returns nil, nothing delivered) never hides
+// the mail: the next PreToolUse still announces it.
+func TestSwallowedPushPreToolUseStillAnnounces(t *testing.T) {
+	db := wakeSetup(t)
+	f := &fakeWaker{live: true}
+	stubWaker(t, f)
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	if out := sendTo(t, "w", "swallowed one"); !strings.Contains(out, "woke w") || len(f.pushes) != 1 {
+		t.Fatalf("setup: push not attempted: %q", out)
+	}
+	ctx := preToolUseSID(t, "sid-w")
+	if !strings.Contains(ctx, "swallowed one") {
+		t.Fatalf("PreToolUse after a swallowed push = %q", ctx)
+	}
+	if again := preToolUseSID(t, "sid-w"); again != "" {
+		t.Errorf("PreToolUse re-announced: %q", again)
+	}
+}
+
+// Codex: `codex queue` printed a Warning and exited 0 (queued, never
+// resumed). The hooks still announce the mail.
+func TestCodexQueueWarningPreToolUseStillAnnounces(t *testing.T) {
+	db := wakeSetup(t)
+	f := &fakeWaker{live: true, detail: "Warning: queued but could not resume thread x"}
+	stubWaker(t, f)
+	_, _ = db.Exec(`UPDATE tasks SET harness='codex', session_id=? WHERE slug='w'`, codexHookSID)
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	sendTo(t, "w", "queued only")
+	if len(f.pushes) != 1 {
+		t.Fatalf("pushes = %d", len(f.pushes))
+	}
+	if ctx := preToolUseSID(t, codexHookSID); !strings.Contains(ctx, "queued only") {
+		t.Fatalf("PreToolUse after a codex queue Warning = %q", ctx)
+	}
+}
+
+// (b)+(d) The Stop check still blocks on mail whose push was swallowed,
+// exactly once.
+func TestSwallowedPushStopBlocksOnce(t *testing.T) {
+	db := wakeSetup(t)
+	f := &fakeWaker{live: true}
+	stubWaker(t, f)
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	sendTo(t, "w", "x")
+	if len(f.pushes) != 1 {
+		t.Fatal("setup: no push")
+	}
+	out := stopHookPayload(t, `{"session_id":"sid-w","stop_hook_active":false}`)
+	if !strings.Contains(out, `"block"`) || !strings.Contains(out, "flow inbox pop") {
+		t.Fatalf("Stop must block on the swallowed mail: %q", out)
+	}
+	if out := stopHookPayload(t, `{"session_id":"sid-w","stop_hook_active":true}`); strings.TrimSpace(out) != "" {
+		t.Errorf("double Stop block: %s", out)
+	}
+	if out := stopHookPayload(t, `{"session_id":"sid-w","stop_hook_active":false}`); strings.TrimSpace(out) != "" {
+		t.Errorf("Stop re-blocked on a later turn: %s", out)
+	}
+}
+
+// A delivered wake prompt proves the notice is in context: it records the
+// hook side, so neither PreToolUse nor Stop repeats it (no extra turn).
+func TestDeliveredWakePromptRecordsHookSide(t *testing.T) {
+	db := wakeSetup(t)
+	f := &fakeWaker{live: true}
+	stubWaker(t, f)
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	sendTo(t, "w", "x")
+	payload, _ := json.Marshal(map[string]string{"session_id": "sid-w", "prompt": f.pushes[0].Notice})
+	withHookStdin(t, string(payload), func() {
+		captureStdout(t, func() { cmdHookUserPromptSubmit(nil) })
+	})
+	if ctx := preToolUseSID(t, "sid-w"); ctx != "" {
+		t.Errorf("PreToolUse repeated a delivered wake: %q", ctx)
+	}
+	if out := stopHookPayload(t, `{"session_id":"sid-w","stop_hook_active":false}`); strings.Contains(out, "block") {
+		t.Errorf("Stop blocked after a delivered wake: %s", out)
+	}
+}
+
+// (c) An idle session whose push was swallowed gets ONE waiter re-nudge
+// once the re-nudge window passes; never a second for the same batch.
+func TestWaiterRenudgesSwallowedPushOnce(t *testing.T) {
+	db := wakeSetup(t)
+	f := &fakeWaker{live: true}
+	stubWaker(t, f)
+	shortRewakeGrace(t)
+	shortRenudge(t, time.Second)
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	sendTo(t, "w", "x")
+	if len(f.pushes) != 1 {
+		t.Fatal("setup: no push")
+	}
+	// The push marked the session busy; a swallowed push leaves it idle in
+	// reality. The waiter's harness cross-check says idle.
+	f.known, f.busy = true, false
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	start := time.Now()
+	rc, _, out := runInboxWait(t, `{"session_id":"sid-w","hook_event_name":"Stop"}`, "--rewake", "--timeout", "5")
+	if rc != 2 || !strings.Contains(out, harness.WakeMarker) {
+		t.Fatalf("waiter did not re-nudge: rc=%d out=%q", rc, out)
+	}
+	if el := time.Since(start); el < 500*time.Millisecond {
+		t.Errorf("re-nudged before the window (%v)", el)
+	}
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	if rc, _, out := runInboxWait(t, `{"session_id":"sid-w"}`, "--rewake", "--timeout", "3"); rc != 0 {
+		t.Fatalf("second re-nudge for the same batch: rc=%d out=%q", rc, out)
+	}
+	if n, _ := flowdb.PendingCountForTask(db, "w"); n != 1 {
+		t.Fatal("waiter consumed mail")
+	}
+}
+
+// The waiter leaves mail the hooks already showed alone: the session
+// knows, so a nudge would only cost a turn.
+func TestWaiterSkipsHookSurfacedMail(t *testing.T) {
+	db := wakeSetup(t)
+	stubWaker(t, &fakeWaker{live: false})
+	shortRewakeGrace(t)
+	shortRenudge(t, 0)
+	sendTo(t, "w", "x")
+	if ctx := preToolUseSID(t, "sid-w"); ctx == "" {
+		t.Fatal("setup: PreToolUse silent")
+	}
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	if rc, _, out := runInboxWait(t, `{"session_id":"sid-w"}`, "--rewake", "--timeout", "2"); rc != 0 {
+		t.Fatalf("waiter nudged hook-surfaced mail: rc=%d out=%q", rc, out)
 	}
 }

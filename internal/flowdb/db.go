@@ -264,7 +264,7 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply bus schema: %w", err)
 	}
-	if _, err := db.Exec(wakeDDL); err != nil {
+	if err := applyWakeSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply wake schema: %w", err)
 	}
