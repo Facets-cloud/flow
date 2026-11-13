@@ -96,6 +96,7 @@ func stubBGMode(t *testing.T) {
 type bgCalls struct {
 	spawn, resume, agents     int
 	lastSpawn, lastResume     []string
+	lastResumeDir             string
 	spawnBanner, resumeBanner string
 	// onResume, if set, fires when a --resume command is issued — lets a
 	// test mutate the registry so the resume's capture lookup resolves the
@@ -122,6 +123,7 @@ func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 			if a == "--resume" {
 				c.resume++
 				c.lastResume = args
+				c.lastResumeDir = workDir
 				if c.onResume != nil {
 					c.onResume()
 				}
