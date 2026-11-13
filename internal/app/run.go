@@ -36,7 +36,7 @@ func cmdRunPlaybook(args []string) int {
 	slug := args[0]
 	fs := flagSet("run playbook")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness (ignored when --here is set)")
-	here := fs.Bool("here", false, "bind THIS Claude session to the new playbook run (no new tab); requires running inside a Claude Code session")
+	here := fs.Bool("here", false, "bind THIS harness session to the new playbook run (no new tab); requires running inside a Claude Code, Codex or prx session")
 	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via `flow done`")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
@@ -87,7 +87,7 @@ func cmdRunPlaybook(args []string) int {
 		sid := currentSessionID()
 		if sid == "" {
 			fmt.Fprintf(os.Stderr,
-				"error: --here requires running inside a Claude Code session ($%s is unset)\n",
+				"error: --here requires running inside a harness session ($%s is unset)\n",
 				h.SessionIDEnvVar())
 			return 1
 		}

@@ -7,6 +7,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **prx (praxis-harness) is a third harness.** `flow do --harness prx`,
+  `flow auto --harness prx`, `flow do --here`, `flow transcript` and the
+  close-out sweep work with prx as they do with Claude Code and Codex.
+  `flow skill install` writes the skill and hooks under
+  `$PRAXIS_CODING_AGENT_DIR` (default `~/.praxis/agent`). prx has no wake
+  push, so a prx session gets mail from its hooks (next prompt, tool call or
+  turn end) and pops it in the foreground. `FLOW_TERM=bg` runs a
+  task in a detached prx host and needs prx v0.6.56 or later; resuming
+  it keeps the session id.
+
 ## [0.1.0-alpha.39] — 2026-11-13
 
 ### Fixed

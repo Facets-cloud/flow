@@ -53,7 +53,7 @@ unreachable through flow afterwards, and step 3 is a direct DB edit.
 4. **Respawn in the target harness with the context injected:**
 
    ```
-   flow do <slug> --harness <claude|codex> --with-file ~/.flow/tasks/<slug>/handoff-YYYY-MM-DD.md
+   flow do <slug> --harness <claude|codex|prx> --with-file ~/.flow/tasks/<slug>/handoff-YYYY-MM-DD.md
    ```
 
    The new session bootstraps normally (brief + updates), then gets
