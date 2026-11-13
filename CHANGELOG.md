@@ -7,8 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **A resumed background Claude session keeps its name.** When a
+  `FLOW_TERM=bg` task's session had exited, `flow do` resumed it with
+  `claude --bg --resume <id>` and no `--name`, so Claude named the new
+  session after the injected prompt. Resume now passes the same
+  `--name <title>` that spawn uses.
+
+## [0.1.0-alpha.37] — 2026-11-12
+
 ### Added
 
+- **flow upgrades itself.** When the SessionStart hook finds a newer
+  release, flow downloads it in the background after a command, checks
+  its SHA-256 against the release, and renames it over the binary. The
+  next command refreshes the skill. `FLOW_NO_AUTO_UPGRADE=1` stops it.
+  Source builds, CI, root, and a binary folder that flow cannot write
+  are skipped. Works on macOS and Linux.
+- **`flow upgrade [--check] [--force]`** installs the latest release now.
 - **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
   opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
   `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an
@@ -84,6 +101,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- **Regular Codex sessions run sandboxed, with flow's commands allow-listed.**
+  `flow do` and `flow run playbook` now open and resume interactive Codex
+  sessions with `-s workspace-write -a on-request` instead of inheriting
+  whatever sandbox the read-only thread-minting probe left behind.
+  `--dangerously-skip-permissions` still passes
+  `--dangerously-bypass-approvals-and-sandbox`; headless paths and Claude are
+  unchanged. `flow skill install`/`update` now also writes a flow-owned Codex
+  exec-policy file, `$CODEX_HOME/rules/flow.rules` (default `~/.codex`), that
+  lets bare `flow message`, `inbox`, `broadcast`, `watch`, `show`, `list` and
+  `transcript` run outside the sandbox with no prompt, so the message bus
+  works from a sandboxed session. Every other flow command goes through
+  Codex's approval prompt. `flow skill uninstall` removes the file. Codex
+  matches only a bare top-level command, so the Codex SessionStart context
+  now says to run flow commands without env prefixes, `cd … &&` or wrapper
+  scripts.
+
 - **`FLOW_TERM` now outranks every ambient terminal marker.** An explicit,
   valid `FLOW_TERM` beats `$TMUX`, `$ZELLIJ` and Rex's and kitty's
   variables, not just `TERM_PROGRAM`: those describe where flow happens to
@@ -95,6 +128,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **Self-upgrade is safer before it ships to everyone** (follow-up to
+  #113). A failed release check (offline, GitHub rate limit) now records
+  a failed attempt, so flow waits 24 hours instead of starting another
+  background upgrade and API call on every command, and the
+  `flow-version-stale` hint comes back. Before a download replaces the
+  binary, flow runs it with `--version` and requires the release tag; a
+  build that does not run or reports another version is refused and the
+  binary is left alone. The replaced binary stays beside it as
+  `flow.prev` (`mv flow.prev flow` rolls back). No automatic upgrade starts
+  inside the Codex sandbox (`CODEX_SANDBOX`) or inside a headless auto
+  run (`FLOW_AUTO_RUN`), so a binary is never swapped mid-run. Downloads
+  left by a killed upgrade are removed after an hour, and production code
+  no longer imports `testing`.
+
+- The stale-version hint fired when the latest tag only differed from the
+  running version. It now fires only when the latest release is newer, by
+  semantic version order.
 - **`flow do` inside tmux on macOS now actually starts the harness.** The
   tmux backend typed the whole launch line (over 1 KB) into the new window
   before its shell had switched the tty to raw mode. A macOS tty in
