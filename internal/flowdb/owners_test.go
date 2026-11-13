@@ -320,6 +320,85 @@ func TestOwnerTickFieldsPersist(t *testing.T) {
 	}
 }
 
+// The tick-session columns (used by same-calendar-day resume) must
+// round-trip through CreateOwner/UpdateOwner and ScanOwner.
+func TestOwnerTickSessionFieldsPersist(t *testing.T) {
+	db := openTempDB(t)
+	o := &Owner{Slug: "o", Name: "O", WorkDir: "/x", Every: "30m"}
+	if err := CreateOwner(db, o); err != nil {
+		t.Fatal(err)
+	}
+	// A freshly created owner has no pinned tick session.
+	got, err := GetOwner(db, "o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TickSessionID.Valid || got.TickSessionDate.Valid {
+		t.Errorf("new owner should have NULL tick session, got id=%+v date=%+v", got.TickSessionID, got.TickSessionDate)
+	}
+
+	o.TickSessionID = sql.NullString{String: "658bf2be-5ae3-4842-a8a4-e0d0b785514d", Valid: true}
+	o.TickSessionDate = sql.NullString{String: "2026-09-08", Valid: true}
+	if err := UpdateOwner(db, o); err != nil {
+		t.Fatal(err)
+	}
+	got, err = GetOwner(db, "o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TickSessionID.String != "658bf2be-5ae3-4842-a8a4-e0d0b785514d" {
+		t.Errorf("TickSessionID = %+v", got.TickSessionID)
+	}
+	if got.TickSessionDate.String != "2026-09-08" {
+		t.Errorf("TickSessionDate = %+v", got.TickSessionDate)
+	}
+}
+
+// SetOwnerTickSession is a TARGETED write: it sets ONLY the two tick-session
+// columns (+ updated_at) and must never clobber concurrent tick_pid /
+// last_tick_* bookkeeping written by a racing dispatch/finish.
+func TestSetOwnerTickSessionIsTargeted(t *testing.T) {
+	db := openTempDB(t)
+	if err := CreateOwner(db, &Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickPID:        sql.NullInt64{Int64: 4242, Valid: true},
+		TickStarted:    sql.NullString{String: "2026-06-09T00:00:00Z", Valid: true},
+		LastTickStatus: sql.NullString{String: "ok", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetOwnerTickSession(db, "o1", "sess-abc", "2026-09-08"); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := GetOwner(db, "o1")
+	if o.TickSessionID.String != "sess-abc" || o.TickSessionDate.String != "2026-09-08" {
+		t.Errorf("SetOwnerTickSession didn't record: id=%q date=%q", o.TickSessionID.String, o.TickSessionDate.String)
+	}
+	if o.TickPID.Int64 != 4242 || o.LastTickStatus.String != "ok" {
+		t.Errorf("SetOwnerTickSession clobbered tick bookkeeping: pid=%v status=%q", o.TickPID, o.LastTickStatus.String)
+	}
+
+	if err := SetOwnerTickSession(db, "nope", "x", "y"); err == nil {
+		t.Errorf("SetOwnerTickSession on unknown owner should error")
+	}
+}
+
+// A DB whose owners table predates the tick-session columns must gain them
+// via idempotent migration on OpenDB.
+func TestMigrationAddsOwnerTickSessionColumns(t *testing.T) {
+	db := openTempDB(t)
+	for _, col := range []string{"tick_session_id", "tick_session_date"} {
+		has, err := columnExists(db, "owners", col)
+		if err != nil {
+			t.Fatalf("columnExists(%s): %v", col, err)
+		}
+		if !has {
+			t.Errorf("owners.%s should exist after migration", col)
+		}
+	}
+}
+
 func TestUpdateOwnerPersistsMutableFields(t *testing.T) {
 	db := openTempDB(t)
 
