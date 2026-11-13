@@ -159,6 +159,13 @@ func pendingUnnudged(db *sql.DB, slug string, skipHookSurfaced bool) ([]*BusMess
 	return queryBusMsgs(db, where, args...)
 }
 
+// nudgedAtLayout is fixed-width so that comparing nudged_at as text (the
+// re-nudge cutoff) matches time order. RFC3339Nano trims trailing zeros,
+// which would sort "...:00Z" after "...:00.5Z".
+const nudgedAtLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+func nudgedAtStamp(t time.Time) string { return t.UTC().Format(nudgedAtLayout) }
+
 // ClaimWakeNudge atomically records a push for every pending row of slug
 // not yet nudged (restricted to rows created before cutoff unless it is
 // zero) and returns the rows THIS caller won. skipHookSurfaced is the
@@ -169,7 +176,7 @@ func ClaimWakeNudge(db *sql.DB, slug string, cutoff time.Time, skipHookSurfaced 
 	if err != nil || len(cands) == 0 {
 		return nil, err
 	}
-	ts := now.UTC().Format(time.RFC3339Nano)
+	ts := nudgedAtStamp(now)
 	var won []*BusMessage
 	for _, m := range cands {
 		if !cutoff.IsZero() {
@@ -200,7 +207,7 @@ func ClaimWakeRenudge(db *sql.DB, slug string, nudgedBefore time.Time) ([]*BusMe
 	if err != nil || len(cands) == 0 {
 		return nil, err
 	}
-	cut := nudgedBefore.UTC().Format(time.RFC3339Nano)
+	cut := nudgedAtStamp(nudgedBefore)
 	var won []*BusMessage
 	for _, m := range cands {
 		res, err := db.Exec(`UPDATE bus_wake_nudged SET renudged=1
@@ -231,7 +238,7 @@ func WakeDue(db *sql.DB, slug string, cutoff, renudgeBefore time.Time) bool {
 	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_wake_nudged w JOIN bus_messages m ON m.id=w.message_id
         WHERE w.task_slug=? AND w.renudged=0 AND w.nudged_at < ? AND m.status='pending'
           AND w.message_id NOT IN (SELECT message_id FROM bus_surfaced WHERE task_slug=?)`,
-		slug, renudgeBefore.UTC().Format(time.RFC3339Nano), slug).Scan(&n)
+		slug, nudgedAtStamp(renudgeBefore), slug).Scan(&n)
 	return n > 0
 }
 

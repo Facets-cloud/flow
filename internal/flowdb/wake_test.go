@@ -332,3 +332,40 @@ func TestCleanupTaskBusDropsSessionState(t *testing.T) {
 		t.Fatalf("wake record survived cleanup: %d", n)
 	}
 }
+
+// nudged_at is compared as text, so it must be fixed-width: RFC3339Nano
+// trims trailing zeros and '...:00Z' sorts after '...:00.5Z'. A push at a
+// whole second is older than a cutoff half a second later.
+func TestRenudgeCutoffSubSecondOrdering(t *testing.T) {
+	db := wakeTestDB(t)
+	m := putTaskMsg(t, db, "a")
+	t0 := time.Now().Add(-time.Minute).Truncate(time.Second)
+	if got, _ := ClaimWakeNudge(db, "a", time.Time{}, false, t0); len(got) != 1 {
+		t.Fatal("nudge")
+	}
+	cut := t0.Add(500 * time.Millisecond)
+	if !WakeDue(db, "a", time.Time{}, cut) {
+		t.Error("WakeDue: a push at :00 is not before :00.5")
+	}
+	got, err := ClaimWakeRenudge(db, "a", cut)
+	if err != nil || len(got) != 1 || got[0].ID != m.ID {
+		t.Fatalf("renudge = %v %v", ids(got), err)
+	}
+}
+
+// ClaimSurfacedIDs is the waiter's atomic hook-side claim: it returns only
+// the ids THIS caller recorded, so rows a hook already announced (e.g. a
+// PreToolUse racing the waiter) are not announced twice.
+func TestClaimSurfacedIDsOnlyWon(t *testing.T) {
+	db := wakeTestDB(t)
+	m1 := putTaskMsg(t, db, "a")
+	m2 := putTaskMsg(t, db, "a")
+	_ = MarkSurfaced(db, "a", []string{m1.ID}) // the hook won m1
+	got, err := ClaimSurfacedIDs(db, "a", []string{m1.ID, m2.ID})
+	if err != nil || len(got) != 1 || got[0] != m2.ID {
+		t.Fatalf("won = %v %v", got, err)
+	}
+	if again, _ := ClaimSurfacedIDs(db, "a", []string{m1.ID, m2.ID}); len(again) != 0 {
+		t.Fatalf("second claim = %v", again)
+	}
+}

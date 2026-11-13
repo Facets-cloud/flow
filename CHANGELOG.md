@@ -18,7 +18,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   only to coalesce). A delivered wake prompt records the hook side, so
   there is no extra turn. The Claude asyncRewake waiter re-nudges an idle
   session once per batch when a push is still unread and unshown 30s
-  later. Upgrading frees any pending mail an alpha.38 wake claimed.
+  later; the waiter's own nudge records the hook side, so PreToolUse and
+  Stop do not repeat it. Codex has no waiter, so a swallowed `codex queue`
+  waits for the next prompt or send (the hooks still show the mail then).
+  The re-nudge clock (`nudged_at`) uses a fixed-width timestamp so its
+  text comparison matches time order. Upgrading frees any pending mail an
+  alpha.38 wake claimed.
 
 ## [0.1.0-alpha.38] — 2026-11-13
 
