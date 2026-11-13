@@ -203,6 +203,37 @@ to prod", "may push a branch and open a PR, do NOT merge">
 - When Done when is met: flow done <slug>, then exit.
 ```
 
+## Writing a child's brief: useful shapes
+
+These are shapes that have worked. They are optional, not types: no
+flags, tags or pipeline go with them. Mix them or ignore them; the
+parent decides.
+
+- **Understand first.** A read-only child maps a repo, system or
+  customer setup into a knowledge note. Keep it around: to ask it more
+  later, run `flow do --auto <slug> --with "<question>"`. That resumes
+  the same session (and reopens it if done) instead of a new child
+  re-reading from zero. Check for an existing one before spawning.
+- **Plan / draft.** Read-only. Ask for options, a recommendation and the
+  gates it would need. The parent gets approval before anyone builds.
+- **Implement.** Works from an approved plan. Ask for tests first (TDD),
+  a PR, and evidence (test output, PR URL).
+- **Review.** An independent read-only check of a plan or PR. Give it the
+  artifact, not your reasoning, so its read is not anchored on yours.
+- **Investigate.** Find the root cause with evidence before any fix.
+  Ask for the evidence, not just the conclusion.
+- **Watch.** Wait for one condition (CI, a deploy, a reply) and report
+  one event, then finish.
+
+Three tips that have paid off in real briefs:
+
+1. Name the exact output file the parent will read (the update note, a
+   plan file, a PR).
+2. Say what the child must NOT do: live applies, merges, outward
+   messages.
+3. Say where questions go: the parent (`user/<driver-slug>`) or the
+   human. Never AskUserQuestion; a headless tab has nobody to answer.
+
 ## Reporting rule (one rule)
 
 - Parent live: the child messages `user/<parent>` at milestones, done,
