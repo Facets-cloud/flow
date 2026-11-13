@@ -67,6 +67,24 @@ type LaunchOpts struct {
 	// write the session's final message to this file (codex: -o). Impls
 	// without an equivalent ignore it.
 	LastMessagePath string
+
+	// TrustDir, when set, is a flow-created work dir (never a user repo —
+	// the caller decides, see internal/trust) that the harness should
+	// treat as trusted for this launch. Codex: a per-launch
+	// `-c projects."<dir>".trust_level="trusted"` override (nothing is
+	// persisted to config.toml). Claude ignores it — its trust lives in
+	// ~/.claude.json and is persisted via WorkspaceTruster instead.
+	TrustDir string
+}
+
+// WorkspaceTruster is an OPTIONAL harness capability: persistently
+// pre-accept the harness's workspace-trust gate for a flow-owned work
+// dir, so headless/background launches (no TTY for the trust dialog)
+// don't die with "Workspace not trusted". Implementations must refuse
+// anything that is not flow-owned (internal/trust.FlowOwnedRoot) and
+// return changed=false, err=nil for it.
+type WorkspaceTruster interface {
+	TrustWorkspace(flowRoot, workDir string) (changed bool, err error)
 }
 
 // BackgroundAgent is one entry from a harness's background-agent
@@ -115,9 +133,11 @@ type BackgroundLauncher interface {
 	// id — verified against the CLI and documented behavior). The
 	// returned BackgroundAgent carries the NEW id, which flow re-records
 	// on the task. workDir is where the resumed agent begins (the task's
-	// work_dir). opts.Inject, if set, is delivered as the first message
-	// after resume.
-	ResumeBackground(workDir, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// work_dir). name is the display name, the same one SpawnBackground
+	// got, so the resumed agent keeps its title instead of being named
+	// after the injected prompt. opts.Inject, if set, is delivered as the
+	// first message after resume.
+	ResumeBackground(workDir, name, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /
@@ -399,4 +419,23 @@ type RewakeHookInstaller interface {
 	InstallRewakeHook(command, rewakeMessage string) (added bool, err error)
 	UninstallRewakeHook(command string) (removed bool, err error)
 	RewakeHookInstalled(command string) bool
+}
+
+// SessionLocator is an optional capability for harnesses that key a
+// session's on-disk transcript by the directory the session was started
+// in (claude). ValidateSession answers "is the transcript where workDir
+// says it should be"; LocateSession answers the question a resume has
+// when that check fails: does the session exist at all, and if so where
+// was it started.
+//
+// A task can end up with a session that is not keyed under its work_dir
+// (GH #59: a `flow do --here` bind made before the bind-time gate
+// existed). Every resume path consults this before deciding the session
+// has no history.
+type SessionLocator interface {
+	// LocateSession reports whether a transcript for sessionID exists
+	// anywhere on disk (found), and the directory that session was
+	// started in (cwd). cwd is "" when the session is found but its
+	// start directory can't be established from the transcript.
+	LocateSession(sessionID string) (cwd string, found bool)
 }

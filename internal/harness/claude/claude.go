@@ -91,7 +91,8 @@ func (c *claude) ValidateSessionID(s string) error {
 // `flow do <slug>` resume find the right conversation": comparing
 // os.Getwd() to work_dir is fooled by chained `cd && flow do --here`
 // from inside a claude Bash invocation, but the filesystem cannot lie
-// about where the jsonl actually lives.
+// about where the jsonl actually lives. workDir is tried as given and
+// with symlinks resolved (see transcriptCwds).
 //
 // StatFn is the indirection point so tests can stub the on-disk
 // check without materializing fake jsonl files under a temp $HOME.
@@ -105,14 +106,22 @@ func (c *claude) ValidateSession(workDir, sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("read home dir: %w", err)
 	}
-	expected := filepath.Join(home, ".claude", "projects", EncodeCwd(workDir), sessionID+".jsonl")
-	if err := StatFn(expected); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("transcript not found at %s", expected)
+	var firstErr error
+	for _, cwd := range transcriptCwds(workDir) {
+		expected := filepath.Join(home, ".claude", "projects", EncodeCwd(cwd), sessionID+".jsonl")
+		err := StatFn(expected)
+		if err == nil {
+			return nil
 		}
-		return fmt.Errorf("stat %s: %w", expected, err)
+		if firstErr == nil {
+			if os.IsNotExist(err) {
+				firstErr = fmt.Errorf("transcript not found at %s", expected)
+			} else {
+				firstErr = fmt.Errorf("stat %s: %w", expected, err)
+			}
+		}
 	}
-	return nil
+	return firstErr
 }
 
 // newUUID generates a v4 UUID in the 8-4-4-4-12 hex format that

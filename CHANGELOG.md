@@ -49,6 +49,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
   kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
 
+### Fixed
+
+- **flow-created work dirs are pre-trusted, so headless spawns no longer die
+  with "Workspace not trusted".** `claude --bg` (`FLOW_TERM=bg`, flow-mesh
+  desks) has no TTY for Claude Code's folder-trust dialog, and a fresh
+  `$FLOW_ROOT/tasks/<slug>/workspace` was never trusted. `flow init` and
+  every `flow do` / `--auto` spawn now mark the resolved `$FLOW_ROOT/tasks`
+  as trusted in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`):
+  one entry covers every flow workspace. User repos are never trusted:
+  anything outside `$FLOW_ROOT/tasks`, or inside a git repo, is skipped. The
+  write is flock-serialized, atomic (temp + rename, permissions kept),
+  keeps every other key, is a no-op when the folder is already trusted, and
+  leaves an unparseable config untouched with a warning. Codex launches in
+  a flow workspace get a per-launch `-c projects."<dir>".trust_level="trusted"`
+  override, and `~/.codex/config.toml` is never written.
+
+- **A resumed background Claude session keeps its name.** When a
+  `FLOW_TERM=bg` task's session had exited, `flow do` resumed it with
+  `claude --bg --resume <id>` and no `--name`, so Claude named the new
+  session after the injected prompt. Resume now passes the same
+  `--name <title>` that spawn uses.
+
 ## [0.1.0-alpha.37] — 2026-11-12
 
 ### Added
