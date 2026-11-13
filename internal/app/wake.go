@@ -420,19 +420,24 @@ func rewakeWait(timeout time.Duration) int {
 			if len(won) == 0 {
 				won, _ = flowdb.ClaimWakeRenudge(db, t.Slug, renudge)
 			}
+			// The exit-2 stderr IS the delivery: it lands in context without
+			// passing UserPromptSubmit, so claim the hook side here or
+			// PreToolUse/Stop would repeat it (an extra turn). Announce only
+			// rows this waiter wins: a hook that raced in first already
+			// showed the rest.
+			var shown []string
 			if len(won) > 0 {
-				// The exit-2 stderr IS the delivery: it lands in context
-				// without passing UserPromptSubmit, so record the hook side
-				// here or PreToolUse/Stop would repeat it (an extra turn).
-				shown := make([]string, len(won))
+				cand := make([]string, len(won))
 				for i, m := range won {
-					shown[i] = m.ID
+					cand[i] = m.ID
 				}
-				_ = flowdb.MarkSurfaced(db, t.Slug, shown)
+				shown, _ = flowdb.ClaimSurfacedIDs(db, t.Slug, cand)
+			}
+			if len(shown) > 0 {
 				_ = flowdb.SetSessionState(db, t.Slug, flowdb.SessionBusy, time.Now())
 				n, _ := flowdb.PendingCountForTask(db, t.Slug)
-				if n < len(won) {
-					n = len(won)
+				if n < len(shown) {
+					n = len(shown)
 				}
 				fmt.Fprintln(os.Stderr, wakeNotice(n))
 				return 2

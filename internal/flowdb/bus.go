@@ -677,6 +677,24 @@ func PendingUnsurfacedForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
 		slug, slug)
 }
 
+// ClaimSurfacedIDs records the hook side for ids and returns only those
+// THIS caller recorded (INSERT OR IGNORE won). The asyncRewake waiter uses
+// it so a hook that announced a row first keeps it, and the row is never
+// announced twice.
+func ClaimSurfacedIDs(db *sql.DB, slug string, ids []string) ([]string, error) {
+	var won []string
+	for _, id := range ids {
+		res, err := db.Exec(`INSERT OR IGNORE INTO bus_surfaced (task_slug, message_id) VALUES (?,?)`, slug, id)
+		if err != nil {
+			return won, err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			won = append(won, id)
+		}
+	}
+	return won, nil
+}
+
 // MarkSurfaced records that the PreToolUse delta-gate has announced these
 // message ids for the task, so the same pending message is never surfaced
 // twice at that hook point. Idempotent; a no-op on an empty id list.

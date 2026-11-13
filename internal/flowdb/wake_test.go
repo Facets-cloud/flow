@@ -352,3 +352,20 @@ func TestRenudgeCutoffSubSecondOrdering(t *testing.T) {
 		t.Fatalf("renudge = %v %v", ids(got), err)
 	}
 }
+
+// ClaimSurfacedIDs is the waiter's atomic hook-side claim: it returns only
+// the ids THIS caller recorded, so rows a hook already announced (e.g. a
+// PreToolUse racing the waiter) are not announced twice.
+func TestClaimSurfacedIDsOnlyWon(t *testing.T) {
+	db := wakeTestDB(t)
+	m1 := putTaskMsg(t, db, "a")
+	m2 := putTaskMsg(t, db, "a")
+	_ = MarkSurfaced(db, "a", []string{m1.ID}) // the hook won m1
+	got, err := ClaimSurfacedIDs(db, "a", []string{m1.ID, m2.ID})
+	if err != nil || len(got) != 1 || got[0] != m2.ID {
+		t.Fatalf("won = %v %v", got, err)
+	}
+	if again, _ := ClaimSurfacedIDs(db, "a", []string{m1.ID, m2.ID}); len(again) != 0 {
+		t.Fatalf("second claim = %v", again)
+	}
+}
