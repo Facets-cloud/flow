@@ -233,7 +233,11 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 //   - otherwise one ping per sender task until the human has seen it:
 //     no ping while that task has a pinged ask still unseen.
 func InsertBusMessage(db *sql.DB, m *BusMessage) error {
-	return insertBusMessage(db, m)
+	if err := insertBusMessage(db, m); err != nil {
+		return err
+	}
+	afterInsert(db, m)
+	return nil
 }
 
 type queryRower interface {
@@ -352,6 +356,7 @@ func AnswerHumanMessage(db *sql.DB, id string, c Consumer, reply *BusMessage) (n
 	if err = tx.Commit(); err != nil {
 		return false, err
 	}
+	afterInsert(db, reply)
 	return true, nil
 }
 
@@ -826,6 +831,7 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 		{`DELETE FROM bus_watches WHERE watched=?`, []any{taskSlug}},
 		{`DELETE FROM bus_nudges WHERE task_slug=?`, []any{taskSlug}},
 		{`DELETE FROM bus_surfaced WHERE task_slug=?`, []any{taskSlug}},
+		{`DELETE FROM bus_session_state WHERE task_slug=?`, []any{taskSlug}},
 	} {
 		if _, err := db.Exec(stmt.q, stmt.args...); err != nil {
 			return fmt.Errorf("cleanup task bus: %w", err)

@@ -9,6 +9,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Harness wake: bus mail reaches a bound session with no listener.**
+  After every bus insert (`flow message`, watched `flow broadcast`, child
+  reports, dead-child pings, driver notices, attachments) flow checks the
+  recipient task's session. Idle → it pushes a short notice that starts a
+  turn: Claude through the session's cross-session socket (recorded by the
+  SessionStart hook, 0600 under `$FLOW_ROOT/wake/`), with an asyncRewake
+  waiter (`flow inbox wait --rewake`, SessionStart + Stop) as the
+  fallback; Codex through `codex queue --thread <id>` into the live TUI.
+  Busy → the session's own hooks deliver: PreToolUse before the next tool
+  call, and a new Stop-hook check that blocks the turn's end with the
+  notice when mail landed after the last tool call. Busy/idle is tracked
+  by flow's hooks (UserPromptSubmit/PreToolUse busy, Stop idle). An
+  Esc-interrupt ends a turn without a Stop hook, so a "busy" session whose
+  hooks are quiet for 30s is cross-checked with `claude agents --json`
+  (Claude), and counts as idle after 2 min when the harness can't tell. Every announcing path claims rows atomically in
+  `bus_surfaced`, so each message is announced once. Never woken: closed
+  tasks, auto runs, the human. The notice is a count + "run `flow inbox
+  pop`" tagged `[flow-bus wake]`, never taken for the human typing.
+  `flow message` / `flow broadcast` now print `woke <slug>` or `stored:
+  <reason>`. `FLOW_NO_WAKE=1` turns it off.
+- **Upgrade notice for running sessions.** When the flow binary changes
+  while a Claude or Codex session is running, that session's next prompt
+  or tool call carries one `[flow-upgrade]` notice: flow was upgraded
+  (old → new), re-load the flow skill, and read the installed
+  `references/upgrade-notes.md` for what changed. SessionStart records
+  the session's version silently; the UserPromptSubmit and PreToolUse
+  hooks compare-and-set it per session id (new `session_versions` table),
+  so concurrent hooks announce it once and every later version change
+  announces again. Sessions that started before this release are told
+  once ("an earlier version"). Dev builds (`Version=dev`) skip it.
+- **`flow inbox wait`** — the non-acking wait: returns when unannounced
+  mail lands in this session's inbox, leaves it unread.
+
 - **Skill: report a flow bug.** A new on-demand reference
   (`references/report-issue.md`, one trigger line in the core) tells agents
   how to file a GitHub issue about flow (`Facets-cloud/flow`) or a connector
@@ -17,6 +50,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   template, and file with `gh issue create` only after the human says
   "File it" (headless runs never file). The issue URL is recorded as a
   task update note.
+
+### Changed
+
+- **No more inbox Monitor.** With harness wake on, SessionStart tells a
+  bound Claude session not to arm a listener; the Monitor recipe left the
+  SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
+  kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
 
 ### Fixed
 

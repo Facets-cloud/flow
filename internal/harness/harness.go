@@ -24,8 +24,10 @@
 package harness
 
 import (
+	"errors"
 	"io"
 	"io/fs"
+	"time"
 )
 
 // Name is the short identifier persisted on tasks.harness and used to
@@ -366,6 +368,57 @@ type CloseoutDeferrer interface {
 func DefersCloseoutInAutoRun(h Harness) bool {
 	d, ok := h.(CloseoutDeferrer)
 	return ok && d.DefersCloseoutInAutoRun()
+}
+
+// WakeMarker tags every wake notice flow pushes into a session. A notice
+// can arrive as an ordinary user prompt (Codex queue; Claude socket mail
+// is framed as a teammate message), so flow's UserPromptSubmit handling
+// keys on this marker to never treat a wake as the human typing.
+const WakeMarker = "[flow-bus wake]"
+
+// ErrWakeUnavailable means the session has no live wake channel right now
+// (closed, never recorded an endpoint, process gone). Not a failure: the
+// caller just skips the push (and a fallback path may still deliver).
+var ErrWakeUnavailable = errors.New("no live wake channel")
+
+// WakeRequest asks a harness to push Notice into the live session
+// SessionID. StateDir ($FLOW_ROOT/wake) is where harnesses keep per-session
+// endpoint records; Timeout bounds the whole push.
+type WakeRequest struct {
+	SessionID string
+	Notice    string
+	StateDir  string
+	Timeout   time.Duration
+}
+
+// Waker is an OPTIONAL capability: pushing a short notice into a live
+// session so it starts a turn without any listener armed. A harness
+// without a push channel does not implement it.
+type Waker interface {
+	// WakeLive reports whether the session has a live push channel now
+	// (cheap: no model cost, no message sent).
+	WakeLive(req WakeRequest) bool
+	// Wake pushes req.Notice. detail carries a non-fatal note worth
+	// reporting (e.g. Codex's "queued but not resumed" warning).
+	Wake(req WakeRequest) (detail string, err error)
+}
+
+// TurnStateChecker is an OPTIONAL cross-check of a session's turn state
+// from the harness itself (Claude: `claude agents --json`). known=false
+// when the harness cannot tell.
+type TurnStateChecker interface {
+	SessionBusy(sessionID string, timeout time.Duration) (busy, known bool)
+}
+
+// RewakeHookInstaller is an OPTIONAL capability for harnesses with async
+// hooks that can wake an idle session on exit (Claude's asyncRewake). The
+// hook runs `command` on SessionStart and Stop; it blocks until mail lands,
+// then exits 2 and the harness starts a turn prefixed with rewakeMessage.
+// Used as the fallback when the primary Waker push is unavailable.
+type RewakeHookInstaller interface {
+	InstallRewakeHook(command, rewakeMessage string) (added bool, err error)
+	UninstallRewakeHook(command string) (removed bool, err error)
+	RewakeHookInstalled(command string) bool
 }
 
 // SessionLocator is an optional capability for harnesses that key a

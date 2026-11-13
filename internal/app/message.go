@@ -230,8 +230,7 @@ func cmdMessage(args []string) int {
 		fmt.Printf("messaged %s [%s] — pending until answered (their reply in this session, or `flow inbox read <id>`)\n",
 			toAssignee, m.ID)
 	} else {
-		fmt.Printf("messaged session %s/%s [%s] — delivered on its next activity or pop\n",
-			toAssignee, toSlug, m.ID)
+		fmt.Printf("messaged session %s/%s [%s] — %s\n", toAssignee, toSlug, m.ID, wakeOutcome(m.ID))
 	}
 	_ = flowdb.SweepBus(db, time.Now())
 	pruneAttachments(db)

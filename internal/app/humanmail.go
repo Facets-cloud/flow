@@ -23,7 +23,8 @@ var flowPromptPrefixes = []string{
 // human actually typed in an interactive session. Only such a prompt may
 // mark human mail seen or count as the human answering an ask. False when:
 // no payload was decoded; the session is a headless auto run (FLOW_AUTO_RUN);
-// the prompt carries flow's --with injection marker; it is a /loop or
+// the prompt carries flow's --with injection marker or a harness-wake
+// notice's marker; it is a /loop or
 // ScheduleWakeup firing or a harness task notification; or it is one of
 // flow's own bootstrap/tick/sweep prompts.
 func isHumanPrompt(known bool, prompt string, getenv func(string) string) bool {
@@ -33,6 +34,7 @@ func isHumanPrompt(known bool, prompt string, getenv func(string) string) bool {
 	p := strings.TrimSpace(prompt)
 	switch {
 	case strings.Contains(p, harness.InjectionMarker),
+		strings.Contains(p, harness.WakeMarker),
 		strings.Contains(p, "<<autonomous-loop"),
 		strings.HasPrefix(p, "/loop"),
 		strings.HasPrefix(p, "<task-notification>"):
