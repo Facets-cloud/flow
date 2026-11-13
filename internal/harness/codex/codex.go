@@ -59,25 +59,30 @@ func (c *codex) ValidateSessionID(s string) error {
 // Codex stores transcripts by globally unique thread id, rather than cwd.
 func (c *codex) ValidateSession(workDir, sessionID string) error { return nil }
 
+// interactivePrefix is the head of every interactive Codex launch and
+// resume. Regular sessions run in Codex's workspace-write sandbox with
+// on-request approvals; flow's bus and read-only commands get out of it
+// through the flow-owned exec-policy rules file (flowRules), not through
+// --add-dir (an added CODEX_HOME would let the sandbox rewrite its own
+// config). --dangerously-skip-permissions keeps the full bypass.
+// Interactive launches still keep Codex's hook-trust prompt (see
+// hookTrustBypass).
+func interactivePrefix(opts harness.LaunchOpts) string {
+	if opts.SkipPermissions {
+		return "codex --dangerously-bypass-approvals-and-sandbox"
+	}
+	return "codex -s workspace-write -a on-request"
+}
+
 func (c *codex) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) string {
 	if opts.Inject != "" {
 		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	cmd := "codex"
-	if opts.SkipPermissions {
-		cmd += " --dangerously-bypass-approvals-and-sandbox"
-	}
-	cmd += trustShell(opts.TrustDir)
-	return cmd + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
+	return interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
 }
 
 func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := "codex"
-	if opts.SkipPermissions {
-		cmd += " --dangerously-bypass-approvals-and-sandbox"
-	}
-	cmd += trustShell(opts.TrustDir)
-	cmd += " resume " + sessionID
+	cmd := interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume " + sessionID
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
@@ -243,9 +248,70 @@ func (c *codex) SkillVersionPath() (string, error) {
 	return filepath.Join(filepath.Dir(p), "VERSION"), nil
 }
 
+// flowRules is Codex exec-policy that lets a workspace-write session run
+// flow's message-bus and read-only commands outside the sandbox (the
+// sandbox makes flow.db read-only and blocks local sockets). Codex loads
+// every *.rules file under $CODEX_HOME/rules/. Only a BARE top-level
+// command matches a prefix_rule: `VAR=x flow …`, `cd … && flow …` and
+// wrapper scripts stay sandboxed. Deliberately absent: a bare ["flow"],
+// and every subcommand that spawns agents or rewrites harness config
+// (do, auto, run, owner, skill, init, edit, connector, peer) or mutates
+// tasks (add, update, done) — those go through Codex's approval prompt.
+const flowRules = `# flow owns this file: flow skill install/update overwrites it and
+# flow skill uninstall removes it. Do not edit; put your own rules in
+# another *.rules file. It lets workspace-write Codex sessions run flow's
+# message-bus and read-only commands (bare, top-level only) outside the
+# sandbox, with no approval prompt.
+prefix_rule(pattern=["flow", "message"], decision="allow")
+prefix_rule(pattern=["flow", "inbox"], decision="allow")
+prefix_rule(pattern=["flow", "broadcast"], decision="allow")
+prefix_rule(pattern=["flow", "watch"], decision="allow")
+prefix_rule(pattern=["flow", "show"], decision="allow")
+prefix_rule(pattern=["flow", "list"], decision="allow")
+prefix_rule(pattern=["flow", "transcript"], decision="allow")
+`
+
+func flowRulesPath() (string, error) {
+	home, err := codexHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "rules", "flow.rules"), nil
+}
+
+func installFlowRules() error {
+	p, err := flowRulesPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(p), err)
+	}
+	if err := os.WriteFile(p, []byte(flowRules), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", p, err)
+	}
+	return nil
+}
+
+func uninstallFlowRules() error {
+	p, err := flowRulesPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", p, err)
+	}
+	return nil
+}
+
+// InstallSkill writes the skill tree and the flow-owned exec-policy rules
+// file (flowRules), so install, update and auto-upgrade all refresh both.
 func (c *codex) InstallSkill(files fs.FS) error {
 	p, err := c.SkillInstallPath()
 	if err != nil {
+		return err
+	}
+	if err := installFlowRules(); err != nil {
 		return err
 	}
 	base := filepath.Dir(p)
@@ -271,6 +337,9 @@ func (c *codex) InstallSkill(files fs.FS) error {
 func (c *codex) UninstallSkill() error {
 	p, err := c.SkillInstallPath()
 	if err != nil {
+		return err
+	}
+	if err := uninstallFlowRules(); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Dir(p)); os.IsNotExist(err) {

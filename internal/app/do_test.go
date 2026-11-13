@@ -250,8 +250,11 @@ func TestCmdDoExplicitHarnessSelectsCodexForNewTask(t *testing.T) {
 	if task.Harness.String != "codex" || task.SessionID.String != sid {
 		t.Errorf("task = harness=%q session=%q, want codex/%q", task.Harness.String, task.SessionID.String, sid)
 	}
-	if !strings.Contains(script(), "codex ") || !strings.Contains(script(), " resume "+sid) {
-		t.Errorf("spawn script did not resume Codex: %q", script())
+	// A regular (no --dangerously-skip-permissions) Codex launch runs in
+	// the workspace-write sandbox; flow's rules file lets bus commands out.
+	// A flow-created work dir may add a trust override before `resume`.
+	if !strings.Contains(script(), "codex -s workspace-write -a on-request ") || !strings.Contains(script(), " resume "+sid) {
+		t.Errorf("spawn script did not resume Codex sandboxed: %q", script())
 	}
 }
 

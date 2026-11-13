@@ -750,7 +750,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// re-record it; otherwise flow would keep pointing at the dead id
 		// (the phantom-id bug). Plain `--resume` would preserve the id but
 		// wouldn't be a background agent, so it can't be used in bg mode.
-		agent, err := bg.ResumeBackground(task.WorkDir, sid, opts)
+		agent, err := bg.ResumeBackground(task.WorkDir, title, sid, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1

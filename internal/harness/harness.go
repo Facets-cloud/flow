@@ -131,9 +131,11 @@ type BackgroundLauncher interface {
 	// id — verified against the CLI and documented behavior). The
 	// returned BackgroundAgent carries the NEW id, which flow re-records
 	// on the task. workDir is where the resumed agent begins (the task's
-	// work_dir). opts.Inject, if set, is delivered as the first message
-	// after resume.
-	ResumeBackground(workDir, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// work_dir). name is the display name, the same one SpawnBackground
+	// got, so the resumed agent keeps its title instead of being named
+	// after the injected prompt. opts.Inject, if set, is delivered as the
+	// first message after resume.
+	ResumeBackground(workDir, name, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /

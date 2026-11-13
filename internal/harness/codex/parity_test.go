@@ -44,12 +44,48 @@ func TestSkipPermissionsRunArgvBypassesHookTrust(t *testing.T) {
 func TestInteractiveLaunchKeepsHookTrust(t *testing.T) {
 	h := New()
 	for _, cmd := range []string{
+		h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}),
 		h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}),
+		h.ResumeCmd(testThreadID, harness.LaunchOpts{}),
 		h.ResumeCmd(testThreadID, harness.LaunchOpts{SkipPermissions: true}),
 	} {
 		if strings.Contains(cmd, "hook-trust") {
 			t.Errorf("interactive command bypasses hook trust: %q", cmd)
 		}
+	}
+}
+
+// Regular (non-skip-permissions) interactive Codex sessions run in
+// Codex's workspace-write sandbox with on-request approvals; flow's own
+// bus/read commands escape it through the flow-owned exec-policy rules
+// file (see flowRules). Skip-permissions keeps the full bypass. Neither
+// --add-dir CODEX_HOME (lets the sandbox rewrite its own config) nor
+// --add-dir FLOW_ROOT (unneeded with the rules file) may appear.
+func TestInteractiveCommandsSandboxedUnlessSkip(t *testing.T) {
+	h := New()
+	const sandboxed = "codex -s workspace-write -a on-request resume "
+	const bypass = "codex --dangerously-bypass-approvals-and-sandbox resume "
+	for name, tc := range map[string]struct {
+		cmd, prefix string
+	}{
+		"LaunchCmd regular":   {h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), sandboxed},
+		"LaunchCmd skip":      {h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}), bypass},
+		"ResumeCmd regular":   {h.ResumeCmd(testThreadID, harness.LaunchOpts{}), sandboxed},
+		"ResumeCmd skip":      {h.ResumeCmd(testThreadID, harness.LaunchOpts{SkipPermissions: true}), bypass},
+		"ResumeCmd injection": {h.ResumeCmd(testThreadID, harness.LaunchOpts{Inject: "follow up"}), sandboxed},
+	} {
+		if !strings.HasPrefix(tc.cmd, tc.prefix) {
+			t.Errorf("%s = %q, want prefix %q", name, tc.cmd, tc.prefix)
+		}
+		if tc.prefix == sandboxed && strings.Contains(tc.cmd, "--dangerously-bypass-approvals-and-sandbox") {
+			t.Errorf("%s: regular session must not bypass the sandbox: %q", name, tc.cmd)
+		}
+		if strings.Contains(tc.cmd, "--add-dir") {
+			t.Errorf("%s: must not widen the sandbox with --add-dir: %q", name, tc.cmd)
+		}
+	}
+	if got, want := h.ResumeCmd(testThreadID, harness.LaunchOpts{}), sandboxed+testThreadID; got != want {
+		t.Errorf("ResumeCmd=%q, want %q", got, want)
 	}
 }
 

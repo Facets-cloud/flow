@@ -158,3 +158,25 @@ func TestAutoSpawnParentReminderCodexSaysNoMonitor(t *testing.T) {
 		t.Errorf("Claude parent reminder lost the Monitor recipe: %s", out)
 	}
 }
+
+// Regular Codex sessions run in the workspace-write sandbox; only BARE
+// flow bus/read commands match the exec-policy allow-list, so the hook
+// must tell Codex to run flow commands bare.
+func TestHookSessionStartCodexSaysRunFlowBare(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "cx", "sid-cx")
+	pinCodex(t, db, "cx")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	ctx := hookRun(t, `{"session_id":"sid-cx"}`, cmdHookSessionStart)
+	for _, want := range []string{"BARE", "readonly database", "approval"} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("Codex SessionStart missing sandbox guidance %q:\n%s", want, ctx)
+		}
+	}
+	mkBusTask(t, db, "cl", "sid-cl")
+	ctx = hookRun(t, `{"session_id":"sid-cl"}`, cmdHookSessionStart)
+	if strings.Contains(ctx, "readonly database") {
+		t.Errorf("Claude SessionStart carries Codex sandbox guidance:\n%s", ctx)
+	}
+}
