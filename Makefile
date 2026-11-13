@@ -6,13 +6,20 @@ INSTALL_DIR := $(HOME)/.local/bin
 VERSION  ?= dev
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: build install uninstall test clean
+.PHONY: build install uninstall test site clean
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) .
 
 test:
 	go test ./...
+
+# Assemble the GitHub Pages tree into out/ exactly as the pages workflow
+# does (copies site/, resolves demo/, splices site/built-with-flow.html into
+# index.html). Preview with: open out/index.html
+site:
+	python3 scripts/build_site.py out
+	python3 -m unittest discover -s scripts
 
 install: build
 	@# Place the binary in $(INSTALL_DIR) so the user's repo dir stays
@@ -68,3 +75,4 @@ uninstall:
 
 clean:
 	rm -f $(BINARY) flowde
+	rm -rf out
