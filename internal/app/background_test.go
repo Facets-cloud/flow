@@ -36,6 +36,9 @@ func TestMain(m *testing.M) {
 	// install tests only see harnesses their sandbox creates.
 	harnessLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	os.Unsetenv("CODEX_HOME")
+	// Workspace pre-trust writes Claude's config; never let an ambient
+	// $CLAUDE_CONFIG_DIR point it at the developer's real one.
+	os.Unsetenv("CLAUDE_CONFIG_DIR")
 	notBG := false
 	spawner.BackgroundOverride = &notBG
 	os.Exit(m.Run())
