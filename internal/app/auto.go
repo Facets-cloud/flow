@@ -371,6 +371,7 @@ func cmdAutoExec(args []string) int {
 			fmt.Fprintf(os.Stderr, "warning: chdir %s: %v; resuming from work_dir\n", resumeCwd, err)
 		}
 	}
+	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
 

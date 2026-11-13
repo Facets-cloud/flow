@@ -237,7 +237,7 @@ func listTasksCmd(args []string) int {
 		filter.ExcludeDone = true
 	}
 	if *since != "" {
-		s, err := parseSince(*since, time.Now())
+		s, err := parseSince(*since, listNow())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: --since: %v\n", err)
 			return 2
@@ -1040,3 +1040,7 @@ func ensureUpdatesDir(root, kind, slug string) (string, error) {
 	}
 	return dir, nil
 }
+
+// listNow is the clock used by `flow list` for --since cutoffs; tests
+// override it to pin "now".
+var listNow = time.Now
