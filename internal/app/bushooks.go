@@ -81,6 +81,16 @@ const codexNoListenerRule = " flow-bus, Codex session: do NOT arm an inbox liste
 	"this task depends on: `flow watch <task-or-project-slug>` (tasks you create from this session " +
 	"are watched automatically); their reports arrive the same way."
 
+// codexSandboxRule rides along with codexNoListenerRule. A regular Codex
+// session runs in the workspace-write sandbox, where flow.db is read-only
+// and local sockets are blocked. flow skill install writes an exec-policy
+// allow-list ($CODEX_HOME/rules/flow.rules) for flow's bus and read
+// commands, but Codex only matches a bare top-level command against it.
+const codexSandboxRule = " flow in Codex's sandbox: run flow commands BARE — no `VAR=… flow`, no " +
+	"`cd … && flow`, no wrapper scripts — or they stay sandboxed and fail with \"readonly database\". " +
+	"flow message/inbox/broadcast/watch/show/list/transcript run without a prompt; other flow " +
+	"commands need approval: run them with escalated permissions so the user gets Codex's prompt."
+
 // isCodexSession reports whether the current session runs under Codex:
 // the bound task is pinned to the codex harness, or this process is a
 // Codex tool shell ($CODEX_THREAD_ID). Hooks see only the pin — Codex
@@ -120,6 +130,7 @@ func busSessionStartContext() string {
 		}
 		if isCodexSession(t) {
 			b.WriteString(codexNoListenerRule)
+			b.WriteString(codexSandboxRule)
 			return b.String()
 		}
 		b.WriteString(" flow-bus listener discipline: arm ONE inbox Monitor NOW (Monitor may be a " +
