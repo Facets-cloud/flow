@@ -363,6 +363,7 @@ func cmdAutoExec(args []string) int {
 	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
 	// A re-run on a session that already ran must resume it.
 	opts.Resume = h.ValidateSession(task.WorkDir, task.SessionID.String) == nil
+	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
 

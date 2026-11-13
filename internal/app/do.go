@@ -455,6 +455,7 @@ func cmdDo(args []string) int {
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
 	}
+	applyWorkspaceTrust(h, cwd, &launchOpts)
 	// bootstrapCmd builds the first-start command. For pre-allocating
 	// harnesses (claude), PrepareSpawn already minted the sessionID and
 	// the status flip above committed it, so the harness can embed it in
@@ -724,6 +725,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	}
 	title := buildTabTitle(project, task)
 	opts := harness.LaunchOpts{SkipPermissions: skipPerms, Inject: inject}
+	// claude --bg has no TTY for the trust dialog: an untrusted flow
+	// workspace dies with "Workspace not trusted". Pre-trust it.
+	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
 	hasSession := task.SessionID.Valid && task.SessionID.String != ""
 
@@ -746,7 +750,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// re-record it; otherwise flow would keep pointing at the dead id
 		// (the phantom-id bug). Plain `--resume` would preserve the id but
 		// wouldn't be a background agent, so it can't be used in bg mode.
-		agent, err := bg.ResumeBackground(task.WorkDir, sid, opts)
+		agent, err := bg.ResumeBackground(task.WorkDir, title, sid, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
