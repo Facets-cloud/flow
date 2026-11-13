@@ -480,6 +480,8 @@ func TestSkillHasUpgradeWorkflow(t *testing.T) {
 		"flow --version",
 		"flow skill update",
 		"flow-version-stale:",
+		"flow upgrade",
+		"FLOW_NO_AUTO_UPGRADE",
 		"xattr -d com.apple.quarantine",
 		"Do not invent download URLs",
 	} {

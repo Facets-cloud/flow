@@ -124,6 +124,7 @@ func cmdInit(args []string) int {
 		}
 		installHooks(h, false)
 	}
+	trustFlowTasksDir(targets, root)
 
 	fmt.Printf("flow initialized at %s\n", root)
 	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)
