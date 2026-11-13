@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.38] — 2026-11-13
+
 ### Added
 
 - **One star nudge, ever.** When `flow done` leaves 25 or more closed tasks
@@ -67,12 +69,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- **Regular Codex sessions run sandboxed.** A non-skip-permissions `flow do`
+  in Codex now starts with `-s workspace-write -a on-request`. `flow skill
+  install` writes a flow-owned `$CODEX_HOME/rules/flow.rules` that lets the
+  bus and read-only flow commands (`message`, `inbox`, `broadcast`, `watch`,
+  `show`, `list`, `transcript`) run outside the sandbox without a prompt;
+  other flow commands ask for approval. (#143)
+
 - **No more inbox Monitor.** With harness wake on, SessionStart tells a
   bound Claude session not to arm a listener; the Monitor recipe left the
   SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
   kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
 
 ### Fixed
+
+- **`flow do` resumes a session from where it lives.** When a task's session
+  was started in another directory, or `work_dir` is (or sits under) a
+  symlink, flow used to treat the session as missing. Resume paths now find
+  the transcript and resume from the directory it was started in. (#59, #135)
+
+- **`--since` compares instants.** `flow list tasks --since` compared
+  timestamps as strings, so rows written with a different UTC offset were
+  dropped near midnight. It now compares them as times. (#134)
 
 - **flow-created work dirs are pre-trusted, so headless spawns no longer die
   with "Workspace not trusted".** `claude --bg` (`FLOW_TERM=bg`, flow-mesh
