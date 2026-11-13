@@ -6,12 +6,20 @@ relays the answer back to the asking task. With role `"peer"` it carries
 messages to other flow hubs (see references/peers.md and "Peer role"
 below). Nothing pings unless the user installed one. This page
 is the full public contract: it is enough to write a connector from
-scratch. A working sample is `examples/connectors/macos` in the flow repo
-(a native macOS dialog). It is also built into the flow binary, so
-`flow connector add macos` works with no repo checkout. On Linux there is
-no built-in desktop-dialog connector yet; hub/webhook-style connectors work
-the same on both OSes, and secrets fall back from the macOS keychain to
-0600 files under `$FLOW_ROOT/secrets`.
+scratch. Two working samples live in the flow repo and are built into the
+binary, so they install with no checkout:
+
+| Sample | Install | What it does |
+|---|---|---|
+| `examples/connectors/macos` | `flow connector add macos` | a native macOS dialog (`osascript`); secret in the keychain |
+| `examples/connectors/linux` | `flow connector add linux` | a desktop dialog via `zenity` or `kdialog`; `notify-send` for the test toast and for asks when no dialog tool exists; needs `jq` or `python3`; secret in a 0600 file under `$FLOW_ROOT/secrets/` |
+
+On a Linux box with **no display** (`DISPLAY`/`WAYLAND_DISPLAY` unset: SSH,
+a container, a server) the linux sample's `send` exits 1 with `no display …
+the ask stays in flow inbox`: dispatch logs it, tries the next tier, and the
+human reads the ask with `flow inbox --as user`. Its `add` fails its test
+there for the same reason — install it where there is a desktop.
+Hub/webhook-style connectors work the same on both OSes.
 
 ```
 agent: flow message user "q" --options "A|B"      (returns at once)
@@ -91,9 +99,9 @@ harness session variables, plus these):
 - `FLOW_CONNECTOR_TOKEN`: this connector's secret. It is generated on
   install and kept in the macOS keychain (service `flow-connector-<name>`,
   account `flow-<12 hex of sha256 of the resolved FLOW_ROOT>`, so each
-  flow home on a Mac has its own) or a 0600 file under
-  `$FLOW_ROOT/secrets/`. It is never in flow.db or
-  the folder. Never log it.
+  flow home on a Mac has its own) or, on Linux and whenever the keychain is
+  unavailable, a 0600 file under `$FLOW_ROOT/secrets/`. It is never in
+  flow.db or the folder. Never log it.
 - `FLOW_BIN`: the absolute path of the flow binary. Call back with
   `"$FLOW_BIN"`, not `flow`.
 - `FLOW_ROOT`: flow's data root.

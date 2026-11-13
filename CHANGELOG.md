@@ -44,6 +44,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `install.sh`, inits, adds a task, binds with `--here`, spawns inside tmux
   with a stub `claude`, closes with `flow done`, and round-trips a message.
   The same script runs on macOS when a tmux binary is on PATH.
+- **`flow schedule`: the OS timer as a flow command.** Owners need a clock
+  (`flow owner tick-due` on an interval) and playbooks run on a cadence;
+  both used to mean a hand-written launchd plist. `flow schedule install
+  owners [--every 60s]` and `flow schedule install playbook <slug> --at
+  HH:MM | --every <dur>` now write and activate the native timer: launchd
+  on macOS (`~/Library/LaunchAgents/cloud.facets.flow.<name>.plist`), a
+  systemd --user `.service` + `.timer` on Linux, or one tagged crontab line
+  when no systemd user session is reachable (or `--backend cron`). It
+  prints every file (with content) and command it ran, `--dry-run` shows
+  the plan, logs go to `$FLOW_ROOT/schedules/<name>.{log,err.log}`, and
+  `flow schedule list` / `remove` manage what is installed. Files flow
+  writes carry a marker; a hand-written file is never replaced or removed
+  without `--force`. Scheduled playbooks run `--auto` (headless). Windows
+  is not supported yet. The systemd unit sets `KillMode=process` and the
+  launchd plist `AbandonProcessGroup`: both jobs fork a detached child and
+  exit, and systemd's default would kill that child with the cgroup, so
+  every fire reported success and nothing ran. The cron line only runs a
+  short wrapper `$FLOW_ROOT/schedules/<name>.sh` (Debian cron rejects long
+  lines and reads `%` as a newline), `%` is escaped in unit files, schedule
+  names are validated on remove too (no `x/../other`), and a playbook
+  cannot take the owner scheduler's name.
+- **Linux human connector.** `flow connector add linux` installs a desktop
+  counterpart of the macOS dialog: `zenity` (or `kdialog`) shows the ask
+  with its options and an optional note, `notify-send` carries the test
+  toast and the ask itself when no dialog tool is installed, and the reply
+  goes back with `flow human reply`. On a box with no display it fails
+  clearly (`no display … the ask stays in flow inbox`) so the next
+  connector tier is tried and the ask waits in `flow inbox`. Needs `jq` or
+  `python3`. Dialog titles are ASCII (`flow - <task>`) and the script forces
+  a UTF-8 locale, so a C/POSIX locale no longer makes zenity reject the
+  text and exit without a dialog.
 - **Peer desk primitives.** `flow peer deliver --to <task>` lets the
   receiving connector route inbound peer mail to a local task it chooses
   (it must be open; else exit 1, nothing stored). A reply whose asking

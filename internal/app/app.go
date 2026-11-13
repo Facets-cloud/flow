@@ -100,6 +100,8 @@ func runCommand(cmd string, rest []string) int {
 		return cmdMessage(rest)
 	case "connector":
 		return cmdConnector(rest)
+	case "schedule":
+		return cmdSchedule(rest)
 	case "human":
 		return cmdHuman(rest)
 	case "peer":
@@ -219,6 +221,13 @@ Playbooks:
   flow run playbook   <slug> --auto                              (run the playbook headlessly in the background)
   flow show playbook  <ref>
   flow list playbooks [--project <slug>] [--include-archived]
+
+Schedules (the OS timer for owners and playbook cadences — launchd / systemd --user / cron):
+  flow schedule install owners [--every <dur>]                  (flow owner tick-due on an interval, default 60s)
+  flow schedule install playbook <slug> --at HH:MM | --every <dur>   (flow run playbook <slug> --auto, daily or on an interval)
+  flow schedule list
+  flow schedule remove owners | playbook <slug>
+  (flags: --backend launchd|systemd|cron, --dry-run, --force — prints every file and command it writes/runs)
 
 Owners (autonomous, self-prompting controllers — see flow skill §4.17):
   flow add owner     "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--mkdir]
