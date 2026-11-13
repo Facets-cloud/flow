@@ -320,8 +320,11 @@ means. Those two commands are the last ones you need to type.
 3. Children, playbooks and the bus make sense after three or four tasks. Not
    before.
 
-Upgrade with the same install command. Uninstall by deleting the binary and
-`~/.flow`.
+flow upgrades itself: after a command, it installs a newer release in the
+background (checksum-verified). `flow upgrade` does it now;
+`FLOW_NO_AUTO_UPGRADE=1` turns it off. Source builds, CI, root and a binary
+folder flow cannot write are skipped; the same install command works there.
+Uninstall by deleting the binary and `~/.flow`.
 
 ## Numbers, for the record
 

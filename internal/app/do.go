@@ -438,10 +438,16 @@ func cmdDo(args []string) int {
 		project = p
 	}
 
-	cwd := task.WorkDir
-	if cwd == "" {
+	if task.WorkDir == "" {
 		fmt.Fprintf(os.Stderr, "error: task %q has no work_dir\n", task.Slug)
 		return 1
+	}
+	// A new session starts in work_dir. An existing one is resumed from
+	// wherever its transcript is keyed, which is work_dir unless the
+	// session was bound from another directory (GH #59).
+	cwd, sessionOnDisk := task.WorkDir, false
+	if !needsBootstrap {
+		cwd, sessionOnDisk = resumeTarget(h, task, sessionID)
 	}
 
 	// Spawn the tab via the active harness adapter.
@@ -455,6 +461,7 @@ func cmdDo(args []string) int {
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
 	}
+	applyWorkspaceTrust(h, cwd, &launchOpts)
 	// bootstrapCmd builds the first-start command. For pre-allocating
 	// harnesses (claude), PrepareSpawn already minted the sessionID and
 	// the status flip above committed it, so the harness can embed it in
@@ -517,7 +524,7 @@ func cmdDo(args []string) int {
 			// A session reserved by an earlier handoff but never started
 			// has no transcript yet; `--resume` would be refused, so hand
 			// out the bootstrap command (same id) again.
-			if !needsBootstrap && h.ValidateSession(cwd, sessionID) != nil {
+			if !needsBootstrap && !sessionOnDisk {
 				command = bootstrapCmd()
 			}
 			printNoTerminalHandoff(task.Slug, cwd, command, spawnEnv)
@@ -580,6 +587,49 @@ func cmdDo(args []string) int {
 		fmt.Printf("Resumed %s (session %s)\n", task.Slug, sessionID)
 	}
 	return 0
+}
+
+// resumeTarget answers the two questions every resume path has about a
+// task's bound session: does it exist on disk (resume it, or start it
+// under the reserved id), and which directory must the harness be started
+// in to find it.
+//
+// The answer is work_dir whenever the transcript is keyed there, which
+// bootstrap guarantees and `flow do --here` enforces at bind time. Rows
+// bound before that gate existed can carry a session started elsewhere.
+// Treating "not under work_dir" as "no session" is what lost their
+// history (GH #59): the tab resumed in a directory the harness could not
+// find the conversation from, and the auto path started a blank
+// conversation under the same id. For those the harness is started where
+// the session lives, with a note on how to make work_dir agree.
+//
+// onDisk is false only when no transcript exists anywhere, i.e. the
+// session id was reserved but never started.
+func resumeTarget(h harness.Harness, task *flowdb.Task, sessionID string) (cwd string, onDisk bool) {
+	if h.ValidateSession(task.WorkDir, sessionID) == nil {
+		return task.WorkDir, true
+	}
+	loc, ok := h.(harness.SessionLocator)
+	if !ok {
+		return task.WorkDir, false
+	}
+	started, found := loc.LocateSession(sessionID)
+	if !found {
+		return task.WorkDir, false
+	}
+	// Found, but the start directory is unknown or gone: resuming by id
+	// from work_dir is the best remaining option.
+	if started == "" {
+		return task.WorkDir, true
+	}
+	if fi, err := os.Stat(started); err != nil || !fi.IsDir() {
+		return task.WorkDir, true
+	}
+	fmt.Fprintf(os.Stderr,
+		"note: %s's session %s was started in %s, not its work_dir %s; resuming it there so its history is found.\n"+
+			"  to make work_dir match: flow update task %s --work-dir %s\n",
+		task.Slug, sessionID, started, task.WorkDir, task.Slug, spawner.ShellQuote(started))
+	return started, true
 }
 
 // printNoTerminalHandoff is the no-dead-end path for hosts where flow
@@ -724,6 +774,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	}
 	title := buildTabTitle(project, task)
 	opts := harness.LaunchOpts{SkipPermissions: skipPerms, Inject: inject}
+	// claude --bg has no TTY for the trust dialog: an untrusted flow
+	// workspace dies with "Workspace not trusted". Pre-trust it.
+	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
 	hasSession := task.SessionID.Valid && task.SessionID.String != ""
 
@@ -746,7 +799,8 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// re-record it; otherwise flow would keep pointing at the dead id
 		// (the phantom-id bug). Plain `--resume` would preserve the id but
 		// wouldn't be a background agent, so it can't be used in bg mode.
-		agent, err := bg.ResumeBackground(task.WorkDir, sid, opts)
+		resumeCwd, _ := resumeTarget(h, task, sid)
+		agent, err := bg.ResumeBackground(resumeCwd, title, sid, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -1128,7 +1182,7 @@ func cmdDoHere(query string, force bool) int {
 
 // printParentListenerReminder tells whoever launched an auto run of a
 // spawned child whether the parent session is subscribed to it, and that
-// the child's reports only wake the parent through an armed inbox Monitor.
+// how the child's reports reach the parent.
 func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 	if !task.ParentSlug.Valid || task.ParentSlug.String == "" {
 		return
@@ -1151,13 +1205,18 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 	fmt.Println(parentListenerReminder())
 }
 
-// parentListenerReminder is the last line of the parent reminder: arm a
-// Monitor in Claude; in Codex (no Monitor, background jobs are killed)
-// the child's reports surface as flow-bus notices instead.
+// parentListenerReminder is the last line of the parent reminder: in
+// Codex (no Monitor, background jobs are killed) and whenever harness wake
+// is on, the child's reports surface as flow-bus notices; only a Claude
+// parent with wake off (FLOW_NO_WAKE) still arms a Monitor.
 func parentListenerReminder() string {
 	if isCodexSession(nil) {
 		return "  Codex parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
 			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
+	}
+	if wakeActive() {
+		return "  The child's reports wake the parent session automatically (flow harness wake) — no inbox " +
+			"listener needed; when a flow-bus notice says mail landed, run a one-shot `flow inbox pop` in the foreground."
 	}
 	return "  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop + "'); re-arm it when it expires."
 }

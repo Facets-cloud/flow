@@ -10,3 +10,10 @@
 
 # git worktrees for isolated feature work
 /.worktrees/
+
+# python
+__pycache__/
+*.pyc
+
+# assembled GitHub Pages tree (make site)
+/out/

@@ -36,6 +36,9 @@ func TestMain(m *testing.M) {
 	// install tests only see harnesses their sandbox creates.
 	harnessLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	os.Unsetenv("CODEX_HOME")
+	// Workspace pre-trust writes Claude's config; never let an ambient
+	// $CLAUDE_CONFIG_DIR point it at the developer's real one.
+	os.Unsetenv("CLAUDE_CONFIG_DIR")
 	notBG := false
 	spawner.BackgroundOverride = &notBG
 	os.Exit(m.Run())
@@ -93,6 +96,7 @@ func stubBGMode(t *testing.T) {
 type bgCalls struct {
 	spawn, resume, agents     int
 	lastSpawn, lastResume     []string
+	lastResumeDir             string
 	spawnBanner, resumeBanner string
 	// onResume, if set, fires when a --resume command is issued — lets a
 	// test mutate the registry so the resume's capture lookup resolves the
@@ -119,6 +123,7 @@ func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 			if a == "--resume" {
 				c.resume++
 				c.lastResume = args
+				c.lastResumeDir = workDir
 				if c.onResume != nil {
 					c.onResume()
 				}
@@ -229,6 +234,9 @@ func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 	}
 	if !pairArg(c.lastResume, "--resume", bgFullSID) {
 		t.Errorf("resume must --resume the OLD id; argv: %v", c.lastResume)
+	}
+	if !pairArg(c.lastResume, "--name", "bgt") {
+		t.Errorf("resume must keep the spawn display name (--name bgt); argv: %v", c.lastResume)
 	}
 	db := openFlowDB(t)
 	task, err := flowdb.GetTask(db, "bgt")

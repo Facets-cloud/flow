@@ -264,6 +264,14 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply bus schema: %w", err)
 	}
+	if _, err := db.Exec(wakeDDL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply wake schema: %w", err)
+	}
+	if _, err := db.Exec(sessionVersionDDL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply session version schema: %w", err)
+	}
 	if err := migrateBusSelfToUser(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate bus assignee: %w", err)
@@ -917,7 +925,10 @@ func ListTasks(db *sql.DB, filter TaskFilter) ([]*Task, error) {
 		args = append(args, t)
 	}
 	if filter.Since != "" {
-		where = append(where, "updated_at >= ?")
+		// Compare instants, not strings: stored timestamps may carry any UTC
+		// offset (local, "Z", a different zone after travel/DST), and RFC3339
+		// strings with different offsets do not sort chronologically.
+		where = append(where, "julianday(updated_at) >= julianday(?)")
 		args = append(args, filter.Since)
 	}
 	if !filter.IncludeArchived {

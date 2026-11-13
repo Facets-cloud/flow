@@ -153,17 +153,17 @@ Subscribe to whatever you depend on or coordinate with. Tasks you spawn
 are wired automatically:
 
 ```
-parent P (bound session, inbox Monitor armed)
+parent P (bound session, no listener)
   flow add task C     -> C.parent_slug = P, user/P now watches C
-  flow do --auto C    -> prints whether user/P watches C + Monitor reminder
+  flow do --auto C    -> prints whether user/P watches C
 child C (headless)
   prompt: flow message user/P at milestones and when done/blocked
-  -> lands in P's inbox -> P's Monitor wakes P
+  -> lands in P's inbox -> harness wake notifies P (idle: a pushed
+     notice; busy: next tool call / turn end)
 ```
 
-The child's reports wake you only if your inbox Monitor is armed. In
-Codex (no Monitor) they surface as a flow-bus notice at your next tool
-call or prompt.
+With wake off (`FLOW_NO_WAKE=1`) a Claude parent hears them only through
+the Monitor fallback above.
 
 ## Consuming: unread vs. everything
 
@@ -196,14 +196,37 @@ machine-readable rows.
   bound session of its task, or `--as <assignee>` for a person's queue);
   anyone else gets a read-only display.
 
-## Listener discipline — two recipes, pick by role
+## Harness wake — mail reaches you, no listener
 
-Only in a BOUND session (one bound to a flow task) arm exactly ONE
-listener at session start so mail WAKES you instead of waiting for your
-next tool call. An unbound (dispatch) session never arms one: it runs as
-the human's identity, so a loop there would sit on the human's own queue.
-The SessionStart hook prints the recipe only in bound sessions. Which
-recipe depends on what you do with each message.
+A bound session arms NO listener: flow delivers mail itself (`flow
+message`, a watched `flow broadcast`, child reports, dead-child pings).
+
+    sender inserts the row ──► session idle?  (hooks track it:
+                               UserPromptSubmit/PreToolUse = busy, Stop = idle)
+      idle → flow pushes a notice that starts a turn
+             Claude: cross-session socket (fallback: asyncRewake waiter
+                     `flow inbox wait --rewake`, armed by SessionStart+Stop)
+             Codex:  `codex queue --thread <id>` into the live TUI
+      busy → PreToolUse notice before your next tool call, or the Stop
+             check blocks the turn's end with the notice
+
+Each message is announced exactly once (an atomic claim shared by every
+path). The notice is a count + "run `flow inbox pop`" tagged
+`[flow-bus wake]`; it never counts as the human typing. On a notice: one-
+shot `flow inbox pop` in the foreground, repeat until empty, act on each.
+`flow message` prints what happened: `woke <slug>` or `stored: <reason>`.
+Never woken: closed tasks, auto runs (they pop in the foreground), the
+human. `flow inbox wait` is the non-acking wait (returns when unannounced
+mail lands; leaves it unread).
+
+## Fallback: listener discipline (wake off: `FLOW_NO_WAKE=1`)
+
+Only with wake off, and only in a BOUND session (one bound to a flow
+task), arm exactly ONE listener at session start so mail WAKES you instead
+of waiting for your next tool call. An unbound (dispatch) session never
+arms one: it runs as the human's identity, so a loop there would sit on
+the human's own queue. Which recipe depends on what you do with each
+message.
 
 Claude Code's Monitor tool may be a deferred tool: load its schema first
 with ToolSearch `select:Monitor`. It has NO `persistent` parameter, and
@@ -245,20 +268,27 @@ therefore never listens, and mail already pending when it is armed is
 acked at once into output the model never reads — lost. So a Codex
 session (interactive or auto) arms no listener; flow refuses `pop --wait`
 there (exit 3) and the SessionStart hook says so. Mail reaches it through
-the flow-bus notices (PreToolUse before each tool call, UserPromptSubmit
-when the user types); when one says mail landed or is pending, run a
+the flow-bus notices (PreToolUse before each tool call, the Stop check at
+turn end, UserPromptSubmit when the user types, and a queued prompt when
+idle — harness wake); when one says mail landed or is pending, run a
 one-shot `flow inbox pop` in the foreground, repeat until empty, and act
-on it. `flow watch` still works: watched reports arrive the same way. An
-idle Codex session does not wake on mail; it sees it on its next turn.
+on it. `flow watch` still works: watched reports arrive the same way.
+
+**Codex sandbox: run flow BARE.** A regular Codex session runs in
+`workspace-write`, where flow.db is read-only. `$CODEX_HOME/rules/flow.rules`
+(written by `flow skill install`) lets `flow message|inbox|broadcast|watch|
+show|list|transcript` out with no prompt — but only as a bare top-level
+command. `VAR=… flow`, `cd … && flow` or a wrapper script stays sandboxed
+and fails with "readonly database". Other flow commands need Codex approval.
 
 **Safety net (Claude and Codex):** a PreToolUse hook also surfaces any
 just-arrived unread item — directed message OR broadcast — right before a
 tool runs, so a mid-turn "stop, don't do X" reaches you before the action
-it would cancel — even if your Monitor loop hasn't woken yet. It's
-delta-gated (each item is announced at most once, so it never spams across
-a turn's tool calls) and inform-only: it does NOT consume the item, so
-still `flow inbox pop` it to actually read and ack. In Claude this
-backstops the listener; in Codex and auto runs it is the delivery path.
+it would cancel. It's delta-gated (each item is announced at most once, so
+it never spams across a turn's tool calls) and inform-only: it does NOT
+consume the item, so still `flow inbox pop` it to actually read and ack.
+It is the busy-session half of harness wake, and in auto runs the delivery
+path.
 
 ## For the user: notification UX is yours
 

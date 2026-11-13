@@ -23,6 +23,88 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   no command rewriting, no PreToolUse check, nothing added to the line.
   `FLOW_PR_TRAILER=off` (also `0`/`false`) drops it; unbound sessions never
   see it.
+- **Harness wake: bus mail reaches a bound session with no listener.**
+  After every bus insert (`flow message`, watched `flow broadcast`, child
+  reports, dead-child pings, driver notices, attachments) flow checks the
+  recipient task's session. Idle → it pushes a short notice that starts a
+  turn: Claude through the session's cross-session socket (recorded by the
+  SessionStart hook, 0600 under `$FLOW_ROOT/wake/`), with an asyncRewake
+  waiter (`flow inbox wait --rewake`, SessionStart + Stop) as the
+  fallback; Codex through `codex queue --thread <id>` into the live TUI.
+  Busy → the session's own hooks deliver: PreToolUse before the next tool
+  call, and a new Stop-hook check that blocks the turn's end with the
+  notice when mail landed after the last tool call. Busy/idle is tracked
+  by flow's hooks (UserPromptSubmit/PreToolUse busy, Stop idle). An
+  Esc-interrupt ends a turn without a Stop hook, so a "busy" session whose
+  hooks are quiet for 30s is cross-checked with `claude agents --json`
+  (Claude), and counts as idle after 2 min when the harness can't tell. Every announcing path claims rows atomically in
+  `bus_surfaced`, so each message is announced once. Never woken: closed
+  tasks, auto runs, the human. The notice is a count + "run `flow inbox
+  pop`" tagged `[flow-bus wake]`, never taken for the human typing.
+  `flow message` / `flow broadcast` now print `woke <slug>` or `stored:
+  <reason>`. `FLOW_NO_WAKE=1` turns it off.
+- **Upgrade notice for running sessions.** When the flow binary changes
+  while a Claude or Codex session is running, that session's next prompt
+  or tool call carries one `[flow-upgrade]` notice: flow was upgraded
+  (old → new), re-load the flow skill, and read the installed
+  `references/upgrade-notes.md` for what changed. SessionStart records
+  the session's version silently; the UserPromptSubmit and PreToolUse
+  hooks compare-and-set it per session id (new `session_versions` table),
+  so concurrent hooks announce it once and every later version change
+  announces again. Sessions that started before this release are told
+  once ("an earlier version"). Dev builds (`Version=dev`) skip it.
+- **`flow inbox wait`** — the non-acking wait: returns when unannounced
+  mail lands in this session's inbox, leaves it unread.
+
+- **Skill: report a flow bug.** A new on-demand reference
+  (`references/report-issue.md`, one trigger line in the core) tells agents
+  how to file a GitHub issue about flow (`Facets-cloud/flow`) or a connector
+  (`Facets-cloud/flow-connectors`): gather version/OS/harness/connectors and a
+  minimal repro, redact paths, secrets, names and ids, draft a fixed
+  template, and file with `gh issue create` only after the human says
+  "File it" (headless runs never file). The issue URL is recorded as a
+  task update note.
+
+### Changed
+
+- **No more inbox Monitor.** With harness wake on, SessionStart tells a
+  bound Claude session not to arm a listener; the Monitor recipe left the
+  SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
+  kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
+
+### Fixed
+
+- **flow-created work dirs are pre-trusted, so headless spawns no longer die
+  with "Workspace not trusted".** `claude --bg` (`FLOW_TERM=bg`, flow-mesh
+  desks) has no TTY for Claude Code's folder-trust dialog, and a fresh
+  `$FLOW_ROOT/tasks/<slug>/workspace` was never trusted. `flow init` and
+  every `flow do` / `--auto` spawn now mark the resolved `$FLOW_ROOT/tasks`
+  as trusted in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`):
+  one entry covers every flow workspace. User repos are never trusted:
+  anything outside `$FLOW_ROOT/tasks`, or inside a git repo, is skipped. The
+  write is flock-serialized, atomic (temp + rename, permissions kept),
+  keeps every other key, is a no-op when the folder is already trusted, and
+  leaves an unparseable config untouched with a warning. Codex launches in
+  a flow workspace get a per-launch `-c projects."<dir>".trust_level="trusted"`
+  override, and `~/.codex/config.toml` is never written.
+
+- **A resumed background Claude session keeps its name.** When a
+  `FLOW_TERM=bg` task's session had exited, `flow do` resumed it with
+  `claude --bg --resume <id>` and no `--name`, so Claude named the new
+  session after the injected prompt. Resume now passes the same
+  `--name <title>` that spawn uses.
+
+## [0.1.0-alpha.37] — 2026-11-12
+
+### Added
+
+- **flow upgrades itself.** When the SessionStart hook finds a newer
+  release, flow downloads it in the background after a command, checks
+  its SHA-256 against the release, and renames it over the binary. The
+  next command refreshes the skill. `FLOW_NO_AUTO_UPGRADE=1` stops it.
+  Source builds, CI, root, and a binary folder that flow cannot write
+  are skipped. Works on macOS and Linux.
+- **`flow upgrade [--check] [--force]`** installs the latest release now.
 - **Linux parity: tmux backend and a no-terminal handoff.** `flow do` now
   opens tabs inside tmux (`$TMUX` set, same priority class as zellij;
   `FLOW_TERM=tmux` forces it) on Linux and macOS, including focusing an
@@ -98,6 +180,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- **Regular Codex sessions run sandboxed, with flow's commands allow-listed.**
+  `flow do` and `flow run playbook` now open and resume interactive Codex
+  sessions with `-s workspace-write -a on-request` instead of inheriting
+  whatever sandbox the read-only thread-minting probe left behind.
+  `--dangerously-skip-permissions` still passes
+  `--dangerously-bypass-approvals-and-sandbox`; headless paths and Claude are
+  unchanged. `flow skill install`/`update` now also writes a flow-owned Codex
+  exec-policy file, `$CODEX_HOME/rules/flow.rules` (default `~/.codex`), that
+  lets bare `flow message`, `inbox`, `broadcast`, `watch`, `show`, `list` and
+  `transcript` run outside the sandbox with no prompt, so the message bus
+  works from a sandboxed session. Every other flow command goes through
+  Codex's approval prompt. `flow skill uninstall` removes the file. Codex
+  matches only a bare top-level command, so the Codex SessionStart context
+  now says to run flow commands without env prefixes, `cd … &&` or wrapper
+  scripts.
+
 - **`FLOW_TERM` now outranks every ambient terminal marker.** An explicit,
   valid `FLOW_TERM` beats `$TMUX`, `$ZELLIJ` and Rex's and kitty's
   variables, not just `TERM_PROGRAM`: those describe where flow happens to
@@ -109,6 +207,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- **Self-upgrade is safer before it ships to everyone** (follow-up to
+  #113). A failed release check (offline, GitHub rate limit) now records
+  a failed attempt, so flow waits 24 hours instead of starting another
+  background upgrade and API call on every command, and the
+  `flow-version-stale` hint comes back. Before a download replaces the
+  binary, flow runs it with `--version` and requires the release tag; a
+  build that does not run or reports another version is refused and the
+  binary is left alone. The replaced binary stays beside it as
+  `flow.prev` (`mv flow.prev flow` rolls back). No automatic upgrade starts
+  inside the Codex sandbox (`CODEX_SANDBOX`) or inside a headless auto
+  run (`FLOW_AUTO_RUN`), so a binary is never swapped mid-run. Downloads
+  left by a killed upgrade are removed after an hour, and production code
+  no longer imports `testing`.
+
+- The stale-version hint fired when the latest tag only differed from the
+  running version. It now fires only when the latest release is newer, by
+  semantic version order.
 - **`flow do` inside tmux on macOS now actually starts the harness.** The
   tmux backend typed the whole launch line (over 1 KB) into the new window
   before its shell had switched the tty to raw mode. A macOS tty in

@@ -730,11 +730,10 @@ moving into design / implementation / debugging. Re-evaluate on every turn.
 
 **Triggers:** "update flow", "upgrade flow", "new flow version", "what
 version am I on", a bare `flow --version`, or a SessionStart
-`flow-version-stale:` signal. The procedure — capture `flow --version`,
-follow INSTALL.md at https://github.com/Facets-cloud/flow (re-running
-install.sh upgrades in place on macOS and Linux; never invent download
-URLs), `flow skill update`, re-check version — lives in
-**references/upgrade.md**.
+`flow-version-stale:` signal (flow self-upgrade failed). Run `flow
+upgrade` (ask before `--force`), then `flow --version`. Fallback and
+failures: **references/upgrade.md**. A `[flow-upgrade]` notice →
+**references/upgrade-notes.md**.
 ### 4.16a Tagging tasks
 
 Tags are free-form single-string labels for cross-cutting identification
@@ -791,24 +790,23 @@ Bodies ≤500 chars, lead with the ask, name a task slug for context.
 
 **Consuming.** `flow inbox` lists unread; `--all` lists everything
 retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
-the oldest. Never touch the human's mail (pop skips it). Only a BOUND
-session arms ONE inbox **Monitor** at start (never unbound; never in an
-auto run or Codex: those pop in the foreground). Load via ToolSearch
-`select:Monitor`; `timeout_ms` REQUIRED (max 1800000):
-
-- **Consumer** (default; `pop` acks as it goes): `Monitor(description:
-  "flow inbox", timeout_ms: 1800000, command: 'while true; do flow inbox
-  pop --wait --timeout 300 --json; rc=$?; [ $rc -eq 3 ] && break; [ $rc
-  -ne 0 ] && sleep 5; done')` (3 = task closed)
-- **Reader / relay** (must NOT ack): same call with `pop --wait
-  --keep-unread` (plain `pop` acks mail you only forward).
-
-Each message wakes you. On expiry, re-arm it immediately. No Monitor
-(Codex): no listener; a notice says mail landed → one-shot pop. `flow watch
-<task|project|assignee>` subscribes you; tasks you create from a bound
-session are auto-watched. Hooks NEVER consume.
+the oldest. Never touch the human's mail (pop skips it). **Mail reaches a
+bound session by itself** (harness wake): idle → flow pushes a notice
+(starts a turn); busy → a notice before your next tool call or at turn
+end. Arm NO listener (no Monitor, no background `pop --wait`). On a
+flow-bus notice: one-shot `flow inbox pop` in the foreground, repeat until
+empty, act on each. Wake off (`FLOW_NO_WAKE=1`) → only a BOUND session
+(never unbound) arms the Monitor fallback in references/messaging.md. `flow watch <task|project|assignee>` subscribes
+you; tasks you create from a bound session are auto-watched. Hooks NEVER
+consume.
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
+
+### 4.19 Report a flow bug
+
+"file a bug" / "report this" / "open an issue" about flow or a connector, or
+you hit a clear flow bug (offer; never file without a yes) → read
+**references/report-issue.md**.
 
 ## 6. The `work_dir` question — rules
 
@@ -1005,8 +1003,7 @@ to find the bound task. Two implications:
   reverse-lookup returns. If `flow show task` errors with
   `not bound to a task`, ask the user which task to attribute it to.
 
-There is no `FLOW_TASK` or `FLOW_PROJECT` env var to read. `flow do`
-no longer injects them; the DB binding is sufficient.
+There is no `FLOW_TASK`/`FLOW_PROJECT` env var; the DB binding is sufficient.
 
 A session is "bound" when some task carries its session_id (set by
 `flow do <slug>` at spawn time, or by `flow do --here <slug>`
@@ -1018,8 +1015,7 @@ retroactively). A session is "dispatch / unbound" when no task does
 Ask. The worst outcome is writing a bad brief or silently
 mis-attributing a progress note. The second-worst outcome is running
 `flow do` on the wrong task. Both are avoided by one clarifying
-question. The user's time budget for a clarifying question is vastly
-lower than their budget for fixing a wrong save after the fact.
+question — far cheaper than fixing a wrong save after the fact.
 
 In a dispatch session (no task bound to this session), also re-check
 §4.14 (substantive-unrelated-work) on every turn. The skill is

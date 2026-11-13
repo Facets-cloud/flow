@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
@@ -113,8 +114,17 @@ func cmdHookSessionStart(args []string) int {
 		return 2
 	}
 	readHookPayload()
+	// Claude socket push: only this hook process sees the session's
+	// socket token, so record it on every start/resume/compaction.
+	recordClaudeEndpoint(currentSessionID())
+	// The session (re)loads the current skill now: record its version
+	// silently so the prompt/tool hooks don't announce an upgrade.
+	recordSessionVersion()
 
 	bound := lookupBoundTask()
+	if bound != nil && !isAutoRunSession(bound) {
+		markSessionState(bound.Slug, flowdb.SessionIdle)
+	}
 	if bound == nil {
 		// Unbound sessions are where the human usually sits — surface
 		// their pending-mail count here too (inform-only).
@@ -178,7 +188,7 @@ func driverDelegationBlock() string {
 		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
 		"answers. Live/prod changes: the child plans and gates only; you apply them with the user. " +
 		"How: write a brief (goal, where, Done when, gates, report via flow message, never block waiting " +
-		"for a reply (it reaches your inbox; pop it when a flow-bus notice or your listener surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
+		"for a reply (it reaches your inbox; pop it when a flow-bus notice surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
 		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
 		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
 		"the child messages you, verify its result (it names its update note) before reporting " +
@@ -188,21 +198,22 @@ func driverDelegationBlock() string {
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
 // hint payloads when the local flow binary is older than the latest
-// GitHub release. Returns "" when the check fails, the cache is fresh
-// and matches, or the running binary is a dev build (no version
-// embedded). The check is best-effort and silent on any error —
-// session-start latency must not be impacted by a flaky network.
+// GitHub release. Returns "" when the check fails, the binary is not
+// older, the running binary is a dev build (no version embedded), or
+// the automatic upgrade takes care of it (selfUpgradeHandles). The
+// check is best-effort and silent on any error — session-start latency
+// must not be impacted by a flaky network.
 func appendStaleVersionHint() string {
 	if Version == "" || Version == "dev" {
 		return ""
 	}
 	latest := LatestRelease()
-	if latest == "" || latest == Version {
+	if latest == "" || !isNewerRelease(latest, Version) || selfUpgradeHandles(latest) {
 		return ""
 	}
 	return fmt.Sprintf(
 		" flow-version-stale: %s — the running flow binary is %s but a newer release is available. "+
-			"When natural, offer the user an upgrade per skill §4.15 (Upgrade flow itself). "+
+			"When natural, offer the user an upgrade (`flow upgrade`) per skill §4.15 (Upgrade flow itself). "+
 			"Do not interrupt active work to push this; surface it at a pause.",
 		latest, Version,
 	)
@@ -331,11 +342,14 @@ func cmdHookUserPromptSubmit(args []string) int {
 		return 2
 	}
 	readHookPayload()
-	pageCtx := busPromptSubmitContext()
 	t := lookupBoundTask()
+	if t != nil && !isAutoRunSession(t) {
+		markSessionState(t.Slug, flowdb.SessionBusy)
+	}
+	pageCtx := busPromptSubmitContext() + upgradeNoticeContext(t)
 	if t == nil {
 		// Unbound — page-bus context (an unbound session can still have
-		// paged the user) is the only possible payload.
+		// paged the user) and the upgrade notice are the only payloads.
 		if pageCtx == "" {
 			return 0
 		}
@@ -372,9 +386,20 @@ func cmdHookPreToolUse(args []string) int {
 		return 2
 	}
 	readHookPayload()
-	ctx := busPreToolUseContext()
+	ctx := busPreToolUseContext() + upgradeNoticeContext(nil)
 	if ctx == "" {
 		return 0
 	}
 	return emitHookContext("PreToolUse", strings.TrimSpace(ctx))
+}
+
+// markSessionState records a hook-observed turn-state change (silent on
+// any error — hooks never fail loud).
+func markSessionState(slug, state string) {
+	db, err := openBusDB()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	_ = flowdb.SetSessionState(db, slug, state, time.Now())
 }

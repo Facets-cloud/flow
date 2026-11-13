@@ -156,6 +156,17 @@ func installHooks(h harness.Harness, quiet bool) {
 			fmt.Printf("%s: %s hook already installed — leaving as is\n", name, fh.event)
 		}
 	}
+	// Harness wake fallback (Claude's asyncRewake waiter). Installed even
+	// when wake is off for this shell: the waiter checks the switch itself.
+	if rw, ok := h.(harness.RewakeHookInstaller); ok {
+		added, err := rw.InstallRewakeHook(rewakeHookCommand, rewakeMessage)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "warning: %s: could not install the wake fallback hook: %v\n", name, err)
+		case added && !quiet:
+			fmt.Printf("%s: installed wake fallback hook (asyncRewake on SessionStart + Stop)\n", name)
+		}
+	}
 }
 
 // maybeAutoUpgradeSkill checks each harness's recorded skill version
@@ -338,6 +349,13 @@ func uninstallSkillFor(h harness.Harness, keepHook bool) bool {
 			fmt.Fprintf(os.Stderr, "warning: %s: could not remove %s hook: %v\n", name, fh.event, err)
 		} else if removed {
 			fmt.Printf("%s: removed %s hook\n", name, fh.event)
+		}
+	}
+	if rw, ok := h.(harness.RewakeHookInstaller); ok {
+		if removed, err := rw.UninstallRewakeHook(rewakeHookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: could not remove the wake fallback hook: %v\n", name, err)
+		} else if removed {
+			fmt.Printf("%s: removed wake fallback hook\n", name)
 		}
 	}
 	return true

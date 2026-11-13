@@ -24,8 +24,10 @@
 package harness
 
 import (
+	"errors"
 	"io"
 	"io/fs"
+	"time"
 )
 
 // Name is the short identifier persisted on tasks.harness and used to
@@ -65,6 +67,24 @@ type LaunchOpts struct {
 	// write the session's final message to this file (codex: -o). Impls
 	// without an equivalent ignore it.
 	LastMessagePath string
+
+	// TrustDir, when set, is a flow-created work dir (never a user repo —
+	// the caller decides, see internal/trust) that the harness should
+	// treat as trusted for this launch. Codex: a per-launch
+	// `-c projects."<dir>".trust_level="trusted"` override (nothing is
+	// persisted to config.toml). Claude ignores it — its trust lives in
+	// ~/.claude.json and is persisted via WorkspaceTruster instead.
+	TrustDir string
+}
+
+// WorkspaceTruster is an OPTIONAL harness capability: persistently
+// pre-accept the harness's workspace-trust gate for a flow-owned work
+// dir, so headless/background launches (no TTY for the trust dialog)
+// don't die with "Workspace not trusted". Implementations must refuse
+// anything that is not flow-owned (internal/trust.FlowOwnedRoot) and
+// return changed=false, err=nil for it.
+type WorkspaceTruster interface {
+	TrustWorkspace(flowRoot, workDir string) (changed bool, err error)
 }
 
 // BackgroundAgent is one entry from a harness's background-agent
@@ -113,9 +133,11 @@ type BackgroundLauncher interface {
 	// id — verified against the CLI and documented behavior). The
 	// returned BackgroundAgent carries the NEW id, which flow re-records
 	// on the task. workDir is where the resumed agent begins (the task's
-	// work_dir). opts.Inject, if set, is delivered as the first message
-	// after resume.
-	ResumeBackground(workDir, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// work_dir). name is the display name, the same one SpawnBackground
+	// got, so the resumed agent keeps its title instead of being named
+	// after the injected prompt. opts.Inject, if set, is delivered as the
+	// first message after resume.
+	ResumeBackground(workDir, name, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /
@@ -346,4 +368,74 @@ type CloseoutDeferrer interface {
 func DefersCloseoutInAutoRun(h Harness) bool {
 	d, ok := h.(CloseoutDeferrer)
 	return ok && d.DefersCloseoutInAutoRun()
+}
+
+// WakeMarker tags every wake notice flow pushes into a session. A notice
+// can arrive as an ordinary user prompt (Codex queue; Claude socket mail
+// is framed as a teammate message), so flow's UserPromptSubmit handling
+// keys on this marker to never treat a wake as the human typing.
+const WakeMarker = "[flow-bus wake]"
+
+// ErrWakeUnavailable means the session has no live wake channel right now
+// (closed, never recorded an endpoint, process gone). Not a failure: the
+// caller just skips the push (and a fallback path may still deliver).
+var ErrWakeUnavailable = errors.New("no live wake channel")
+
+// WakeRequest asks a harness to push Notice into the live session
+// SessionID. StateDir ($FLOW_ROOT/wake) is where harnesses keep per-session
+// endpoint records; Timeout bounds the whole push.
+type WakeRequest struct {
+	SessionID string
+	Notice    string
+	StateDir  string
+	Timeout   time.Duration
+}
+
+// Waker is an OPTIONAL capability: pushing a short notice into a live
+// session so it starts a turn without any listener armed. A harness
+// without a push channel does not implement it.
+type Waker interface {
+	// WakeLive reports whether the session has a live push channel now
+	// (cheap: no model cost, no message sent).
+	WakeLive(req WakeRequest) bool
+	// Wake pushes req.Notice. detail carries a non-fatal note worth
+	// reporting (e.g. Codex's "queued but not resumed" warning).
+	Wake(req WakeRequest) (detail string, err error)
+}
+
+// TurnStateChecker is an OPTIONAL cross-check of a session's turn state
+// from the harness itself (Claude: `claude agents --json`). known=false
+// when the harness cannot tell.
+type TurnStateChecker interface {
+	SessionBusy(sessionID string, timeout time.Duration) (busy, known bool)
+}
+
+// RewakeHookInstaller is an OPTIONAL capability for harnesses with async
+// hooks that can wake an idle session on exit (Claude's asyncRewake). The
+// hook runs `command` on SessionStart and Stop; it blocks until mail lands,
+// then exits 2 and the harness starts a turn prefixed with rewakeMessage.
+// Used as the fallback when the primary Waker push is unavailable.
+type RewakeHookInstaller interface {
+	InstallRewakeHook(command, rewakeMessage string) (added bool, err error)
+	UninstallRewakeHook(command string) (removed bool, err error)
+	RewakeHookInstalled(command string) bool
+}
+
+// SessionLocator is an optional capability for harnesses that key a
+// session's on-disk transcript by the directory the session was started
+// in (claude). ValidateSession answers "is the transcript where workDir
+// says it should be"; LocateSession answers the question a resume has
+// when that check fails: does the session exist at all, and if so where
+// was it started.
+//
+// A task can end up with a session that is not keyed under its work_dir
+// (GH #59: a `flow do --here` bind made before the bind-time gate
+// existed). Every resume path consults this before deciding the session
+// has no history.
+type SessionLocator interface {
+	// LocateSession reports whether a transcript for sessionID exists
+	// anywhere on disk (found), and the directory that session was
+	// started in (cwd). cwd is "" when the session is found but its
+	// start directory can't be established from the transcript.
+	LocateSession(sessionID string) (cwd string, found bool)
 }
