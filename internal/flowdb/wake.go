@@ -1,6 +1,7 @@
 package flowdb
 
 import (
+	"context"
 	"database/sql"
 	"time"
 )
@@ -51,19 +52,57 @@ CREATE TABLE IF NOT EXISTS bus_wake_nudged (
 // Worst case is one harmless duplicate PreToolUse line. Keyed on the new
 // table's absence, so it runs once.
 func applyWakeSchema(db *sql.DB) error {
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bus_wake_nudged'`).Scan(&n); err != nil {
+	exists := func(q interface {
+		QueryRowContext(context.Context, string, ...any) *sql.Row
+	}) (bool, error) {
+		var n int
+		err := q.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bus_wake_nudged'`).Scan(&n)
+		return n > 0, err
+	}
+	// Fast path (every open after the first): nothing to do, no write lock.
+	if ok, err := exists(db); err != nil || ok {
+		if err == nil {
+			_, err = db.Exec(wakeDDL)
+		}
 		return err
 	}
-	if _, err := db.Exec(wakeDDL); err != nil {
+	// One IMMEDIATE transaction on one connection: the table's existence is
+	// the "migrated" marker, so it never commits without the cleanup, and
+	// concurrent first opens serialize on the write lock (busy_timeout)
+	// instead of failing a deferred read→write upgrade.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
 		return err
 	}
-	if n == 0 {
-		if _, err := db.Exec(`DELETE FROM bus_surfaced
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	commit := false
+	defer func() {
+		if !commit {
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+	ok, err := exists(conn)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, wakeDDL); err != nil {
+		return err
+	}
+	if !ok {
+		if _, err := conn.ExecContext(ctx, `DELETE FROM bus_surfaced
             WHERE message_id IN (SELECT id FROM bus_messages WHERE status='pending')`); err != nil {
 			return err
 		}
 	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	commit = true
 	return nil
 }
 
