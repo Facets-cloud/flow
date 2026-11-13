@@ -831,6 +831,7 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 		{`DELETE FROM bus_watches WHERE watched=?`, []any{taskSlug}},
 		{`DELETE FROM bus_nudges WHERE task_slug=?`, []any{taskSlug}},
 		{`DELETE FROM bus_surfaced WHERE task_slug=?`, []any{taskSlug}},
+		{`DELETE FROM bus_wake_nudged WHERE task_slug=?`, []any{taskSlug}},
 		{`DELETE FROM bus_session_state WHERE task_slug=?`, []any{taskSlug}},
 	} {
 		if _, err := db.Exec(stmt.q, stmt.args...); err != nil {
@@ -901,6 +902,10 @@ func SweepBus(db *sql.DB, now time.Time) error {
 	if _, err := db.Exec(
 		`DELETE FROM bus_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
 		return fmt.Errorf("sweep surfaced: %w", err)
+	}
+	if _, err := db.Exec(
+		`DELETE FROM bus_wake_nudged WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
+		return fmt.Errorf("sweep wake nudged: %w", err)
 	}
 	if _, err := db.Exec(
 		`DELETE FROM bus_human_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {

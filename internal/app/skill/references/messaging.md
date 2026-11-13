@@ -210,8 +210,10 @@ message`, a watched `flow broadcast`, child reports, dead-child pings).
       busy → PreToolUse notice before your next tool call, or the Stop
              check blocks the turn's end with the notice
 
-Each message is announced exactly once (an atomic claim shared by every
-path). The notice is a count + "run `flow inbox pop`" tagged
+A push can be swallowed, so it never hides mail: your hooks (PreToolUse,
+Stop) still announce anything no hook has shown you, and an idle session
+whose push went unread gets one re-nudge ~30s later. You may see a push
+and a PreToolUse line for the same mail — pop once, it is one message. The notice is a count + "run `flow inbox pop`" tagged
 `[flow-bus wake]`; it never counts as the human typing. On a notice: one-
 shot `flow inbox pop` in the foreground, repeat until empty, act on each.
 `flow message` prints what happened: `woke <slug>` or `stored: <reason>`.

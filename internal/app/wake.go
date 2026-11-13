@@ -24,17 +24,24 @@ import (
 //	       session live (harness Waker) · idle (hook-tracked state)
 //	   │ idle                                   │ busy
 //	   ▼                                        ▼
-//	claim rows (bus_surfaced) ─► push notice    nothing: the session's own
+//	WAKE record (bus_wake_nudged) ─► push       nothing: the session's own
 //	(Claude socket / Codex queue)               hooks announce it — PreToolUse
-//	   │ push failed → release the claim        on the next tool call, the
+//	   │ push failed → release the wake record  on the next tool call, the
 //	   ▼                                        Stop check at turn end
 //	mark busy (the notice starts a turn)
 //
-// Ordering makes it race-free: Stop sets idle THEN claims; wake inserts
-// THEN reads the state. Every path claims through flowdb.ClaimUnsurfaced
-// (INSERT OR IGNORE), so exactly one of them announces a given message.
-// Claude also arms an asyncRewake waiter (`flow inbox wait --rewake`) as
-// the fallback when the socket is unavailable.
+// Two records (see flowdb/wake.go): the push writes only the WAKE record,
+// which coalesces pushes. The hooks read and write only the HOOK record
+// (bus_surfaced). A push can be swallowed silently (Claude socket
+// hold/refuse or a stale token; a `codex queue` Warning with exit 0), so a
+// push never hides mail from the hooks: PreToolUse and the Stop check
+// still announce it. A delivered push proves itself: its prompt reaches
+// UserPromptSubmit, which records the hook side.
+//
+// Claude also arms an asyncRewake waiter (`flow inbox wait --rewake`): it
+// nudges an idle session's mail nobody pushed or showed, and re-nudges
+// ONCE per batch when a push is still unread and unshown after
+// rewakeRenudgeAfter — the swallowed-push case on a fully idle session.
 
 // wakeOffEnv opts out: with it set, flow never pushes notices and the
 // sessions it starts keep the old Monitor listener discipline.
@@ -65,6 +72,12 @@ const (
 // rewakeGrace leaves young rows to the sender's immediate push; the
 // fallback waiter only claims mail nobody announced for this long.
 var rewakeGrace = 3 * time.Second
+
+// rewakeRenudgeAfter: a pushed row still unread, and never shown by a
+// hook, this long after its push is presumed swallowed; the waiter
+// re-nudges it once. It matches wakeBusyRecheck, the earliest a pushed
+// (so marked busy) but really idle session can be confirmed idle.
+var rewakeRenudgeAfter = 30 * time.Second
 
 // rewakePoll is how often a waiter checks the inbox.
 const rewakePoll = time.Second
@@ -173,12 +186,12 @@ func wakeTask(db *sql.DB, slug string) wakeResult {
 	if !sessionIdleNow(db, slug, t.SessionID.String, w) {
 		return stored(busyWhy)
 	}
-	won, err := flowdb.ClaimUnsurfaced(db, slug)
+	won, err := flowdb.ClaimWakeNudge(db, slug, time.Time{}, false, time.Now())
 	if err != nil {
 		return stored("claim failed: " + err.Error())
 	}
 	if len(won) == 0 {
-		return stored("already announced to the session")
+		return stored("already pushed to the session")
 	}
 	n, _ := flowdb.PendingCountForTask(db, slug)
 	if n < len(won) {
@@ -191,7 +204,7 @@ func wakeTask(db *sql.DB, slug string) wakeResult {
 		for i, m := range won {
 			ids[i] = m.ID
 		}
-		_ = flowdb.ReleaseSurfaced(db, slug, ids)
+		_ = flowdb.ReleaseWakeNudge(db, slug, ids)
 		return stored("push failed: " + err.Error())
 	}
 	_ = flowdb.SetSessionState(db, slug, flowdb.SessionBusy, time.Now())
@@ -276,10 +289,13 @@ func pruneClaudeEndpoints(dir string) {
 //	                                  idle session; 0 = nothing to do.
 //
 // Neither form consumes: the rows stay unread for `flow inbox pop`. The
-// rewake form only claims while the session is idle (a busy session's
-// hooks announce its mail), only rows older than rewakeGrace (the
-// sender's socket push goes first), and runs one waiter per session (pid
-// lock). It exits quietly when wake is off, in an auto run, in an unbound
+// plain form prints into the caller's context, so it uses the HOOK
+// record. The rewake form uses the WAKE record: it only fires while the
+// session is idle (a busy session's hooks announce its mail), skips rows
+// a hook already showed, nudges rows older than rewakeGrace that nobody
+// pushed (the sender's socket push goes first), re-nudges once a push
+// still unread after rewakeRenudgeAfter, and runs one waiter per session
+// (pid lock). It exits quietly when wake is off, in an auto run, in an unbound
 // or closed session, or when the Claude process is gone.
 func cmdInboxWait(args []string) int {
 	fs := flagSet("inbox wait")
@@ -397,8 +413,14 @@ func rewakeWait(timeout time.Duration) int {
 		if taskClosed(db, t.Slug) || !wakeActive() || (parent > 0 && !claude.ProcessAlive(parent)) {
 			return 0
 		}
-		if now := time.Now(); hasUnannouncedBefore(db, t.Slug, now.Add(-rewakeGrace)) && idle(now) {
-			if won, _ := flowdb.ClaimUnsurfacedOlderThan(db, t.Slug, now.Add(-rewakeGrace)); len(won) > 0 {
+		now := time.Now()
+		cutoff, renudge := now.Add(-rewakeGrace), now.Add(-rewakeRenudgeAfter)
+		if flowdb.WakeDue(db, t.Slug, cutoff, renudge) && idle(now) {
+			won, _ := flowdb.ClaimWakeNudge(db, t.Slug, cutoff, true, now)
+			if len(won) == 0 {
+				won, _ = flowdb.ClaimWakeRenudge(db, t.Slug, renudge)
+			}
+			if len(won) > 0 {
 				_ = flowdb.SetSessionState(db, t.Slug, flowdb.SessionBusy, time.Now())
 				n, _ := flowdb.PendingCountForTask(db, t.Slug)
 				if n < len(won) {
@@ -411,19 +433,4 @@ func rewakeWait(timeout time.Duration) int {
 		time.Sleep(rewakePoll)
 	}
 	return 0
-}
-
-// hasUnannouncedBefore reports whether slug has pending mail no path has
-// announced yet, created before cutoff (a cheap read; no claim).
-func hasUnannouncedBefore(db *sql.DB, slug string, cutoff time.Time) bool {
-	ms, err := flowdb.PendingUnsurfacedForTask(db, slug)
-	if err != nil {
-		return false
-	}
-	for _, m := range ms {
-		if ts, err := time.Parse(time.RFC3339, m.CreatedAt); err != nil || ts.Before(cutoff) {
-			return true
-		}
-	}
-	return false
 }

@@ -33,14 +33,15 @@ import (
 //	                  broadcast) right before a tool runs, so a mid-turn
 //	                  "stop, don't do X" reaches the agent before the
 //	                  action it would cancel. Announced once per item
-//	                  (bus_surfaced high-water mark), so the same pending
+//	                  (bus_surfaced, the HOOK record), so the same pending
 //	                  set never re-nudges across a turn's many tool calls.
 //	Stop              cmdHookStop(): marks the session idle, then the
 //	                  wake catch (unannounced mail → block with the
 //	                  notice), then the broadcast nudge.
 //
-// Every announcing path claims through flowdb.ClaimUnsurfaced, so a
-// message is announced once (see wake.go).
+// Every hook path claims through flowdb.ClaimUnsurfaced (the HOOK record),
+// so a hook announces a message once. Hooks never read the wake record: a
+// pushed notice may have been swallowed (see wake.go).
 //
 // Hook code must never fail loud — errors degrade to silence.
 
@@ -187,9 +188,15 @@ func busPromptSubmitContext() string {
 				m.ID, m.Body, fmtBusWait(m.WaitedS)))
 		}
 	}
-	// A wake notice that arrived as this prompt already says it all.
-	if s.TaskSlug != "" && !strings.Contains(hookPrompt, harness.WakeMarker) {
-		b.WriteString(pendingTaskNotice(db, s.TaskSlug))
+	// A wake notice that arrived as this prompt already says it all — and
+	// proves the push was delivered: record the pending set as shown, so
+	// PreToolUse and the Stop check do not repeat it.
+	if s.TaskSlug != "" {
+		if strings.Contains(hookPrompt, harness.WakeMarker) {
+			_, _ = flowdb.ClaimUnsurfaced(db, s.TaskSlug)
+		} else {
+			b.WriteString(pendingTaskNotice(db, s.TaskSlug))
+		}
 	}
 	return b.String()
 }
@@ -221,8 +228,8 @@ func busPreToolUseContext() string {
 	// A tool is about to run: the session is mid-turn (busy). This also
 	// covers turns that start without a UserPromptSubmit (a pushed wake).
 	_ = flowdb.TouchSessionActivity(db, s.TaskSlug, time.Now())
-	// Atomic claim: only rows no other path (wake, Stop check, waiter)
-	// announced yet, and never again for these rows.
+	// Atomic claim in the HOOK record: rows no hook path showed yet. A
+	// wake push does not count — it may have been swallowed.
 	msgs, err := flowdb.ClaimUnsurfaced(db, s.TaskSlug)
 	if err != nil || len(msgs) == 0 {
 		return ""
@@ -326,8 +333,8 @@ func pendingTaskNotice(db *sql.DB, slug string) string {
 	if err != nil || n == 0 {
 		return ""
 	}
-	// This notice announces the whole pending set: claim it so a wake or
-	// the Stop check does not announce the same rows again.
+	// This notice announces the whole pending set: record it so
+	// PreToolUse and the Stop check do not announce the same rows again.
 	_, _ = flowdb.ClaimUnsurfaced(db, slug)
 	how := " now (or your armed Monitor loop will deliver them)."
 	if t, _ := flowdb.GetTask(db, slug); noListenerSession(t) {
@@ -354,9 +361,9 @@ func nudgeBackoffFor(attempts int) time.Duration {
 // cmdHookStop fires when a turn ends. Two jobs, in order:
 //
 //  1. Wake catch (harness wake on, not an auto run): record the session
-//     idle, THEN claim any mail no other path announced — mail that landed
-//     after the turn's last tool call, when a sender's wake saw the
-//     session busy and left it to the hooks. If the claim wins anything,
+//     idle, THEN claim (HOOK record) any mail no hook showed — mail that
+//     landed after the turn's last tool call, when a sender's wake saw
+//     the session busy, or whose push was swallowed. If the claim wins anything,
 //     block the stop with the notice so the turn continues and pops it
 //     (the session stays busy). Setting idle before claiming closes the
 //     race with a concurrent sender, which inserts before reading the

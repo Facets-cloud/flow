@@ -7,25 +7,65 @@ import (
 
 // Harness wake state (see internal/app/wake.go for the delivery side).
 //
-// Two pieces of shared state let every notice path agree:
+// Two independent records, so a swallowed push can never hide mail:
 //
-//   - bus_surfaced (bus.go) is the ATOMIC CLAIM. A path that wants to tell
-//     a session "you have mail" first INSERT OR IGNOREs each pending row's
-//     id; only the rows whose insert it won are its to announce. The sender
-//     wake, the Stop-hook check, PreToolUse, SessionStart/UserPromptSubmit
-//     and the Claude asyncRewake waiter all claim through here, so a
-//     message is announced exactly once whichever path gets there first.
-//   - bus_session_state tracks whether the task's session is mid-turn
-//     (busy) or waiting for input (idle), written by flow's own hooks:
-//     UserPromptSubmit/PreToolUse → busy (+activity), Stop → idle. A busy
-//     session is left to its hooks; only an idle one is pushed a notice.
+//	bus_surfaced     HOOK record ("shown in this session's context").
+//	(bus.go)         Written only by paths whose output is known to land in
+//	                 context: PreToolUse, the Stop check, the SessionStart /
+//	                 UserPromptSubmit pending notices, a delivered wake
+//	                 prompt, and `flow inbox wait`. Hooks read only this.
+//	bus_wake_nudged  WAKE record ("a push was sent for this row"). Written
+//	                 by the sender's push and the asyncRewake waiter, used
+//	                 only to coalesce pushes (one per batch) and to bound
+//	                 the waiter's single re-nudge. A Claude socket push or
+//	                 a `codex queue` can be swallowed silently, so this
+//	                 record never decides whether the hooks announce mail.
+//
+// The one cross-read: the WAITER skips rows the hooks already showed (the
+// session provably knows; a nudge would be a wasted turn). The sender's
+// push reads only its own record.
+//
+// bus_session_state tracks whether the task's session is mid-turn (busy)
+// or waiting for input (idle), written by flow's own hooks:
+// UserPromptSubmit/PreToolUse → busy (+activity), Stop → idle. A busy
+// session is left to its hooks; only an idle one is pushed a notice.
 const wakeDDL = `
 CREATE TABLE IF NOT EXISTS bus_session_state (
     task_slug      TEXT PRIMARY KEY,
     state          TEXT NOT NULL,
     changed_at     TEXT NOT NULL,
     last_activity  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS bus_wake_nudged (
+    task_slug   TEXT NOT NULL,
+    message_id  TEXT NOT NULL,
+    nudged_at   TEXT NOT NULL,
+    renudged    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (task_slug, message_id)
 );`
+
+// applyWakeSchema creates the wake tables. On the first open after an
+// upgrade from a release where bus_surfaced was one claim shared by wake
+// and hooks (alpha.38), a pending row's mark may be a push that never
+// arrived: free every pending row's mark so the hooks announce it again.
+// Worst case is one harmless duplicate PreToolUse line. Keyed on the new
+// table's absence, so it runs once.
+func applyWakeSchema(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bus_wake_nudged'`).Scan(&n); err != nil {
+		return err
+	}
+	if _, err := db.Exec(wakeDDL); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := db.Exec(`DELETE FROM bus_surfaced
+            WHERE message_id IN (SELECT id FROM bus_messages WHERE status='pending')`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Session states recorded by flow's hooks.
 const (
@@ -45,34 +85,17 @@ func afterInsert(db *sql.DB, m *BusMessage) {
 	}
 }
 
-// ClaimUnsurfaced atomically claims every pending, not-yet-announced row
-// addressed to slug's session and returns the rows THIS caller won,
-// oldest first. An empty result means there is nothing for the caller to
-// announce (no mail, or another path already announced it).
+// ClaimUnsurfaced atomically claims (in the HOOK record) every pending row
+// addressed to slug's session that no hook-side path has shown yet, and
+// returns the rows THIS caller won, oldest first. Only callers whose
+// output reliably reaches the session's context may use it.
 func ClaimUnsurfaced(db *sql.DB, slug string) ([]*BusMessage, error) {
-	return claimUnsurfaced(db, slug, time.Time{})
-}
-
-// ClaimUnsurfacedOlderThan is ClaimUnsurfaced restricted to rows created
-// before cutoff — the fallback waiter's form, which leaves young rows to
-// the sender's immediate push.
-func ClaimUnsurfacedOlderThan(db *sql.DB, slug string, cutoff time.Time) ([]*BusMessage, error) {
-	return claimUnsurfaced(db, slug, cutoff)
-}
-
-func claimUnsurfaced(db *sql.DB, slug string, cutoff time.Time) ([]*BusMessage, error) {
 	cands, err := PendingUnsurfacedForTask(db, slug)
 	if err != nil || len(cands) == 0 {
 		return nil, err
 	}
 	var won []*BusMessage
 	for _, m := range cands {
-		if !cutoff.IsZero() {
-			ts, err := time.Parse(time.RFC3339, m.CreatedAt)
-			if err == nil && !ts.Before(cutoff) {
-				continue
-			}
-		}
 		res, err := db.Exec(`INSERT OR IGNORE INTO bus_surfaced (task_slug, message_id) VALUES (?,?)`, slug, m.ID)
 		if err != nil {
 			return won, err
@@ -84,11 +107,100 @@ func claimUnsurfaced(db *sql.DB, slug string, cutoff time.Time) ([]*BusMessage, 
 	return won, nil
 }
 
-// ReleaseSurfaced undoes a claim whose notice could not be delivered, so
-// a fallback path (a hook, the waiter) can claim and announce the rows.
-func ReleaseSurfaced(db *sql.DB, slug string, ids []string) error {
+// pendingUnnudged lists pending rows for slug with no wake record,
+// optionally excluding rows the hooks already showed.
+func pendingUnnudged(db *sql.DB, slug string, skipHookSurfaced bool) ([]*BusMessage, error) {
+	where := `status='pending' AND to_task_slug=?
+         AND id NOT IN (SELECT message_id FROM bus_wake_nudged WHERE task_slug=?)`
+	args := []any{slug, slug}
+	if skipHookSurfaced {
+		where += ` AND id NOT IN (SELECT message_id FROM bus_surfaced WHERE task_slug=?)`
+		args = append(args, slug)
+	}
+	return queryBusMsgs(db, where, args...)
+}
+
+// ClaimWakeNudge atomically records a push for every pending row of slug
+// not yet nudged (restricted to rows created before cutoff unless it is
+// zero) and returns the rows THIS caller won. skipHookSurfaced is the
+// waiter's form: rows the hooks already showed are left alone. now stamps
+// nudged_at (the re-nudge clock).
+func ClaimWakeNudge(db *sql.DB, slug string, cutoff time.Time, skipHookSurfaced bool, now time.Time) ([]*BusMessage, error) {
+	cands, err := pendingUnnudged(db, slug, skipHookSurfaced)
+	if err != nil || len(cands) == 0 {
+		return nil, err
+	}
+	ts := now.UTC().Format(time.RFC3339Nano)
+	var won []*BusMessage
+	for _, m := range cands {
+		if !cutoff.IsZero() {
+			if c, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil && !c.Before(cutoff) {
+				continue
+			}
+		}
+		res, err := db.Exec(`INSERT OR IGNORE INTO bus_wake_nudged (task_slug, message_id, nudged_at) VALUES (?,?,?)`,
+			slug, m.ID, ts)
+		if err != nil {
+			return won, err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			won = append(won, m)
+		}
+	}
+	return won, nil
+}
+
+// ClaimWakeRenudge claims the single re-nudge of rows that were pushed
+// before nudgedBefore, are still unread, and that no hook has shown — the
+// signature of a swallowed push. Each row is re-nudged at most once.
+func ClaimWakeRenudge(db *sql.DB, slug string, nudgedBefore time.Time) ([]*BusMessage, error) {
+	cands, err := queryBusMsgs(db, `status='pending' AND to_task_slug=?
+         AND id NOT IN (SELECT message_id FROM bus_surfaced WHERE task_slug=?)
+         AND id IN (SELECT message_id FROM bus_wake_nudged WHERE task_slug=? AND renudged=0)`,
+		slug, slug, slug)
+	if err != nil || len(cands) == 0 {
+		return nil, err
+	}
+	cut := nudgedBefore.UTC().Format(time.RFC3339Nano)
+	var won []*BusMessage
+	for _, m := range cands {
+		res, err := db.Exec(`UPDATE bus_wake_nudged SET renudged=1
+            WHERE task_slug=? AND message_id=? AND renudged=0 AND nudged_at < ?`, slug, m.ID, cut)
+		if err != nil {
+			return won, err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			won = append(won, m)
+		}
+	}
+	return won, nil
+}
+
+// WakeDue is the waiter's cheap read (no claim): is there a row it would
+// nudge (first nudge before cutoff) or re-nudge (pushed before
+// renudgeBefore), ignoring rows the hooks already showed?
+func WakeDue(db *sql.DB, slug string, cutoff, renudgeBefore time.Time) bool {
+	ms, err := pendingUnnudged(db, slug, true)
+	if err == nil {
+		for _, m := range ms {
+			if c, err := time.Parse(time.RFC3339, m.CreatedAt); err != nil || c.Before(cutoff) {
+				return true
+			}
+		}
+	}
+	var n int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_wake_nudged w JOIN bus_messages m ON m.id=w.message_id
+        WHERE w.task_slug=? AND w.renudged=0 AND w.nudged_at < ? AND m.status='pending'
+          AND w.message_id NOT IN (SELECT message_id FROM bus_surfaced WHERE task_slug=?)`,
+		slug, renudgeBefore.UTC().Format(time.RFC3339Nano), slug).Scan(&n)
+	return n > 0
+}
+
+// ReleaseWakeNudge undoes a wake claim whose push could not be sent, so a
+// later push or the waiter can nudge the rows.
+func ReleaseWakeNudge(db *sql.DB, slug string, ids []string) error {
 	for _, id := range ids {
-		if _, err := db.Exec(`DELETE FROM bus_surfaced WHERE task_slug=? AND message_id=?`, slug, id); err != nil {
+		if _, err := db.Exec(`DELETE FROM bus_wake_nudged WHERE task_slug=? AND message_id=?`, slug, id); err != nil {
 			return err
 		}
 	}
