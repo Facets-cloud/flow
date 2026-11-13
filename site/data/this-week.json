@@ -1,34 +1,34 @@
 {
   "counts": {
-    "asks_to_human": 7,
-    "children": 71,
-    "dead": 2,
-    "done": 66,
+    "asks_to_human": 6,
+    "children": 68,
+    "dead": 1,
+    "done": 62,
     "messages_between_tasks": 49,
-    "notes": 73,
-    "refs": 37,
+    "notes": 66,
+    "refs": 36,
     "running": 1,
-    "tasks": 75
+    "tasks": 70
   },
   "dead_reasons": {
-    "exited without closing": 2
+    "exited without closing": 1
   },
-  "generated_at": "2026-11-12T10:33:20+05:30",
+  "generated_at": "2026-11-11T16:20:15+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 75
+      "tasks": 70
     },
     {
-      "items": 73,
+      "items": 66,
       "name": "updates/",
-      "tasks": 75
+      "tasks": 70
     },
     {
-      "items": 72,
+      "items": 64,
       "name": "auto-runs/",
-      "tasks": 67
+      "tasks": 62
     },
     {
       "items": 11,
@@ -60,68 +60,13 @@
   "tasks": [
     {
       "auto_run_status": "running",
-      "child": false,
+      "child": true,
       "dead_reason": null,
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-12-05-03",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": false,
-      "dead_reason": "exited without closing",
-      "notes": 0,
-      "refs": [],
-      "shown": true,
-      "slug": "site-daily--2026-11-12-00-34",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 4,
-      "refs": [],
-      "shown": false,
-      "slug": "star-nudge",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        140
-      ],
-      "shown": true,
-      "slug": "skill-report-issue",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "connectors-release",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        138,
-        139
-      ],
-      "shown": true,
       "slug": "site-polish",
-      "status": "done"
+      "status": "in-progress"
     },
     {
       "auto_run_status": "completed",
@@ -296,7 +241,7 @@
         131,
         132
       ],
-      "shown": false,
+      "shown": true,
       "slug": "pr132-merge-main",
       "status": "done"
     },
@@ -309,7 +254,7 @@
         131,
         132
       ],
-      "shown": false,
+      "shown": true,
       "slug": "pr132-rebase",
       "status": "done"
     },
@@ -321,7 +266,7 @@
       "refs": [
         130
       ],
-      "shown": false,
+      "shown": true,
       "slug": "flow-schedule-fix",
       "status": "done"
     },
