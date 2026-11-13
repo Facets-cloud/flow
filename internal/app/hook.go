@@ -377,9 +377,11 @@ func cmdHookUserPromptSubmit(args []string) int {
 //
 // All the gating lives in busPreToolUseContext: unbound sessions and
 // tool calls with nothing new in the inbox produce "" (a silent no-op),
-// and the bus_surfaced delta-gate guarantees a given item is announced
-// at most once, so this never spams the same pending set across a turn's
-// many tool calls. Inform-only — it never consumes.
+// and the bus_surfaced delta-gate (the hook-side record) guarantees the
+// hooks announce a given item at most once, so this never spams the same
+// pending set across a turn's many tool calls. Wake pushes keep their own
+// record (bus_wake_nudged), so a swallowed push can still be announced
+// here once. Inform-only — it never consumes.
 func cmdHookPreToolUse(args []string) int {
 	fs := flagSet("hook pre-tool-use")
 	if err := fs.Parse(args); err != nil {

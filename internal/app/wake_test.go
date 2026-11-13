@@ -718,3 +718,42 @@ func TestWaiterSkipsHookSurfacedMail(t *testing.T) {
 		t.Fatalf("waiter nudged hook-surfaced mail: rc=%d out=%q", rc, out)
 	}
 }
+
+// A waiter nudge (exit 2) is itself the delivery: its stderr lands in
+// context without passing UserPromptSubmit, so the waiter records the hook
+// side. Neither PreToolUse nor Stop repeats it (no extra turn). Covers the
+// first nudge (push unavailable) and the re-nudge of a swallowed push.
+func TestWaiterNudgeRecordsHookSide(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		live  bool
+		renud bool
+	}{{"first-nudge", false, false}, {"re-nudge", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := wakeSetup(t)
+			f := &fakeWaker{live: tc.live}
+			stubWaker(t, f)
+			shortRewakeGrace(t)
+			shortRenudge(t, 0)
+			_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+			sendTo(t, "w", "x")
+			if tc.renud {
+				if len(f.pushes) != 1 {
+					t.Fatal("setup: no push")
+				}
+				f.known, f.busy = true, false
+				_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+			}
+			rc, _, out := runInboxWait(t, `{"session_id":"sid-w","hook_event_name":"Stop"}`, "--rewake", "--timeout", "3")
+			if rc != 2 || !strings.Contains(out, harness.WakeMarker) {
+				t.Fatalf("waiter did not nudge: rc=%d out=%q", rc, out)
+			}
+			if ctx := preToolUseSID(t, "sid-w"); ctx != "" {
+				t.Errorf("PreToolUse repeated the waiter nudge: %q", ctx)
+			}
+			if out := stopHookPayload(t, `{"session_id":"sid-w","stop_hook_active":false}`); strings.Contains(out, "block") {
+				t.Errorf("Stop blocked after the waiter nudge: %s", out)
+			}
+		})
+	}
+}

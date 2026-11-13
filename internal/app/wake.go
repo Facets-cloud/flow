@@ -421,6 +421,14 @@ func rewakeWait(timeout time.Duration) int {
 				won, _ = flowdb.ClaimWakeRenudge(db, t.Slug, renudge)
 			}
 			if len(won) > 0 {
+				// The exit-2 stderr IS the delivery: it lands in context
+				// without passing UserPromptSubmit, so record the hook side
+				// here or PreToolUse/Stop would repeat it (an extra turn).
+				shown := make([]string, len(won))
+				for i, m := range won {
+					shown[i] = m.ID
+				}
+				_ = flowdb.MarkSurfaced(db, t.Slug, shown)
 				_ = flowdb.SetSessionState(db, t.Slug, flowdb.SessionBusy, time.Now())
 				n, _ := flowdb.PendingCountForTask(db, t.Slug)
 				if n < len(won) {
