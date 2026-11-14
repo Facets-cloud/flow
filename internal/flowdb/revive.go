@@ -114,7 +114,9 @@ func ReleaseRevive(db *sql.DB, slug string, holderPID int, claimedAt time.Time, 
 		NullIfEmpty(prev.Status), NullIfEmpty(prev.Started), NullIfEmpty(prev.Finished), slug, holderPID); err != nil {
 		return err
 	}
-	_, err := db.Exec(`DELETE FROM bus_revives WHERE task_slug=? AND revived_at=?`,
+	// One row: another revive may share the second.
+	_, err := db.Exec(`DELETE FROM bus_revives WHERE rowid =
+        (SELECT rowid FROM bus_revives WHERE task_slug=? AND revived_at=? ORDER BY rowid DESC LIMIT 1)`,
 		slug, claimedAt.UTC().Format(time.RFC3339))
 	return err
 }

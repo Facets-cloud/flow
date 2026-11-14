@@ -360,6 +360,7 @@ func cmdAutoExec(args []string) int {
 	reviveStarted := task.AutoRunStarted.String
 	if revive {
 		prompt = buildRevivePrompt(slug)
+		adoptReviveRun(db, slug)
 	}
 
 	// Resolve the task's harness (claude today; codex/gemini once their
@@ -388,6 +389,10 @@ func cmdAutoExec(args []string) int {
 	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
+	// The headless process is gone: whatever its hooks last recorded, no
+	// turn is running (an auto run's Stop hook never records idle), and a
+	// stale 'busy' would hold off wake and revive for wakeStaleBusy.
+	_ = flowdb.SetSessionState(db, slug, flowdb.SessionIdle, time.Now())
 
 	// Re-read status: the session may have called `flow done` on itself.
 	// The self-done is the authoritative success signal.

@@ -107,30 +107,49 @@ func isChildReport(db *sql.DB, m *flowdb.BusMessage) bool {
 }
 
 // maybeRevive upgrades a "not live" wake result into a revive when every
-// gate passes; otherwise r comes back unchanged.
+// gate passes; otherwise r comes back unchanged, or with the reason a
+// revive was refused (the human gets one FYI for a refusal: the sender is
+// a headless child nobody watches).
 func maybeRevive(db *sql.DB, m *flowdb.BusMessage, r wakeResult) wakeResult {
-	if !r.notLive || !reviveActive() || !isChildReport(db, m) || !isDriverTask(db, m.ToTaskSlug) {
+	if !r.notLive || !wakeActive() || !isChildReport(db, m) || !isDriverTask(db, m.ToTaskSlug) {
+		return r
+	}
+	if !reviveActive() {
+		r.Reason += "; not revived: revive off (" + reviveOffEnv + ")"
 		return r
 	}
 	t, err := flowdb.GetTask(db, m.ToTaskSlug)
 	if err != nil || t == nil || !t.SessionID.Valid || t.SessionID.String == "" {
 		return r
 	}
-	live, onDisk := reviveProbe(t, wakeAdapterFor(t))
+	w := wakeAdapterFor(t)
+	live, onDisk := reviveProbe(t, w)
 	// Belt and braces for a session the process probes cannot see (a
 	// host-owned Codex thread): hooks reporting a running turn mean live.
-	if st, _ := flowdb.GetSessionState(db, t.Slug); !st.Idle(time.Now(), wakeStaleBusy) {
-		live = true
+	// A harness that cross-checks the turn itself (Claude) already
+	// answered in the probe; its hook state can be stale (a tab closed
+	// mid-turn never records idle), so it is not consulted.
+	if _, canCheck := w.(harness.TurnStateChecker); !canCheck {
+		if st, _ := flowdb.GetSessionState(db, t.Slug); !st.Idle(time.Now(), wakeStaleBusy) {
+			live = true
+		}
 	}
 	switch {
 	case live:
-		r.Reason += "; not revived: the session may still be running"
-		return r
+		return refuseRevive(db, t, r, "the session may still be running")
 	case !onDisk:
-		r.Reason += "; not revived: no transcript to resume"
-		return r
+		return refuseRevive(db, t, r, "no transcript to resume")
 	}
 	return launchRevive(db, t, r)
+}
+
+// refuseRevive reports why t was not revived, to the sender and (once
+// while unread) to the human.
+func refuseRevive(db *sql.DB, t *flowdb.Task, r wakeResult, why string) wakeResult {
+	r.Reason += "; not revived: " + why
+	fyiHumanOnce(db, t.Slug, reviveRefusedPrefix, fmt.Sprintf(reviveRefusedPrefix+"%s for its child's report: %s. "+
+		"The report is still unread — reopen it with flow do %s", t.Slug, why, t.Slug))
+	return r
 }
 
 // launchRevive claims and starts the headless resume.
@@ -148,8 +167,7 @@ func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
 		r.Reason = "auto run (it pops in the foreground)"
 		return r
 	case claim == flowdb.ReviveRateLimited:
-		r.Reason += fmt.Sprintf("; not revived: rate limit (%d per %s)", reviveLimit.Max, reviveLimit.Window)
-		return r
+		return refuseRevive(db, t, r, fmt.Sprintf("rate limit (%d per %s)", reviveLimit.Max, reviveLimit.Window))
 	case claim != flowdb.ReviveClaimed:
 		return r
 	}
@@ -164,9 +182,27 @@ func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
 		r.Reason += "; revive failed: " + err.Error()
 		return r
 	}
-	_ = recordAutoRunLaunched(db, t.Slug, pid, logPath)
+	_ = recordReviveLaunched(db, t.Slug, os.Getpid(), pid, logPath)
 	r.Woke, r.Reason = true, "revived its exited session headlessly, pid "+fmt.Sprint(pid)
 	return r
+}
+
+// recordReviveLaunched records the launched supervisor's pid and log. The
+// pid moves only while the row is still this claim's run (the claimant's
+// pid, or the supervisor's own once it adopted the row): a supervisor that
+// already finished must not be put back to 'running' with a dead pid.
+func recordReviveLaunched(db *sql.DB, slug string, holderPID, pid int, logPath string) error {
+	_, err := db.Exec(`UPDATE tasks SET auto_run_log=?, updated_at=?,
+            auto_run_pid = CASE WHEN auto_run_status='running' AND auto_run_pid IN (?,?) THEN ? ELSE auto_run_pid END
+        WHERE slug=?`, logPath, flowdb.NowISO(), holderPID, pid, pid, slug)
+	return err
+}
+
+// adoptReviveRun runs first in a revive's supervisor: the claim stamped
+// the SENDER's pid, so the supervisor takes the row over, or a run that
+// ends before the sender records the pid could not finalize it.
+func adoptReviveRun(db *sql.DB, slug string) {
+	_, _ = db.Exec(`UPDATE tasks SET auto_run_pid=? WHERE slug=? AND auto_run_status='running'`, supervisorPID(), slug)
 }
 
 // isReviveRun reports whether this process belongs to the revive run of
@@ -192,7 +228,9 @@ func reviveIfMailLanded(db *sql.DB, slug, startedAt string) {
 	for i := len(ms) - 1; i >= 0; i-- {
 		m := ms[i]
 		c, err := time.Parse(time.RFC3339, m.CreatedAt)
-		if err != nil || c.Before(start) || !isChildReport(db, m) {
+		// Second precision: a report stamped in the start second is the one
+		// that triggered this revive, not mail that landed mid-run.
+		if err != nil || !c.After(start) || !isChildReport(db, m) {
 			continue
 		}
 		res := maybeRevive(db, m, wakeResult{Slug: slug, notLive: true})
@@ -205,44 +243,36 @@ func reviveIfMailLanded(db *sql.DB, slug, startedAt string) {
 // failed resume is an FYI to the human (the child's mail is still unread);
 // otherwise mail that landed mid-run gets its one re-check.
 func finishRevive(db *sql.DB, t *flowdb.Task, status, startedAt string) {
-	// The headless process is gone: whatever its hooks last recorded, no
-	// turn is running now (an auto run's Stop hook never records idle).
-	_ = flowdb.SetSessionState(db, t.Slug, flowdb.SessionIdle, time.Now())
 	switch status {
 	case "dead":
-		// One FYI per unseen failure: a resume that keeps failing would
-		// otherwise repeat it on every revive the rate limit allows.
-		if unreadReviveFailure(db, t.Slug) {
-			return
-		}
-		m := &flowdb.BusMessage{
-			ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
-			FromAssignee: busUser, FromTaskSlug: t.Slug, ToAssignee: busUser, FYI: true,
-			Body: fmt.Sprintf(reviveFailedPrefix+"%s for its children's mail and the headless resume "+
-				"failed; the mail is still unread — reopen it with flow do %s (log under tasks/%s/auto-runs/)", t.Slug, t.Slug, t.Slug),
-		}
-		_ = flowdb.InsertBusMessage(db, m)
+		fyiHumanOnce(db, t.Slug, reviveFailedPrefix, fmt.Sprintf(reviveFailedPrefix+"%s for its children's mail and the headless resume "+
+			"failed; the mail is still unread — reopen it with flow do %s (log under tasks/%s/auto-runs/)", t.Slug, t.Slug, t.Slug))
 	case reviveStatus:
 		reviveIfMailLanded(db, t.Slug, startedAt)
 	}
 }
 
-// reviveFailedPrefix starts the human FYI for a failed revive.
-const reviveFailedPrefix = "FYI: flow tried to revive driver "
+// Human FYIs about a driver's revive, one per kind while unread.
+const (
+	reviveFailedPrefix  = "FYI: flow tried to revive driver "
+	reviveRefusedPrefix = "FYI: flow did not revive driver "
+)
 
-// unreadReviveFailure reports whether the human still has an unread
-// failed-revive FYI for slug.
-func unreadReviveFailure(db *sql.DB, slug string) bool {
-	ms, err := flowdb.UnreadForHuman(db, busUser)
-	if err != nil {
-		return false
-	}
-	for _, m := range ms {
-		if m.FromTaskSlug == slug && strings.HasPrefix(m.Body, reviveFailedPrefix) {
-			return true
+// fyiHumanOnce sends the human an FYI from slug, unless one from slug
+// starting with prefix is still unread: a driver that keeps failing (or
+// being refused) would otherwise repeat it on every child report.
+func fyiHumanOnce(db *sql.DB, slug, prefix, body string) {
+	if ms, err := flowdb.UnreadForHuman(db, busUser); err == nil {
+		for _, m := range ms {
+			if m.FromTaskSlug == slug && strings.HasPrefix(m.Body, prefix) {
+				return
+			}
 		}
 	}
-	return false
+	_ = flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: busUser, FromTaskSlug: slug, ToAssignee: busUser, FYI: true, Body: body,
+	})
 }
 
 // buildRevivePrompt is the first user turn of a revive: short, because

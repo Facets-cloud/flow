@@ -117,10 +117,13 @@ func TestReviveGates(t *testing.T) {
 		{"not a driver", func(t *testing.T, db *sql.DB) {
 			_, _ = db.Exec(`DELETE FROM task_tags WHERE task_slug='d'`)
 		}, "c", false, "no live push channel"},
-		{"revive off", func(t *testing.T, db *sql.DB) { t.Setenv(reviveOffEnv, "1") }, "c", false, "no live push channel"},
+		{"revive off", func(t *testing.T, db *sql.DB) { t.Setenv(reviveOffEnv, "1") }, "c", false, "revive off (FLOW_NO_REVIVE)"},
 		{"wake off", func(t *testing.T, db *sql.DB) { t.Setenv(wakeOffEnv, "1") }, "c", false, "wake off"},
 		{"maybe live", func(t *testing.T, db *sql.DB) { stubReviveProbe(t, true, true) }, "c", false, "may still be running"},
-		{"hooks say mid-turn", func(t *testing.T, db *sql.DB) {
+		{"hooks say mid-turn, no turn check", func(t *testing.T, db *sql.DB) {
+			old := wakeAdapterFor
+			wakeAdapterFor = func(*flowdb.Task) harness.Waker { return plainWaker{} }
+			t.Cleanup(func() { wakeAdapterFor = old })
 			_ = flowdb.SetSessionState(db, "d", flowdb.SessionBusy, time.Now())
 		}, "c", false, "may still be running"},
 		{"no transcript", func(t *testing.T, db *sql.DB) { stubReviveProbe(t, false, false) }, "c", false, "no transcript"},
@@ -241,6 +244,10 @@ func TestReviveSupervisorRevivesMailLandedMidRun(t *testing.T) {
 	supervisorPID = func() int { return 9101 }
 	t.Cleanup(func() { supervisorPID = oldPID })
 	t.Setenv(reviveEnvVar, "d")
+	// A real revive runs for seconds: mail in its start second is taken
+	// for the trigger, so start it earlier than the mid-run report.
+	_, _ = db.Exec(`UPDATE tasks SET auto_run_started=? WHERE slug='d'`,
+		time.Now().Add(-5*time.Second).Format(time.RFC3339))
 	stubAutoRunner(t, func(h harness.Harness, sessionID, p string, opts harness.LaunchOpts) error {
 		_ = flowdb.TouchSessionActivity(db, "d", time.Now())
 		_, _ = db.Exec(`DELETE FROM bus_messages WHERE id='m0'`) // the session popped it

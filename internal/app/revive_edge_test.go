@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/harness/claude"
 )
 
@@ -221,7 +222,7 @@ func TestReviveRecheckCoversSurfacedButUnpoppedMail(t *testing.T) {
 }
 
 // reviveIfMailLanded: a bad start time does nothing; mail from before the
-// revive started is not its business; a report exactly at the start counts.
+// revive started, or from its start second, is not its business.
 func TestReviveIfMailLandedBounds(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -231,7 +232,10 @@ func TestReviveIfMailLandedBounds(t *testing.T) {
 	}{
 		{"unparseable start", func(time.Time) string { return "yesterday" }, time.Now(), 0},
 		{"mail before start", func(c time.Time) string { return c.Add(time.Minute).Format(time.RFC3339) }, time.Now(), 0},
-		{"mail exactly at start", func(c time.Time) string { return c.Format(time.RFC3339) }, time.Now(), 1},
+		// Second precision: a report stamped in the revive's start second is the
+		// one that triggered it (e2e: a revive that did not pop it re-revived).
+		{"mail in the start second", func(c time.Time) string { return c.Format(time.RFC3339) }, time.Now(), 0},
+		{"mail after start", func(c time.Time) string { return c.Add(-2 * time.Second).Format(time.RFC3339) }, time.Now(), 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -313,5 +317,154 @@ func TestReviveProbeReal(t *testing.T) {
 	claude.PSRunner = func() ([]byte, error) { return []byte(""), nil }
 	if live, onDisk := reviveProbe(task, nil); live || onDisk {
 		t.Errorf("no process, no transcript: live=%v onDisk=%v, want false,false", live, onDisk)
+	}
+}
+
+// plainWaker has no TurnStateChecker: a harness that cannot cross-check a
+// session's turn (Codex), where hook state is the only busy signal.
+type plainWaker struct{}
+
+func (plainWaker) WakeLive(harness.WakeRequest) bool        { return false }
+func (plainWaker) Wake(harness.WakeRequest) (string, error) { return "", nil }
+
+// e2e bug 1: a driver closed mid-turn (or one that last ran as an auto
+// run, whose Stop hook never records idle) keeps hook state 'busy'. With a
+// harness that can cross-check the turn (Claude), the probe already said
+// not running, so stale hook state must not refuse the revive.
+func TestReviveIgnoresHookBusyWhenHarnessCanCheck(t *testing.T) {
+	db, envs := reviveSetup(t) // fakeWaker is a TurnStateChecker
+	_ = flowdb.SetSessionState(db, "d", flowdb.SessionBusy, time.Now())
+	if out := mail(t, db, "hb", "c", "d", false); len(*envs) != 1 {
+		t.Errorf("launches = %d (out %q), want a revive", len(*envs), out)
+	}
+}
+
+// Without a turn cross-check, recent hook activity still means live.
+func TestReviveHookBusyGuardWithoutTurnCheck(t *testing.T) {
+	db, envs := reviveSetup(t)
+	old := wakeAdapterFor
+	wakeAdapterFor = func(*flowdb.Task) harness.Waker { return plainWaker{} }
+	t.Cleanup(func() { wakeAdapterFor = old })
+	_ = flowdb.SetSessionState(db, "d", flowdb.SessionBusy, time.Now())
+	if out := mail(t, db, "hc", "c", "d", false); len(*envs) != 0 || !strings.Contains(out, "may still be running") {
+		t.Errorf("launches = %d out %q, want refused", len(*envs), out)
+	}
+}
+
+// e2e bug 1 (second half): any auto run's process is gone once its
+// supervisor finalizes, so its session is idle whatever the hooks said.
+func TestAutoExecLeavesSessionIdle(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "ar")
+	seedRunningAuto(t, "ar", 4545)
+	db := openFlowDB(t)
+	_ = flowdb.SetSessionState(db, "ar", flowdb.SessionBusy, time.Now())
+	stubAutoRunner(t, func(harness.Harness, string, string, harness.LaunchOpts) error { return nil })
+	cmdAutoExec([]string{"ar"})
+	if st, _ := flowdb.GetSessionState(db, "ar"); st.State == flowdb.SessionBusy {
+		t.Errorf("session state = busy after the auto run exited")
+	}
+}
+
+// e2e bug 4: the claim stamps the SENDER's pid. A supervisor that finished
+// before the sender recorded its pid could not finalize (not its pid), and
+// the sender's late record then left the row 'running' with a dead pid.
+func TestReviveFastSupervisorFinalizes(t *testing.T) {
+	db, envs := reviveSetup(t)
+	oldPID := supervisorPID
+	t.Cleanup(func() { supervisorPID = oldPID })
+	stubAutoRunner(t, func(harness.Harness, string, string, harness.LaunchOpts) error { return nil })
+	autoLauncher = func(slug, workDir, logPath, injection string, env []string) (int, error) {
+		*envs = append(*envs, env)
+		// The supervisor runs to completion before launch returns.
+		supervisorPID = func() int { return 9301 }
+		t.Setenv(reviveEnvVar, slug)
+		cmdAutoExec([]string{slug})
+		return 9301, nil
+	}
+	mail(t, db, "fs", "c", "d", false)
+	task, _ := flowdb.GetTask(db, "d")
+	if task.AutoRunStatus.String != reviveStatus || task.AutoRunPID.Valid {
+		t.Errorf("auto run = %q pid %v, want %s with no pid", task.AutoRunStatus.String, task.AutoRunPID, reviveStatus)
+	}
+}
+
+func TestAutoRunColorRevived(t *testing.T) {
+	if autoRunColor(reviveStatus) == "" {
+		t.Error("revived has no color in flow list")
+	}
+}
+
+// ReleaseRevive drops exactly its own rate-limit row, even when another
+// row shares the second.
+func TestReleaseReviveDropsOneRow(t *testing.T) {
+	db, _ := reviveSetup(t)
+	now := time.Now()
+	ts := now.UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO bus_revives (task_slug, revived_at) VALUES ('d', ?)`, ts)
+	if c, err := flowdb.ClaimRevive(db, "d", now, reviveLimit, 7); err != nil || c != flowdb.ReviveClaimed {
+		t.Fatalf("claim = %v, %v", c, err)
+	}
+	if err := flowdb.ReleaseRevive(db, "d", 7, now, flowdb.AutoRunRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bus_revives WHERE task_slug='d'`).Scan(&n)
+	if n != 1 {
+		t.Errorf("rows = %d, want 1 (only the released claim's row dropped)", n)
+	}
+}
+
+// A refused revive leaves the child's report unread with only a headless
+// sender told why: the human gets ONE FYI naming the driver and reason.
+func TestReviveRefusalFYIsHuman(t *testing.T) {
+	humanFYIs := func(db *sql.DB) []string {
+		ms, _ := flowdb.UnreadForHuman(db, busUser)
+		var out []string
+		for _, m := range ms {
+			if m.FromTaskSlug == "d" {
+				out = append(out, m.Body)
+			}
+		}
+		return out
+	}
+	cases := []struct {
+		name, reason string
+		prep         func(t *testing.T, db *sql.DB)
+	}{
+		{"rate limit", "rate limit", func(t *testing.T, db *sql.DB) {
+			old := reviveLimit
+			reviveLimit = flowdb.ReviveLimit{Window: time.Hour, Max: 0}
+			t.Cleanup(func() { reviveLimit = old })
+		}},
+		{"may be running", "may still be running", func(t *testing.T, db *sql.DB) { stubReviveProbe(t, true, true) }},
+		{"no transcript", "no transcript", func(t *testing.T, db *sql.DB) { stubReviveProbe(t, false, false) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			db, envs := reviveSetup(t)
+			c.prep(t, db)
+			mail(t, db, "x1", "c", "d", false)
+			mail(t, db, "x2", "c", "d", false)
+			got := humanFYIs(db)
+			if len(*envs) != 0 || len(got) != 1 {
+				t.Fatalf("launches=%d human FYIs=%d %q, want 0 and 1", len(*envs), len(got), got)
+			}
+			if !strings.Contains(got[0], "d") || !strings.Contains(got[0], c.reason) {
+				t.Errorf("FYI %q should name the driver and %q", got[0], c.reason)
+			}
+		})
+	}
+}
+
+// Non-eligible mail and an in-flight revive are not refusals worth a ping.
+func TestReviveNoRefusalFYIForNormalHolds(t *testing.T) {
+	db, envs := reviveSetup(t)
+	mail(t, db, "n1", "o", "d", false) // not its child
+	mail(t, db, "n2", "c", "d", false) // revives
+	mail(t, db, "n3", "c", "d", false) // held by the running revive
+	ms, _ := flowdb.UnreadForHuman(db, busUser)
+	if len(*envs) != 1 || len(ms) != 0 {
+		t.Errorf("launches=%d human mail=%d, want 1 and 0", len(*envs), len(ms))
 	}
 }
