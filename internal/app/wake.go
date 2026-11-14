@@ -30,6 +30,9 @@ import (
 //	   ▼                                        Stop check at turn end
 //	mark busy (the notice starts a turn)
 //
+// Not live at all (exited)? maybeRevive (revive.go) may resume a DRIVER
+// headlessly when the mail is its own child's report.
+//
 // Two records (see flowdb/wake.go): the push writes only the WAKE record,
 // which coalesces pushes. The hooks read and write only the HOOK record
 // (bus_surfaced). A push can be swallowed silently (Claude socket
@@ -118,6 +121,9 @@ type wakeResult struct {
 	Slug   string
 	Woke   bool
 	Reason string // why it was only stored; or a push detail when Woke
+	// notLive: stored only because the session has no live push channel
+	// (exited, or its harness has none) — the case revive may take over.
+	notLive bool
 }
 
 func (r wakeResult) String() string {
@@ -149,7 +155,7 @@ func afterBusInsert(db *sql.DB, m *flowdb.BusMessage) {
 	if m.ToTaskSlug == "" {
 		return // human mail never wakes a session
 	}
-	wakeResults[m.ID] = wakeTask(db, m.ToTaskSlug)
+	wakeResults[m.ID] = maybeRevive(db, m, wakeTask(db, m.ToTaskSlug))
 }
 
 // wakeTask pushes a notice into slug's session if every gate passes.
@@ -164,6 +170,10 @@ func wakeTask(db *sql.DB, slug string) wakeResult {
 	if err != nil || t == nil {
 		return stored("no such task")
 	}
+	// A 'running' row whose supervisor died (kill -9, reboot) would hold
+	// this task's mail behind the auto-run gate, and block every revive,
+	// until some read path reconciled it; settle it here instead.
+	reconcileAutoRun(db, t)
 	switch {
 	case t.ArchivedAt.Valid:
 		return stored("task archived")
@@ -176,10 +186,12 @@ func wakeTask(db *sql.DB, slug string) wakeResult {
 	}
 	w := wakeAdapterFor(t)
 	if w == nil {
+		r.notLive = true
 		return stored("harness has no wake channel")
 	}
 	req := harness.WakeRequest{SessionID: t.SessionID.String, StateDir: wakeStateDir(), Timeout: wakePushTimeout}
 	if !w.WakeLive(req) {
+		r.notLive = true
 		return stored("no live push channel (a fallback waiter or its hooks deliver)")
 	}
 	const busyWhy = "session busy (its hooks deliver at the next tool call or turn end)"

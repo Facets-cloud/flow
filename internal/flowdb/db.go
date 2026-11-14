@@ -268,6 +268,10 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply wake schema: %w", err)
 	}
+	if _, err := db.Exec(reviveDDL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply revive schema: %w", err)
+	}
 	if _, err := db.Exec(sessionVersionDDL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply session version schema: %w", err)

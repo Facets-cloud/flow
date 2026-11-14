@@ -11,6 +11,19 @@
 
 ## Unreleased
 
+- **Drivers are revived when a child writes and the session has exited.**
+  If you are a driver resumed with a `[flow-bus wake]` prompt that says no
+  human is watching, pop the inbox in the foreground, act on each message,
+  send the human at most one `flow message user` for a decision, and end
+  the turn. You may dispatch auto children from a revive. Opt out with
+  `FLOW_NO_REVIVE=1`. Details: references/messaging.md, "Driver revive".
+  The human gets one FYI naming the driver when a revive is refused (rate
+  limit or no transcript, one per reason), fails or is killed, ends with
+  child reports unread, or the driver is in backlog; relay it and reopen
+  the driver if its children are waiting. A driver that may still be
+  running gets no FYI (its hooks deliver). A revive that drains the
+  reports marks the driver's earlier revive FYIs read.
+
 ## v0.1.0-alpha.38
 
 - **Mail reaches you automatically (harness wake).** flow now pushes a

@@ -222,6 +222,23 @@ Never woken: closed tasks, auto runs (they pop in the foreground), the
 human. `flow inbox wait` is the non-acking wait (returns when unannounced
 mail lands; leaves it unread).
 
+**Driver revive (exited session).** Wake needs a live process. When a
+DRIVER task's session has exited and one of its own auto children sends it
+a non-FYI message, flow resumes that same session headlessly (`woke <slug>
+(revived …)`): you get a `[flow-bus wake]` prompt saying no human is
+watching — pop the inbox, act as the driver (verify, note, dispatch the
+next child), send the human ONE `flow message user` if a decision is
+needed, and end the turn. A revive may dispatch auto children. Never while
+any process may hold the session; one at a time; at most 4 per hour per
+driver; off with `FLOW_NO_REVIVE=1` (or `FLOW_NO_WAKE=1`). Other mail to an
+exited session waits for the next `flow do`. The human gets ONE FYI (no
+repeat while it is unread) naming the driver when a revive is refused for
+a rate limit or a missing transcript (one per reason), fails or is killed,
+ends with child reports still unread, or the driver is in backlog (never
+revived): relay it, and reopen the driver if its children are waiting. A
+driver that may still be running gets no FYI — its own hooks deliver. A
+revive that drains the reports marks the driver's earlier revive FYIs read.
+
 ## Fallback: listener discipline (wake off: `FLOW_NO_WAKE=1`)
 
 Only with wake off, and only in a BOUND session (one bound to a flow

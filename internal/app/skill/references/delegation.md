@@ -119,7 +119,9 @@ judgment calls from the user mid-way:
    permission first, and keep working on the main thread.
 4. The child reports with `flow message user/<driver>`; harness wake
    brings each report to you (§4.18): pop in the foreground when a
-   flow-bus notice says mail landed. No listener to arm.
+   flow-bus notice says mail landed. No listener to arm. If your session
+   has exited, a child's report revives it headlessly (messaging.md,
+   "Driver revive").
 5. When the child says it is done, open the update note it names
    (`flow show task <slug>` lists it), verify the result yourself, then
    report to the user. Do not relay a child's claim unverified.
