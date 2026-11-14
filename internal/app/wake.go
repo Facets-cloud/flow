@@ -170,6 +170,10 @@ func wakeTask(db *sql.DB, slug string) wakeResult {
 	if err != nil || t == nil {
 		return stored("no such task")
 	}
+	// A 'running' row whose supervisor died (kill -9, reboot) would hold
+	// this task's mail behind the auto-run gate, and block every revive,
+	// until some read path reconciled it; settle it here instead.
+	reconcileAutoRun(db, t)
 	switch {
 	case t.ArchivedAt.Valid:
 		return stored("task archived")

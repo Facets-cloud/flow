@@ -29,6 +29,11 @@ func reviveSetup(t *testing.T) (*sql.DB, *[][]string) {
 	}
 	stubWaker(t, &fakeWaker{live: false})
 	stubReviveProbe(t, false, true)
+	// The fake launcher's pids stand for live supervisors; without this a
+	// wake-time reconcile would settle their runs as dead.
+	oldAlive := processAlive
+	processAlive = func(int) bool { return true }
+	t.Cleanup(func() { processAlive = oldAlive })
 	var envs [][]string
 	old := autoLauncher
 	autoLauncher = func(slug, workDir, logPath, injection string, env []string) (int, error) {
