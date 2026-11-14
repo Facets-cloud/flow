@@ -120,6 +120,8 @@ func cmdDone(args []string) int {
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
 		} else if closeoutDeferred(h, task) {
 			fmt.Println("close-out sweep deferred: the auto-run supervisor runs it after the harness exits")
+		} else if tabSweepDetached(h, task) && launchDetachedSweep(task.Slug) {
+			fmt.Println("close-out sweep detached: it runs in its own process (this harness cuts long inline commands short)")
 		} else {
 			fmt.Print("updating kbs, project updates...")
 			if err := runCloseoutSweep(h, task); err != nil {

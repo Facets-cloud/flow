@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness/prx"
 )
 
 // noHeadlessLaunch fails the test if the detached headless supervisor is
@@ -212,20 +213,103 @@ func TestCmdDoAutoTabNoTerminalFails(t *testing.T) {
 	}
 }
 
-func TestCmdDoAutoTabRefusesPrx(t *testing.T) {
+// prx: the tab runs `prx -session-id <id>` interactively in bypass mode
+// with the autonomous prompt.
+func TestCmdDoAutoTabSpawnsTabPrx(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "prx-tab")
-	count, _ := stubITerm(t)
+	count, script := stubITerm(t)
 	noHeadlessLaunch(t)
-	if rc := cmdDo([]string{"prx-tab", "--auto", "--tab", "--harness", "prx"}); rc != 2 {
-		t.Errorf("prx --tab rc=%d, want 2", rc)
+	if rc := cmdDo([]string{"prx-tab", "--auto", "--tab", "--harness", "prx"}); rc != 0 {
+		t.Fatalf("rc=%d, want 0", rc)
 	}
-	if *count != 0 {
-		t.Errorf("no tab should open for prx")
+	if *count != 1 {
+		t.Fatalf("tab spawns = %d, want 1", *count)
 	}
-	if getTask(t, "prx-tab").Status != "backlog" {
-		t.Errorf("refusal must not flip the task")
+	task := getTask(t, "prx-tab")
+	s := script()
+	for _, want := range []string{"prx -session-id " + task.SessionID.String, "-permission-mode", "-prompt", "AUTONOMOUS", "-trust-workspace"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("prx tab command missing %q; got:\n%s", want, s)
+		}
 	}
+	if strings.Contains(s, "prx run") {
+		t.Errorf("tab must run interactive prx, not prx run; got:\n%s", s)
+	}
+	if task.AutoRunStatus.String != "running" || task.AutoRunMode.String != autoRunModeTab || task.Harness.String != "prx" {
+		t.Errorf("auto_run=%q/%q harness=%q, want running/tab/prx", task.AutoRunStatus.String, task.AutoRunMode.String, task.Harness.String)
+	}
+}
+
+// stubCloseoutLauncher records detached close-out sweep launches.
+func stubCloseoutLauncher(t *testing.T) *[]string {
+	t.Helper()
+	var got []string
+	old := closeoutLauncher
+	closeoutLauncher = func(slug string) error {
+		got = append(got, slug)
+		return nil
+	}
+	t.Cleanup(func() { closeoutLauncher = old })
+	return &got
+}
+
+// On a harness that defers the sweep in auto runs (prx, codex), a tab
+// run's own flow done has no supervisor to defer to: it detaches the
+// sweep into its own process instead of running it inline.
+func TestCmdDoneTabRunDeferringHarnessDetachesSweep(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "prx-closer")
+	seedTabRun(t, "prx-closer", time.Minute)
+	if _, err := openFlowDB(t).Exec(`UPDATE tasks SET harness='prx' WHERE slug='prx-closer'`); err != nil {
+		t.Fatal(err)
+	}
+	inline := stubPrxSweep(t)
+	launched := stubCloseoutLauncher(t)
+	out := captureStdout(t, func() {
+		if rc := cmdDone([]string{"prx-closer"}); rc != 0 {
+			t.Fatalf("done rc=%d", rc)
+		}
+	})
+	if *inline != 0 {
+		t.Errorf("inline sweeps = %d, want 0 (detached)", *inline)
+	}
+	if len(*launched) != 1 || (*launched)[0] != "prx-closer" {
+		t.Errorf("detached sweep launches = %v, want [prx-closer]", *launched)
+	}
+	if !strings.Contains(out, "detached") {
+		t.Errorf("done should say the sweep was detached; got:\n%s", out)
+	}
+	if got := getTask(t, "prx-closer").AutoRunStatus.String; got != "completed" {
+		t.Errorf("auto_run_status = %q, want completed", got)
+	}
+}
+
+// The hidden __closeout-sweep entry point runs the sweep for a task.
+func TestCmdCloseoutSweepRunsSweep(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "swept")
+	seedTabRun(t, "swept", time.Minute)
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET harness='prx', status='done' WHERE slug='swept'`); err != nil {
+		t.Fatal(err)
+	}
+	inline := stubPrxSweep(t)
+	if rc := cmdCloseoutSweep([]string{"swept"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if *inline != 1 {
+		t.Errorf("sweeps = %d, want 1", *inline)
+	}
+}
+
+func stubPrxSweep(t *testing.T) *int {
+	t.Helper()
+	var n int
+	old := prx.SkipPermissionsRunner
+	prx.SkipPermissionsRunner = func(string) error { n++; return nil }
+	t.Cleanup(func() { prx.SkipPermissionsRunner = old })
+	return &n
 }
 
 // A live tab run blocks a second --auto launch, like a headless one.
@@ -442,22 +526,5 @@ func TestCmdDoAutoTabEnvDefaultNoTerminalFallsBackLoudly(t *testing.T) {
 	}
 	if m := getTask(t, "env-linux").AutoRunMode; m.Valid {
 		t.Errorf("auto_run_mode = %q, want NULL (headless)", m.String)
-	}
-}
-
-// Same for prx, which has no tab path yet.
-func TestCmdDoAutoTabEnvDefaultPrxFallsBack(t *testing.T) {
-	setupFlowRoot(t)
-	seedTask(t, "env-prx")
-	t.Setenv(autoTabEnvVar, "1")
-	count, _ := stubITerm(t)
-	calls, _, _, _, _ := stubAutoLauncher(t, 56)
-	var rc int
-	out := captureStdout(t, func() { rc = cmdDo([]string{"env-prx", "--auto", "--harness", "prx"}) })
-	if rc != 0 || *calls != 1 || *count != 0 {
-		t.Errorf("rc=%d headless=%d tabs=%d, want 0/1/0; output:\n%s", rc, *calls, *count, out)
-	}
-	if !strings.Contains(out, "prx") || !strings.Contains(out, "running headless instead") {
-		t.Errorf("fallback must name prx and say headless; got:\n%s", out)
 	}
 }

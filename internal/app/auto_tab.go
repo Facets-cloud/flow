@@ -5,6 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"time"
 
 	"flow/internal/flowdb"
 	"flow/internal/harness"
@@ -35,27 +39,114 @@ func resolveAutoTab(fs *flag.FlagSet, auto, tab bool) (autoTab, explicit bool, r
 	}
 }
 
-// checkAutoTabPossible vets a tab auto run before any DB change: prx has
-// no tab path yet, and the host must have a terminal flow can drive. An
-// explicit --tab fails (rc 2 for prx, 1 for no terminal). A tab that only
-// came from $FLOW_AUTO_TAB is a preference, so it falls back to headless —
-// loudly, never silently.
-func checkAutoTabPossible(h harness.Harness, explicit bool) (autoTab bool, rc int) {
-	why, code := "", 0
-	if h.Name() == harness.NamePrx {
-		why, code = "--tab is not supported for the prx harness yet", 2
-	} else if err := spawner.TerminalAvailable(); err != nil {
-		why, code = "no supported terminal detected on this host, so --tab cannot open a tab", 1
-	}
-	if why == "" {
+// checkAutoTabPossible vets a tab auto run before any DB change: the host
+// must have a terminal flow can drive. An explicit --tab fails (rc 1). A
+// tab that only came from $FLOW_AUTO_TAB is a preference, so it falls back
+// to headless — loudly, never silently.
+func checkAutoTabPossible(explicit bool) (autoTab bool, rc int) {
+	if spawner.TerminalAvailable() == nil {
 		return true, 0
 	}
+	const why = "no supported terminal detected on this host, so --tab cannot open a tab"
 	if explicit {
 		fmt.Fprintf(os.Stderr, "error: %s; drop --tab to run it headless\n", why)
-		return false, code
+		return false, 1
 	}
 	fmt.Fprintf(os.Stderr, "note: $%s asks for a tab, but %s; running headless instead\n", autoTabEnvVar, why)
 	return false, 0
+}
+
+// closeoutLauncher starts the close-out sweep for slug in a detached
+// process (`flow __closeout-sweep <slug>`) and returns at once. Used by a
+// tab run's own `flow done` on a harness that defers the sweep in auto
+// runs (harness.CloseoutDeferrer): such a harness backgrounds or kills a
+// long inline command (prx after 5 minutes, codex after ~10s), and a tab
+// run has no supervisor to defer to. Output goes to a log under the
+// task's auto-runs/ directory.
+var closeoutLauncher = func(slug string) error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate flow binary: %w", err)
+	}
+	root, err := flowRoot()
+	if err != nil {
+		return err
+	}
+	runsDir := filepath.Join(root, "tasks", slug, "auto-runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", runsDir, err)
+	}
+	logPath := filepath.Join(runsDir, time.Now().UTC().Format("2006-01-02-150405")+"-closeout.log")
+	logF, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open log %s: %w", logPath, err)
+	}
+	defer logF.Close()
+	cmd := exec.Command(self, closeoutSweepArg, slug)
+	cmd.Env = autoChildEnv()
+	cmd.Stdout, cmd.Stderr = logF, logF
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start close-out sweep: %w", err)
+	}
+	return cmd.Process.Release()
+}
+
+// closeoutSweepArg is the hidden subcommand closeoutLauncher re-enters.
+const closeoutSweepArg = "__closeout-sweep"
+
+// cmdCloseoutSweep is the hidden `flow __closeout-sweep <slug>` entry
+// point: run the close-out sweep (KB + project update) for a task.
+func cmdCloseoutSweep(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "error: "+closeoutSweepArg+" requires a task slug")
+		return 2
+	}
+	dbPath, err := flowDBPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	db, err := openConcurrentDB(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	task, err := flowdb.GetTask(db, args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: load task %q: %v\n", args[0], err)
+		return 1
+	}
+	h, err := harnessForTask(task)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if err := runCloseoutSweep(h, task); err != nil {
+		fmt.Fprintf(os.Stderr, "close-out sweep for %q failed: %v\n", task.Slug, err)
+		return 1
+	}
+	fmt.Printf("close-out sweep for %q done\n", task.Slug)
+	return 0
+}
+
+// launchDetachedSweep starts the detached sweep, reporting success; on
+// failure it warns so the caller can sweep inline instead.
+func launchDetachedSweep(slug string) bool {
+	if err := closeoutLauncher(slug); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: detach close-out sweep: %v; sweeping inline\n", err)
+		return false
+	}
+	return true
+}
+
+// tabSweepDetached reports whether this `flow done` should detach the
+// close-out sweep: the task is a running tab auto run on a harness that
+// defers its sweep in auto runs. task is the row as loaded before the flip.
+func tabSweepDetached(h harness.Harness, task *flowdb.Task) bool {
+	return isTabAutoRun(task) && task.AutoRunStatus.Valid && task.AutoRunStatus.String == "running" &&
+		harness.DefersCloseoutInAutoRun(h)
 }
 
 // autoTabPrompt builds the tab-mode autonomous prompt for task.

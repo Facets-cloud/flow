@@ -13,7 +13,7 @@
 
 - **Auto children can run in a visible tab.** `flow auto … --tab` and
   `flow do --auto <slug> --tab` (or `FLOW_AUTO_TAB=1` as the default) run
-  the child as an interactive claude/codex session in a terminal tab
+  the child as an interactive claude/codex/prx session in a terminal tab
   instead of headless. Same contract: it reports to `user/<parent>` and
   self-closes with `flow done`. If you ARE such a tab child, a human may
   type into your session — treat it as instructions. `flow show task`

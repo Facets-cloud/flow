@@ -200,7 +200,7 @@ func cmdDo(args []string) int {
 		return 1
 	}
 	if autoTab {
-		if autoTab, rc = checkAutoTabPossible(h, tabExplicit); rc != 0 {
+		if autoTab, rc = checkAutoTabPossible(tabExplicit); rc != 0 {
 			return rc
 		}
 	}

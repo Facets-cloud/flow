@@ -58,6 +58,10 @@ func runCommand(cmd string, rest []string) int {
 		// Hidden: the detached supervisor entry point for `flow do --auto`.
 		// Not listed in usage; invoked only by autoLauncher.
 		return cmdAutoExec(rest)
+	case closeoutSweepArg:
+		// Hidden: a detached close-out sweep. Invoked only by
+		// closeoutLauncher (a tab auto run's own flow done).
+		return cmdCloseoutSweep(rest)
 	case "__owner-tick":
 		// Hidden: the detached owner-tick supervisor. Invoked only by
 		// ownerTickLauncher (via `flow owner tick-due`).
