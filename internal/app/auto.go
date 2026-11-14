@@ -214,10 +214,94 @@ func recordAutoRunLaunched(db *sql.DB, slug string, pid int, logPath string) err
 	now := flowdb.NowISO()
 	_, err := db.Exec(
 		`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=?,
-		 auto_run_finished=NULL, auto_run_log=?, updated_at=? WHERE slug=?`,
+		 auto_run_finished=NULL, auto_run_log=?, auto_run_mode=NULL, updated_at=? WHERE slug=?`,
 		pid, now, logPath, now, slug,
 	)
 	return err
+}
+
+// autoRunModeTab marks an auto run that executes as an interactive harness
+// session in a terminal tab (`flow do --auto --tab`) instead of under a
+// detached headless supervisor.
+const autoRunModeTab = "tab"
+
+// autoTabEnvVar, when set to 1/true, makes `--auto` open a tab by default
+// for this user; `--tab=false` still forces headless for one run.
+const autoTabEnvVar = "FLOW_AUTO_TAB"
+
+// autoTabStartupGrace is how long a fresh tab run counts as running even
+// though its harness is not in the process table yet: the terminal has to
+// open the tab, start a shell, and exec the harness first.
+const autoTabStartupGrace = 90 * time.Second
+
+// autoTabDefault reports whether $FLOW_AUTO_TAB opts this user into tab
+// auto runs by default.
+func autoTabDefault() bool {
+	v := strings.TrimSpace(os.Getenv(autoTabEnvVar))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+}
+
+// isTabAutoRun reports whether t's auto run executes in a terminal tab.
+func isTabAutoRun(t *flowdb.Task) bool {
+	return t.AutoRunMode.Valid && t.AutoRunMode.String == autoRunModeTab
+}
+
+// recordAutoTabLaunched writes the 'running' bookkeeping for a tab run.
+// There is no supervisor, so no pid and no log: liveness is the harness
+// session itself (tabSessionLive) and the transcript is the record.
+func recordAutoTabLaunched(db *sql.DB, slug string) error {
+	now := flowdb.NowISO()
+	_, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='running', auto_run_pid=NULL, auto_run_started=?,
+		 auto_run_finished=NULL, auto_run_log=NULL, auto_run_mode=?, updated_at=? WHERE slug=?`,
+		now, autoRunModeTab, now, slug,
+	)
+	return err
+}
+
+// completeTabAutoRunOnDone records 'completed' for a running tab run the
+// moment its task flips to done. The tab (and harness) stay open for
+// review, so liveness can no longer tell finished from running.
+func completeTabAutoRunOnDone(db *sql.DB, slug string) error {
+	now := flowdb.NowISO()
+	_, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='completed', auto_run_finished=?
+		 WHERE slug=? AND auto_run_mode=? AND auto_run_status='running' AND status='done'`,
+		now, slug, autoRunModeTab,
+	)
+	return err
+}
+
+// tabSessionLive reports whether t's harness session is running in some
+// process. A test seam over the harness's LiveSessionIDs probe.
+var tabSessionLive = func(t *flowdb.Task) (bool, error) {
+	if !t.SessionID.Valid || t.SessionID.String == "" {
+		return false, nil
+	}
+	h, err := harnessForTask(t)
+	if err != nil {
+		return false, err
+	}
+	live, err := h.LiveSessionIDs()
+	if err != nil {
+		return false, err
+	}
+	return live[strings.ToLower(t.SessionID.String)] > 0, nil
+}
+
+// tabAutoRunAlive reports whether a running tab run should stay 'running':
+// not done, and either still inside the startup grace, the liveness probe
+// failed (unknown is not dead), or its harness session is live.
+func tabAutoRunAlive(t *flowdb.Task) bool {
+	if t.Status == "done" {
+		return false
+	}
+	if started, err := time.Parse(time.RFC3339, t.AutoRunStarted.String); err == nil &&
+		time.Since(started) < autoTabStartupGrace {
+		return true
+	}
+	live, err := tabSessionLive(t)
+	return err != nil || live
 }
 
 // finalizeAutoRun records a terminal auto-run status ('completed' or
@@ -270,7 +354,12 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	if !t.AutoRunStatus.Valid || t.AutoRunStatus.String != "running" {
 		return
 	}
-	if t.AutoRunPID.Valid && processAlive(int(t.AutoRunPID.Int64)) {
+	tab := isTabAutoRun(t)
+	if tab {
+		if tabAutoRunAlive(t) {
+			return
+		}
+	} else if t.AutoRunPID.Valid && processAlive(int(t.AutoRunPID.Int64)) {
 		return
 	}
 	now := flowdb.NowISO()
@@ -291,7 +380,14 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	// dead notice. This UPDATE matched exactly once, so this is the single
 	// running→dead transition: tell the human about a parentless run.
 	// (Parented reconcile is unchanged: no parent notice here.)
+	//
+	// A tab run has no supervisor at all, so this reconcile is the only
+	// place its death is noticed: tell the parent driver too, exactly as a
+	// headless supervisor does when its harness exits without flow done.
 	if status == "dead" {
+		if tab {
+			notifyParentOfDeadChild(db, t)
+		}
 		notifyHumanOfDeadOrphan(db, t)
 	}
 }
@@ -468,6 +564,41 @@ func autoResultContract(parentSlug string) string {
 // (the task was spawned from a bound session) adds a standing
 // authorization to report milestones to that parent's inbox.
 func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) string {
+	return buildAutoPrompt(slug, kind, playbookSlug, parentSlug, headlessAutoWording)
+}
+
+// buildAutoTabBootstrapPrompt is the autonomous prompt for a tab run
+// (`flow do --auto --tab`): the same contract as the headless prompt —
+// work end to end, report to the parent, close yourself out — but the
+// session is a visible interactive tab, so it is told a human may be
+// watching and that anything they type is an instruction to follow.
+func buildAutoTabBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) string {
+	return buildAutoPrompt(slug, kind, playbookSlug, parentSlug, tabAutoWording)
+}
+
+// autoWording holds the lines that differ between a headless and a tab
+// auto run; everything else in the autonomous prompt is shared.
+type autoWording struct {
+	intro, noAsk, listener, stop, closing string
+}
+
+var headlessAutoWording = autoWording{
+	intro:    "You are an AUTONOMOUS, headless execution session for flow task %s. NO HUMAN IS WATCHING and there is no terminal to prompt. Work end to end on your own and then close yourself out.",
+	noAsk:    "- Do NOT use AskUserQuestion and do NOT wait for user input — there is no one to answer.",
+	listener: "nobody reads a listener's output in a headless run, so it would ack and lose your mail; flow refuses pop --wait here",
+	stop:     "exit WITHOUT marking the task done (it will surface as a failed autonomous run)",
+	closing:  "Do this yourself; no human will.",
+}
+
+var tabAutoWording = autoWording{
+	intro:    "You are an AUTONOMOUS execution session for flow task %s, running in a visible terminal tab. A human may be watching and may type into this session: treat anything they type as instructions from the user and follow it. Otherwise work end to end on your own and then close yourself out.",
+	noAsk:    "- Do NOT use AskUserQuestion and do NOT block waiting for user input — nobody is required to answer.",
+	listener: "a listener would ack your mail into output nobody acts on; flow refuses pop --wait here",
+	stop:     "stop WITHOUT marking the task done (the run will surface as dead once this tab closes, and the human can take over here)",
+	closing:  "Do this yourself; do not wait for the human. Leave this tab open afterwards for review.",
+}
+
+func buildAutoPrompt(slug, kind, playbookSlug, parentSlug string, w autoWording) string {
 	showStep := "2. Run: flow show task. Read the file at the brief: path AND every file under updates:. Files under other: are on-demand references."
 	if kind == "playbook_run" {
 		showStep = fmt.Sprintf(
@@ -487,21 +618,21 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 	}
 
 	return fmt.Sprintf(
-		"You are an AUTONOMOUS, headless execution session for flow task %s. NO HUMAN IS WATCHING and there is no terminal to prompt. Work end to end on your own and then close yourself out.\n\n"+
+		fmt.Sprintf(w.intro, slug)+"\n\n"+
 			"Bootstrap (do these in order before any work):\n"+
 			"1. "+flowSkillStep()+" — it governs workflows, the bootstrap contract, KB discipline, and scope-creep detection.\n"+
 			showStep+"\n"+
 			"3. If a project is listed on the task, run: flow show project <slug> and read its brief + updates.\n"+
 			"4. Read "+repoInstructionFiles+" in your work_dir and any nested ones under subtrees you will modify — they override the brief.\n\n"+
 			"Operating rules for autonomous mode:\n"+
-			"- Do NOT use AskUserQuestion and do NOT wait for user input — there is no one to answer. Where the interactive workflow would ask, decide using best engineering judgment and proceed. Resolve any deferred/unclear brief sections yourself rather than stopping.\n"+
+			w.noAsk+" Where the interactive workflow would ask, decide using best engineering judgment and proceed. Resolve any deferred/unclear brief sections yourself rather than stopping.\n"+
 			"- Follow the repo's conventions (build/test commands, TDD if the repo expects it). Verify your work by running the tests before considering the task complete.\n"+
 			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone beyond the reporting rule below unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
 			parentRule+
-			"- Do NOT arm an inbox listener: no Monitor, no background flow inbox pop --wait loop, no flow watch (nobody reads a listener's output in a headless run, so it would ack and lose your mail; flow refuses pop --wait here). When a flow-bus notice says mail landed, and before each report and before flow done, run flow inbox pop in the foreground (one-shot, never --wait): it shows you one message; repeat until empty and act on what it says.\n"+
-			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
+			"- Do NOT arm an inbox listener: no Monitor, no background flow inbox pop --wait loop, no flow watch ("+w.listener+"). When a flow-bus notice says mail landed, and before each report and before flow done, run flow inbox pop in the foreground (one-shot, never --wait): it shows you one message; repeat until empty and act on what it says.\n"+
+			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and "+w.stop+".\n\n"+
 			"Closing out:\n"+
-			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
-		slug, slug,
+			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. "+w.closing+"\n",
+		slug,
 	)
 }

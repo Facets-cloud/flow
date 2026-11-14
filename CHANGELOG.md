@@ -9,6 +9,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Auto children in a visible tab.** `flow auto … --tab` and
+  `flow do --auto <slug> --tab` run the autonomous session as a real
+  interactive Claude Code or Codex session in a terminal tab, so you can
+  watch it work and type into it. It still reports to its parent driver and
+  closes itself with `flow done`; the tab stays open for review. `flow show`
+  / `flow list` show `running (tab, …)`; closing the tab (or the harness
+  exiting) before `flow done` records the run as `dead`. Set
+  `FLOW_AUTO_TAB=1` to make `--auto` open a tab by default (`--tab=false`
+  forces headless for one run). Headless stays the default. With no
+  supported terminal an explicit `--tab` fails instead of falling back; a
+  tab that only came from `FLOW_AUTO_TAB` runs headless and says so. Not
+  yet available for prx.
+
 - **prx (praxis-harness) is a third harness.** `flow do --harness prx`,
   `flow auto --harness prx`, `flow do --here`, `flow transcript` and the
   close-out sweep work with prx as they do with Claude Code and Codex.

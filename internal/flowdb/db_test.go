@@ -224,7 +224,7 @@ func TestMigrationAddsAutoRunColumns(t *testing.T) {
 	db := openTempDB(t)
 	for _, col := range []string{
 		"auto_run_status", "auto_run_pid", "auto_run_started",
-		"auto_run_finished", "auto_run_log",
+		"auto_run_finished", "auto_run_log", "auto_run_mode",
 	} {
 		has, err := columnExists(db, "tasks", col)
 		if err != nil {

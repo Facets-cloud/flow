@@ -204,6 +204,15 @@ func FocusSession(sessionID, binary string) (bool, error) {
 	}
 }
 
+// TerminalAvailable reports, without spawning anything, whether SpawnTab
+// can open a tab on this host: nil when it can, an error wrapping
+// ErrNoTerminal when auto-detection lands on a backend this host cannot
+// drive (a macOS-only backend off macOS). Callers that must not leave
+// state behind on a failed spawn (`flow do --auto --tab`) check it first.
+func TerminalAvailable() error {
+	return unsupportedHere()
+}
+
 // macOnly reports whether a backend drives its terminal via osascript and
 // therefore only works on macOS.
 func macOnly(b Backend) bool {

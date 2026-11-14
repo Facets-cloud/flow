@@ -107,6 +107,9 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
+	if err := completeTabAutoRunOnDone(db, task.Slug); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: record tab auto run completed: %v\n", err)
+	}
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		h, lookupErr := harnessForTask(task)
