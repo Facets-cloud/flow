@@ -154,7 +154,7 @@ func autoChildEnv() []string {
 	for _, kv := range in {
 		// A stale auto marker from an enclosing auto run never leaks: the
 		// launcher re-adds the right one for the run it starts.
-		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=")
+		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, reviveEnvVar+"=")
 		for _, h := range allHarnesses() {
 			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
 				isSessionEnv = true
@@ -191,6 +191,12 @@ func isAutoRunSession(bound *flowdb.Task) bool {
 // part of the same bookkeeping flow as the interactive path's post-spawn
 // updates.
 func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, error) {
+	return launchAutoRunEnv(task, root, injection)
+}
+
+// launchAutoRunEnv is launchAutoRun with extra KEY=VALUE entries for the
+// supervisor's environment (a revive marks itself with reviveEnvVar).
+func launchAutoRunEnv(task *flowdb.Task, root, injection string, extraEnv ...string) (int, string, error) {
 	runsDir := filepath.Join(root, "tasks", task.Slug, "auto-runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return 0, "", fmt.Errorf("mkdir %s: %w", runsDir, err)
@@ -201,6 +207,7 @@ func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, erro
 	logPath := filepath.Join(runsDir, logName)
 
 	env := append(autoChildEnv(), autoRunEnvVar+"="+task.Slug)
+	env = append(env, extraEnv...)
 	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, env)
 	if err != nil {
 		return 0, "", err
@@ -241,16 +248,16 @@ func finalizeAutoRun(db *sql.DB, slug, status string) (owned bool, err error) {
 	return n > 0, err
 }
 
-// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, "dead") gated on
+// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, status) gated on
 // the task still not being done, in the same statement. owned=false means
 // either a newer run owns the row or a `flow done` landed first; the caller
 // re-reads the task to tell which.
-func finalizeAutoRunUnlessDone(db *sql.DB, slug string) (owned bool, err error) {
+func finalizeAutoRunUnlessDone(db *sql.DB, slug, status string) (owned bool, err error) {
 	now := flowdb.NowISO()
 	res, err := db.Exec(
-		`UPDATE tasks SET auto_run_status='dead', auto_run_finished=?, auto_run_pid=NULL, updated_at=?
+		`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
 		 WHERE slug=? AND status != 'done' AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
-		now, now, slug, supervisorPID(),
+		status, now, now, slug, supervisorPID(),
 	)
 	if err != nil {
 		return false, err
@@ -347,6 +354,13 @@ func cmdAutoExec(args []string) int {
 		parentSlug = task.ParentSlug.String
 	}
 	prompt := buildAutoBootstrapPrompt(slug, task.Kind, playbookSlug, parentSlug)
+	// A revive (revive.go) resumes a driver to handle its children's mail:
+	// its own short prompt, and it ends 'revived' rather than 'dead'.
+	revive := isReviveRun(slug)
+	reviveStarted := task.AutoRunStarted.String
+	if revive {
+		prompt = buildRevivePrompt(slug)
+	}
 
 	// Resolve the task's harness (claude today; codex/gemini once their
 	// adapters implement AutoRunArgv). The --with instruction rides via
@@ -388,11 +402,14 @@ func cmdAutoExec(args []string) int {
 	// the finalize came first (done then sees a finalized row and sweeps
 	// inline). No window where a done is neither swept nor counted.
 	status := "dead"
+	if revive && runErr == nil {
+		status = reviveStatus
+	}
 	var owned bool
 	var ferr error
 	finalized := false
 	if !isDone {
-		owned, ferr = finalizeAutoRunUnlessDone(db, slug)
+		owned, ferr = finalizeAutoRunUnlessDone(db, slug, status)
 		if ferr != nil || owned {
 			finalized = true
 		} else if late, lerr := flowdb.GetTask(db, slug); lerr == nil && late.Status == "done" {
@@ -434,7 +451,10 @@ func cmdAutoExec(args []string) int {
 		// nor sends a dead-child notice.
 		fmt.Printf("flow: a newer auto run took over %q; leaving its status alone (this run: %s)\n", slug, status)
 	}
-	if status == "dead" && owned {
+	switch {
+	case revive && owned:
+		finishRevive(db, task, status, reviveStarted)
+	case status == "dead" && owned:
 		notifyParentOfDeadChild(db, task)
 		notifyHumanOfDeadOrphan(db, task)
 	}

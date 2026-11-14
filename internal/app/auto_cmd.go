@@ -53,7 +53,9 @@ func cmdAuto(args []string) int {
 	defer db.Close()
 
 	bound, _ := currentSessionTask(db)
-	if isAutoRunSession(bound) {
+	// A revived driver (revive.go) runs as an auto run but IS the driver:
+	// its children are first-level, so it may dispatch them.
+	if isAutoRunSession(bound) && (bound == nil || !isReviveRun(bound.Slug)) {
 		fmt.Fprintln(os.Stderr, "error: flow auto refused inside an auto run: an auto child may not spawn a grandchild. "+
 			"Do the work yourself, or report that it needs splitting so the driver decides.")
 		return 1
