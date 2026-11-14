@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     auto_run_started      TEXT,
     auto_run_finished     TEXT,
     auto_run_log          TEXT,
+    auto_run_mode         TEXT,
     parent_slug           TEXT REFERENCES tasks(slug),
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
@@ -178,6 +179,11 @@ type Task struct {
 	AutoRunStarted  sql.NullString
 	AutoRunFinished sql.NullString
 	AutoRunLog      sql.NullString
+	// AutoRunMode is how the run executes: NULL = headless detached
+	// supervisor (AutoRunPID set); 'tab' = an interactive harness session
+	// in a terminal tab (`flow do --auto --tab`), with no supervisor —
+	// liveness comes from the harness's LiveSessionIDs probe instead.
+	AutoRunMode sql.NullString
 	// ParentSlug is the task whose bound session ran `flow add task` to
 	// create this one. NULL for tasks created from an unbound session.
 	ParentSlug sql.NullString
@@ -438,6 +444,7 @@ func runMigrations(db *sql.DB) error {
 		{"auto_run_started", "ALTER TABLE tasks ADD COLUMN auto_run_started TEXT"},
 		{"auto_run_finished", "ALTER TABLE tasks ADD COLUMN auto_run_finished TEXT"},
 		{"auto_run_log", "ALTER TABLE tasks ADD COLUMN auto_run_log TEXT"},
+		{"auto_run_mode", "ALTER TABLE tasks ADD COLUMN auto_run_mode TEXT"},
 		// parent_slug: the task whose bound session created this one
 		// (set by `flow add task`). Some live DBs already carry a legacy,
 		// unused parent_slug column with this exact shape, hence the
@@ -829,7 +836,7 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, parent_slug, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, auto_run_mode, parent_slug, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
@@ -838,7 +845,7 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 		&t.Priority, &t.WorkDir,
 		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.StatusChangedAt, &t.SessionID,
 		&t.SessionStarted, &t.SessionLastResumed, &t.Harness,
-		&t.AutoRunStatus, &t.AutoRunPID, &t.AutoRunStarted, &t.AutoRunFinished, &t.AutoRunLog,
+		&t.AutoRunStatus, &t.AutoRunPID, &t.AutoRunStarted, &t.AutoRunFinished, &t.AutoRunLog, &t.AutoRunMode,
 		&t.ParentSlug,
 		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)

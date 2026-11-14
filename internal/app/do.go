@@ -106,6 +106,7 @@ func cmdDo(args []string) int {
 	force := fs.Bool("force", false, "open even if the task's harness session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires a supported harness session")
 	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
+	tab := fs.Bool("tab", false, "with --auto: run the autonomous session in a visible interactive terminal tab instead of headless (default from $"+autoTabEnvVar+")")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
 	// Two-pass parse so the slug positional may appear before OR after
@@ -139,6 +140,10 @@ func cmdDo(args []string) int {
 	if *auto && *here {
 		fmt.Fprintln(os.Stderr, "error: --auto cannot be used with --here (--auto launches its own detached session; --here binds the current one)")
 		return 2
+	}
+	autoTab, tabExplicit, rc := resolveAutoTab(fs, *auto, *tab)
+	if rc != 0 {
+		return rc
 	}
 	// --auto + --with IS allowed: the instruction is forwarded to the
 	// detached supervisor and appended (behind withMarker) to the
@@ -193,6 +198,11 @@ func cmdDo(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if autoTab {
+		if autoTab, rc = checkAutoTabPossible(tabExplicit); rc != 0 {
+			return rc
+		}
 	}
 	// A task can be bound to the thread that is running this very flow
 	// command (for example after `flow do --here`). Starting `codex resume`
@@ -388,7 +398,7 @@ func cmdDo(args []string) int {
 	// background. The status flip above already committed (in-progress +
 	// session_id), so we only need to start the supervisor and record the
 	// run bookkeeping.
-	if *auto {
+	if *auto && !autoTab {
 		root, err := flowRoot()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -404,14 +414,7 @@ func cmdDo(args []string) int {
 			// spawn-failure recovery: undo a fresh bootstrap's pre-allocated
 			// session + status flip so the next attempt retries cleanly.
 			if needsBootstrap {
-				if _, undoErr := db.Exec(
-					`UPDATE tasks SET session_id=NULL, session_started=NULL,
-						status='backlog', status_changed_at=NULL, updated_at=?
-					 WHERE slug=? AND session_id=?`,
-					flowdb.NowISO(), task.Slug, sessionID,
-				); undoErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: rollback after auto-launch failure: %v\n", undoErr)
-				}
+				rollbackFreshBootstrap(db, task.Slug, sessionID)
 			}
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -488,14 +491,23 @@ func cmdDo(args []string) int {
 			isFirstRun = runCount <= 1
 		}
 		prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+		if autoTab {
+			prompt = autoTabPrompt(task)
+		}
 		return h.LaunchCmd(sessionID, prompt, launchOpts)
 	}
 	if needsBootstrap {
 		command = bootstrapCmd()
 	} else {
 		// Resume path: the UUID we already have in the DB is what the
-		// harness used when it first wrote its transcript.
-		command = h.ResumeCmd(sessionID, launchOpts)
+		// harness used when it first wrote its transcript. A tab auto run
+		// delivers the autonomous prompt (plus any --with) as the first
+		// message after resume, as the headless supervisor does.
+		resumeOpts := launchOpts
+		if autoTab {
+			resumeOpts.Inject = joinInjection(autoTabPrompt(task), injectionText)
+		}
+		command = h.ResumeCmd(sessionID, resumeOpts)
 	}
 	// Env propagation. Flow never injects harness-specific env vars
 	// (the harness exports its own session id env; flow only reads
@@ -514,6 +526,19 @@ func cmdDo(args []string) int {
 	}
 	handedOff := false
 	if err := spawner.SpawnTabIn(group, buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
+		if autoTab {
+			// Never hand a tab auto run to the user as a command to paste,
+			// and never fall back to headless silently: undo and refuse.
+			if needsBootstrap {
+				rollbackFreshBootstrap(db, task.Slug, sessionID)
+			}
+			if errors.Is(err, spawner.ErrNoTerminal) {
+				fmt.Fprintf(os.Stderr, "error: no supported terminal detected on this host, so --tab cannot open a tab for %s; drop --tab to run it headless (flow do --auto %s)\n", task.Slug, task.Slug)
+			} else {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			}
+			return 1
+		}
 		if errors.Is(err, spawner.ErrNoTerminal) {
 			// No supported terminal on this host (Linux outside
 			// tmux/zellij/kitty). Not a failure: the binding above
@@ -542,18 +567,7 @@ func cmdDo(args []string) int {
 				// The WHERE clause guards against a concurrent `flow do`
 				// having mutated session_id between commit and now —
 				// only roll back if we still own the session.
-				if _, undoErr := db.Exec(
-					`UPDATE tasks SET
-						session_id        = NULL,
-						session_started   = NULL,
-						status            = 'backlog',
-						status_changed_at = NULL,
-						updated_at        = ?
-					 WHERE slug=? AND session_id=?`,
-					flowdb.NowISO(), task.Slug, sessionID,
-				); undoErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: rollback pre-allocated session after spawn failure: %v\n", undoErr)
-				}
+				rollbackFreshBootstrap(db, task.Slug, sessionID)
 			}
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -579,6 +593,12 @@ func cmdDo(args []string) int {
 	}
 
 	switch {
+	case autoTab:
+		if err := recordAutoTabLaunched(db, task.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: record auto run: %v\n", err)
+		}
+		fmt.Printf("Launched autonomous run for %s in a tab (session %s)\n", task.Slug, sessionID)
+		printParentListenerReminder(db, task)
 	case handedOff:
 		// printNoTerminalHandoff already said what to do.
 	case needsBootstrap:

@@ -241,3 +241,27 @@ func TestSkillPaths(t *testing.T) {
 		t.Errorf("SkillVersionPath=%q", v)
 	}
 }
+
+// A flow-owned work dir (opts.TrustDir) is trusted for the launch, so the
+// interactive TUI never stops at its trust prompt (a tab auto run would
+// otherwise hang there). Other dirs keep the prompt for a human.
+func TestInteractiveTrustsFlowWorkspace(t *testing.T) {
+	p := New()
+	trusted := harness.LaunchOpts{TrustDir: "/flow/tasks/x/workspace"}
+	for name, cmd := range map[string]string{
+		"launch": p.LaunchCmd(testID, "go", trusted),
+		"resume": p.ResumeCmd(testID, trusted),
+	} {
+		if !strings.Contains(cmd, " -trust-workspace") {
+			t.Errorf("%s with TrustDir should pass -trust-workspace; got %q", name, cmd)
+		}
+	}
+	for name, cmd := range map[string]string{
+		"launch": p.LaunchCmd(testID, "go", harness.LaunchOpts{}),
+		"resume": p.ResumeCmd(testID, harness.LaunchOpts{}),
+	} {
+		if strings.Contains(cmd, "trust-workspace") {
+			t.Errorf("%s without TrustDir must keep the trust prompt; got %q", name, cmd)
+		}
+	}
+}

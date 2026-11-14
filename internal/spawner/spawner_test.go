@@ -953,3 +953,29 @@ func TestMacDefaultsUnchangedWithoutTmux(t *testing.T) {
 		}
 	}
 }
+
+// TestTerminalAvailable: the no-spawn preflight agrees with SpawnTab —
+// a macOS-only default on linux is ErrNoTerminal; zellij on linux and
+// any backend on darwin are fine.
+func TestTerminalAvailable(t *testing.T) {
+	oldOverride, oldGOOS := Override, GOOS
+	t.Cleanup(func() { Override, GOOS = oldOverride, oldGOOS })
+	Override = ""
+	for _, k := range []string{"ZELLIJ", "TMUX", "REX_SESSION", "KITTY_WINDOW_ID", "FLOW_TERM", "TERM_PROGRAM"} {
+		t.Setenv(k, "")
+	}
+
+	GOOS = "linux"
+	if err := TerminalAvailable(); !errors.Is(err, ErrNoTerminal) {
+		t.Errorf("linux, no terminal: err=%v, want ErrNoTerminal", err)
+	}
+	t.Setenv("ZELLIJ", "0")
+	if err := TerminalAvailable(); err != nil {
+		t.Errorf("linux in zellij: err=%v, want nil", err)
+	}
+	t.Setenv("ZELLIJ", "")
+	GOOS = "darwin"
+	if err := TerminalAvailable(); err != nil {
+		t.Errorf("darwin: err=%v, want nil", err)
+	}
+}

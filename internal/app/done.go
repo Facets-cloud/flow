@@ -107,6 +107,9 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
+	if err := completeTabAutoRunOnDone(db, task.Slug); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: record tab auto run completed: %v\n", err)
+	}
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		h, lookupErr := harnessForTask(task)
@@ -117,6 +120,8 @@ func cmdDone(args []string) int {
 			fmt.Fprintf(os.Stderr, "warning: close-out sweep skipped: %v\n", lookupErr)
 		} else if closeoutDeferred(h, task) {
 			fmt.Println("close-out sweep deferred: the auto-run supervisor runs it after the harness exits")
+		} else if tabSweepDetached(h, task) && launchDetachedSweep(task.Slug) {
+			fmt.Println("close-out sweep detached: it runs in its own process (this harness cuts long inline commands short)")
 		} else {
 			fmt.Print("updating kbs, project updates...")
 			if err := runCloseoutSweep(h, task); err != nil {

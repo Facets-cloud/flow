@@ -58,6 +58,10 @@ func runCommand(cmd string, rest []string) int {
 		// Hidden: the detached supervisor entry point for `flow do --auto`.
 		// Not listed in usage; invoked only by autoLauncher.
 		return cmdAutoExec(rest)
+	case closeoutSweepArg:
+		// Hidden: a detached close-out sweep. Invoked only by
+		// closeoutLauncher (a tab auto run's own flow done).
+		return cmdCloseoutSweep(rest)
 	case "__owner-tick":
 		// Hidden: the detached owner-tick supervisor. Invoked only by
 		// ownerTickLauncher (via `flow owner tick-due`).
@@ -138,8 +142,9 @@ Create:
 
 Sessions:
   flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions]
-  flow do --auto         <ref> [--harness claude|codex|prx] (run headlessly in the background; self-completes via flow done)
-  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx]
+  flow do --auto         <ref> [--harness claude|codex|prx] [--tab] (run headlessly in the background; self-completes via flow done;
+                          --tab runs it as a visible interactive tab instead — default from FLOW_AUTO_TAB=1)
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx] [--tab]
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>

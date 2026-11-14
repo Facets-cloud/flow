@@ -354,6 +354,7 @@ func listTasksCmd(args []string) int {
 			// Reconcile a crashed 'running' supervisor to 'dead' before display.
 			reconcileAutoRun(db, t)
 			r.AutoRun = t.AutoRunStatus.String
+			r.AutoRunTab = isTabAutoRun(t)
 			if t.AutoRunPID.Valid {
 				r.AutoRunPID = int(t.AutoRunPID.Int64)
 			}
@@ -479,6 +480,7 @@ type taskListRow struct {
 	Live       bool     `json:"live,omitempty"`
 	AutoRun    string   `json:"auto_run,omitempty"`
 	AutoRunPID int      `json:"auto_run_pid,omitempty"`
+	AutoRunTab bool     `json:"auto_run_tab,omitempty"`
 	Archived   bool     `json:"archived,omitempty"`
 	Updated    string   `json:"updated,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
@@ -493,7 +495,10 @@ func autoCell(p listfmt.Painter, r taskListRow) string {
 		return ""
 	}
 	label := r.AutoRun
-	if r.AutoRun == "running" && r.AutoRunPID > 0 {
+	switch {
+	case r.AutoRun == "running" && r.AutoRunTab:
+		label += " tab"
+	case r.AutoRun == "running" && r.AutoRunPID > 0:
 		label += fmt.Sprintf(" %d", r.AutoRunPID)
 	}
 	return p.Wrap(label, autoRunColor(r.AutoRun))
