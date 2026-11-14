@@ -150,11 +150,11 @@ var processAlive = func(pid int) bool {
 // and leaking one would confuse reverse-lookups inside the autonomous session.
 func autoChildEnv() []string {
 	in := os.Environ()
-	out := make([]string, 0, len(in))
+	out := make([]string, 0, len(in)+1)
 	for _, kv := range in {
-		// A stale auto marker from an enclosing auto run never leaks: the
-		// launcher re-adds the right one for the run it starts.
-		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=")
+		// A stale auto marker or driver id from an enclosing auto run never
+		// leaks: the launcher re-adds the right ones for the run it starts.
+		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, autoDriverSessionEnvVar+"=")
 		for _, h := range allHarnesses() {
 			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
 				isSessionEnv = true
@@ -167,6 +167,24 @@ func autoChildEnv() []string {
 	}
 	return out
 }
+
+// autoDriverEnv is the dispatching (driver) session's id for an auto run, under
+// its own name: the child's harness routes the child's questions and turn ends
+// to that driver instead of stopping (prx reads it; other harnesses ignore it).
+// Only a prx driver has one. It is added in launchAutoRun alone, never in
+// autoChildEnv, so an owner tick (also built on autoChildEnv) stays sessionless.
+func autoDriverEnv() []string {
+	if h := ambientHarness(); h != nil && string(h.Name()) == "prx" {
+		if id := os.Getenv(h.SessionIDEnvVar()); id != "" {
+			return []string{autoDriverSessionEnvVar + "=" + id}
+		}
+	}
+	return nil
+}
+
+// autoDriverSessionEnvVar carries the dispatching (driver) session's id into
+// an auto run, since the harness session ids themselves are stripped.
+const autoDriverSessionEnvVar = "FLOW_AUTO_DRIVER_SESSION"
 
 // autoRunEnvVar marks the environment of a headless auto run (value: the
 // task slug). Hooks and `flow auto` read it to tell an unattended child
@@ -201,6 +219,7 @@ func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, erro
 	logPath := filepath.Join(runsDir, logName)
 
 	env := append(autoChildEnv(), autoRunEnvVar+"="+task.Slug)
+	env = append(env, autoDriverEnv()...)
 	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, env)
 	if err != nil {
 		return 0, "", err
