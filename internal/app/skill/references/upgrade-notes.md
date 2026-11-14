@@ -11,6 +11,11 @@
 
 ## Unreleased
 
+- **Mail wakes idle prx sessions.** A flow-bus message to a task bound to a
+  live prx session now starts a turn in that session, the same as for Claude
+  Code and Codex. It needs a Praxis that has `prx peer send`. Without it the
+  mail waits for the session's next turn, as before.
+
 ## v0.1.0-alpha.38
 
 - **Mail reaches you automatically (harness wake).** flow now pushes a
