@@ -120,3 +120,21 @@ func ReleaseRevive(db *sql.DB, slug string, holderPID int, claimedAt time.Time, 
 		slug, claimedAt.UTC().Format(time.RFC3339))
 	return err
 }
+
+// IsReviveRun reports whether the auto run of slug that started at
+// started (the task's auto_run_started, RFC3339) was a revive: every
+// revive claim stamps a bus_revives row at the same second (in UTC). A
+// run older than the rate-limit window may have lost its row to pruning
+// and reads as not a revive.
+func IsReviveRun(db *sql.DB, slug, started string) bool {
+	ts, err := time.Parse(time.RFC3339, started)
+	if err != nil {
+		return false
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bus_revives WHERE task_slug=? AND revived_at=?`,
+		slug, ts.UTC().Format(time.RFC3339)).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
+}

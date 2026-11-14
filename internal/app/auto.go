@@ -306,6 +306,7 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 		return
 	}
 	now := flowdb.NowISO()
+	started := t.AutoRunStarted.String
 	var status, finished string
 	if err := db.QueryRow(
 		`UPDATE tasks SET auto_run_status = CASE WHEN status='done' THEN 'completed' ELSE 'dead' END,
@@ -323,7 +324,13 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	// dead notice. This UPDATE matched exactly once, so this is the single
 	// running→dead transition: tell the human about a parentless run.
 	// (Parented reconcile is unchanged: no parent notice here.)
-	if status == "dead" {
+	// A killed REVIVE is not a crashed task: its driver's mail is still
+	// unread and the next child report (often the very send reconciling
+	// it) revives it again, so the human gets an FYI, not a reopen ask.
+	switch {
+	case status == "dead" && flowdb.IsReviveRun(db, t.Slug, started):
+		noteKilledRevive(db, t.Slug)
+	case status == "dead":
 		notifyHumanOfDeadOrphan(db, t)
 	}
 }

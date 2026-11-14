@@ -417,6 +417,8 @@ func TestReleaseReviveDropsOneRow(t *testing.T) {
 
 // A refused revive leaves the child's report unread with only a headless
 // sender told why: the human gets ONE FYI naming the driver and reason.
+// (A driver that may still be running is not FYI'd: its hooks deliver —
+// TestReviveLiveDriverNoHumanFYI.)
 func TestReviveRefusalFYIsHuman(t *testing.T) {
 	humanFYIs := func(db *sql.DB) []string {
 		ms, _ := flowdb.UnreadForHuman(db, busUser)
@@ -437,7 +439,6 @@ func TestReviveRefusalFYIsHuman(t *testing.T) {
 			reviveLimit = flowdb.ReviveLimit{Window: time.Hour, Max: 0}
 			t.Cleanup(func() { reviveLimit = old })
 		}},
-		{"may be running", "may still be running", func(t *testing.T, db *sql.DB) { stubReviveProbe(t, true, true) }},
 		{"no transcript", "no transcript", func(t *testing.T, db *sql.DB) { stubReviveProbe(t, false, false) }},
 	}
 	for _, c := range cases {
