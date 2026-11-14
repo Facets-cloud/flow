@@ -150,11 +150,11 @@ var processAlive = func(pid int) bool {
 // and leaking one would confuse reverse-lookups inside the autonomous session.
 func autoChildEnv() []string {
 	in := os.Environ()
-	out := make([]string, 0, len(in))
+	out := make([]string, 0, len(in)+1)
 	for _, kv := range in {
-		// A stale auto marker from an enclosing auto run never leaks: the
-		// launcher re-adds the right one for the run it starts.
-		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=")
+		// A stale auto marker or driver id from an enclosing auto run never
+		// leaks: the launcher re-adds the right ones for the run it starts.
+		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, autoDriverSessionEnvVar+"=")
 		for _, h := range allHarnesses() {
 			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
 				isSessionEnv = true
@@ -165,8 +165,18 @@ func autoChildEnv() []string {
 			out = append(out, kv)
 		}
 	}
+	// The dispatching session's id goes on under its own name: the child's
+	// harness routes the child's questions and turn ends to that driver
+	// instead of stopping (prx reads it; other harnesses ignore it).
+	if id := os.Getenv("PRAXIS_SESSION_ID"); id != "" {
+		out = append(out, autoDriverSessionEnvVar+"="+id)
+	}
 	return out
 }
+
+// autoDriverSessionEnvVar carries the dispatching (driver) session's id into
+// an auto run, since the harness session ids themselves are stripped.
+const autoDriverSessionEnvVar = "FLOW_AUTO_DRIVER_SESSION"
 
 // autoRunEnvVar marks the environment of a headless auto run (value: the
 // task slug). Hooks and `flow auto` read it to tell an unattended child
