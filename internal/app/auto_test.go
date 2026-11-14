@@ -371,22 +371,29 @@ func TestAutoExecPassesLastMessagePath(t *testing.T) {
 	}
 }
 
-// The driver's prx session id reaches the child under its own name, while the
-// harness session ids themselves (and a stale driver id) are still stripped.
-func TestAutoChildEnvCarriesDriverSession(t *testing.T) {
+// autoChildEnv (shared with owner ticks) never carries a driver id: a stale
+// one is stripped and none is added, so a tick run from a prx session stays
+// sessionless.
+func TestAutoChildEnvCarriesNoDriverSession(t *testing.T) {
 	t.Setenv("PRAXIS_SESSION_ID", "drv-1")
 	t.Setenv(autoDriverSessionEnvVar, "stale")
-	env := autoChildEnv()
-	var got []string
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "PRAXIS_SESSION_ID=") {
-			t.Fatalf("harness session id leaked: %q", kv)
-		}
-		if strings.HasPrefix(kv, autoDriverSessionEnvVar+"=") {
-			got = append(got, kv)
+	for _, kv := range autoChildEnv() {
+		if strings.HasPrefix(kv, "PRAXIS_SESSION_ID=") || strings.HasPrefix(kv, autoDriverSessionEnvVar+"=") {
+			t.Fatalf("leaked %q", kv)
 		}
 	}
-	if len(got) != 1 || got[0] != autoDriverSessionEnvVar+"=drv-1" {
-		t.Fatalf("driver env = %v, want exactly %s=drv-1", got, autoDriverSessionEnvVar)
+}
+
+// Only a prx driver gives the child a driver id.
+func TestAutoDriverEnv(t *testing.T) {
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	if got := autoDriverEnv(); got != nil {
+		t.Fatalf("no session: %v", got)
+	}
+	t.Setenv("PRAXIS_SESSION_ID", "drv-1")
+	if got := autoDriverEnv(); len(got) != 1 || got[0] != autoDriverSessionEnvVar+"=drv-1" {
+		t.Fatalf("prx driver: %v", got)
 	}
 }
