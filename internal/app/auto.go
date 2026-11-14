@@ -165,13 +165,21 @@ func autoChildEnv() []string {
 			out = append(out, kv)
 		}
 	}
-	// The dispatching session's id goes on under its own name: the child's
-	// harness routes the child's questions and turn ends to that driver
-	// instead of stopping (prx reads it; other harnesses ignore it).
-	if id := os.Getenv("PRAXIS_SESSION_ID"); id != "" {
-		out = append(out, autoDriverSessionEnvVar+"="+id)
-	}
 	return out
+}
+
+// autoDriverEnv is the dispatching (driver) session's id for an auto run, under
+// its own name: the child's harness routes the child's questions and turn ends
+// to that driver instead of stopping (prx reads it; other harnesses ignore it).
+// Only a prx driver has one. It is added in launchAutoRun alone, never in
+// autoChildEnv, so an owner tick (also built on autoChildEnv) stays sessionless.
+func autoDriverEnv() []string {
+	if h := ambientHarness(); h != nil && string(h.Name()) == "prx" {
+		if id := os.Getenv(h.SessionIDEnvVar()); id != "" {
+			return []string{autoDriverSessionEnvVar + "=" + id}
+		}
+	}
+	return nil
 }
 
 // autoDriverSessionEnvVar carries the dispatching (driver) session's id into
@@ -211,6 +219,7 @@ func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, erro
 	logPath := filepath.Join(runsDir, logName)
 
 	env := append(autoChildEnv(), autoRunEnvVar+"="+task.Slug)
+	env = append(env, autoDriverEnv()...)
 	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, env)
 	if err != nil {
 		return 0, "", err
