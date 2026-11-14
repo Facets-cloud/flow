@@ -40,10 +40,13 @@ var (
 const (
 	// SessionStart matcher for ~/.claude/settings.json. "compact" makes
 	// the hook re-fire after compaction, which is what restores the
-	// listener discipline the compacted context lost. installHook keys
+	// listener discipline the compacted context lost. "fork" covers
+	// `claude --bg --resume`, which runs `--fork-session` under a NEW id:
+	// without it the hook never runs there, so the resumed session gets
+	// no wake endpoint, no asyncRewake waiter and no task reload. installHook keys
 	// on the command, not the matcher, and migrates an older matcher
 	// (e.g. "startup|resume") in place, so changing it is safe.
-	hookMatcher = "startup|resume|compact"
+	hookMatcher = "startup|resume|compact|fork"
 )
 
 // New returns a fresh claude harness. The struct is stateless; we
