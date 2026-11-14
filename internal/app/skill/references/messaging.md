@@ -236,7 +236,8 @@ repeat while it is unread) naming the driver when a revive is refused for
 a rate limit or a missing transcript (one per reason), fails or is killed,
 ends with child reports still unread, or the driver is in backlog (never
 revived): relay it, and reopen the driver if its children are waiting. A
-driver that may still be running gets no FYI — its own hooks deliver.
+driver that may still be running gets no FYI — its own hooks deliver. A
+revive that drains the reports marks the driver's earlier revive FYIs read.
 
 ## Fallback: listener discipline (wake off: `FLOW_NO_WAKE=1`)
 

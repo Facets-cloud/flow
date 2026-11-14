@@ -21,7 +21,8 @@
   limit or no transcript, one per reason), fails or is killed, ends with
   child reports unread, or the driver is in backlog; relay it and reopen
   the driver if its children are waiting. A driver that may still be
-  running gets no FYI (its hooks deliver).
+  running gets no FYI (its hooks deliver). A revive that drains the
+  reports marks the driver's earlier revive FYIs read.
 
 ## v0.1.0-alpha.38
 

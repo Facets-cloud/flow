@@ -72,7 +72,8 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 	}
 	logF, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return 0, fmt.Errorf("open log %s: %w", logPath, err)
+		// The *os.PathError already names logPath.
+		return 0, fmt.Errorf("open log: %w", err)
 	}
 	defer logF.Close()
 

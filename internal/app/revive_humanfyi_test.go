@@ -2,6 +2,8 @@ package app
 
 import (
 	"database/sql"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -185,4 +187,83 @@ func TestBacklogNonDriverNoFYI(t *testing.T) {
 	if got := humanMailFrom(db, "d"); len(got) != 0 {
 		t.Errorf("human mail = %d, want 0 for a non-driver", len(got))
 	}
+}
+
+// N1: a revive whose launch fails (unwritable log dir, fork failure)
+// releases its claim, so the child's report sits unread with nothing
+// surfacing it. The human gets ONE FYI while it is unread, even though
+// each attempt's error text differs (the log name is timestamped).
+func TestReviveLaunchFailureFYIsHumanOnce(t *testing.T) {
+	db, _ := reviveSetup(t)
+	old := autoLauncher
+	n := 0
+	autoLauncher = func(string, string, string, string, []string) (int, error) {
+		n++
+		return 0, fmt.Errorf("open log: open /x/run-%d.log: permission denied", n)
+	}
+	t.Cleanup(func() { autoLauncher = old })
+	for _, id := range []string{"n1", "n2"} {
+		if out := mail(t, db, id, "c", "d", false); !strings.Contains(out, "revive failed") {
+			t.Fatalf("outcome = %q, want revive failed", out)
+		}
+	}
+	got := humanMailFrom(db, "d")
+	if len(got) != 1 {
+		t.Fatalf("human FYIs = %d after two failed launches, want 1 deduped", len(got))
+	}
+	b := got[0].Body
+	if !got[0].FYI || !strings.Contains(b, "could not launch") || !strings.Contains(b, "permission denied") ||
+		!strings.Contains(b, "flow do d") {
+		t.Errorf("FYI %+v should name the launch failure, its error and how to reopen", got[0])
+	}
+}
+
+// N1: the launcher's log-open error names the log path once; the
+// *os.PathError it wraps already carries it.
+func TestAutoLauncherLogErrorNamesPathOnce(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "missing", "run.log")
+	_, err := autoLauncher("s", t.TempDir(), logPath, "", nil)
+	if err == nil {
+		t.Fatal("launch succeeded with a missing log dir")
+	}
+	if c := strings.Count(err.Error(), logPath); c != 1 {
+		t.Errorf("error %q names the log path %d times, want 1", err, c)
+	}
+}
+
+// O1: a revive that drained the driver's child reports makes earlier
+// revive FYIs stale ("did not revive", "could not launch"): flow marks
+// them read. A backlog notice is not about a revive and stays.
+func TestReviveDrainedRetractsStaleFYIs(t *testing.T) {
+	db, _ := reviveSetup(t)
+	stubReviveProbe(t, false, false) // no transcript → refusal FYI
+	mail(t, db, "o1", "c", "d", false)
+	fyiHumanOnce(db, "d", reviveBacklogPrefix+"d is in backlog", reviveBacklogPrefix+"d is in backlog; keep me")
+	if got := humanMailFrom(db, "d"); len(got) != 2 {
+		t.Fatalf("human FYIs = %d before the revive, want 2", len(got))
+	}
+	if _, err := db.Exec(`UPDATE bus_messages SET status='delivered' WHERE to_task_slug='d'`); err != nil {
+		t.Fatal(err)
+	}
+	task, _ := flowdb.GetTask(db, "d")
+	finishRevive(db, task, reviveStatus, time.Now().Format(time.RFC3339))
+	got := humanMailFrom(db, "d")
+	if len(got) != 1 || !strings.HasPrefix(got[0].Body, reviveBacklogPrefix) {
+		t.Fatalf("human unread after a drained revive = %d, want only the backlog notice", len(got))
+	}
+}
+
+// O1 contrast: a revive that left reports unread retracts nothing.
+func TestReviveUndrainedKeepsRefusalFYI(t *testing.T) {
+	db, _ := reviveSetup(t)
+	stubReviveProbe(t, false, false)
+	mail(t, db, "o2", "c", "d", false)
+	task, _ := flowdb.GetTask(db, "d")
+	finishRevive(db, task, reviveStatus, time.Now().Add(time.Hour).Format(time.RFC3339))
+	for _, m := range humanMailFrom(db, "d") {
+		if strings.HasPrefix(m.Body, reviveRefusedPrefix) {
+			return
+		}
+	}
+	t.Error("refusal FYI was retracted although the report is still unread")
 }

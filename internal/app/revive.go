@@ -205,11 +205,22 @@ func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
 	if err != nil {
 		_ = flowdb.ReleaseRevive(db, t.Slug, os.Getpid(), now, prev)
 		r.Reason += "; revive failed: " + err.Error()
+		noteReviveLaunchFailed(db, t.Slug, err)
 		return r
 	}
 	_ = recordReviveLaunched(db, t.Slug, os.Getpid(), pid, logPath)
 	r.Woke, r.Reason = true, "revived its exited session headlessly, pid "+fmt.Sprint(pid)
 	return r
+}
+
+// noteReviveLaunchFailed FYIs the human (once while unread) that a revive
+// could not even start: the claim was released, so the child's report
+// sits unread with nothing else surfacing it. The dedup key leaves out
+// the error, whose text varies per attempt (timestamped log names).
+func noteReviveLaunchFailed(db *sql.DB, slug string, err error) {
+	key := fmt.Sprintf(reviveFailedPrefix+"%s but could not launch the headless resume", slug)
+	fyiHumanOnce(db, slug, key, fmt.Sprintf("%s (%v); its children's mail is still unread — reopen it with flow do %s",
+		key, err, slug))
 }
 
 // recordReviveLaunched records the launched supervisor's pid and log. The
@@ -276,20 +287,51 @@ func finishRevive(db *sql.DB, t *flowdb.Task, status, startedAt string) {
 		fyiHumanOnce(db, t.Slug, reviveFailedPrefix, fmt.Sprintf(reviveFailedPrefix+"%s for its children's mail and the headless resume "+
 			"failed; the mail is still unread — reopen it with flow do %s (log under tasks/%s/auto-runs/)", t.Slug, t.Slug, t.Slug))
 	case reviveStatus:
-		if !reviveIfMailLanded(db, t.Slug, startedAt) {
-			noteUnreadAfterRevive(db, t.Slug)
+		if !reviveIfMailLanded(db, t.Slug, startedAt) && !noteUnreadAfterRevive(db, t.Slug) {
+			retractStaleReviveFYIs(db, t.Slug)
 		}
 	}
+}
+
+// retractStaleReviveFYIs marks read the human's unread revive FYIs from
+// slug (refused, failed, killed, unread) once a revive drained its child
+// reports: each one says mail is waiting, which is no longer true. The
+// backlog notice is about the task's status, not a revive, and stays.
+func retractStaleReviveFYIs(db *sql.DB, slug string) {
+	ms, err := flowdb.UnreadForHuman(db, busUser)
+	if err != nil {
+		return
+	}
+	var ids []string
+	for _, m := range ms {
+		if m.FromTaskSlug == slug && m.FYI && isReviveFYI(m.Body) {
+			ids = append(ids, m.ID)
+		}
+	}
+	if len(ids) > 0 {
+		_, _ = flowdb.MarkSeen(db, ids, flowdb.Consumer{By: "flow", Identity: "flow:revive"})
+	}
+}
+
+// isReviveFYI reports whether body is one of flow's revive FYIs.
+func isReviveFYI(body string) bool {
+	for _, p := range []string{reviveFailedPrefix, reviveRefusedPrefix, reviveUnreadPrefix, reviveKilledPrefix} {
+		if strings.HasPrefix(body, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // noteUnreadAfterRevive FYIs the human (once while unread) when a revive
 // ended with child reports still unread that no re-revive picked up: the
 // session ignored its prompt or exited early, and the reports would
 // otherwise sit silently. It never revives again.
-func noteUnreadAfterRevive(db *sql.DB, slug string) {
+// Reports whether any child report is still unread (or the check failed).
+func noteUnreadAfterRevive(db *sql.DB, slug string) bool {
 	ms, err := flowdb.PendingForTask(db, slug)
 	if err != nil {
-		return
+		return true
 	}
 	n := 0
 	for _, m := range ms {
@@ -298,11 +340,12 @@ func noteUnreadAfterRevive(db *sql.DB, slug string) {
 		}
 	}
 	if n == 0 {
-		return
+		return false
 	}
 	key := fmt.Sprintf(reviveUnreadPrefix+"%s ended", slug)
 	fyiHumanOnce(db, slug, key, fmt.Sprintf("%s with %d child report(s) still unread. flow will not revive it "+
 		"again for them — reopen it with flow do %s to handle them", key, n, slug))
+	return true
 }
 
 // Human FYIs about a driver's revive, one per kind (and, for refusals,
