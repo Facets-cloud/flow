@@ -47,7 +47,7 @@ func TestNewSessionIDRejectsMissingOrInvalidThread(t *testing.T) {
 
 func TestCommands(t *testing.T) {
 	h := New()
-	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex resume -s workspace-write -a on-request "+testThreadID+" 'work'"; got != want {
+	if got, want := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}), "codex -s workspace-write -a on-request resume "+testThreadID+" 'work'"; got != want {
 		t.Errorf("LaunchCmd=%q, want %q", got, want)
 	}
 	if got := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{SkipPermissions: true}); !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume ") {
@@ -66,20 +66,19 @@ func TestCommands(t *testing.T) {
 // F1: the probe mints the thread read-only/approval=never and `codex
 // resume` keeps a thread's first-turn settings unless told otherwise, so a
 // sandboxed interactive session must pass its sandbox + approval policy
-// explicitly — and make the flow root writable, or `flow show task` dies
-// with "attempt to write a readonly database".
+// explicitly. flow's own bus/read commands leave the sandbox through the
+// flow.rules exec-policy file (#143), so no --add-dir is needed.
 func TestInteractiveCommandsAreWorkspaceWriteOnRequest(t *testing.T) {
 	h := New()
-	opts := harness.LaunchOpts{WritableDirs: []string{"/tmp/flow root"}}
-	wantPrefix := "codex resume -s workspace-write -a on-request --add-dir '/tmp/flow root' " + testThreadID
-	if got := h.LaunchCmd(testThreadID, "work", opts); got != wantPrefix+" 'work'" {
+	wantPrefix := "codex -s workspace-write -a on-request resume " + testThreadID
+	if got := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}); got != wantPrefix+" 'work'" {
 		t.Errorf("LaunchCmd=%q, want %q", got, wantPrefix+" 'work'")
 	}
-	if got := h.ResumeCmd(testThreadID, opts); got != wantPrefix {
+	if got := h.ResumeCmd(testThreadID, harness.LaunchOpts{}); got != wantPrefix {
 		t.Errorf("ResumeCmd=%q, want %q", got, wantPrefix)
 	}
-	// Skip-permissions is unchanged: bypass, no sandbox/approval/add-dir.
-	skip := harness.LaunchOpts{SkipPermissions: true, WritableDirs: []string{"/tmp/x"}}
+	// Skip-permissions is unchanged: bypass, no sandbox/approval flags.
+	skip := harness.LaunchOpts{SkipPermissions: true}
 	for _, got := range []string{h.LaunchCmd(testThreadID, "work", skip), h.ResumeCmd(testThreadID, skip)} {
 		if !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume "+testThreadID) {
 			t.Errorf("skip-permissions command changed: %q", got)
@@ -88,11 +87,12 @@ func TestInteractiveCommandsAreWorkspaceWriteOnRequest(t *testing.T) {
 			t.Errorf("skip-permissions command carries sandbox flags: %q", got)
 		}
 	}
-	// The live-session guard still sees the sandboxed interactive argv.
+	// The live-session guard still sees the sandboxed interactive argv,
+	// including a per-launch trust override whose path has a space.
 	orig := PSRunner
 	t.Cleanup(func() { PSRunner = orig })
 	PSRunner = func() ([]byte, error) {
-		return []byte("300 codex resume -s workspace-write -a on-request --add-dir /tmp/flowroot " + testThreadID + " work"), nil
+		return []byte("300 codex -s workspace-write -a on-request -c projects./tmp/flow root.trust_level=trusted resume " + testThreadID + " work"), nil
 	}
 	live, err := h.LiveSessionIDs()
 	if err != nil {
@@ -283,5 +283,65 @@ func TestAutoRunArgvLastMessagePath(t *testing.T) {
 	}
 	if live[testThreadID] != 1 {
 		t.Errorf("live=%v, want the -o auto run detected", live)
+	}
+}
+
+// flow skill install writes a flow-owned exec-policy rules file into
+// $CODEX_HOME/rules/flow.rules so a workspace-write Codex session can run
+// flow's bus + read commands outside the sandbox. Exactly this set: never a
+// bare ["flow"], never anything that spawns agents or rewrites config.
+func TestInstallSkillWritesFlowRules(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	h := New()
+	rulesPath := filepath.Join(codexHome, "rules", "flow.rules")
+	// A stale/edited file is overwritten: flow owns it.
+	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rulesPath, []byte(`prefix_rule(pattern=["flow"], decision="allow")`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(codexHome, "rules", "user.rules")
+	if err := os.WriteFile(other, []byte("# user's own\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.InstallSkill(os.DirFS(t.TempDir())); err != nil {
+		t.Fatalf("InstallSkill: %v", err)
+	}
+	raw, err := os.ReadFile(rulesPath)
+	if err != nil {
+		t.Fatalf("flow.rules not written: %v", err)
+	}
+	got := string(raw)
+	if !strings.HasPrefix(got, "#") || !strings.Contains(got, "flow owns this file") {
+		t.Errorf("flow.rules missing ownership header:\n%s", got)
+	}
+	var rules []string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "prefix_rule(") {
+			rules = append(rules, line)
+		}
+	}
+	var want []string
+	for _, sub := range []string{"message", "inbox", "broadcast", "watch", "show", "list", "transcript"} {
+		want = append(want, `prefix_rule(pattern=["flow", "`+sub+`"], decision="allow")`)
+	}
+	if strings.Join(rules, "\n") != strings.Join(want, "\n") {
+		t.Errorf("flow.rules rules =\n%s\nwant\n%s", strings.Join(rules, "\n"), strings.Join(want, "\n"))
+	}
+	if err := h.UninstallSkill(); err != nil {
+		t.Fatalf("UninstallSkill: %v", err)
+	}
+	if _, err := os.Stat(rulesPath); !os.IsNotExist(err) {
+		t.Errorf("flow.rules survived uninstall (err=%v)", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("uninstall touched the user's own rules file: %v", err)
+	}
+	// Uninstall with no rules file present is fine.
+	if err := h.UninstallSkill(); err != nil {
+		t.Errorf("second UninstallSkill: %v", err)
 	}
 }

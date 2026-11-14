@@ -29,8 +29,10 @@ func TestHookSessionStartAutoRunArmsNoListener(t *testing.T) {
 		}
 	}
 
-	// The interactive bound session keeps the listener discipline.
+	// With harness wake off, the interactive bound session keeps the
+	// listener discipline.
 	t.Setenv("FLOW_AUTO_RUN", "")
+	t.Setenv(wakeOffEnv, "1")
 	mkBusTask(t, db, "desk", "sid-desk")
 	ctx = hookRun(t, `{"session_id":"sid-desk"}`, cmdHookSessionStart)
 	if !strings.Contains(ctx, "arm ONE inbox Monitor") {

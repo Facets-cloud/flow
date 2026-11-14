@@ -233,7 +233,11 @@ func queryBusMsgs(db *sql.DB, where string, args ...any) ([]*BusMessage, error) 
 //   - otherwise one ping per sender task until the human has seen it:
 //     no ping while that task has a pinged ask still unseen.
 func InsertBusMessage(db *sql.DB, m *BusMessage) error {
-	return insertBusMessage(db, m)
+	if err := insertBusMessage(db, m); err != nil {
+		return err
+	}
+	afterInsert(db, m)
+	return nil
 }
 
 type queryRower interface {
@@ -352,6 +356,7 @@ func AnswerHumanMessage(db *sql.DB, id string, c Consumer, reply *BusMessage) (n
 	if err = tx.Commit(); err != nil {
 		return false, err
 	}
+	afterInsert(db, reply)
 	return true, nil
 }
 
@@ -672,6 +677,24 @@ func PendingUnsurfacedForTask(db *sql.DB, slug string) ([]*BusMessage, error) {
 		slug, slug)
 }
 
+// ClaimSurfacedIDs records the hook side for ids and returns only those
+// THIS caller recorded (INSERT OR IGNORE won). The asyncRewake waiter uses
+// it so a hook that announced a row first keeps it, and the row is never
+// announced twice.
+func ClaimSurfacedIDs(db *sql.DB, slug string, ids []string) ([]string, error) {
+	var won []string
+	for _, id := range ids {
+		res, err := db.Exec(`INSERT OR IGNORE INTO bus_surfaced (task_slug, message_id) VALUES (?,?)`, slug, id)
+		if err != nil {
+			return won, err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			won = append(won, id)
+		}
+	}
+	return won, nil
+}
+
 // MarkSurfaced records that the PreToolUse delta-gate has announced these
 // message ids for the task, so the same pending message is never surfaced
 // twice at that hook point. Idempotent; a no-op on an empty id list.
@@ -826,6 +849,8 @@ func CleanupTaskBus(db *sql.DB, taskSlug string) error {
 		{`DELETE FROM bus_watches WHERE watched=?`, []any{taskSlug}},
 		{`DELETE FROM bus_nudges WHERE task_slug=?`, []any{taskSlug}},
 		{`DELETE FROM bus_surfaced WHERE task_slug=?`, []any{taskSlug}},
+		{`DELETE FROM bus_wake_nudged WHERE task_slug=?`, []any{taskSlug}},
+		{`DELETE FROM bus_session_state WHERE task_slug=?`, []any{taskSlug}},
 	} {
 		if _, err := db.Exec(stmt.q, stmt.args...); err != nil {
 			return fmt.Errorf("cleanup task bus: %w", err)
@@ -895,6 +920,10 @@ func SweepBus(db *sql.DB, now time.Time) error {
 	if _, err := db.Exec(
 		`DELETE FROM bus_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
 		return fmt.Errorf("sweep surfaced: %w", err)
+	}
+	if _, err := db.Exec(
+		`DELETE FROM bus_wake_nudged WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
+		return fmt.Errorf("sweep wake nudged: %w", err)
 	}
 	if _, err := db.Exec(
 		`DELETE FROM bus_human_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {

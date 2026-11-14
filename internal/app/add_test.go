@@ -23,6 +23,11 @@ func setupFlowRoot(t *testing.T) string {
 	t.Setenv("CODEX_THREAD_ID", "")
 	// ...and a Codex sandbox marker would make every launch refuse.
 	t.Setenv("CODEX_SANDBOX", "")
+	// Same for a prx shell, and prx's state dirs must resolve under the
+	// sandboxed $HOME, not a real override.
+	t.Setenv("PRAXIS_SESSION_ID", "")
+	t.Setenv("PRAXIS_CODING_AGENT_DIR", "")
+	t.Setenv("PRAXIS_CODING_AGENT_SESSION_DIR", "")
 	if rc := cmdInit(nil); rc != 0 {
 		t.Fatalf("cmdInit rc=%d", rc)
 	}

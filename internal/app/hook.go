@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // cmdHook dispatches `flow hook <subcommand>`. Two subcommands:
@@ -116,8 +117,17 @@ func cmdHookSessionStart(args []string) int {
 		return flagParseRC(err)
 	}
 	readHookPayload()
+	// Claude socket push: only this hook process sees the session's
+	// socket token, so record it on every start/resume/compaction.
+	recordClaudeEndpoint(currentSessionID())
+	// The session (re)loads the current skill now: record its version
+	// silently so the prompt/tool hooks don't announce an upgrade.
+	recordSessionVersion()
 
 	bound := lookupBoundTask()
+	if bound != nil && !isAutoRunSession(bound) {
+		markSessionState(bound.Slug, flowdb.SessionIdle)
+	}
 	if bound == nil {
 		// Unbound sessions are where the human usually sits — surface
 		// their pending-mail count here too (inform-only).
@@ -134,6 +144,9 @@ func cmdHookSessionStart(args []string) int {
 			pageCtx += driverDelegationBlock()
 		}
 	}
+	// Every bound session, tab or headless child, is told the PR trailer
+	// (an instruction, not an enforcement; FLOW_PR_TRAILER=off drops it).
+	pageCtx += prTrailerBlock()
 
 	instructions := fmt.Sprintf(
 		"You are running inside a flow execution session for task %q. "+
@@ -178,7 +191,7 @@ func driverDelegationBlock() string {
 		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
 		"answers. Live/prod changes: the child plans and gates only; you apply them with the user. " +
 		"How: write a brief (goal, where, Done when, gates, report via flow message, never block waiting " +
-		"for a reply (it reaches your inbox; pop it when a flow-bus notice or your listener surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
+		"for a reply (it reaches your inbox; pop it when a flow-bus notice surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
 		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
 		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
 		"the child messages you, verify its result (it names its update note) before reporting " +
@@ -332,11 +345,14 @@ func cmdHookUserPromptSubmit(args []string) int {
 		return flagParseRC(err)
 	}
 	readHookPayload()
-	pageCtx := busPromptSubmitContext()
 	t := lookupBoundTask()
+	if t != nil && !isAutoRunSession(t) {
+		markSessionState(t.Slug, flowdb.SessionBusy)
+	}
+	pageCtx := busPromptSubmitContext() + upgradeNoticeContext(t)
 	if t == nil {
 		// Unbound — page-bus context (an unbound session can still have
-		// paged the user) is the only possible payload.
+		// paged the user) and the upgrade notice are the only payloads.
 		if pageCtx == "" {
 			return 0
 		}
@@ -364,18 +380,31 @@ func cmdHookUserPromptSubmit(args []string) int {
 //
 // All the gating lives in busPreToolUseContext: unbound sessions and
 // tool calls with nothing new in the inbox produce "" (a silent no-op),
-// and the bus_surfaced delta-gate guarantees a given item is announced
-// at most once, so this never spams the same pending set across a turn's
-// many tool calls. Inform-only — it never consumes.
+// and the bus_surfaced delta-gate (the hook-side record) guarantees the
+// hooks announce a given item at most once, so this never spams the same
+// pending set across a turn's many tool calls. Wake pushes keep their own
+// record (bus_wake_nudged), so a swallowed push can still be announced
+// here once. Inform-only — it never consumes.
 func cmdHookPreToolUse(args []string) int {
 	fs := flagSet("hook pre-tool-use")
 	if err := fs.Parse(args); err != nil {
 		return flagParseRC(err)
 	}
 	readHookPayload()
-	ctx := busPreToolUseContext()
+	ctx := busPreToolUseContext() + upgradeNoticeContext(nil)
 	if ctx == "" {
 		return 0
 	}
 	return emitHookContext("PreToolUse", strings.TrimSpace(ctx))
+}
+
+// markSessionState records a hook-observed turn-state change (silent on
+// any error — hooks never fail loud).
+func markSessionState(slug, state string) {
+	db, err := openBusDB()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	_ = flowdb.SetSessionState(db, slug, state, time.Now())
 }

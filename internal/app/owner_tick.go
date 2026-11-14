@@ -87,7 +87,7 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 	if err != nil {
 		return fmt.Errorf("new session id: %w", err)
 	}
-	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{WritableDirs: sandboxWritableDirs()})
+	command := h.LaunchCmd(sid, prompt, harness.LaunchOpts{})
 	var spawnEnv map[string]string
 	if root := os.Getenv("FLOW_ROOT"); root != "" {
 		spawnEnv = map[string]string{"FLOW_ROOT": root}

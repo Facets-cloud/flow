@@ -22,18 +22,6 @@ func flowRoot() (string, error) {
 	return filepath.Join(home, ".flow"), nil
 }
 
-// sandboxWritableDirs lists the directories a sandboxed interactive harness
-// session must be able to write besides its work_dir: the flow root, so
-// `flow show task` (which opens flow.db read-write), `flow message` and
-// update notes work from inside the sandbox.
-func sandboxWritableDirs() []string {
-	root, err := flowRoot()
-	if err != nil {
-		return nil
-	}
-	return []string{root}
-}
-
 // flowDBPath returns the absolute path to flow.db under the flow root.
 // Returns a clear error if the data directory hasn't been initialized.
 func flowDBPath() (string, error) {
@@ -136,6 +124,7 @@ func cmdInit(args []string) int {
 		}
 		installHooks(h, false)
 	}
+	trustFlowTasksDir(targets, root)
 
 	fmt.Printf("flow initialized at %s\n", root)
 	fmt.Println(`Next: flow add project "My first project" --work-dir <path>`)

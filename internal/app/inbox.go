@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 )
 
 // cmdInbox is the consumption surface of the message bus:
@@ -17,6 +18,7 @@ import (
 //	flow inbox [--all] [--as <assignee>] [--json]
 //	flow inbox pop [--wait] [--timeout <s>] [--keep-unread] [--as <assignee>] [--json]
 //	flow inbox read <id> [--json]
+//	flow inbox wait [--timeout <s>]   (non-acking; see wake.go)
 //	flow inbox stats [--as <assignee>]
 //
 // Mail model: `flow inbox` lists unread (pending); `--all` lists the whole
@@ -49,6 +51,8 @@ func cmdInbox(args []string) int {
 	switch sub {
 	case "pop":
 		return inboxPop(rest)
+	case "wait":
+		return cmdInboxWait(rest)
 	case "read":
 		return inboxRead(rest)
 	case "stats":
@@ -415,10 +419,18 @@ func inboxPop(args []string) int {
 	// Codex kills a backgrounded child when its shell command returns, so
 	// a `pop --wait` there either dies unseen or acks pending mail into
 	// output the model never reads. Same refusal, same exit code.
-	if *wait && isCodexSession(nil) {
+	if *wait && sessionHarness(nil) == harness.NameCodex {
 		fmt.Fprintln(os.Stderr, "flow inbox pop --wait: refused in a Codex session — Codex kills background "+
 			"shell jobs, so a listener would ack your mail unseen; when a flow-bus notice says mail landed, run a "+
 			"one-shot `flow inbox pop` in the foreground (exit 3)")
+		return popExitNoListener
+	}
+	// prx has no streaming listener either: a backgrounded `pop --wait`
+	// acks mail into job output the model may never poll.
+	if *wait && sessionHarness(nil) == harness.NamePrx {
+		fmt.Fprintln(os.Stderr, "flow inbox pop --wait: refused in a prx session — prx has no streaming "+
+			"listener, so a background wait would ack your mail unseen; when a flow-bus notice says mail landed, "+
+			"run a one-shot `flow inbox pop` in the foreground (exit 3)")
 		return popExitNoListener
 	}
 	db, err := openBusDB()

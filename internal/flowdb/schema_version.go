@@ -17,7 +17,12 @@ import (
 // rev 2: peer hubs (migratePeers). A DB stamped by a pre-peers build must
 // not take OpenDB's fast path, or it never gets the peers table and the
 // bus_messages peer columns.
-const schemaRevision = 2
+//
+// rev 3: harness wake (#146/#153: bus_session_state, bus_wake_nudged and
+// the one-time alpha.38 bus_surfaced cleanup in applyWakeSchema) and
+// session_versions. Their DDL now feeds the fingerprint too, so a DB
+// stamped by a pre-wake build re-runs migrate on its next open.
+const schemaRevision = 3
 
 // schemaFingerprint identifies the schema this binary migrates to. It is
 // stored in PRAGMA user_version after a successful migration pass; OpenDB
@@ -26,7 +31,7 @@ const schemaRevision = 2
 func schemaFingerprint() int64 {
 	h := crc32.NewIEEE()
 	fmt.Fprintf(h, "rev=%d\x00", schemaRevision)
-	for _, ddl := range []string{schemaDDL, busDDL, indexesPostMigrate, peersDDL, peerBusIndexDDL} {
+	for _, ddl := range []string{schemaDDL, busDDL, indexesPostMigrate, peersDDL, peerBusIndexDDL, wakeDDL, sessionVersionDDL} {
 		h.Write([]byte(ddl))
 		h.Write([]byte{0})
 	}

@@ -123,10 +123,10 @@ func printUsage() {
 	fmt.Println(`flow — personal task and agent-session manager
 
 Setup:
-  flow init [--harness claude|codex]
-  flow skill install [--force] [--harness claude|codex]
-  flow skill uninstall [--harness claude|codex]
-  flow skill update [--harness claude|codex]
+  flow init [--harness claude|codex|prx]
+  flow skill install [--force] [--harness claude|codex|prx]
+  flow skill uninstall [--harness claude|codex|prx]
+  flow skill update [--harness claude|codex|prx]
   (default: every present harness — binary on PATH or config home exists)
   flow upgrade [--check] [--force]             (install the latest release now; flow also upgrades
                                                 itself after a command — FLOW_NO_AUTO_UPGRADE=1 stops that)
@@ -137,9 +137,9 @@ Create:
                    (from a task-bound session: records that task as parent, inherits its project)
 
 Sessions:
-  flow do                <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions]
-  flow do --auto         <ref> [--harness claude|codex] (run headlessly in the background; self-completes via flow done)
-  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex]
+  flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions]
+  flow do --auto         <ref> [--harness claude|codex|prx] (run headlessly in the background; self-completes via flow done)
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx]
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>
@@ -164,7 +164,7 @@ Edit / mutate:
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
                             [--project <slug>] [--clear-project]
   flow update project <ref> [--priority h|m|l] [--terminal-group <name>] [--clear-terminal-group]
-  flow do        <ref> [--harness claude|codex] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard)
+  flow do        <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard)
   flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>

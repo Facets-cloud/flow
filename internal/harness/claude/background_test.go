@@ -252,13 +252,18 @@ func TestResumeBackgroundCapturesNewID(t *testing.T) {
 	cap := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
 	oldSID := "00000000-1111-4222-8333-444444444444"
-	agent, err := h.ResumeBackground("/repo/app", oldSID, harness.LaunchOpts{SkipPermissions: true})
+	agent, err := h.ResumeBackground("/repo/app", "proj/task", oldSID, harness.LaunchOpts{SkipPermissions: true})
 	if err != nil {
 		t.Fatalf("ResumeBackground: %v", err)
 	}
 	// argv resumes the OLD id under --bg, in the task's work_dir ...
 	if !contains(cap.args, "--bg") || !containsPair(cap.args, "--resume", oldSID) {
 		t.Errorf("resume argv wrong: %v", cap.args)
+	}
+	// ... keeps the task's display name (else claude names the new bg
+	// session after the injected prompt) ...
+	if !containsPair(cap.args, "--name", "proj/task") {
+		t.Errorf("resume argv missing --name proj/task: %v", cap.args)
 	}
 	if cap.workDir != "/repo/app" {
 		t.Errorf("resume cwd = %q, want /repo/app", cap.workDir)

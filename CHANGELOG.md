@@ -9,6 +9,204 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **prx (praxis-harness) is a third harness.** `flow do --harness prx`,
+  `flow auto --harness prx`, `flow do --here`, `flow transcript` and the
+  close-out sweep work with prx as they do with Claude Code and Codex.
+  `flow skill install` writes the skill and hooks under
+  `$PRAXIS_CODING_AGENT_DIR` (default `~/.praxis/agent`). prx has no wake
+  push, so a prx session gets mail from its hooks (next prompt, tool call or
+  turn end) and pops it in the foreground. `FLOW_TERM=bg` runs a
+  task in a detached prx host and needs prx v0.6.56 or later; resuming
+  it keeps the session id.
+
+### Fixed
+
+- **flow refuses to launch harness runs from inside the Codex sandbox.**
+  Under Codex's seatbelt sandbox (`CODEX_SANDBOX` set) a child had no
+  network or keychain: Codex children could not mint a thread, Claude
+  children were "Not logged in", and `flow done`'s close-out sweep failed
+  after the status had already flipped, so the sweep was lost. `flow
+  auto`, `flow do` (including `--auto`), `flow run playbook`, `flow owner
+  tick` and `flow done` (and `update task --status done`) now refuse
+  before any side effect, telling the agent to re-run escalated. `flow do
+  --here` and `--no-sweep` launch nothing and stay allowed.
+- **`--help` never creates anything.** `flow add task --help` used to
+  create a task named "--help". Every command that takes a name or ref
+  before its flags (`add task|project|playbook|owner`, `auto`, `done`,
+  `update`, `run playbook`, `owner …`, `message`, `broadcast`,
+  `connector …`, …) now prints usage and exits 0 on `-h`/`--help`, and
+  a leading dash-argument is never taken as a name.
+- **Parallel `flow auto` launches no longer die with SQLITE_BUSY.** `flow
+  do` minted the Codex thread (a model round-trip) inside its write
+  transaction, holding the DB lock for the whole probe, while every DB
+  open ran write migrations. The session id is now minted before the
+  transaction. The DB records a schema fingerprint in `PRAGMA
+  user_version` and skips DDL and migrations (no write lock) when it is
+  current, and real migrations are serialized across processes with a
+  lock file (`flow.db.migrate.lock`).
+- **`flow update task --status done` runs the close-out sweep.** It now
+  goes through the same close path as `flow done` (after the other
+  fields apply), so a session that closes via `update` no longer skips
+  the KB and project distillation. `--no-sweep` keeps the old
+  status-only flip for scripted bulk edits, with a note on stderr.
+- **Codex sessions are told how to ask and close.** Codex has no
+  AskUserQuestion tool. Its SessionStart context, and the skill, now say:
+  ask in plain chat and wait for the reply, close only with `flow done`
+  after the user says yes, and run flow's launch commands escalated.
+- **Codex live-session guard reads unquoted argv correctly.** `ps` prints
+  argv unquoted, so a flag value with a space (a per-launch trust override
+  for a path like `/tmp/flow root`) split the line into several tokens and
+  the guard could miss the thread id, letting `flow do` start a second
+  `codex resume` on an open thread. It now takes the first standalone id
+  after `resume`, and a thread id quoted in a prompt no longer counts as a
+  live session.
+- **`flow update task --status …` checks the session before writing
+  anything.** On a task that never had a session, `--priority high --tag zz
+  --status done` wrote the priority and tag, printed `status → done`, then
+  failed. It now refuses up front with nothing changed, and the "routed
+  through flow done" line is printed only after the status flipped.
+- **`--help` gaps closed.** `flow connector list|escalate|priority --help`
+  and the group level `flow add|run|show|list|update|owner|workdir|skill|hook
+  --help` print usage and exit 0, as does `flow upgrade --help`. `flow add
+  task -- "-5 degrees fix"` creates a name that starts with a dash. Help text no longer renders
+  `-no-sweep flow done` / `-auto flow done`.
+- **A skipped migration is no longer stamped as done.** If probing a
+  column failed, the backfill was skipped silently and the schema version
+  was recorded anyway, so nothing retried it. The open now fails and the
+  next one retries.
+- **The migration lock times out.** An opener waiting on a stuck migrator
+  fails after 2 minutes with an error naming the lock file instead of
+  hanging.
+
+## [0.1.0-alpha.39] — 2026-11-13
+
+### Fixed
+
+- **A swallowed wake push no longer hides mail.** Wake and the hooks used
+  one shared "announced" claim, so a push that never arrived (Claude socket
+  held/refused or a stale token; `codex queue` printing a Warning with exit
+  0) left the mail invisible to PreToolUse, the Stop check and the waiter.
+  They now keep separate records: hooks track what they showed in context
+  (`bus_surfaced`), wake tracks what it pushed (`bus_wake_nudged`, used
+  only to coalesce). A delivered wake prompt records the hook side, so
+  there is no extra turn. The Claude asyncRewake waiter re-nudges an idle
+  session once per batch when a push is still unread and unshown 30s
+  later; the waiter's own nudge records the hook side, so PreToolUse and
+  Stop do not repeat it. Codex has no waiter, so a swallowed `codex queue`
+  waits for the next prompt or send (the hooks still show the mail then).
+  The re-nudge clock (`nudged_at`) uses a fixed-width timestamp so its
+  text comparison matches time order. Upgrading frees any pending mail an
+  alpha.38 wake claimed.
+
+## [0.1.0-alpha.38] — 2026-11-13
+
+### Added
+
+- **One star nudge, ever.** When `flow done` leaves 25 or more closed tasks
+  behind, it prints one `note for the user:` block naming the real count and
+  asking for a GitHub star, relayed by your agent, then drops
+  `state/nudge-star-25` under the flow root so it never says it again.
+  Installs already past 25 see it on their next `flow done`. `FLOW_QUIET=1`
+  suppresses it; nothing is written to the bus, and a nudge that cannot be
+  recorded never fails `flow done`.
+- **PR trailer for flow-bound sessions.** The SessionStart hook now tells
+  every bound session (tab or headless child) to end a pull request
+  description with the line `Shipped from a [flow](https://github.com/Facets-cloud/flow) task.`
+  after any harness footer. An instruction in context, not an enforcement:
+  no command rewriting, no PreToolUse check, nothing added to the line.
+  `FLOW_PR_TRAILER=off` (also `0`/`false`) drops it; unbound sessions never
+  see it.
+- **Harness wake: bus mail reaches a bound session with no listener.**
+  After every bus insert (`flow message`, watched `flow broadcast`, child
+  reports, dead-child pings, driver notices, attachments) flow checks the
+  recipient task's session. Idle → it pushes a short notice that starts a
+  turn: Claude through the session's cross-session socket (recorded by the
+  SessionStart hook, 0600 under `$FLOW_ROOT/wake/`), with an asyncRewake
+  waiter (`flow inbox wait --rewake`, SessionStart + Stop) as the
+  fallback; Codex through `codex queue --thread <id>` into the live TUI.
+  Busy → the session's own hooks deliver: PreToolUse before the next tool
+  call, and a new Stop-hook check that blocks the turn's end with the
+  notice when mail landed after the last tool call. Busy/idle is tracked
+  by flow's hooks (UserPromptSubmit/PreToolUse busy, Stop idle). An
+  Esc-interrupt ends a turn without a Stop hook, so a "busy" session whose
+  hooks are quiet for 30s is cross-checked with `claude agents --json`
+  (Claude), and counts as idle after 2 min when the harness can't tell. Every announcing path claims rows atomically in
+  `bus_surfaced`, so each message is announced once. Never woken: closed
+  tasks, auto runs, the human. The notice is a count + "run `flow inbox
+  pop`" tagged `[flow-bus wake]`, never taken for the human typing.
+  `flow message` / `flow broadcast` now print `woke <slug>` or `stored:
+  <reason>`. `FLOW_NO_WAKE=1` turns it off.
+- **Upgrade notice for running sessions.** When the flow binary changes
+  while a Claude or Codex session is running, that session's next prompt
+  or tool call carries one `[flow-upgrade]` notice: flow was upgraded
+  (old → new), re-load the flow skill, and read the installed
+  `references/upgrade-notes.md` for what changed. SessionStart records
+  the session's version silently; the UserPromptSubmit and PreToolUse
+  hooks compare-and-set it per session id (new `session_versions` table),
+  so concurrent hooks announce it once and every later version change
+  announces again. Sessions that started before this release are told
+  once ("an earlier version"). Dev builds (`Version=dev`) skip it.
+- **`flow inbox wait`** — the non-acking wait: returns when unannounced
+  mail lands in this session's inbox, leaves it unread.
+
+- **Skill: report a flow bug.** A new on-demand reference
+  (`references/report-issue.md`, one trigger line in the core) tells agents
+  how to file a GitHub issue about flow (`Facets-cloud/flow`) or a connector
+  (`Facets-cloud/flow-connectors`): gather version/OS/harness/connectors and a
+  minimal repro, redact paths, secrets, names and ids, draft a fixed
+  template, and file with `gh issue create` only after the human says
+  "File it" (headless runs never file). The issue URL is recorded as a
+  task update note.
+
+### Changed
+
+- **Regular Codex sessions run sandboxed.** A non-skip-permissions `flow do`
+  in Codex now starts with `-s workspace-write -a on-request`. `flow skill
+  install` writes a flow-owned `$CODEX_HOME/rules/flow.rules` that lets the
+  bus and read-only flow commands (`message`, `inbox`, `broadcast`, `watch`,
+  `show`, `list`, `transcript`) run outside the sandbox without a prompt;
+  other flow commands ask for approval. (#143)
+
+- **No more inbox Monitor.** With harness wake on, SessionStart tells a
+  bound Claude session not to arm a listener; the Monitor recipe left the
+  SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
+  kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
+
+### Fixed
+
+- **`flow do` resumes a session from where it lives.** When a task's session
+  was started in another directory, or `work_dir` is (or sits under) a
+  symlink, flow used to treat the session as missing. Resume paths now find
+  the transcript and resume from the directory it was started in. (#59, #135)
+
+- **`--since` compares instants.** `flow list tasks --since` compared
+  timestamps as strings, so rows written with a different UTC offset were
+  dropped near midnight. It now compares them as times. (#134)
+
+- **flow-created work dirs are pre-trusted, so headless spawns no longer die
+  with "Workspace not trusted".** `claude --bg` (`FLOW_TERM=bg`, flow-mesh
+  desks) has no TTY for Claude Code's folder-trust dialog, and a fresh
+  `$FLOW_ROOT/tasks/<slug>/workspace` was never trusted. `flow init` and
+  every `flow do` / `--auto` spawn now mark the resolved `$FLOW_ROOT/tasks`
+  as trusted in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`):
+  one entry covers every flow workspace. User repos are never trusted:
+  anything outside `$FLOW_ROOT/tasks`, or inside a git repo, is skipped. The
+  write is flock-serialized, atomic (temp + rename, permissions kept),
+  keeps every other key, is a no-op when the folder is already trusted, and
+  leaves an unparseable config untouched with a warning. Codex launches in
+  a flow workspace get a per-launch `-c projects."<dir>".trust_level="trusted"`
+  override, and `~/.codex/config.toml` is never written.
+
+- **A resumed background Claude session keeps its name.** When a
+  `FLOW_TERM=bg` task's session had exited, `flow do` resumed it with
+  `claude --bg --resume <id>` and no `--name`, so Claude named the new
+  session after the injected prompt. Resume now passes the same
+  `--name <title>` that spawn uses.
+
+## [0.1.0-alpha.37] — 2026-11-12
+
+### Added
+
 - **flow upgrades itself.** When the SessionStart hook finds a newer
   release, flow downloads it in the background after a command, checks
   its SHA-256 against the release, and renames it over the binary. The
@@ -91,6 +289,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- **Regular Codex sessions run sandboxed, with flow's commands allow-listed.**
+  `flow do` and `flow run playbook` now open and resume interactive Codex
+  sessions with `-s workspace-write -a on-request` instead of inheriting
+  whatever sandbox the read-only thread-minting probe left behind.
+  `--dangerously-skip-permissions` still passes
+  `--dangerously-bypass-approvals-and-sandbox`; headless paths and Claude are
+  unchanged. `flow skill install`/`update` now also writes a flow-owned Codex
+  exec-policy file, `$CODEX_HOME/rules/flow.rules` (default `~/.codex`), that
+  lets bare `flow message`, `inbox`, `broadcast`, `watch`, `show`, `list` and
+  `transcript` run outside the sandbox with no prompt, so the message bus
+  works from a sandboxed session. Every other flow command goes through
+  Codex's approval prompt. `flow skill uninstall` removes the file. Codex
+  matches only a bare top-level command, so the Codex SessionStart context
+  now says to run flow commands without env prefixes, `cd … &&` or wrapper
+  scripts.
+
 - **`FLOW_TERM` now outranks every ambient terminal marker.** An explicit,
   valid `FLOW_TERM` beats `$TMUX`, `$ZELLIJ` and Rex's and kitty's
   variables, not just `TERM_PROGRAM`: those describe where flow happens to
@@ -102,45 +316,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
-- **Interactive Codex sessions can write again.** `flow do` minted the
-  Codex thread with a read-only, approval=never probe, and `codex resume`
-  kept those first-turn settings, so `flow show task` failed with
-  "attempt to write a readonly database" and the agent could neither edit
-  the repo nor ask. Interactive Codex launches and resumes now pass
-  `-s workspace-write -a on-request --add-dir <flow root>` (honoring
-  `$FLOW_ROOT`). Skip-permissions launches are unchanged.
-- **flow refuses to launch harness runs from inside the Codex sandbox.**
-  Under Codex's seatbelt sandbox (`CODEX_SANDBOX` set) a child had no
-  network or keychain: Codex children could not mint a thread, Claude
-  children were "Not logged in", and `flow done`'s close-out sweep failed
-  after the status had already flipped, so the sweep was lost. `flow
-  auto`, `flow do` (including `--auto`), `flow run playbook`, `flow owner
-  tick` and `flow done` (and `update task --status done`) now refuse
-  before any side effect, telling the agent to re-run escalated. `flow do
-  --here` and `--no-sweep` launch nothing and stay allowed.
-- **`--help` never creates anything.** `flow add task --help` used to
-  create a task named "--help". Every command that takes a name or ref
-  before its flags (`add task|project|playbook|owner`, `auto`, `done`,
-  `update`, `run playbook`, `owner …`, `message`, `broadcast`,
-  `connector …`, …) now prints usage and exits 0 on `-h`/`--help`, and
-  a leading dash-argument is never taken as a name.
-- **Parallel `flow auto` launches no longer die with SQLITE_BUSY.** `flow
-  do` minted the Codex thread (a model round-trip) inside its write
-  transaction, holding the DB lock for the whole probe, while every DB
-  open ran write migrations. The session id is now minted before the
-  transaction. The DB records a schema fingerprint in `PRAGMA
-  user_version` and skips DDL and migrations (no write lock) when it is
-  current, and real migrations are serialized across processes with a
-  lock file (`flow.db.migrate.lock`).
-- **`flow update task --status done` runs the close-out sweep.** It now
-  goes through the same close path as `flow done` (after the other
-  fields apply), so a session that closes via `update` no longer skips
-  the KB and project distillation. `--no-sweep` keeps the old
-  status-only flip for scripted bulk edits, with a note on stderr.
-- **Codex sessions are told how to ask and close.** Codex has no
-  AskUserQuestion tool. Its SessionStart context, and the skill, now say:
-  ask in plain chat and wait for the reply, close only with `flow done`
-  after the user says yes, and run flow's launch commands escalated.
+- **Self-upgrade is safer before it ships to everyone** (follow-up to
+  #113). A failed release check (offline, GitHub rate limit) now records
+  a failed attempt, so flow waits 24 hours instead of starting another
+  background upgrade and API call on every command, and the
+  `flow-version-stale` hint comes back. Before a download replaces the
+  binary, flow runs it with `--version` and requires the release tag; a
+  build that does not run or reports another version is refused and the
+  binary is left alone. The replaced binary stays beside it as
+  `flow.prev` (`mv flow.prev flow` rolls back). No automatic upgrade starts
+  inside the Codex sandbox (`CODEX_SANDBOX`) or inside a headless auto
+  run (`FLOW_AUTO_RUN`), so a binary is never swapped mid-run. Downloads
+  left by a killed upgrade are removed after an hour, and production code
+  no longer imports `testing`.
+
 - The stale-version hint fired when the latest tag only differed from the
   running version. It now fires only when the latest release is newer, by
   semantic version order.
@@ -155,27 +344,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   the typed line is a few dozen bytes however long the prompt is. Linux
   (`MAX_CANON` 4096) was unaffected. `scripts/smoke-linux.sh` drives its
   control window the same way, so it passes on macOS too.
-- **Codex live-session guard handles a flow root with a space.** `ps`
-  prints `--add-dir /tmp/flow root <id>` unquoted, so the guard missed the
-  thread id and `flow do` could start a second `codex resume` on a thread
-  that was already open. It now finds the id whatever the flag values are.
-- **`flow update task --status …` checks the session before writing
-  anything.** On a task that never had a session, `--priority high --tag zz
-  --status done` wrote the priority and tag, printed `status → done`, then
-  failed. It now refuses up front with nothing changed, and the "routed
-  through flow done" line is printed only after the status flipped.
-- **`--help` gaps closed.** `flow connector list|escalate|priority --help`
-  and the group level `flow add|run|show|list|update|owner|workdir|skill|hook
-  --help` print usage and exit 0, as does `flow upgrade --help`. `flow add
-  task -- "-5 degrees fix"` creates a name that starts with a dash. Help text no longer renders
-  `-no-sweep flow done` / `-auto flow done`.
-- **A skipped migration is no longer stamped as done.** If probing a
-  column failed, the backfill was skipped silently and the schema version
-  was recorded anyway, so nothing retried it. The open now fails and the
-  next one retries.
-- **The migration lock times out.** An opener waiting on a stuck migrator
-  fails after 2 minutes with an error naming the lock file instead of
-  hanging.
 
 ## [0.1.0-alpha.36] — 2026-11-10
 

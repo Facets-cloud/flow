@@ -138,6 +138,9 @@ func closeTaskThen(db *sql.DB, task *flowdb.Task, afterFlip func()) int {
 			}
 		}
 	}
+	// Last, after all of done's own output: the one-time star note on
+	// stdout for the agent to relay (nudge.go). Never fails done.
+	maybeStarNudge(db)
 	return 0
 }
 

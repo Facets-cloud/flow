@@ -29,7 +29,8 @@ func refuseInCodexSandbox(what string) int {
 		"error: %s launches a harness run, which cannot work inside the Codex sandbox (%s=%s: no network, "+
 			"no keychain or ~/.claude access) — nothing was changed.\n"+
 			"  re-run this exact command with escalated permissions (outside the sandbox): request "+
-			"escalation/approval for it, the same way you would for `git push`.\n",
+			"escalation/approval for it, the same way you would for `git push` (it is not on flow's flow.rules "+
+			"allow-list, so Codex asks the user).\n",
 		what, codexSandboxEnvVar, os.Getenv(codexSandboxEnvVar))
 	return 1
 }

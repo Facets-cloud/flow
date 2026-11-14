@@ -41,7 +41,8 @@ func TestHookSessionStartInteractiveCodexArmsNoListener(t *testing.T) {
 		}
 	}
 
-	// Claude keeps the Monitor recipe unchanged.
+	// Claude keeps the Monitor recipe as the fallback when wake is off.
+	t.Setenv(wakeOffEnv, "1")
 	mkBusTask(t, db, "cl", "sid-cl")
 	ctx = hookRun(t, `{"session_id":"sid-cl"}`, cmdHookSessionStart)
 	if !strings.Contains(ctx, "arm ONE inbox Monitor") {
@@ -154,7 +155,33 @@ func TestAutoSpawnParentReminderCodexSaysNoMonitor(t *testing.T) {
 	}
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-cl")
+	if out := parentListenerReminder(); strings.Contains(out, "Monitor(") || !strings.Contains(out, "foreground") {
+		t.Errorf("Claude parent with wake on must not arm a Monitor: %s", out)
+	}
+	t.Setenv(wakeOffEnv, "1")
 	if out := parentListenerReminder(); !strings.Contains(out, "Monitor(") {
-		t.Errorf("Claude parent reminder lost the Monitor recipe: %s", out)
+		t.Errorf("Claude parent with wake off lost the Monitor fallback: %s", out)
+	}
+}
+
+// Regular Codex sessions run in the workspace-write sandbox; only BARE
+// flow bus/read commands match the exec-policy allow-list, so the hook
+// must tell Codex to run flow commands bare.
+func TestHookSessionStartCodexSaysRunFlowBare(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "cx", "sid-cx")
+	pinCodex(t, db, "cx")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	ctx := hookRun(t, `{"session_id":"sid-cx"}`, cmdHookSessionStart)
+	for _, want := range []string{"BARE", "readonly database", "approval"} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("Codex SessionStart missing sandbox guidance %q:\n%s", want, ctx)
+		}
+	}
+	mkBusTask(t, db, "cl", "sid-cl")
+	ctx = hookRun(t, `{"session_id":"sid-cl"}`, cmdHookSessionStart)
+	if strings.Contains(ctx, "readonly database") {
+		t.Errorf("Claude SessionStart carries Codex sandbox guidance:\n%s", ctx)
 	}
 }

@@ -174,14 +174,16 @@ func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.Laun
 	return c.launchAndCapture(workDir, args, "spawn")
 }
 
-// ResumeBackground runs `claude --bg --resume <sessionID>
-// [<injection>] [--dangerously-skip-permissions]`. `--bg` does not honor
+// ResumeBackground runs `claude --bg --name <name> --resume <sessionID>
+// [<injection>] [--dangerously-skip-permissions]`. --name keeps the same
+// display name SpawnBackground used; without it claude names the new
+// background session after the injected prompt. `--bg` does not honor
 // `--resume`'s id — it starts a fresh background process that *inherits
 // the prior conversation* under a NEW id (verified against the CLI). So
 // this captures and returns the new id exactly like SpawnBackground; the
 // caller re-records it on the task.
-func (c *claude) ResumeBackground(workDir, sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
-	args := []string{"--bg", "--resume", sessionID}
+func (c *claude) ResumeBackground(workDir, name, sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+	args := []string{"--bg", "--name", name, "--resume", sessionID}
 	if opts.Inject != "" {
 		args = append(args, harness.InjectionMarker+"\n"+opts.Inject)
 	}
