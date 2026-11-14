@@ -146,26 +146,51 @@ var processAlive = func(pid int) bool {
 // autoChildEnv builds the environment for the detached supervisor. It
 // inherits the parent's environment (so PATH finds the selected harness and
 // FLOW_ROOT points at the same store) but strips every registered harness
-// session id. Those ids belong to the dispatch session, not the headless run,
-// and leaking one would confuse reverse-lookups inside the autonomous session.
+// session id and the launching session's harness env (harnessSessionEnv).
+// Those belong to the dispatch session, not the headless run: a leaked id
+// confuses reverse-lookups inside the autonomous session, and a leaked
+// socket or pid points wake at the wrong process.
 func autoChildEnv() []string {
 	in := os.Environ()
 	out := make([]string, 0, len(in))
 	for _, kv := range in {
-		// A stale auto marker from an enclosing auto run never leaks: the
-		// launcher re-adds the right one for the run it starts.
-		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, reviveEnvVar+"=")
-		for _, h := range allHarnesses() {
-			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
-				isSessionEnv = true
-				break
-			}
-		}
-		if !isSessionEnv {
+		if !isSessionEnv(kv) {
 			out = append(out, kv)
 		}
 	}
 	return out
+}
+
+// harnessSessionEnv names the per-session variables a harness exports
+// beyond its session id: the live session's messaging socket, token and
+// pid, and its nesting markers. They describe the session that LAUNCHED
+// the run (for a revive: the child that wrote to its driver), so a
+// detached run inheriting them would record or push to the wrong
+// session's endpoint.
+var harnessSessionEnv = []string{
+	"CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
+	"CLAUDE_PID", "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION",
+}
+
+// isSessionEnv reports whether kv belongs to the launching session (see
+// autoChildEnv).
+func isSessionEnv(kv string) bool {
+	// A stale auto marker from an enclosing auto run never leaks: the
+	// launcher re-adds the right one for the run it starts.
+	if strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, reviveEnvVar+"=") {
+		return true
+	}
+	for _, h := range allHarnesses() {
+		if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
+			return true
+		}
+	}
+	for _, k := range harnessSessionEnv {
+		if strings.HasPrefix(kv, k+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // autoRunEnvVar marks the environment of a headless auto run (value: the
