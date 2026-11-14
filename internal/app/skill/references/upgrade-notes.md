@@ -17,9 +17,11 @@
   send the human at most one `flow message user` for a decision, and end
   the turn. You may dispatch auto children from a revive. Opt out with
   `FLOW_NO_REVIVE=1`. Details: references/messaging.md, "Driver revive".
-  When a revive is refused (rate limit, session may still be running, no
-  transcript) or fails, the human gets one FYI naming the driver and the
-  reason; relay it and reopen the driver if its children are waiting.
+  The human gets one FYI naming the driver when a revive is refused (rate
+  limit or no transcript, one per reason), fails or is killed, ends with
+  child reports unread, or the driver is in backlog; relay it and reopen
+  the driver if its children are waiting. A driver that may still be
+  running gets no FYI (its hooks deliver).
 
 ## v0.1.0-alpha.38
 

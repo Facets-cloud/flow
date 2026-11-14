@@ -231,10 +231,12 @@ next child), send the human ONE `flow message user` if a decision is
 needed, and end the turn. A revive may dispatch auto children. Never while
 any process may hold the session; one at a time; at most 4 per hour per
 driver; off with `FLOW_NO_REVIVE=1` (or `FLOW_NO_WAKE=1`). Other mail to an
-exited session waits for the next `flow do`. A refused revive (rate limit,
-session may still be running, no transcript) or a failed one sends the
-human ONE FYI naming the driver and why (no repeat while it is unread):
-relay it, and reopen the driver if its children are waiting.
+exited session waits for the next `flow do`. The human gets ONE FYI (no
+repeat while it is unread) naming the driver when a revive is refused for
+a rate limit or a missing transcript (one per reason), fails or is killed,
+ends with child reports still unread, or the driver is in backlog (never
+revived): relay it, and reopen the driver if its children are waiting. A
+driver that may still be running gets no FYI — its own hooks deliver.
 
 ## Fallback: listener discipline (wake off: `FLOW_NO_WAKE=1`)
 
