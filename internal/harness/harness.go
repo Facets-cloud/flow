@@ -116,6 +116,23 @@ type BackgroundAgent struct {
 	PID       int
 	Status    string // coarse liveness, e.g. "busy" / "idle"
 	State     string // finer state, e.g. "working" / "blocked" / "done"
+	Detail    string // why it failed, when the harness knows (state "failed")
+}
+
+// BackgroundStopper is an OPTIONAL BackgroundLauncher extension: stop a
+// live background session (claude: `claude stop <shortId>`). flow uses it
+// only on a session that is idle and never took a turn — it holds no
+// conversation, so stopping it loses nothing.
+type BackgroundStopper interface {
+	StopBackground(shortID string) error
+}
+
+// BackgroundForkSourcer is an OPTIONAL BackgroundLauncher extension: name
+// the session a live background agent was forked from (claude: the
+// process's `--fork-session --resume <source>` arguments). It recovers the
+// history source of forks recorded before flow kept session lineage.
+type BackgroundForkSourcer interface {
+	BackgroundForkSource(a BackgroundAgent) (string, bool)
 }
 
 // BackgroundLauncher is an OPTIONAL harness capability: hosting

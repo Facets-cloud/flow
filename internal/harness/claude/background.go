@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,7 +131,78 @@ func (c *claude) BackgroundAgents() ([]harness.BackgroundAgent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claude agents --json --all: %w", err)
 	}
-	return parseBackgroundAgents(out)
+	agents, err := parseBackgroundAgents(out)
+	if err != nil {
+		return nil, err
+	}
+	for i := range agents {
+		if agents[i].State == "failed" {
+			agents[i].Detail = jobDetail(agents[i].ShortID)
+		}
+	}
+	return agents, nil
+}
+
+// jobDetail reads the failure reason of background job shortID from
+// ~/.claude/jobs/<shortID>/state.json — `claude agents --json` omits it,
+// but it is what says why a resume died ("source session … not found").
+func jobDetail(shortID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || shortID == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".claude", "jobs", filepath.Base(shortID), "state.json"))
+	if err != nil {
+		return ""
+	}
+	var st struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(raw, &st) != nil {
+		return ""
+	}
+	return st.Detail
+}
+
+// StopBackground runs `claude stop <shortID>`.
+func (c *claude) StopBackground(shortID string) error {
+	out, err := BGCommandRunner("", []string{"stop", shortID})
+	if err != nil {
+		return fmt.Errorf("claude stop %s: %w (output: %s)", shortID, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// BackgroundForkSource reads the live agent's command line: `claude --bg
+// --resume <src>` runs as `… --session-id <new> --fork-session --resume
+// <src> …`, so <src> is where the conversation's history lives.
+func (c *claude) BackgroundForkSource(a harness.BackgroundAgent) (string, bool) {
+	if a.PID <= 0 {
+		return "", false
+	}
+	out, err := PSRunner()
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != strconv.Itoa(a.PID) {
+			continue
+		}
+		fork := false
+		for _, arg := range f[1:] {
+			if arg == "--fork-session" {
+				fork = true
+			}
+		}
+		for i := 1; fork && i+1 < len(f); i++ {
+			if f[i] == "--resume" {
+				return f[i+1], true
+			}
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // launchAndCapture runs a `claude --bg …` command in workDir, parses the

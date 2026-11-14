@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // loadInjectionText resolves --with / --with-file into the text that
@@ -791,28 +792,65 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	if pending, perr := flowdb.PendingForTask(db, task.Slug); perr == nil {
 		unread = len(pending)
 	}
+	// resumeFrom is the session whose transcript a resume is seeded from:
+	// the bound id or, when the bound id never took a turn, the nearest
+	// fork ancestor that did. onDisk reports whether one was found.
+	resumeFrom, resumeCwd, onDisk := "", task.WorkDir, false
 	if hasSession && !fresh {
+		sid := task.SessionID.String
+		resumeCwd, onDisk = resumeTarget(h, task, sid)
+		resumeFrom = sid
 		// If the session is still LIVE in the Agent View (process alive —
 		// running or idle-waiting), don't spawn or resume: it's already
 		// there, so just point the user at it. (A live bg session keeps a
 		// pid; an exited one — stopped/failed/done — has none.)
-		sid := task.SessionID.String
+		// Exception: a live session that is idle and never took a turn
+		// (no transcript, e.g. a prompt-less fork left by an older flow)
+		// holds no conversation and can't be woken, yet it would block
+		// this task forever. When its history source is known, stop it and
+		// resume from that source.
+		ancestorFrom, ancestorCwd, haveAncestor := "", "", false
 		if a := bgAgentInRegistry(bg, sid); a != nil && a.PID > 0 {
-			fmt.Printf("%s is running in the background (%s, %s) — %s\n",
-				task.Slug, a.ShortID, bgStateLabel(a), bgViewHint(h, sid))
-			return 0
-		}
-	}
-	// A bound session with no transcript anywhere never took a turn (e.g.
-	// a prompt-less bg resume). `claude --bg --resume` on it prints its
-	// banner, then the agent fails silently, so start fresh instead.
-	resumeCwd, onDisk := task.WorkDir, false
-	if hasSession && !fresh {
-		resumeCwd, onDisk = resumeTarget(h, task, task.SessionID.String)
-		if !onDisk {
+			stopper, canStop := bg.(harness.BackgroundStopper)
+			if !onDisk && a.Status == "idle" && canStop {
+				forkSource := ""
+				if fs, ok := bg.(harness.BackgroundForkSourcer); ok {
+					forkSource, _ = fs.BackgroundForkSource(*a)
+				}
+				ancestorFrom, ancestorCwd, haveAncestor = transcriptAncestor(db, h, task, sid, forkSource)
+			}
+			if !haveAncestor {
+				fmt.Printf("%s is running in the background (%s, %s) — %s\n",
+					task.Slug, a.ShortID, bgStateLabel(a), bgViewHint(h, sid))
+				if !onDisk && a.Status == "idle" {
+					fmt.Printf("  it never took a turn and its history source is unknown; `flow do --fresh %s` replaces it\n", task.Slug)
+				}
+				return 0
+			}
 			fmt.Fprintf(os.Stderr,
-				"note: %s's session %s has no transcript to resume (it never took a turn); starting a fresh background session.\n",
-				task.Slug, task.SessionID.String)
+				"note: %s's session %s is idle and never took a turn (no transcript); stopping it.\n",
+				task.Slug, a.ShortID)
+			if err := stopper.StopBackground(a.ShortID); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+		} else if !onDisk {
+			ancestorFrom, ancestorCwd, haveAncestor = transcriptAncestor(db, h, task, sid, "")
+		}
+		if !onDisk {
+			if haveAncestor {
+				fmt.Fprintf(os.Stderr,
+					"note: %s's session %s has no transcript (it never took a turn); resuming its history from %s.\n",
+					task.Slug, sid, ancestorFrom)
+				resumeFrom, resumeCwd, onDisk = ancestorFrom, ancestorCwd, true
+			} else {
+				// No transcript-bearing ancestor known. `claude --bg
+				// --resume` on a transcript-less id prints its banner, then
+				// the agent fails silently, so start fresh instead.
+				fmt.Fprintf(os.Stderr,
+					"note: %s's session %s has no transcript to resume (it never took a turn); starting a fresh background session.\n",
+					task.Slug, sid)
+			}
 		}
 	}
 
@@ -829,9 +867,15 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// it would sit idle and never read mail queued while nothing was
 		// live. Always kick it off; --with rides behind the kickoff.
 		kickoff := buildBgResumeKickoff(task.Slug, unread)
-		agent, err := bg.ResumeBackground(resumeCwd, title, sid, kickoff, opts)
+		agent, err := bg.ResumeBackground(resumeCwd, title, resumeFrom, kickoff, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		// The banner only proves the job registered; it can still fail
+		// seconds later. Never bind the task to a job that died.
+		if err := confirmBgResume(h, bg, resumeCwd, agent); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v; %s stays bound to %s\n", err, task.Slug, sid)
 			return 1
 		}
 		now := flowdb.NowISO()
@@ -844,6 +888,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "error: record resume: %v\n", err)
 			return 1
+		}
+		if agent.SessionID != resumeFrom {
+			_ = flowdb.RecordSessionSource(db, agent.SessionID, resumeFrom, task.Slug)
 		}
 		bumpWorkdirUsed(db, task.WorkDir)
 		if agent.SessionID == sid {
@@ -1288,4 +1335,69 @@ func parentListenerReminder() string {
 			"listener needed; when a flow-bus notice says mail landed, run a one-shot `flow inbox pop` in the foreground."
 	}
 	return "  Make sure the parent's inbox Monitor is armed: Monitor(description: \"flow inbox\", timeout_ms: 1800000, command: '" + inboxMonitorLoop + "'); re-arm it when it expires."
+}
+
+// bgResumeConfirmTimeout bounds how long cmdDoBackground watches a freshly
+// resumed background session before recording it. A `--bg --resume` job
+// can print its banner and then fail ~10s later ("source session … not
+// found"); recording that id leaves the task bound to a phantom.
+var (
+	bgResumeConfirmTimeout = 30 * time.Second
+	bgResumeConfirmPoll    = time.Second
+)
+
+// maxLineageHops bounds the walk up a session's fork ancestry.
+const maxLineageHops = 16
+
+// transcriptAncestor walks sid's fork lineage to the nearest session that
+// has a transcript. The lineage comes from flow's session_lineage table;
+// for forks made before flow recorded it, firstSource (read from the live
+// process) stands in for the first hop.
+func transcriptAncestor(db *sql.DB, h harness.Harness, task *flowdb.Task, sid, firstSource string) (string, string, bool) {
+	seen := map[string]bool{sid: true}
+	cur := sid
+	for i := 0; i < maxLineageHops; i++ {
+		src, ok := flowdb.SessionSource(db, cur)
+		if !ok && i == 0 && firstSource != "" {
+			src, ok = firstSource, true
+		}
+		if !ok || seen[src] {
+			return "", "", false
+		}
+		seen[src] = true
+		if cwd, onDisk := resumeTarget(h, task, src); onDisk {
+			return src, cwd, true
+		}
+		cur = src
+	}
+	return "", "", false
+}
+
+// confirmBgResume watches a just-resumed background session until it has
+// a transcript (it took its kickoff turn) or its job failed. A failed job
+// is an error carrying the harness's detail. If neither happens within
+// bgResumeConfirmTimeout the resume is accepted unconfirmed: the lineage
+// recorded for it still lets the next resume recover the history.
+func confirmBgResume(h harness.Harness, bg harness.BackgroundLauncher, cwd string, agent harness.BackgroundAgent) error {
+	deadline := time.Now().Add(bgResumeConfirmTimeout)
+	for {
+		if h.ValidateSession(cwd, agent.SessionID) == nil {
+			return nil
+		}
+		if a := bgAgentInRegistry(bg, agent.SessionID); a != nil && strings.EqualFold(a.State, "failed") {
+			if a.Detail != "" {
+				return fmt.Errorf("resumed background session %s failed: %s", a.ShortID, a.Detail)
+			}
+			return fmt.Errorf("resumed background session %s failed", a.ShortID)
+		}
+		if !time.Now().Before(deadline) {
+			if bgResumeConfirmTimeout > 0 {
+				fmt.Fprintf(os.Stderr,
+					"note: resumed session %s has not started its turn after %s; recording it anyway.\n",
+					agent.ShortID, bgResumeConfirmTimeout)
+			}
+			return nil
+		}
+		time.Sleep(bgResumeConfirmPoll)
+	}
 }

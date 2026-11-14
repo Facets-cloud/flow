@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 	os.Unsetenv("CLAUDE_CONFIG_DIR")
 	notBG := false
 	spawner.BackgroundOverride = &notBG
+	// Resumes are confirmed instantly in tests (one registry check, no
+	// polling); tests of the confirmation window set it themselves.
+	bgResumeConfirmTimeout = 0
 	os.Exit(m.Run())
 }
 
@@ -95,13 +98,17 @@ func stubBGMode(t *testing.T) {
 
 type bgCalls struct {
 	spawn, resume, agents     int
+	stop                      int
 	lastSpawn, lastResume     []string
+	lastStop                  []string
 	lastResumeDir             string
 	spawnBanner, resumeBanner string
 	// onResume, if set, fires when a --resume command is issued — lets a
 	// test mutate the registry so the resume's capture lookup resolves the
 	// newly-forked id.
 	onResume func()
+	// onStop, if set, fires on `claude stop <id>`.
+	onStop func()
 }
 
 // stubBGCommand swaps claude.BGCommandRunner with a recorder that
@@ -118,6 +125,14 @@ func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 		if len(args) >= 1 && args[0] == "agents" {
 			c.agents++
 			return []byte(*agentsJSON), nil
+		}
+		if len(args) >= 1 && args[0] == "stop" {
+			c.stop++
+			c.lastStop = args
+			if c.onStop != nil {
+				c.onStop()
+			}
+			return []byte("stopped " + args[len(args)-1] + "\n"), nil
 		}
 		for _, a := range args {
 			if a == "--resume" {
