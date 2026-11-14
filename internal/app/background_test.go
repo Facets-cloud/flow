@@ -216,6 +216,7 @@ func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 	if rc := cmdDo([]string{"bgt"}); rc != 0 { // fresh spawn, binds bgFullSID
 		t.Fatalf("first cmdDo rc=%d", rc)
 	}
+	writeBoundTranscript(t, "bgt")
 
 	// Old session removed; resume forks a new id (99aabbcc…), which must
 	// be the only thing in the registry at capture time.
@@ -262,6 +263,7 @@ func TestCmdDoBackgroundResumeWhenExited(t *testing.T) {
 	if rc := cmdDo([]string{"bgt"}); rc != 0 { // fresh spawn, binds bgFullSID
 		t.Fatalf("first cmdDo rc=%d", rc)
 	}
+	writeBoundTranscript(t, "bgt")
 
 	// Session now present but EXITED (stopped, no pid): the alive-check must
 	// see it as not-running → resume. The resume forks a new id, so flip the
@@ -431,4 +433,157 @@ func pairArg(ss []string, flag, val string) bool {
 		}
 	}
 	return false
+}
+
+// resumeExitedWithMail drives the gap this test pair covers: a bg task
+// whose session exited, with mail queued while nothing was live, is
+// resumed. Returns the recorded resume argv.
+func resumeExitedWithMail(t *testing.T, doArgs []string) []string {
+	t.Helper()
+	setupFlowRoot(t)
+	t.Setenv(wakeOffEnv, "1")
+	seedTask(t, "bgt")
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+	if rc := cmdDo([]string{"bgt"}); rc != 0 {
+		t.Fatalf("first cmdDo rc=%d", rc)
+	}
+	writeBoundTranscript(t, "bgt")
+	db := openFlowDB(t)
+	for _, id := range []string{"msgq0001", "msgq0002"} {
+		if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+			ID: id, CreatedAt: flowdb.NowISO(), Kind: "message",
+			FromAssignee: "user", ToAssignee: "user", ToTaskSlug: "bgt",
+			Body: "queued while no session was live",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const newSID = "77665544-0000-4000-8000-000000000000"
+	reg = bgAgentsJSONExited(bgFullSID, "stopped")
+	c.resumeBanner = "backgrounded · 77665544 · bgt\n"
+	c.onResume = func() { reg = bgAgentsJSON(newSID) }
+	if rc := cmdDo(doArgs); rc != 0 {
+		t.Fatalf("resume cmdDo rc=%d", rc)
+	}
+	if c.resume != 1 {
+		t.Fatalf("resume calls = %d, want 1", c.resume)
+	}
+	return c.lastResume
+}
+
+// resumePrompt returns the positional prompt of a `claude --bg --resume`
+// argv: the first arg that is neither a flag nor a flag's value.
+func resumePrompt(argv []string) string {
+	valued := map[string]bool{"--name": true, "--resume": true, "--settings": true}
+	for i := 0; i < len(argv); i++ {
+		a := argv[i]
+		if valued[a] {
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		return a
+	}
+	return ""
+}
+
+// TestCmdDoBackgroundResumeKicksOff: a bg resume WITHOUT --with must still
+// hand the session a prompt — with none, `claude --bg --resume` sits idle
+// forever and mail queued while no session was live is never read. The
+// kickoff re-loads task context, names the unread count, and drains the
+// inbox.
+func TestCmdDoBackgroundResumeKicksOff(t *testing.T) {
+	argv := resumeExitedWithMail(t, []string{"bgt"})
+	p := resumePrompt(argv)
+	if p == "" {
+		t.Fatalf("bg resume passed no prompt; argv: %v", argv)
+	}
+	for _, want := range []string{"flow show task", "flow inbox pop", "2 unread"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("kickoff missing %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, harness.InjectionMarker) {
+		t.Errorf("kickoff without --with must not carry the --with marker:\n%s", p)
+	}
+}
+
+// TestCmdDoBackgroundResumeWithAppendsAfterKickoff: --with no longer
+// replaces the kickoff; it rides behind the marker after it, exactly like
+// a fresh bg spawn appends it to the bootstrap prompt.
+func TestCmdDoBackgroundResumeWithAppendsAfterKickoff(t *testing.T) {
+	argv := resumeExitedWithMail(t, []string{"--with", "also rebase on main", "bgt"})
+	p := resumePrompt(argv)
+	k := strings.Index(p, "flow inbox pop")
+	m := strings.Index(p, harness.InjectionMarker+"\nalso rebase on main")
+	if k < 0 || m < 0 || m < k {
+		t.Errorf("want kickoff, then marker + --with text; got:\n%s", p)
+	}
+}
+
+// writeBoundTranscript materializes the transcript of slug's bound
+// session under its work_dir, so a bg re-run resumes rather than treating
+// the session as never started.
+func writeBoundTranscript(t *testing.T, slug string) {
+	t.Helper()
+	task, err := flowdb.GetTask(openFlowDB(t), slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeClaudeTranscript(t, task.WorkDir, task.SessionID.String)
+}
+
+// TestCmdDoBackgroundResumeWithoutTranscriptSpawnsFresh: a bound session
+// with no transcript anywhere (e.g. a prompt-less bg resume that never
+// took a turn) cannot be resumed — `claude --bg --resume` prints its
+// banner and the agent then fails silently. flow must start a fresh
+// background session instead, bootstrap prompt and queued mail included.
+func TestCmdDoBackgroundResumeWithoutTranscriptSpawnsFresh(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv(wakeOffEnv, "1")
+	seedTask(t, "bgt")
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+	if rc := cmdDo([]string{"bgt"}); rc != 0 {
+		t.Fatalf("first cmdDo rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+		ID: "msgq0003", CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: "user", ToAssignee: "user", ToTaskSlug: "bgt", Body: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const newSID = "77665544-0000-4000-8000-000000000000"
+	reg = bgAgentsJSONExited(bgFullSID, "failed")
+	c.spawnBanner = "backgrounded · 77665544 · bgt\n"
+	c.onResume = func() { t.Fatalf("resumed a session with no transcript") }
+	old := claude.BGCommandRunner
+	claude.BGCommandRunner = func(workDir string, args []string) ([]byte, error) {
+		if len(args) > 0 && args[0] != "agents" {
+			reg = bgAgentsJSON(newSID)
+		}
+		return old(workDir, args)
+	}
+	if rc := cmdDo([]string{"bgt"}); rc != 0 {
+		t.Fatalf("cmdDo rc=%d", rc)
+	}
+	if c.resume != 0 || c.spawn != 2 {
+		t.Fatalf("resume=%d spawn=%d, want a fresh spawn and no resume", c.resume, c.spawn)
+	}
+	p := c.lastSpawn[len(c.lastSpawn)-1]
+	if !strings.Contains(p, "execution session for flow task bgt") || !strings.Contains(p, "1 unread") {
+		t.Errorf("fresh spawn prompt lacks bootstrap or unread mail:\n%s", p)
+	}
+	task, _ := flowdb.GetTask(db, "bgt")
+	if task.SessionID.String != newSID {
+		t.Errorf("session_id = %q, want %q", task.SessionID.String, newSID)
+	}
 }

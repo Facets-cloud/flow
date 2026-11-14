@@ -252,7 +252,7 @@ func TestResumeBackgroundCapturesNewID(t *testing.T) {
 	cap := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
 	oldSID := "00000000-1111-4222-8333-444444444444"
-	agent, err := h.ResumeBackground("/repo/app", "proj/task", oldSID, harness.LaunchOpts{SkipPermissions: true})
+	agent, err := h.ResumeBackground("/repo/app", "proj/task", oldSID, "", harness.LaunchOpts{SkipPermissions: true})
 	if err != nil {
 		t.Fatalf("ResumeBackground: %v", err)
 	}
@@ -322,4 +322,18 @@ func containsPair(ss []string, flag, val string) bool {
 		}
 	}
 	return false
+}
+
+// ResumeBackground passes the resume prompt as the positional first
+// message, with opts.Inject appended behind the marker (as on spawn).
+func TestResumeBackgroundPromptAndInjection(t *testing.T) {
+	cap := stubBG(t, realBanner, realAgentsJSON)
+	h := New().(harness.BackgroundLauncher)
+	if _, err := h.ResumeBackground("/w", "n", "00000000-1111-4222-8333-444444444444",
+		"kick", harness.LaunchOpts{Inject: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(cap.args, "kick\n\n"+harness.InjectionMarker+"\nx") {
+		t.Errorf("resume argv missing prompt+injection: %v", cap.args)
+	}
 }

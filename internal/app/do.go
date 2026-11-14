@@ -787,19 +787,37 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
 	hasSession := task.SessionID.Valid && task.SessionID.String != ""
-
+	unread := 0
+	if pending, perr := flowdb.PendingForTask(db, task.Slug); perr == nil {
+		unread = len(pending)
+	}
 	if hasSession && !fresh {
-		sid := task.SessionID.String
 		// If the session is still LIVE in the Agent View (process alive —
 		// running or idle-waiting), don't spawn or resume: it's already
 		// there, so just point the user at it. (A live bg session keeps a
 		// pid; an exited one — stopped/failed/done — has none.)
+		sid := task.SessionID.String
 		if a := bgAgentInRegistry(bg, sid); a != nil && a.PID > 0 {
 			fmt.Printf("%s is running in the background (%s, %s) — %s\n",
 				task.Slug, a.ShortID, bgStateLabel(a), bgViewHint(h, sid))
 			return 0
 		}
+	}
+	// A bound session with no transcript anywhere never took a turn (e.g.
+	// a prompt-less bg resume). `claude --bg --resume` on it prints its
+	// banner, then the agent fails silently, so start fresh instead.
+	resumeCwd, onDisk := task.WorkDir, false
+	if hasSession && !fresh {
+		resumeCwd, onDisk = resumeTarget(h, task, task.SessionID.String)
+		if !onDisk {
+			fmt.Fprintf(os.Stderr,
+				"note: %s's session %s has no transcript to resume (it never took a turn); starting a fresh background session.\n",
+				task.Slug, task.SessionID.String)
+		}
+	}
 
+	if hasSession && !fresh && onDisk {
+		sid := task.SessionID.String
 		// Not running (exited: stopped/failed/done) or removed: bring the
 		// conversation back as a background agent seeded from its
 		// transcript. `claude --bg --resume` mints a NEW id (history
@@ -807,8 +825,11 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// re-record it; otherwise flow would keep pointing at the dead id
 		// (the phantom-id bug). Plain `--resume` would preserve the id but
 		// wouldn't be a background agent, so it can't be used in bg mode.
-		resumeCwd, _ := resumeTarget(h, task, sid)
-		agent, err := bg.ResumeBackground(resumeCwd, title, sid, opts)
+		// A resumed background session takes no turn without a prompt:
+		// it would sit idle and never read mail queued while nothing was
+		// live. Always kick it off; --with rides behind the kickoff.
+		kickoff := buildBgResumeKickoff(task.Slug, unread)
+		agent, err := bg.ResumeBackground(resumeCwd, title, sid, kickoff, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -841,6 +862,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	}
 	playbookSlug, isFirstRun := bgPlaybookContext(db, task)
 	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+	if unread > 0 {
+		prompt += "\n" + bgUnreadMailLine(unread)
+	}
 
 	agent, err := bg.SpawnBackground(task.WorkDir, title, prompt, opts)
 	if err != nil {
@@ -939,6 +963,34 @@ func buildTaskBootstrapPrompt(slug string) string {
 			"5. Only then begin work. If any brief section is blank or unclear, ASK — do not infer.",
 		slug,
 	)
+}
+
+// buildBgResumeKickoff is the first message of a background session that
+// `flow do` resumes ($FLOW_TERM=bg on a task whose session exited). The
+// conversation already holds the bootstrap, so it does not repeat it: it
+// re-loads what may have changed (brief, updates) and drains mail that
+// was queued while no session was live — the wake path only reaches live
+// sessions. unread is the task's pending-mail count at resume time.
+// Shell-safe like the bootstrap prompts (no quotes, backticks or dollars).
+func buildBgResumeKickoff(slug string, unread int) string {
+	mail := "Then " + bgInboxDrain
+	if unread > 0 {
+		mail = bgUnreadMailLine(unread)
+	}
+	return fmt.Sprintf(
+		"You were resumed in the background by flow for task %s. "+
+			"Re-load your task context first: run flow show task and re-read the brief and any update files you have not seen, since they may have changed while you were stopped. "+
+			"%s Then continue the task where you left off.",
+		slug, mail,
+	)
+}
+
+const bgInboxDrain = "run flow inbox pop in the foreground (one-shot, never --wait) and repeat until it is empty, acting on each message."
+
+// bgUnreadMailLine tells a background session about mail queued for its
+// task before it existed — the wake path only reaches live sessions.
+func bgUnreadMailLine(unread int) string {
+	return fmt.Sprintf("You have %d unread message(s) in your flow inbox, queued while no session was live. Once your context is loaded, %s", unread, bgInboxDrain)
 }
 
 // buildPlaybookRunBootstrapPrompt is the prompt for playbook-run tasks.

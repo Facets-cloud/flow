@@ -164,10 +164,7 @@ func (c *claude) launchAndCapture(workDir string, args []string, what string) (h
 // opts.Inject is appended to the prompt behind InjectionMarker, mirroring
 // LaunchCmd.
 func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
-	if opts.Inject != "" {
-		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
-	args := []string{"--bg", "--name", name, prompt}
+	args := []string{"--bg", "--name", name, harness.WithInjection(prompt, opts.Inject)}
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
@@ -175,17 +172,18 @@ func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.Laun
 }
 
 // ResumeBackground runs `claude --bg --name <name> --resume <sessionID>
-// [<injection>] [--dangerously-skip-permissions]`. --name keeps the same
+// [<prompt>] [--dangerously-skip-permissions]`. opts.Inject is appended to
+// prompt behind InjectionMarker, as in SpawnBackground. --name keeps the same
 // display name SpawnBackground used; without it claude names the new
 // background session after the injected prompt. `--bg` does not honor
 // `--resume`'s id — it starts a fresh background process that *inherits
 // the prior conversation* under a NEW id (verified against the CLI). So
 // this captures and returns the new id exactly like SpawnBackground; the
 // caller re-records it on the task.
-func (c *claude) ResumeBackground(workDir, name, sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+func (c *claude) ResumeBackground(workDir, name, sessionID, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
 	args := []string{"--bg", "--name", name, "--resume", sessionID}
-	if opts.Inject != "" {
-		args = append(args, harness.InjectionMarker+"\n"+opts.Inject)
+	if p := harness.WithInjection(prompt, opts.Inject); p != "" {
+		args = append(args, p)
 	}
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")

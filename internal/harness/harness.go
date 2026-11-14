@@ -46,6 +46,20 @@ const (
 // to recognize the literal string.
 const InjectionMarker = "[via flow do --with]"
 
+// WithInjection appends a `flow do --with` instruction to prompt behind
+// InjectionMarker. With no prompt the marked instruction stands alone;
+// with no instruction prompt is returned unchanged.
+func WithInjection(prompt, inject string) string {
+	if inject == "" {
+		return prompt
+	}
+	marked := InjectionMarker + "\n" + inject
+	if prompt == "" {
+		return marked
+	}
+	return prompt + "\n\n" + marked
+}
+
 // LaunchOpts are options forwarded into the spawn command builder.
 // Harness adapters translate to per-CLI flags (Claude:
 // --dangerously-skip-permissions, Codex: --dangerously-bypass-…, etc).
@@ -136,9 +150,11 @@ type BackgroundLauncher interface {
 	// on the task. workDir is where the resumed agent begins (the task's
 	// work_dir). name is the display name, the same one SpawnBackground
 	// got, so the resumed agent keeps its title instead of being named
-	// after the injected prompt. opts.Inject, if set, is delivered as the
-	// first message after resume.
-	ResumeBackground(workDir, name, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// after the injected prompt. prompt is the first message after resume
+	// (flow's resume kickoff): without one a resumed background session
+	// never takes a turn. opts.Inject, if set, is appended behind
+	// InjectionMarker, exactly as SpawnBackground appends it.
+	ResumeBackground(workDir, name, sessionID, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /
