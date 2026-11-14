@@ -42,17 +42,23 @@ type ReviveLimit struct {
 
 // ClaimRevive atomically claims a revive of slug: the task must be
 // in-progress, unarchived, with no auto run in flight, and fewer than
-// lim.Max revives started in [now-lim.Window, now]. On success auto_run_status is
+// lim.Max revives started in (now-lim.Window, now]. On success auto_run_status is
 // 'running' with auto_run_pid=holderPID (the claimant, alive while it
 // launches, so a concurrent reconcile does not mark the run dead) and a
-// bus_revives row is recorded.
+// bus_revives row is recorded. The claim, the row and the pruning of rows
+// outside the window are one transaction: a failure leaves nothing held.
 func ClaimRevive(db *sql.DB, slug string, now time.Time, lim ReviveLimit, holderPID int) (ReviveClaim, error) {
 	// revived_at is UTC so the window compares as text; the task columns
 	// use NowISO's layout like every other writer.
 	ts := now.UTC().Format(time.RFC3339)
 	local := now.Format(time.RFC3339)
 	since := now.Add(-lim.Window).UTC().Format(time.RFC3339)
-	res, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=?,
+	tx, err := db.Begin()
+	if err != nil {
+		return ReviveNotEligible, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=?,
             auto_run_finished=NULL, updated_at=?
         WHERE slug=? AND status='in-progress' AND archived_at IS NULL
           AND (auto_run_status IS NULL OR auto_run_status != 'running')
@@ -62,11 +68,20 @@ func ClaimRevive(db *sql.DB, slug string, now time.Time, lim ReviveLimit, holder
 		return ReviveNotEligible, err
 	}
 	if n, _ := res.RowsAffected(); n == 1 {
-		if _, err := db.Exec(`INSERT INTO bus_revives (task_slug, revived_at) VALUES (?,?)`, slug, ts); err != nil {
-			return ReviveClaimed, err
+		// Rows outside the window never count again: drop them so the
+		// table stays bounded (at most lim.Max rows per task).
+		if _, err := tx.Exec(`DELETE FROM bus_revives WHERE task_slug=? AND revived_at <= ?`, slug, since); err != nil {
+			return ReviveNotEligible, err
+		}
+		if _, err := tx.Exec(`INSERT INTO bus_revives (task_slug, revived_at) VALUES (?,?)`, slug, ts); err != nil {
+			return ReviveNotEligible, err
+		}
+		if err := tx.Commit(); err != nil {
+			return ReviveNotEligible, err
 		}
 		return ReviveClaimed, nil
 	}
+	_ = tx.Rollback()
 	// Lost: say why, for the sender's report.
 	var status string
 	var archived sql.NullString
@@ -84,16 +99,19 @@ func ClaimRevive(db *sql.DB, slug string, now time.Time, lim ReviveLimit, holder
 	return ReviveRateLimited, nil
 }
 
-// ReleaseRevive undoes a claim whose launch failed: the auto run is
-// cleared back to prevStatus (NULL when "") only while the claimant still
-// holds it, and the rate-limit row is dropped.
-func ReleaseRevive(db *sql.DB, slug string, holderPID int, claimedAt time.Time, prevStatus string) error {
-	var prev any
-	if prevStatus != "" {
-		prev = prevStatus
-	}
-	if _, err := db.Exec(`UPDATE tasks SET auto_run_status=?, auto_run_pid=NULL, auto_run_started=NULL
-        WHERE slug=? AND auto_run_status='running' AND auto_run_pid=?`, prev, slug, holderPID); err != nil {
+// AutoRunRecord is the auto-run state a claim overwrites, so a release
+// can put it back ("" = NULL).
+type AutoRunRecord struct {
+	Status, Started, Finished string
+}
+
+// ReleaseRevive undoes a claim whose launch failed: the auto-run columns
+// go back to prev only while the claimant still holds the row, and the
+// rate-limit row is dropped.
+func ReleaseRevive(db *sql.DB, slug string, holderPID int, claimedAt time.Time, prev AutoRunRecord) error {
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status=?, auto_run_pid=NULL, auto_run_started=?, auto_run_finished=?
+        WHERE slug=? AND auto_run_status='running' AND auto_run_pid=?`,
+		NullIfEmpty(prev.Status), NullIfEmpty(prev.Started), NullIfEmpty(prev.Finished), slug, holderPID); err != nil {
 		return err
 	}
 	_, err := db.Exec(`DELETE FROM bus_revives WHERE task_slug=? AND revived_at=?`,

@@ -65,7 +65,10 @@ func reviveActive() bool { return wakeActive() && os.Getenv(reviveOffEnv) == "" 
 // and whether its transcript exists to resume (onDisk). Any doubt counts
 // as live: a headless resume next to a live tab would put two writers on
 // one transcript. Tests replace it.
-var reviveProbe = func(t *flowdb.Task, w harness.Waker) (live, onDisk bool) {
+var reviveProbe = defaultReviveProbe
+
+// defaultReviveProbe is the real reviveProbe.
+func defaultReviveProbe(t *flowdb.Task, w harness.Waker) (live, onDisk bool) {
 	sid := t.SessionID.String
 	if w != nil && w.WakeLive(harness.WakeRequest{SessionID: sid, StateDir: wakeStateDir()}) {
 		return true, true
@@ -132,9 +135,8 @@ func maybeRevive(db *sql.DB, m *flowdb.BusMessage, r wakeResult) wakeResult {
 
 // launchRevive claims and starts the headless resume.
 func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
-	prev := ""
-	if t.AutoRunStatus.Valid {
-		prev = t.AutoRunStatus.String
+	prev := flowdb.AutoRunRecord{
+		Status: t.AutoRunStatus.String, Started: t.AutoRunStarted.String, Finished: t.AutoRunFinished.String,
 	}
 	now := time.Now()
 	claim, err := flowdb.ClaimRevive(db, t.Slug, now, reviveLimit, os.Getpid())
@@ -174,14 +176,16 @@ func isReviveRun(slug string) bool {
 }
 
 // reviveIfMailLanded runs in the revive supervisor after the session
-// exited: a child report that landed after the revive started and that no
-// hook showed the session gets one more revive (rate limit applies).
+// exited: a child report that landed after the revive started and is
+// still unread gets one more revive (rate limit applies). Unread, not
+// merely unannounced: a PreToolUse notice the session saw but never
+// popped leaves the report just as stuck.
 func reviveIfMailLanded(db *sql.DB, slug, startedAt string) {
 	start, err := time.Parse(time.RFC3339, startedAt)
 	if err != nil {
 		return
 	}
-	ms, err := flowdb.PendingUnsurfacedForTask(db, slug)
+	ms, err := flowdb.PendingForTask(db, slug)
 	if err != nil {
 		return
 	}
@@ -206,16 +210,39 @@ func finishRevive(db *sql.DB, t *flowdb.Task, status, startedAt string) {
 	_ = flowdb.SetSessionState(db, t.Slug, flowdb.SessionIdle, time.Now())
 	switch status {
 	case "dead":
+		// One FYI per unseen failure: a resume that keeps failing would
+		// otherwise repeat it on every revive the rate limit allows.
+		if unreadReviveFailure(db, t.Slug) {
+			return
+		}
 		m := &flowdb.BusMessage{
 			ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
 			FromAssignee: busUser, FromTaskSlug: t.Slug, ToAssignee: busUser, FYI: true,
-			Body: fmt.Sprintf("FYI: flow tried to revive driver %s for its children's mail and the headless resume "+
+			Body: fmt.Sprintf(reviveFailedPrefix+"%s for its children's mail and the headless resume "+
 				"failed; the mail is still unread — reopen it with flow do %s (log under tasks/%s/auto-runs/)", t.Slug, t.Slug, t.Slug),
 		}
 		_ = flowdb.InsertBusMessage(db, m)
 	case reviveStatus:
 		reviveIfMailLanded(db, t.Slug, startedAt)
 	}
+}
+
+// reviveFailedPrefix starts the human FYI for a failed revive.
+const reviveFailedPrefix = "FYI: flow tried to revive driver "
+
+// unreadReviveFailure reports whether the human still has an unread
+// failed-revive FYI for slug.
+func unreadReviveFailure(db *sql.DB, slug string) bool {
+	ms, err := flowdb.UnreadForHuman(db, busUser)
+	if err != nil {
+		return false
+	}
+	for _, m := range ms {
+		if m.FromTaskSlug == slug && strings.HasPrefix(m.Body, reviveFailedPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildRevivePrompt is the first user turn of a revive: short, because
