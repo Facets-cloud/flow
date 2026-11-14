@@ -370,3 +370,23 @@ func TestAutoExecPassesLastMessagePath(t *testing.T) {
 		t.Errorf("LastMessagePath=%q", gotOpts.LastMessagePath)
 	}
 }
+
+// The driver's prx session id reaches the child under its own name, while the
+// harness session ids themselves (and a stale driver id) are still stripped.
+func TestAutoChildEnvCarriesDriverSession(t *testing.T) {
+	t.Setenv("PRAXIS_SESSION_ID", "drv-1")
+	t.Setenv(autoDriverSessionEnvVar, "stale")
+	env := autoChildEnv()
+	var got []string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PRAXIS_SESSION_ID=") {
+			t.Fatalf("harness session id leaked: %q", kv)
+		}
+		if strings.HasPrefix(kv, autoDriverSessionEnvVar+"=") {
+			got = append(got, kv)
+		}
+	}
+	if len(got) != 1 || got[0] != autoDriverSessionEnvVar+"=drv-1" {
+		t.Fatalf("driver env = %v, want exactly %s=drv-1", got, autoDriverSessionEnvVar)
+	}
+}
