@@ -41,7 +41,21 @@ it: a flow child has its own task, brief, transcript and close-out sweep.
 Flow marks it everywhere: `flow list` shows `◆driver` (json
 `"driver": true`), `flow show task` prints `role: driver`, the per-prompt
 anchor says `[driver]`, and SessionStart / `flow do --here` print the
-`flow DRIVER task` block. Auto children never get it, even if tagged.
+`flow DRIVER task` line. Auto children never get it, even if tagged.
+
+### The Role section in brief.md
+
+The driver role lives in the task's own `brief.md` as a `## Role: driver`
+section, the LAST section (template: references/templates.md). Flow
+appends it when the task becomes a driver (`flow add task --tag driver`,
+`flow update task --tag driver`) unless a `## Role` section is already
+there; it never overwrites one, so edit it per task freely. With the
+section present the hook prints only "flow DRIVER task: follow the ## Role
+section in your brief.md."; without it (older briefs, or a brief
+overwritten without keeping the section) the hook prints the full driver
+block as a fallback. When you rewrite a driver brief, keep the section at
+the end. Removing the tag leaves the section; the hook stops pointing at
+it.
 
 ### Intake question (§4.2 step 5)
 
@@ -59,8 +73,9 @@ the user describes a big goal; else Regular first. On Driver, add
 ### Mid-session switch
 
 "make this a driver", "drive this", "you own this end to end" → run
-`flow update task <bound-slug> --tag driver`. Its output prints the
-driver block: follow it from that turn on. To step back, `--remove-tag
+`flow update task <bound-slug> --tag driver`. It appends the Role section
+to the brief and its output points at it: read it and follow it from that
+turn on. To step back, `--remove-tag
 driver` (output says it is no longer a driver). Tell the user in one
 line; no confirmation needed when they asked.
 

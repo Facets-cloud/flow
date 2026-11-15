@@ -347,6 +347,11 @@ func cmdUpdateTask(args []string) int {
 		}
 		fmt.Printf("tag + %s\n", t)
 	}
+	if !wasDriver && isDriverTask(db, task.Slug) {
+		if err := ensureDriverRoleSection(task.Slug); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: append Role section to brief: %v\n", err)
+		}
+	}
 	announceDriverChange(db, task, wasDriver)
 	return 0
 }
@@ -360,7 +365,7 @@ func announceDriverChange(db *sql.DB, task *flowdb.Task, wasDriver bool) {
 		return
 	}
 	if isDriver {
-		fmt.Println(strings.TrimSpace(driverRoleBlock()))
+		fmt.Println(strings.TrimSpace(driverRoleBlockFor(task.Slug)))
 		return
 	}
 	fmt.Printf("%s is no longer a driver; back to regular delegation:\n", task.Slug)

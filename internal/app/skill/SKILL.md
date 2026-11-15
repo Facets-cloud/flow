@@ -464,8 +464,9 @@ A task tagged `driver` (list `◆driver`, show `role: driver`, anchor
 decisions, verifying results, live/prod applies inline. Other bound
 sessions delegate lightly. No §4.2/§4.4 asks;
 announce `spawning auto child: <slug>`. Make one mid-session: `flow
-update task <bound> --tag driver` (prints the block). No grandchildren.
-Habits, brief template → **references/delegation.md**.
+update task <bound> --tag driver`. The role is the brief's last section,
+`## Role: driver` (flow appends it; keep it when rewriting). No
+grandchildren. Habits, brief template → **references/delegation.md**.
 
 ### 4.5 Save a progress note
 

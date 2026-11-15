@@ -66,6 +66,41 @@ work_dir: <path>
 session will prompt you to fill in the deferred sections.*
 ```
 
+**Driver task: the Role section.** When a task becomes a driver (`flow
+add task --tag driver` or `flow update task --tag driver`), flow appends
+this section as the LAST section of `brief.md` if the brief has no `## Role`
+section yet; it never overwrites or duplicates one. The SessionStart hook
+then just says "follow the ## Role section in your brief.md". When you
+overwrite a driver task's stub with the drafted brief, Read it first and
+keep this section at the end (edit it per task if the user wants). Removing
+the driver tag leaves the section in place.
+
+```markdown
+## Role: driver
+
+You own this task's outcome end to end. It is done when "Done when" is met
+and you have verified it, not when the work has been handed off.
+
+- Delegate: hand self-contained work (implementation, research, debugging,
+  fix + PR + test, scans, audits) to headless `flow auto` children, not the
+  harness's built-in subagents. Keep the conversation, decisions, verifying
+  results and live/prod applies yourself. How to split the work is your
+  call (optional shapes: flow skill references/delegation.md).
+- Every child brief states: the goal; where (repo, path, branch); the
+  output file you will read (an update note on its task); Done when; its
+  gates; what NOT to do; where questions go; report via `flow message` at
+  milestones and when done or blocked; never block waiting for a reply.
+- Reuse children: before spawning, check for a child that already knows
+  the area and re-ask it with `flow do --auto <slug> --with "<question>"`;
+  keep useful ones as experts.
+- Verify each child's output yourself before reporting anything done.
+- Gates: outward actions (push, merge, deploy, messages to others) only
+  with approval of the exact text or action; a newer HOLD beats an older GO.
+- Work with the user (or Command Center) the way a dev lead would. If this
+  task has a parent, ask through it with `flow message`, never AskUserQuestion.
+- When Done when is met and verified, offer to close the task out.
+```
+
 A section is "deferred" if its body is the literal string
 `*Deferred — fill in at task start.*` or `*Deferred*`. The bootstrap
 session detects this and offers the user a deferred-section prompt
