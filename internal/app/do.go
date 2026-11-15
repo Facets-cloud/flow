@@ -694,7 +694,7 @@ func backgroundLauncherFor(h harness.Harness) (harness.BackgroundLauncher, error
 	bg, ok := h.(harness.BackgroundLauncher)
 	if !ok {
 		return nil, fmt.Errorf(
-			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (only claude does today) — unset FLOW_TERM to open a terminal tab instead",
+			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (claude and prx do) — unset FLOW_TERM to open a terminal tab instead",
 			h.Name())
 	}
 	return bg, nil
@@ -716,6 +716,14 @@ func bgAgentInRegistry(bg harness.BackgroundLauncher, sessionID string) *harness
 		}
 	}
 	return nil
+}
+
+// bgViewHint tells the user how to see or reply to a background session.
+func bgViewHint(h harness.Harness, sessionID string) string {
+	if h.Name() == harness.NamePrx {
+		return "attach with `prx -resume " + sessionID + "`, or list them with `prx agents`"
+	}
+	return "check your Agent View: `claude agents`"
 }
 
 // bgStateLabel renders a background agent's coarse condition for user
@@ -787,8 +795,8 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// there, so just point the user at it. (A live bg session keeps a
 		// pid; an exited one — stopped/failed/done — has none.)
 		if a := bgAgentInRegistry(bg, sid); a != nil && a.PID > 0 {
-			fmt.Printf("%s is open in your Agent View (%s, %s) — run `claude agents` to view or reply\n",
-				task.Slug, a.ShortID, bgStateLabel(a))
+			fmt.Printf("%s is running in the background (%s, %s) — %s\n",
+				task.Slug, a.ShortID, bgStateLabel(a), bgViewHint(h, sid))
 			return 0
 		}
 
@@ -817,8 +825,13 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 			return 1
 		}
 		bumpWorkdirUsed(db, task.WorkDir)
-		fmt.Printf("Resumed %s in background (prior session was no longer tracked; brought the conversation back as %s · session %s)\n  check your Agent View: `claude agents`\n",
-			task.Slug, agent.ShortID, agent.SessionID)
+		if agent.SessionID == sid {
+			fmt.Printf("Resumed %s in background (%s · session %s)\n  %s\n",
+				task.Slug, agent.ShortID, agent.SessionID, bgViewHint(h, agent.SessionID))
+		} else {
+			fmt.Printf("Resumed %s in background (prior session was no longer tracked; brought the conversation back as %s · session %s)\n  %s\n",
+				task.Slug, agent.ShortID, agent.SessionID, bgViewHint(h, agent.SessionID))
+		}
 		return 0
 	}
 
@@ -851,8 +864,8 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		return 1
 	}
 	bumpWorkdirUsed(db, task.WorkDir)
-	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  check your Agent View: `claude agents`\n",
-		task.Slug, agent.SessionID, agent.ShortID, title)
+	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  %s\n",
+		task.Slug, agent.SessionID, agent.ShortID, title, bgViewHint(h, agent.SessionID))
 	return 0
 }
 
@@ -1210,7 +1223,11 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 // is on, the child's reports surface as flow-bus notices; only a Claude
 // parent with wake off (FLOW_NO_WAKE) still arms a Monitor.
 func parentListenerReminder() string {
-	if isCodexSession(nil) {
+	if sessionHarness(nil) == harness.NamePrx {
+		return "  prx parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
+			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
+	}
+	if sessionHarness(nil) == harness.NameCodex {
 		return "  Codex parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
 			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
 	}

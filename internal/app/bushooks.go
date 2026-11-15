@@ -100,23 +100,56 @@ const wakeNoListenerRule = " flow-bus: mail reaches you automatically — don't 
 	"the foreground (one-shot), repeat until empty, and act on each. Subscribe to what this task depends on: " +
 	"`flow watch <task-or-project-slug>` (tasks you create from this session are watched automatically)."
 
-// isCodexSession reports whether the current session runs under Codex:
-// the bound task is pinned to the codex harness, or this process is a
-// Codex tool shell ($CODEX_THREAD_ID). Hooks see only the pin — Codex
-// exports CODEX_THREAD_ID to tool shells, never to hook processes.
-func isCodexSession(bound *flowdb.Task) bool {
-	if bound != nil && bound.Harness.Valid && bound.Harness.String == string(harness.NameCodex) {
+// prxNoListenerRule replaces the Monitor discipline in an interactive prx
+// session. prx's `monitor` tool polls a command on an interval instead of
+// streaming, and its shell carries no PRAXIS_SESSION_ID, so it can't run
+// flow's inbox loop; a backgrounded `pop --wait` would ack mail into job
+// output nobody reads. Mail arrives as flow-bus hook notices instead.
+const prxNoListenerRule = " flow-bus, prx session: do NOT arm an inbox listener (no `monitor`, no " +
+	"background `flow inbox pop --wait`; flow refuses `pop --wait` here). Mail reaches you as flow-bus " +
+	"notices before your tool calls and when the user types. When a notice says mail landed or is pending, " +
+	"run `flow inbox pop` in the foreground (one-shot, never --wait): it shows you one message; repeat until " +
+	"empty and act on what it says. Still subscribe to what this task depends on: `flow watch " +
+	"<task-or-project-slug>` (tasks you create from this session are watched automatically); their reports " +
+	"arrive the same way."
+
+// sessionHarness names the harness the current session runs under: the
+// bound task's pin, else the ambient harness of this process (a tool
+// shell exports its session env var). Hooks see only the pin: Codex and
+// prx export their session id to tool shells, never to hook processes.
+// "" when neither is known.
+func sessionHarness(bound *flowdb.Task) harness.Name {
+	if bound != nil && bound.Harness.Valid && bound.Harness.String != "" {
+		return harness.Name(bound.Harness.String)
+	}
+	if h := ambientHarness(); h != nil {
+		return h.Name()
+	}
+	return ""
+}
+
+// foregroundInboxHarness reports whether the session's harness can't host
+// flow's streaming inbox listener (Codex, prx), so mail is popped in the
+// foreground on flow-bus notices.
+func foregroundInboxHarness(bound *flowdb.Task) bool {
+	switch sessionHarness(bound) {
+	case harness.NameCodex, harness.NamePrx:
 		return true
 	}
-	h := ambientHarness()
-	return h != nil && h.Name() == harness.NameCodex
+	return false
+}
+
+// isCodexSession reports whether the current session runs under Codex
+// (the bound task's pin, else this process's ambient harness).
+func isCodexSession(bound *flowdb.Task) bool {
+	return sessionHarness(bound) == harness.NameCodex
 }
 
 // noListenerSession reports whether the session must pop its inbox in
 // the foreground instead of relying on a listener: a headless auto run,
-// any Codex session, or any session while harness wake is on.
+// any Codex or prx session, or any session while harness wake is on.
 func noListenerSession(bound *flowdb.Task) bool {
-	return isAutoRunSession(bound) || isCodexSession(bound) || wakeActive()
+	return isAutoRunSession(bound) || foregroundInboxHarness(bound) || wakeActive()
 }
 
 // busSessionStartContext returns extra SessionStart context (may be "").
@@ -137,9 +170,13 @@ func busSessionStartContext() string {
 			b.WriteString(autoRunNoListenerRule)
 			return b.String()
 		}
-		if isCodexSession(t) {
+		switch sessionHarness(t) {
+		case harness.NameCodex:
 			b.WriteString(codexNoListenerRule)
 			b.WriteString(codexSandboxRule)
+			return b.String()
+		case harness.NamePrx:
+			b.WriteString(prxNoListenerRule)
 			return b.String()
 		}
 		if wakeActive() {

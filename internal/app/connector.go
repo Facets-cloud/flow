@@ -186,7 +186,7 @@ func connectorEnv() []string {
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		switch k {
-		case "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "FLOW_CONNECTOR_TOKEN":
+		case "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "PRAXIS_SESSION_ID", "FLOW_CONNECTOR_TOKEN":
 			continue
 		}
 		out = append(out, kv)
