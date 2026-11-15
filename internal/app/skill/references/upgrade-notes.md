@@ -11,6 +11,12 @@
 
 ## Unreleased
 
+- **Driver role lives in your brief.** A driver task's `brief.md` now ends
+  with a `## Role: driver` section (flow appends it on `--tag driver` if
+  missing; never overwrites one). The hook only says "follow the ## Role
+  section in your brief.md"; the full block remains a fallback for briefs
+  without it. When you rewrite a driver brief, keep that section last.
+
 ## v0.1.0-alpha.38
 
 - **Mail reaches you automatically (harness wake).** flow now pushes a
