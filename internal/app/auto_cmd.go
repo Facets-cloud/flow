@@ -98,7 +98,8 @@ func cmdAuto(args []string) int {
 	// addTask and cmdDo open their own handles.
 	db.Close()
 
-	addArgs := []string{name, "--slug", slug, "--priority", *priority}
+	// "--" keeps a dash-prefixed name (flow auto -- "-5 ...") literal in addTask.
+	addArgs := []string{"--", name, "--slug", slug, "--priority", *priority}
 	if *workDir != "" {
 		addArgs = append(addArgs, "--work-dir", *workDir)
 	}
