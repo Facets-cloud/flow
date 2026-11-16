@@ -205,7 +205,7 @@ func (c *claude) SessionBusy(sessionID string, timeout time.Duration) (busy, kno
 const rewakeTimeout = 86400
 
 // InstallRewakeHook registers command as an asyncRewake hook on
-// SessionStart (startup|resume|compact) and Stop. Claude Code runs it in
+// SessionStart (hookMatcher: startup|resume|compact|fork) and Stop. Claude Code runs it in
 // the background; when it exits 2 the session starts a turn whose prompt
 // is rewakeMessage + the hook's stderr. An entry for command that lost the
 // async fields is repaired in place, never duplicated.
