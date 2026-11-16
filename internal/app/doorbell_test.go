@@ -109,3 +109,32 @@ func TestSkillTeachesDoorbell(t *testing.T) {
 		}
 	}
 }
+
+// Tab spawn and tab resume both pass --name <project>/<slug> — the same
+// name background sessions get — so tab sessions are doorbell-addressable.
+func TestCmdDoTabPassesSessionName(t *testing.T) {
+	setupFlowRoot(t)
+	if rc := cmdAdd([]string{"project", "proj", "--slug", "proj", "--work-dir", t.TempDir()}); rc != 0 {
+		t.Fatal("add project")
+	}
+	if rc := cmdAdd([]string{"task", "tabby", "--slug", "tabby", "--project", "proj"}); rc != 0 {
+		t.Fatal("add task")
+	}
+	_, getScript := stubITerm(t)
+	stubNewUUID(t, "11111111-2222-4333-8444-555555555555")
+
+	if rc := cmdDo([]string{"tabby"}); rc != 0 {
+		t.Fatalf("fresh rc=%d", rc)
+	}
+	if s := getScript(); !strings.Contains(s, "--name 'proj/tabby'") {
+		t.Errorf("fresh tab spawn should pass --name proj/tabby: %s", s)
+	}
+
+	stubClaudeStatOK(t)
+	if rc := cmdDo([]string{"tabby", "--force"}); rc != 0 {
+		t.Fatalf("resume rc=%d", rc)
+	}
+	if s := getScript(); !strings.Contains(s, "--resume") || !strings.Contains(s, "--name 'proj/tabby'") {
+		t.Errorf("tab resume should pass --name proj/tabby: %s", s)
+	}
+}

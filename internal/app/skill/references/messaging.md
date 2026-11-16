@@ -259,7 +259,9 @@ flow wake / `flow do` resume still apply); with two live sessions sharing a
 name, delivery sticks to the one the sender already talked to, not the
 newest; holds when sender and receiver run different permission modes are
 untested; Codex and prx are not covered (flow wake / `codex queue` remain).
-Interactive tab sessions are addressable only once flow names them too.
+Tab sessions started or resumed by `flow do` carry the same `--name`;
+sessions started before that (or outside flow) have generic names and are
+not addressable — rely on flow wake.
 
 ## Fallback: listener discipline (wake off: `FLOW_NO_WAKE=1`)
 

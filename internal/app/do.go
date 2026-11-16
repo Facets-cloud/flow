@@ -460,6 +460,9 @@ func cmdDo(args []string) int {
 	launchOpts := harness.LaunchOpts{
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
+		// Same name a background session gets (claudeSessionName), so
+		// tab sessions are reachable by the Claude doorbell too.
+		Name: buildTabTitle(project, task),
 	}
 	applyWorkspaceTrust(h, cwd, &launchOpts)
 	// bootstrapCmd builds the first-start command. For pre-allocating

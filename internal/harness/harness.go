@@ -76,6 +76,13 @@ type LaunchOpts struct {
 	// persisted to config.toml). Claude ignores it — its trust lives in
 	// ~/.claude.json and is persisted via WorkspaceTruster instead.
 	TrustDir string
+
+	// Name, when set, is the session display name for an interactive
+	// tab launch/resume (claude: --name). flow uses the same
+	// <project>/<slug> name background sessions get, so a Claude sender
+	// can ring the session by name (the doorbell). Impls without an
+	// equivalent ignore it.
+	Name string
 }
 
 // WorkspaceTruster is an OPTIONAL harness capability: persistently

@@ -146,7 +146,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 	if opts.Inject != "" {
 		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	cmd := fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
+	cmd := "claude --session-id " + sessionID + nameFlag(opts) + " " + spawner.ShellQuote(prompt)
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
@@ -155,7 +155,7 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 
 // ResumeCmd builds `claude --resume <uuid> [<quoted-injection>] [--dangerously-skip-permissions]`.
 func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := "claude --resume " + sessionID
+	cmd := "claude --resume " + sessionID + nameFlag(opts)
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
@@ -163,6 +163,17 @@ func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 		cmd += " --dangerously-skip-permissions"
 	}
 	return cmd
+}
+
+// nameFlag renders ` --name '<name>'` for a tab launch/resume, or "" when
+// opts.Name is unset (keeping the legacy command byte-identical). Same
+// display name SpawnBackground/ResumeBackground pass, so tab sessions are
+// addressable by name too.
+func nameFlag(opts harness.LaunchOpts) string {
+	if opts.Name == "" {
+		return ""
+	}
+	return " --name " + spawner.ShellQuote(opts.Name)
 }
 
 // ---------- headless ----------
