@@ -445,13 +445,17 @@ func TestBacktickInfoStringBriefWithRoleIsUnchanged(t *testing.T) {
 // --- Round 4: Anuj's review ---------------------------------------------
 
 func TestRoleSectionCarriesDriverHabits(t *testing.T) {
+	flat := strings.Join(strings.Fields(driverRoleSection), " ")
 	for _, want := range []string{
 		"Children cannot spawn grandchildren.",
 		"Don't idle while children run; use the time on open decisions.",
 		"End any turn that needs the user with a numbered \"Needs from you:\" list.",
-		"In a headless `flow auto` run, do the work yourself; delegation applies only to the interactive driver session.",
+		"In any headless auto run (`flow auto` or `flow do --auto`), do the work yourself; delegation applies only to the interactive driver session.",
+		"`flow auto \"<name>\" --slug <s> --brief <file>`",
+		"announce \"spawning auto child: <slug>\" and continue without asking",
+		"Work with the user (or the parent task) the way a dev lead would.",
 	} {
-		if !strings.Contains(driverRoleSection, want) {
+		if !strings.Contains(flat, want) {
 			t.Errorf("Role section missing %q", want)
 		}
 	}
@@ -529,5 +533,40 @@ func TestCRLFBriefWithRoleIsUnchanged(t *testing.T) {
 		if got := briefOf(t, slug); got != custom {
 			t.Errorf("CRLF brief with a Role section must stay unchanged:\n%q", got)
 		}
+	}
+}
+
+// Round 5 (review): template lines stay wrapped, "Command Center" is gone,
+// and the docs describe how the Role section reaches headless runs and
+// existing drivers.
+func TestRoleSectionWordingRound5(t *testing.T) {
+	for _, line := range strings.Split(driverRoleSection, "\n") {
+		if len(line) > 80 {
+			t.Errorf("Role template line over 80 chars (%d): %q", len(line), line)
+		}
+	}
+	ref, _ := fs.ReadFile(skillFiles(), "references/templates.md")
+	del, _ := fs.ReadFile(skillFiles(), "references/delegation.md")
+	up, _ := fs.ReadFile(skillFiles(), "references/upgrade-notes.md")
+	for where, txt := range map[string]string{"role": driverRoleSection, "templates.md": string(ref)} {
+		if strings.Contains(txt, "Command Center") {
+			t.Errorf("%s still mentions the undefined \"Command Center\"", where)
+		}
+	}
+	flatDel := strings.Join(strings.Fields(string(del)), " ")
+	for _, want := range []string{
+		"Auto children never get the hook line; the Role section tells a headless run to do the work itself.",
+		"untag to opt out",
+	} {
+		if !strings.Contains(flatDel, want) {
+			t.Errorf("delegation.md missing %q", want)
+		}
+	}
+	if strings.Contains(flatDel, "Auto children never get it, even if tagged.") {
+		t.Error("delegation.md still has the old \"never get it\" wording")
+	}
+	flatUp := strings.Join(strings.Fields(string(up)), " ")
+	if !strings.Contains(flatUp, "Existing driver briefs gain the section on their next") {
+		t.Error("upgrade-notes.md must say existing driver briefs gain the section on their next flow do / SessionStart")
 	}
 }

@@ -57,13 +57,16 @@ tag is removed, ignore it.
 
 You own this task's outcome end to end. It is done when "Done when" is met
 and you have verified it, not when the work has been handed off.
-In a headless ` + "`flow auto`" + ` run, do the work yourself; delegation applies only to the interactive driver session.
+In any headless auto run (` + "`flow auto`" + ` or ` + "`flow do --auto`" + `), do the work
+yourself; delegation applies only to the interactive driver session.
 
 - Delegate: hand self-contained work (implementation, research, debugging,
   fix + PR + test, scans, audits) to headless ` + "`flow auto`" + ` children, not the
   harness's built-in subagents. Keep the conversation, decisions, verifying
   results and live/prod applies yourself. How to split the work is your
   call (optional shapes: flow skill references/delegation.md).
+- Spawn with ` + "`flow auto \"<name>\" --slug <s> --brief <file>`" + `; announce
+  "spawning auto child: <slug>" and continue without asking.
 - Children cannot spawn grandchildren.
 - Don't idle while children run; use the time on open decisions.
 - Every child brief states: the goal; where (repo, path, branch); the
@@ -76,8 +79,9 @@ In a headless ` + "`flow auto`" + ` run, do the work yourself; delegation applie
 - Verify each child's output yourself before reporting anything done.
 - Gates: outward actions (push, merge, deploy, messages to others) only
   with approval of the exact text or action; a newer HOLD beats an older GO.
-- Work with the user (or Command Center) the way a dev lead would. If this
-  task has a parent, ask through it with ` + "`flow message`" + `, never AskUserQuestion.
+- Work with the user (or the parent task) the way a dev lead would. If
+  this task has a parent, ask through it with ` + "`flow message`" + `,
+  never AskUserQuestion.
 - End any turn that needs the user with a numbered "Needs from you:" list.
 - When Done when is met and verified, offer to close the task out.
 `
@@ -253,8 +257,9 @@ func driverRolePointer() string {
 }
 
 // driverRoleBlockFor picks the pointer when the task's brief has a Role
-// section, else the full fallback block (briefs written before #58, or a
-// brief overwritten without keeping the section).
+// section, else the full fallback block. Callers heal first, so the
+// fallback is reached only when the section could not be appended (the
+// brief is missing or unwritable, or the task is a playbook run).
 func driverRoleBlockFor(slug string) string {
 	if briefHasRoleSection(slug) {
 		return driverRolePointer()

@@ -41,7 +41,8 @@ it: a flow child has its own task, brief, transcript and close-out sweep.
 Flow marks it everywhere: `flow list` shows `◆driver` (json
 `"driver": true`), `flow show task` prints `role: driver`, the per-prompt
 anchor says `[driver]`, and SessionStart / `flow do --here` print the
-`flow DRIVER task` line. Auto children never get it, even if tagged.
+`flow DRIVER task` line. Auto children never get the hook line; the Role
+section tells a headless run to do the work itself.
 
 ### The Role section in brief.md
 
@@ -57,7 +58,9 @@ touched. With the section present the hook prints only "flow DRIVER task:
 follow the ## Role section in your brief.md."; if the brief still has no
 Role section (e.g. it cannot be written) the hook prints the full driver
 block as a fallback. When you rewrite a driver brief, keep the section at
-the end. Removing the tag leaves the section in the brief, but a retained
+the end. Deleting the Role section by hand doesn't stick while the task is
+tagged `driver` (it is re-appended); untag to opt out. Removing the tag
+leaves the section in the brief, but a retained
 Role section is ignored once the `driver` tag is removed: the hook stops
 pointing at it, and the section itself says it applies only while the
 task is tagged `driver`.
