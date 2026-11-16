@@ -97,7 +97,7 @@ func TestModelFlagsRejectedWithHere(t *testing.T) {
 // noModelHarness is a harness without the ModelSelector capability.
 type noModelHarness struct{ harness.Harness }
 
-func TestApplyModelFlagsUnsupportedHarness(t *testing.T) {
+func TestCheckModelFlagsUnsupportedHarness(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "nm")
 	db := openFlowDB(t)
@@ -107,17 +107,56 @@ func TestApplyModelFlagsUnsupportedHarness(t *testing.T) {
 	}
 	h := noModelHarness{claude.New()}
 	stderr := captureStderr(t)
-	if rc := applyModelFlags(db, task, h, "opus", ""); rc != 2 {
+	if rc := checkModelFlags(task, h, "opus", ""); rc != 2 {
 		t.Errorf("rc=%d, want 2", rc)
 	}
 	if got := stderr(); !strings.Contains(got, "does not support --model/--effort") {
 		t.Errorf("stderr = %q", got)
 	}
-	if m, _ := taskModel(t, "nm"); m != "" {
-		t.Errorf("unsupported harness must store nothing, got model=%q", m)
-	}
-	if rc := applyModelFlags(db, task, h, "", ""); rc != 0 {
+	if rc := checkModelFlags(task, h, "", ""); rc != 0 {
 		t.Errorf("no flags on unsupported harness rc=%d, want 0", rc)
+	}
+}
+
+// A command refused by the running-auto-run guard must not change the
+// task's stored model/effort.
+func TestCmdDoRefusedAutoKeepsModel(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "ra")
+	stubITerm(t)
+	stubAutoLauncher(t, 4242)
+	oldAlive := processAlive
+	processAlive = func(pid int) bool { return true }
+	t.Cleanup(func() { processAlive = oldAlive })
+
+	if rc := cmdDo([]string{"ra", "--auto", "--model", "haiku", "--effort", "low"}); rc != 0 {
+		t.Fatalf("first --auto rc=%d", rc)
+	}
+	if rc := cmdDo([]string{"ra", "--auto", "--model", "opus", "--effort", "high"}); rc != 1 {
+		t.Fatalf("second --auto rc=%d, want 1 (already running)", rc)
+	}
+	if m, e := taskModel(t, "ra"); m != "haiku" || e != "low" {
+		t.Errorf("refused command changed stored model=%q effort=%q", m, e)
+	}
+}
+
+// An --effort-only launch writes only effort: a model another command
+// stored after this one loaded the task survives.
+func TestStoreModelFlagsWritesOnlyGivenColumns(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "sc")
+	db := openFlowDB(t)
+	if err := storeModelFlags(db, "sc", "haiku", "low"); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeModelFlags(db, "sc", "opus", ""); err != nil { // concurrent --model
+		t.Fatal(err)
+	}
+	if err := storeModelFlags(db, "sc", "", "high"); err != nil { // --effort only
+		t.Fatal(err)
+	}
+	if m, e := taskModel(t, "sc"); m != "opus" || e != "high" {
+		t.Errorf("stored model=%q effort=%q, want opus/high", m, e)
 	}
 }
 

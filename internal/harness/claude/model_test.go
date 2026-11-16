@@ -82,6 +82,9 @@ func TestModelEffortBackgroundArgv(t *testing.T) {
 			[]string{"--bg", "--name", "flow/bg-probe", "--resume", "48d287d9-1ef0-4738-84b9-3110beb988c4"}},
 		{"resume model", true, harness.LaunchOpts{SkipPermissions: true, Model: "opus"},
 			[]string{"--bg", "--name", "flow/bg-probe", "--resume", "48d287d9-1ef0-4738-84b9-3110beb988c4", "--dangerously-skip-permissions", "--model", "opus"}},
+		// A registered session keeps its id only without launch flags.
+		{"resume registered drops model", true, harness.LaunchOpts{ResumeRegistered: true, Model: "opus", Effort: "low"},
+			[]string{"--bg", "--resume", "48d287d9-1ef0-4738-84b9-3110beb988c4"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,7 +92,7 @@ func TestModelEffortBackgroundArgv(t *testing.T) {
 			bg := New().(harness.BackgroundLauncher)
 			var err error
 			if c.resume {
-				_, err = bg.ResumeBackground("/w", "flow/bg-probe", "48d287d9-1ef0-4738-84b9-3110beb988c4", c.opts)
+				_, err = bg.ResumeBackground("/w", "flow/bg-probe", "48d287d9-1ef0-4738-84b9-3110beb988c4", "", c.opts)
 			} else {
 				_, err = bg.SpawnBackground("/w", "flow/bg-probe", "go", c.opts)
 			}

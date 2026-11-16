@@ -52,7 +52,7 @@ func TestModelEffortArgv(t *testing.T) {
 	if _, err := bg.SpawnBackground("/w", "t", "go", harness.LaunchOpts{Model: "opus", Effort: "low"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bg.ResumeBackground("/w", "t", testID, harness.LaunchOpts{Model: "opus"}); err != nil {
+	if _, err := bg.ResumeBackground("/w", "t", testID, "", harness.LaunchOpts{Model: "opus"}); err != nil {
 		t.Fatal(err)
 	}
 	wantSpawn := []string{"dir=/w", "run", "-sdk", "-detach", "-cwd", "/w", "-max-turns", "5000", "-model", "opus", "-thinking", "low", "-prompt", "go"}

@@ -389,7 +389,7 @@ func ownerStart(args []string) int {
 		if rc := checkOwnerModel(o.Harness.String, m, e); rc != 0 {
 			return rc
 		}
-		if err := flowdb.SetOwnerModel(db, o.Slug, m, e); err != nil {
+		if err := flowdb.SetOwnerModel(db, o.Slug, *model, *effort); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}

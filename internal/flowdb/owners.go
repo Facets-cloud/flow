@@ -162,10 +162,11 @@ func SetOwnerNextWake(db *sql.DB, slug, nextWakeAt string) error {
 	return affectedOwnerRow(res, err, "set next wake", slug)
 }
 
-// SetOwnerModel sets ONLY model and effort (targeted column write). Empty
-// strings are stored as NULL (harness default).
+// SetOwnerModel sets ONLY model and effort (targeted column write), and of
+// those only the ones given: an empty string keeps the stored value, so a
+// concurrent change to the other column survives.
 func SetOwnerModel(db *sql.DB, slug, model, effort string) error {
-	res, err := db.Exec(`UPDATE owners SET model=?, effort=?, updated_at=? WHERE slug=?`,
+	res, err := db.Exec(`UPDATE owners SET model=COALESCE(?, model), effort=COALESCE(?, effort), updated_at=? WHERE slug=?`,
 		NullIfEmpty(model), NullIfEmpty(effort), NowISO(), slug)
 	return affectedOwnerRow(res, err, "set model", slug)
 }

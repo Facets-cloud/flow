@@ -768,7 +768,7 @@ func TestMigrationAddsModelAndEffort(t *testing.T) {
 
 // A DB created before owners.model/effort existed gets both columns on
 // open, NULL for existing rows; SetOwnerModel round-trips through GetOwner
-// and stores "" as NULL.
+// and leaves a column given as "" untouched.
 func TestMigrationAddsOwnerModelAndEffort(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "flow.db")
 	db, err := OpenDB(path)
@@ -802,6 +802,13 @@ func TestMigrationAddsOwnerModelAndEffort(t *testing.T) {
 	}
 	if got, _ = GetOwner(db, "old"); got.Model.String != "haiku" || got.Effort.Valid {
 		t.Errorf("round-trip model=%+v effort=%+v", got.Model, got.Effort)
+	}
+	// Only the given column is written: an effort-only call keeps model.
+	if err := SetOwnerModel(db, "old", "", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = GetOwner(db, "old"); got.Model.String != "haiku" || got.Effort.String != "high" {
+		t.Errorf("effort-only write model=%+v effort=%+v", got.Model, got.Effort)
 	}
 	if err := SetOwnerModel(db, "missing", "haiku", ""); err == nil {
 		t.Error("SetOwnerModel on a missing owner should fail")

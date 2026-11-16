@@ -41,11 +41,12 @@ func rejectModelWithHere(model, effort string) bool {
 	return true
 }
 
-// applyModelFlags checks that h can honour the task's model/effort (the
-// flag value, else the one stored on the task) and stores any flag value
-// on the task row, so later launches without the flag reuse it. task is
-// updated in memory to match. Returns a non-zero exit code on failure.
-func applyModelFlags(db *sql.DB, task *flowdb.Task, h harness.Harness, model, effort string) int {
+// checkModelFlags checks that h can honour the task's model/effort (the
+// flag value, else the one stored on the task) and updates task in memory
+// to match. It writes nothing: storeModelFlags persists the flag values
+// once the launch is known to proceed, so a refused command leaves the row
+// unchanged. Returns a non-zero exit code on failure.
+func checkModelFlags(task *flowdb.Task, h harness.Harness, model, effort string) int {
 	if model == "" {
 		model = task.Model.String
 	}
@@ -56,17 +57,29 @@ func applyModelFlags(db *sql.DB, task *flowdb.Task, h harness.Harness, model, ef
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
 	}
-	if model == task.Model.String && effort == task.Effort.String {
-		return 0
-	}
-	if _, err := db.Exec(`UPDATE tasks SET model = ?, effort = ?, updated_at = ? WHERE slug = ?`,
-		flowdb.NullIfEmpty(model), flowdb.NullIfEmpty(effort), flowdb.NowISO(), task.Slug); err != nil {
-		fmt.Fprintf(os.Stderr, "error: store model/effort: %v\n", err)
-		return 1
-	}
 	task.Model = sql.NullString{String: model, Valid: model != ""}
 	task.Effort = sql.NullString{String: effort, Valid: effort != ""}
 	return 0
+}
+
+// execer is satisfied by both *sql.DB and *sql.Tx.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// storeModelFlags writes the given --model/--effort flag values to the
+// task row so later launches without the flag reuse them. Only the columns
+// whose flag was given are written; an omitted flag keeps whatever is
+// stored, even if another command changed it meanwhile.
+func storeModelFlags(db execer, slug, model, effort string) error {
+	if model == "" && effort == "" {
+		return nil
+	}
+	if _, err := db.Exec(`UPDATE tasks SET model = COALESCE(?, model), effort = COALESCE(?, effort), updated_at = ? WHERE slug = ?`,
+		flowdb.NullIfEmpty(model), flowdb.NullIfEmpty(effort), flowdb.NowISO(), slug); err != nil {
+		return fmt.Errorf("store model/effort: %w", err)
+	}
+	return nil
 }
 
 // checkModelForNewTask is the early --model/--effort check for commands

@@ -199,10 +199,11 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	// --model/--effort: refuse what h can't honour, and store a flag value
-	// on the task before any launch path (tab, --auto supervisor, bg) reads
-	// it back, so resumes and wakes keep the same model.
-	if rc := applyModelFlags(db, task, h, *model, *effort); rc != 0 {
+	// --model/--effort: refuse what h can't honour now, before any guard.
+	// The flag values are stored only once a launch proceeds (inside the
+	// allocation tx below, or in cmdDoBackground), so resumes and wakes
+	// keep the same model but a refused command changes nothing.
+	if rc := checkModelFlags(task, h, *model, *effort); rc != 0 {
 		return rc
 	}
 	// A task can be bound to the thread that is running this very flow
@@ -229,7 +230,10 @@ func cmdDo(args []string) int {
 			fmt.Fprintln(os.Stderr, "error: $FLOW_TERM=bg cannot be combined with --auto (both spawn their own session; pick one)")
 			return 2
 		}
-		return cmdDoBackground(db, task, h, *fresh, *dangerSkip, injectionText)
+		return cmdDoBackground(db, task, h, bgLaunch{
+			fresh: *fresh, skipPerms: *dangerSkip, inject: injectionText,
+			model: *model, effort: *effort,
+		})
 	}
 
 	// The focus-an-existing-tab behavior only makes sense for the
@@ -312,8 +316,16 @@ func cmdDo(args []string) int {
 	// was passed. In both cases we allocate a new UUID here and claim it
 	// in the DB via the status-flip UPDATE below — so the jsonl file claude
 	// writes is identified deterministically by us, not scraped afterwards.
+	// The launch proceeds from here, so store the --model/--effort flags
+	// now, then read model/effort back in this tx: the probe below and the
+	// launch (from the re-select) both use this one snapshot.
+	if err := storeModelFlags(tx, task.Slug, *model, *effort); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
 	var curSessionID sql.NullString
-	if err := tx.QueryRow(`SELECT session_id FROM tasks WHERE slug=?`, task.Slug).Scan(&curSessionID); err != nil {
+	if err := tx.QueryRow(`SELECT session_id, model, effort FROM tasks WHERE slug=?`, task.Slug).
+		Scan(&curSessionID, &task.Model, &task.Effort); err != nil {
 		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
 	}
@@ -764,6 +776,14 @@ func bgStateLabel(a *harness.BackgroundAgent) string {
 	}
 }
 
+// bgLaunch is cmdDo's per-invocation input to cmdDoBackground. model and
+// effort are the raw flag values, stored once a spawn or resume proceeds.
+type bgLaunch struct {
+	fresh, skipPerms bool
+	inject           string
+	model, effort    string
+}
+
 // cmdDoBackground is the $FLOW_TERM=bg branch of `flow do`. It spawns (or
 // resumes) a terminal-free background agent via the harness's
 // BackgroundLauncher and captures the harness-minted session id. Unlike
@@ -781,7 +801,8 @@ func bgStateLabel(a *harness.BackgroundAgent) string {
 //   - session not running (exited or removed) → resume under the SAME id
 //     (no launch flags for a registered session; a copy is the last
 //     resort and gets lineage + its original stopped)
-func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, skipPerms bool, inject string) int {
+func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaunch) int {
+	fresh, skipPerms, inject := in.fresh, in.skipPerms, in.inject
 	bg, err := backgroundLauncherFor(h)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -987,6 +1008,15 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				"note: --dangerously-skip-permissions not applied: %s's session is resumed with its saved permission mode (a registered background session takes no launch flags; `flow do --fresh %s` starts over with the flag)\n",
 				task.Slug, task.Slug)
 		}
+		if resumeOpts.ResumeRegistered && (in.model != "" || in.effort != "") {
+			fmt.Fprintf(os.Stderr,
+				"note: --model/--effort not applied now: %s's session is resumed with its saved settings (a registered background session takes no launch flags); they are stored for the next fresh launch\n",
+				task.Slug)
+		}
+		if err := storeModelFlags(db, task.Slug, in.model, in.effort); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 		agent, err := bg.ResumeBackground(resumeCwd, title, resumeFrom, kickoff, resumeOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -1036,6 +1066,10 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		prompt += "\n" + bgUnreadMailLine(unread)
 	}
 
+	if err := storeModelFlags(db, task.Slug, in.model, in.effort); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
 	agent, err := bg.SpawnBackground(task.WorkDir, title, prompt, opts)
 	if err != nil {
 		// Nothing was written to the DB yet — clean failure, next attempt retries.
