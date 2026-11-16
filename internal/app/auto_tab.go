@@ -142,10 +142,13 @@ func launchDetachedSweep(slug string) bool {
 }
 
 // tabSweepDetached reports whether this `flow done` should detach the
-// close-out sweep: the task is a running tab auto run on a harness that
-// defers its sweep in auto runs. task is the row as loaded before the flip.
+// close-out sweep: the task is a tab auto run (running, or falsely
+// reconciled dead) on a harness that defers its sweep in auto runs, so
+// the sweep never runs inline inside the harness's tool. task is the row
+// as loaded before the flip.
 func tabSweepDetached(h harness.Harness, task *flowdb.Task) bool {
-	return isTabAutoRun(task) && task.AutoRunStatus.Valid && task.AutoRunStatus.String == "running" &&
+	st := task.AutoRunStatus.String
+	return isTabAutoRun(task) && task.AutoRunStatus.Valid && (st == "running" || st == "dead") &&
 		harness.DefersCloseoutInAutoRun(h)
 }
 

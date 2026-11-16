@@ -261,12 +261,14 @@ func recordAutoTabLaunched(db *sql.DB, slug string) error {
 
 // completeTabAutoRunOnDone records 'completed' for a running tab run the
 // moment its task flips to done. The tab (and harness) stay open for
-// review, so liveness can no longer tell finished from running.
+// review, so liveness can no longer tell finished from running. A run
+// already reconciled 'dead' completes too: flow done is the run's success
+// signal, so a false death (a probe that missed the harness) is undone.
 func completeTabAutoRunOnDone(db *sql.DB, slug string) error {
 	now := flowdb.NowISO()
 	_, err := db.Exec(
 		`UPDATE tasks SET auto_run_status='completed', auto_run_finished=?
-		 WHERE slug=? AND auto_run_mode=? AND auto_run_status='running' AND status='done'`,
+		 WHERE slug=? AND auto_run_mode=? AND auto_run_status IN ('running','dead') AND status='done'`,
 		now, slug, autoRunModeTab,
 	)
 	return err

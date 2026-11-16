@@ -510,14 +510,10 @@ func cmdDo(args []string) int {
 		command = h.ResumeCmd(sessionID, resumeOpts)
 	}
 	// Env propagation. Flow never injects harness-specific env vars
-	// (the harness exports its own session id env; flow only reads
-	// it). The one exception is $FLOW_ROOT — flow's own data root —
-	// which the spawned session needs to read the same flow.db / kb
-	// / briefs as the parent process.
-	var spawnEnv map[string]string
-	if root := os.Getenv("FLOW_ROOT"); root != "" {
-		spawnEnv = map[string]string{"FLOW_ROOT": root}
-	}
+	// (the harness exports its own session id env; flow only reads it).
+	// It forwards only its own: $FLOW_ROOT and the pinned launcher binary
+	// (pinnedFlowEnv).
+	spawnEnv := pinnedFlowEnv()
 	// The project's terminal group (Rex session) decides where the tab
 	// opens; floating tasks and ungrouped projects open where flow ran.
 	group := ""

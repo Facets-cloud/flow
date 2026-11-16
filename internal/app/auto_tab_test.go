@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -526,5 +527,111 @@ func TestCmdDoAutoTabEnvDefaultNoTerminalFallsBackLoudly(t *testing.T) {
 	}
 	if m := getTask(t, "env-linux").AutoRunMode; m.Valid {
 		t.Errorf("auto_run_mode = %q, want NULL (headless)", m.String)
+	}
+}
+
+// B3: a tab must run the same flow binary that launched it. The tab's
+// login shell may put another flow first on PATH (e.g. ~/.local/bin), so
+// the spawn pins the launcher's directory first on PATH and FLOW_BIN.
+func TestCmdDoAutoTabPinsLauncherBinary(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "pinned")
+	binDir := t.TempDir()
+	old := flowBinPath
+	flowBinPath = func() string { return filepath.Join(binDir, "flow") }
+	t.Cleanup(func() { flowBinPath = old })
+	t.Setenv("PATH", "/shadow/bin:/usr/bin")
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	if rc := cmdDo([]string{"pinned", "--auto", "--tab", "--harness", "prx"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	s := script()
+	for _, want := range []string{
+		"FLOW_BIN='" + filepath.Join(binDir, "flow") + "'",
+		"PATH='" + binDir + ":/shadow/bin:/usr/bin'",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("tab spawn missing %q; got:\n%s", want, s)
+		}
+	}
+}
+
+// pinnedFlowEnv does not repeat the launcher dir when it is already on PATH.
+func TestPinnedFlowEnvDedupesPath(t *testing.T) {
+	old := flowBinPath
+	flowBinPath = func() string { return "/opt/flow/bin/flow" }
+	t.Cleanup(func() { flowBinPath = old })
+	t.Setenv("PATH", "/a:/opt/flow/bin:/b")
+	t.Setenv("FLOW_ROOT", "")
+	env := pinnedFlowEnv()
+	if env["PATH"] != "/opt/flow/bin:/a:/b" {
+		t.Errorf("PATH = %q, want /opt/flow/bin:/a:/b", env["PATH"])
+	}
+	if env["FLOW_BIN"] != "/opt/flow/bin/flow" {
+		t.Errorf("FLOW_BIN = %q", env["FLOW_BIN"])
+	}
+	if _, ok := env["FLOW_ROOT"]; ok {
+		t.Error("FLOW_ROOT must not be set when the launcher has none")
+	}
+}
+
+// B4: a tab run falsely reconciled dead must still complete on its own
+// flow done, and a deferring harness must still detach the sweep (never
+// sweep inline inside the prx tool).
+func TestCmdDoneDeadTabRunCompletesAndDetaches(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "lazarus")
+	seedTabRun(t, "lazarus", time.Minute)
+	if _, err := openFlowDB(t).Exec(`UPDATE tasks SET harness='prx', auto_run_status='dead', auto_run_finished=? WHERE slug='lazarus'`, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	inline := stubPrxSweep(t)
+	launched := stubCloseoutLauncher(t)
+	captureStdout(t, func() {
+		if rc := cmdDone([]string{"lazarus"}); rc != 0 {
+			t.Fatalf("done rc=%d", rc)
+		}
+	})
+	if *inline != 0 {
+		t.Errorf("inline sweeps = %d, want 0 (detached)", *inline)
+	}
+	if len(*launched) != 1 {
+		t.Errorf("detached sweep launches = %v, want [lazarus]", *launched)
+	}
+	if got := getTask(t, "lazarus").AutoRunStatus.String; got != "completed" {
+		t.Errorf("auto_run_status = %q, want completed", got)
+	}
+}
+
+// B5: flow auto --mkdir creating a brand-new work dir outside the flow
+// root: flow made it, so the prx tab launch passes -trust-workspace instead
+// of stalling on prx's trust prompt.
+func TestCmdAutoTabMkdirTrustsCreatedDir(t *testing.T) {
+	setupFlowRoot(t)
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	dir := filepath.Join(t.TempDir(), "fresh", "wd")
+	brief := writeFile(t, t.TempDir(), "b.md", "# goal\nDone when: x\n")
+	if rc := cmdAuto([]string{"mk child", "--slug", "mk", "--brief", brief, "--tab", "--harness", "prx", "--work-dir", dir, "--mkdir"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if s := script(); !strings.Contains(s, "-trust-workspace") {
+		t.Errorf("prx tab in a flow-created --mkdir dir should pass -trust-workspace; got:\n%s", s)
+	}
+}
+
+// ...but an existing user dir is never auto-trusted, --mkdir or not.
+func TestCmdAutoTabMkdirExistingDirNotTrusted(t *testing.T) {
+	setupFlowRoot(t)
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	dir := t.TempDir()
+	brief := writeFile(t, t.TempDir(), "b.md", "# goal\nDone when: x\n")
+	if rc := cmdAuto([]string{"ex child", "--slug", "ex", "--brief", brief, "--tab", "--harness", "prx", "--work-dir", dir, "--mkdir"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if s := script(); strings.Contains(s, "-trust-workspace") {
+		t.Errorf("an existing user dir must keep prx's trust prompt; got:\n%s", s)
 	}
 }

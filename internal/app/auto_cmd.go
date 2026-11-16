@@ -104,8 +104,15 @@ func cmdAuto(args []string) int {
 	if *mkdir {
 		addArgs = append(addArgs, "--mkdir")
 	}
+	preExisting := *workDir == "" || dirExists(*workDir)
 	if rc := addTask(addArgs); rc != 0 {
 		return rc
+	}
+	if *mkdir && !preExisting {
+		if resolved, err := filepath.EvalSymlinks(*workDir); err == nil {
+			mkdirCreatedWorkDir = resolved
+			defer func() { mkdirCreatedWorkDir = "" }()
+		}
 	}
 
 	root, err := flowRoot()
@@ -146,4 +153,11 @@ func readAutoBrief(src string) (string, error) {
 	}
 	b, err := os.ReadFile(src)
 	return string(b), err
+}
+
+// dirExists reports whether path exists (as anything; addTask rejects a
+// non-directory).
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
