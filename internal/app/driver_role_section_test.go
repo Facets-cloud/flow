@@ -123,12 +123,17 @@ func TestSessionStartDriverWithoutRoleSectionGetsFallback(t *testing.T) {
 	t.Setenv("FLOW_AUTO_RUN", "")
 	seedTask(t, "old")
 	tagTask(t, "old", "driver") // tagged directly: brief has no Role section
-	// A brief the hook cannot heal (read-only) keeps the full fallback.
+	// A brief the hook cannot heal keeps the full fallback. brief.md is
+	// replaced by a directory: unreadable and unwritable as a file for
+	// every user, root included (a 0444 chmod is not, under
+	// CAP_DAC_OVERRIDE).
 	p := filepath.Join(os.Getenv("FLOW_ROOT"), "tasks", "old", "brief.md")
-	if err := os.Chmod(p, 0o444); err != nil {
+	if err := os.Remove(p); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(p, 0o644) })
+	if err := os.Mkdir(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	bindSession(t, "old", "sid-old")
 	out := sessionStartOutput(t)
 	if !strings.Contains(out, fallbackOnlyPhrase) {
@@ -366,5 +371,54 @@ func TestRetainedRoleSectionIsMarkedInactiveWithoutTag(t *testing.T) {
 	}
 	if !strings.Contains(string(ref), "is ignored once the `driver` tag is removed") {
 		t.Error("delegation.md must say a retained Role section is ignored once the driver tag is removed")
+	}
+}
+
+// --- Round 3: CommonMark heading indent + unclosed fences ---------------
+
+func TestRoleHeadingIndentFollowsCommonMark(t *testing.T) {
+	for _, tc := range []struct {
+		brief string
+		want  bool
+	}{
+		{"# t\n## Role: driver\n", true},
+		{"# t\n ## Role: driver\n", true},
+		{"# t\n   ## Role: driver\n", true},
+		{"# t\n    ## Role: driver\n", false},     // 4 spaces: indented code
+		{"# t\n\t## Role: driver\n", false},       // tab: indented code
+		{"# t\n    ```\n## Role: driver\n", true}, // indented ``` is code, not a fence
+	} {
+		if got := hasRoleHeading([]byte(tc.brief)); got != tc.want {
+			t.Errorf("hasRoleHeading(%q) = %v, want %v", tc.brief, got, tc.want)
+		}
+	}
+}
+
+func TestUnclosedFenceIsClosedBeforeAppendingRole(t *testing.T) {
+	for _, tail := range []string{"```markdown\n## Role: reviewer\nexample", "~~~~\nexample\n"} {
+		t.Run(tail[:3], func(t *testing.T) {
+			setupFlowRoot(t)
+			seedTask(t, "drv")
+			body := "# drv\n\n## What\nx\n\n" + tail
+			writeTaskBrief(t, "drv", body)
+			tagTask(t, "drv", "driver")
+			db := openFlowDB(t)
+			for i := 0; i < 3; i++ { // repeated healing must append once
+				healDriverRoleSection(db, "drv", false)
+			}
+			b := briefOf(t, "drv")
+			if n := strings.Count(b, roleHeading); n != 1 {
+				t.Fatalf("want exactly one %q after repeated healing, got %d:\n%s", roleHeading, n, b)
+			}
+			if !strings.HasPrefix(b, body) {
+				t.Errorf("existing content must be kept:\n%s", b)
+			}
+			if !briefHasRoleSection("drv") {
+				t.Errorf("appended Role must sit outside the fence:\n%s", b)
+			}
+			if !strings.HasSuffix(strings.TrimSpace(b), strings.TrimSpace(driverRoleSection)) {
+				t.Errorf("Role must be the last section:\n%s", b)
+			}
+		})
 	}
 }

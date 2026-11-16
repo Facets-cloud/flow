@@ -78,33 +78,44 @@ and you have verified it, not when the work has been handed off.
 - When Done when is met and verified, offer to close the task out.
 `
 
-// roleHeadingRe matches a `## Role` heading line, so a user-edited or
+// roleHeadingRe matches a `## Role` ATX heading with 0-3 leading spaces
+// (CommonMark; 4+ spaces or a tab is indented code), so a user-edited or
 // renamed Role section is never duplicated.
-var roleHeadingRe = regexp.MustCompile(`^##\s+Role\b`)
+var roleHeadingRe = regexp.MustCompile(`^ {0,3}##[ \t]+Role\b`)
 
-// hasRoleHeading reports whether brief carries a real `## Role` heading,
+// fenceOpenRe matches a CommonMark fence opener: 0-3 spaces, then 3+
+// backticks or tildes.
+var fenceOpenRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
+
+// scanBrief reports whether brief carries a real `## Role` heading,
 // skipping fenced code blocks (``` or ~~~): a `## Role: reviewer` inside
-// an example child brief is not this task's Role section.
-func hasRoleHeading(brief []byte) bool {
+// an example child brief is not this task's Role section. openFence is
+// the opener of a fence still unclosed at EOF ("" if none).
+func scanBrief(brief []byte) (hasRole bool, openFence string) {
 	fence := ""
 	for _, line := range strings.Split(string(brief), "\n") {
-		trimmed := strings.TrimSpace(line)
 		if fence != "" {
-			if strings.HasPrefix(trimmed, fence) && strings.TrimLeft(trimmed, fence[:1]) == "" {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, fence) && strings.TrimLeft(trimmed, fence[:1]) == "" &&
+				len(line)-len(strings.TrimLeft(line, " ")) <= 3 {
 				fence = ""
 			}
 			continue
 		}
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			ch := trimmed[:1]
-			fence = trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, ch))]
+		if m := fenceOpenRe.FindStringSubmatch(line); m != nil {
+			fence = m[1]
 			continue
 		}
 		if roleHeadingRe.MatchString(line) {
-			return true
+			return true, ""
 		}
 	}
-	return false
+	return false, fence
+}
+
+func hasRoleHeading(brief []byte) bool {
+	has, _ := scanBrief(brief)
+	return has
 }
 
 func taskBriefPath(slug string) (string, error) {
@@ -143,8 +154,19 @@ func ensureDriverRoleSection(slug string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if hasRoleHeading(b) {
+	has, openFence := scanBrief(b)
+	if has {
 		return nil
+	}
+	// A brief ending inside an unclosed fence would swallow the appended
+	// section (and healing would re-append it every time): close it first.
+	closer := ""
+	if openFence != "" {
+		if len(b) > 0 && !strings.HasSuffix(string(b), "\n") {
+			closer = "\n"
+		}
+		closer += openFence + "\n"
+		b = append(b, closer...)
 	}
 	sep := ""
 	switch {
@@ -155,11 +177,15 @@ func ensureDriverRoleSection(slug string) error {
 	default:
 		sep = "\n\n"
 	}
+	return appendToFile(p, closer+sep+driverRoleSection)
+}
+
+func appendToFile(p, text string) error {
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(sep + driverRoleSection); err != nil {
+	if _, err := f.WriteString(text); err != nil {
 		f.Close()
 		return err
 	}
