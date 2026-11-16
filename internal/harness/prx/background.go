@@ -43,20 +43,17 @@ func runBGCommand(workDir string, args []string) ([]byte, error) {
 // `prx -resume <id>`. name is unused: prx's -name is a peer name, not a
 // display title.
 func (p *prx) SpawnBackground(workDir, name, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
-	if opts.Inject != "" {
-		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
-	args := append(detachArgs(workDir, opts), "-prompt", prompt)
+	args := append(detachArgs(workDir, opts), "-prompt", harness.WithInjection(prompt, opts.Inject))
 	return p.detach(workDir, args, "spawn")
 }
 
 // ResumeBackground restarts a detached host on an existing session. Unlike
 // `claude --bg --resume`, prx keeps the session id. name is unused, as in
 // SpawnBackground.
-func (p *prx) ResumeBackground(workDir, name, sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+func (p *prx) ResumeBackground(workDir, name, sessionID, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
 	args := append(detachArgs(workDir, opts), "-session", sessionID)
-	if opts.Inject != "" {
-		args = append(args, "-prompt", harness.InjectionMarker+"\n"+opts.Inject)
+	if pr := harness.WithInjection(prompt, opts.Inject); pr != "" {
+		args = append(args, "-prompt", pr)
 	}
 	return p.detach(workDir, args, "resume")
 }

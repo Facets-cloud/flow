@@ -122,6 +122,12 @@ func cmdInit(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: %s: stat %s: %v\n", h.Name(), skillPath, err)
 			return 1
 		}
+		if prev := readSkillVersion(h); installedIsNewer(prev, Version) {
+			// Never let an older binary rewrite a newer install's hooks
+			// implicitly; `flow skill update` is the deliberate path.
+			fmt.Fprintf(os.Stderr, "warning: %s: skill + hooks are from %s, newer than this flow %s — leaving them alone (run `flow skill update` to replace them)\n", h.Name(), prev, Version)
+			continue
+		}
 		installHooks(h, false)
 	}
 	trustFlowTasksDir(targets, root)

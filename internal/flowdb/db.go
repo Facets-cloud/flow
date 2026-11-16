@@ -305,6 +305,9 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(sessionVersionDDL); err != nil {
 		return fmt.Errorf("apply session version schema: %w", err)
 	}
+	if _, err := db.Exec(sessionLineageDDL); err != nil {
+		return fmt.Errorf("apply session lineage schema: %w", err)
+	}
 	if err := migrateBusSelfToUser(db); err != nil {
 		return fmt.Errorf("migrate bus assignee: %w", err)
 	}

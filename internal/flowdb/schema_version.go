@@ -22,7 +22,11 @@ import (
 // the one-time alpha.38 bus_surfaced cleanup in applyWakeSchema) and
 // session_versions. Their DDL now feeds the fingerprint too, so a DB
 // stamped by a pre-wake build re-runs migrate on its next open.
-const schemaRevision = 3
+//
+// rev 4: session_lineage (#170/#180, sessionLineageDDL). Its DDL feeds the
+// fingerprint, so a DB stamped by a revision-3 build re-runs migrate and
+// gets the table before a bg resume records a fork source.
+const schemaRevision = 4
 
 // schemaFingerprint identifies the schema this binary migrates to. It is
 // stored in PRAGMA user_version after a successful migration pass; OpenDB
@@ -31,7 +35,7 @@ const schemaRevision = 3
 func schemaFingerprint() int64 {
 	h := crc32.NewIEEE()
 	fmt.Fprintf(h, "rev=%d\x00", schemaRevision)
-	for _, ddl := range []string{schemaDDL, busDDL, indexesPostMigrate, peersDDL, peerBusIndexDDL, wakeDDL, sessionVersionDDL} {
+	for _, ddl := range []string{schemaDDL, busDDL, indexesPostMigrate, peersDDL, peerBusIndexDDL, wakeDDL, sessionVersionDDL, sessionLineageDDL} {
 		h.Write([]byte(ddl))
 		h.Write([]byte{0})
 	}
