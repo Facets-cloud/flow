@@ -33,12 +33,18 @@ import (
 // limitation: a tick that runs longer than `every` may overlap the next
 // dispatch — there is no run-liveness guard yet.
 
-// ownerTickRunner executes one headless, sessionless tick for the owner
-// via its harness. SkipPermissionsRun starts a FRESH session each call
-// (no pinned session id) — the owner's memory is its durable charter +
-// ledger, not a resumed transcript. Overridable in tests.
-var ownerTickRunner = func(h harness.Harness, prompt string) error {
-	return h.SkipPermissionsRun(prompt)
+// ownerTickResumableRunner executes one headless tick for the owner via its
+// harness, PINNED to sessionID. When resume is true it continues that session
+// (SkipPermissionsResume); when false it starts a fresh, resumable session
+// (SkipPermissionsRunSession). cmdOwnerTick picks resume-vs-fresh by calendar
+// day: within a day it resumes the same warm session, and a new day starts
+// fresh. The journal remains the cross-day / cross-crash memory — this only
+// warms WITHIN a day. Overridable in tests.
+var ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error {
+	if resume {
+		return h.SkipPermissionsResume(sessionID, prompt)
+	}
+	return h.SkipPermissionsRunSession(sessionID, prompt)
 }
 
 // ownerTickLauncher starts the detached `flow __owner-tick <slug>`
@@ -337,7 +343,31 @@ func cmdOwnerTick(args []string) int {
 		return 1
 	}
 	prompt := buildOwnerTickPrompt(o.Slug, ownerDir)
-	runErr := ownerTickRunner(h, prompt)
+
+	// Resume the same harness session WITHIN a calendar day; start fresh each
+	// new day. The local calendar day is the reset boundary. On a fresh run we
+	// mint a resumable session id and record it (+ today's date) via the
+	// targeted SetOwnerTickSession so a later same-day tick can resume it —
+	// recorded regardless of the run's exit status (the session/transcript
+	// exists once claude is invoked with it, and the next same-day tick should
+	// still warm from it). The targeted write can't clobber the concurrent
+	// tick_pid / last_tick_* bookkeeping.
+	today := time.Now().Format("2006-01-02")
+	var runErr error
+	if o.TickSessionID.Valid && o.TickSessionID.String != "" && o.TickSessionDate.String == today {
+		runErr = ownerTickResumableRunner(h, o.TickSessionID.String, prompt, true)
+	} else {
+		sid, sidErr := h.NewSessionID()
+		if sidErr != nil {
+			fmt.Fprintf(os.Stderr, "error: mint tick session for %q: %v\n", slug, sidErr)
+			_ = recordOwnerTick(db, slug, "error")
+			return 1
+		}
+		runErr = ownerTickResumableRunner(h, sid, prompt, false)
+		if err := flowdb.SetOwnerTickSession(db, slug, sid, today); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: record tick session for %q: %v\n", slug, err)
+		}
+	}
 
 	status := "ok"
 	if runErr != nil {

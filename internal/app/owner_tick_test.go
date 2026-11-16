@@ -150,9 +150,9 @@ func TestCmdOwnerTickSkipClearsTickPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	ran := false
-	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error { ran = true; return nil }
-	t.Cleanup(func() { ownerTickRunner = old })
+	old := ownerTickResumableRunner
+	ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error { ran = true; return nil }
+	t.Cleanup(func() { ownerTickResumableRunner = old })
 
 	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
@@ -359,15 +359,15 @@ func TestCmdOwnerTickPreservesSelfPacedNextWake(t *testing.T) {
 	}
 	selfPaced := time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
 
-	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error {
+	old := ownerTickResumableRunner
+	ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error {
 		// Simulate the tick calling `flow owner next o1 --in 5m`.
 		if _, err := db.Exec(`UPDATE owners SET next_wake_at=? WHERE slug=?`, selfPaced, "o1"); err != nil {
 			t.Fatal(err)
 		}
 		return nil
 	}
-	t.Cleanup(func() { ownerTickRunner = old })
+	t.Cleanup(func() { ownerTickResumableRunner = old })
 
 	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
@@ -396,9 +396,9 @@ func TestCmdOwnerTickDetachedSkipsNonActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	ran := false
-	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error { ran = true; return nil }
-	t.Cleanup(func() { ownerTickRunner = old })
+	old := ownerTickResumableRunner
+	ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error { ran = true; return nil }
+	t.Cleanup(func() { ownerTickResumableRunner = old })
 
 	cmdOwnerTick([]string{"o1"})
 
@@ -446,9 +446,9 @@ func TestCmdOwnerTickClearsTickPID(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error { return nil }
-	t.Cleanup(func() { ownerTickRunner = old })
+	old := ownerTickResumableRunner
+	ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error { return nil }
+	t.Cleanup(func() { ownerTickResumableRunner = old })
 
 	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
@@ -581,12 +581,12 @@ func TestCmdOwnerTickRecordsOkStatus(t *testing.T) {
 	}
 
 	var gotPrompt string
-	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error {
+	old := ownerTickResumableRunner
+	ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error {
 		gotPrompt = prompt
 		return nil
 	}
-	t.Cleanup(func() { ownerTickRunner = old })
+	t.Cleanup(func() { ownerTickResumableRunner = old })
 
 	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
 		t.Fatalf("tick rc=%d", rc)
@@ -614,11 +614,11 @@ func TestCmdOwnerTickRecordsErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error {
+	old := ownerTickResumableRunner
+	ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error {
 		return errTickBoom
 	}
-	t.Cleanup(func() { ownerTickRunner = old })
+	t.Cleanup(func() { ownerTickResumableRunner = old })
 
 	if rc := cmdOwnerTick([]string{"o1"}); rc != 1 {
 		t.Errorf("tick rc=%d, want 1 on runner error", rc)
@@ -629,6 +629,122 @@ func TestCmdOwnerTickRecordsErrorStatus(t *testing.T) {
 	}
 	if o.LastTickStatus.String != "error" {
 		t.Errorf("LastTickStatus = %q, want error", o.LastTickStatus.String)
+	}
+}
+
+// captureResumable records the (resume, sessionID) a tick invoked the runner
+// with, so the fresh-vs-resume decision can be asserted without a real harness.
+type resumableCall struct {
+	resume    bool
+	sessionID string
+	called    bool
+}
+
+func stubResumableRunner(t *testing.T, rec *resumableCall) {
+	t.Helper()
+	old := ownerTickResumableRunner
+	ownerTickResumableRunner = func(h harness.Harness, sessionID, prompt string, resume bool) error {
+		rec.called = true
+		rec.resume = resume
+		rec.sessionID = sessionID
+		return nil
+	}
+	t.Cleanup(func() { ownerTickResumableRunner = old })
+}
+
+// First tick of a calendar day (no session recorded) mints a FRESH session
+// and records tick_session_id + tick_session_date=today so intra-day ticks can
+// resume it.
+func TestCmdOwnerTickFreshSessionWhenNoneRecorded(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m"}); err != nil {
+		t.Fatal(err)
+	}
+	var rec resumableCall
+	stubResumableRunner(t, &rec)
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if !rec.called || rec.resume {
+		t.Fatalf("first tick must run FRESH (resume=false), got called=%v resume=%v", rec.called, rec.resume)
+	}
+	if rec.sessionID == "" {
+		t.Errorf("fresh tick must pin a newly-minted session id")
+	}
+	o, _ := flowdb.GetOwner(db, "o1")
+	if o.TickSessionID.String != rec.sessionID {
+		t.Errorf("tick_session_id = %q, want the minted id %q", o.TickSessionID.String, rec.sessionID)
+	}
+	if o.TickSessionDate.String != time.Now().Format("2006-01-02") {
+		t.Errorf("tick_session_date = %q, want today %q", o.TickSessionDate.String, time.Now().Format("2006-01-02"))
+	}
+}
+
+// A tick with a session recorded for TODAY must RESUME that same session.
+func TestCmdOwnerTickResumesSameDaySession(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	today := time.Now().Format("2006-01-02")
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickSessionID:   sql.NullString{String: "warm-sess-123", Valid: true},
+		TickSessionDate: sql.NullString{String: today, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var rec resumableCall
+	stubResumableRunner(t, &rec)
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if !rec.called || !rec.resume {
+		t.Fatalf("same-day tick must RESUME (resume=true), got called=%v resume=%v", rec.called, rec.resume)
+	}
+	if rec.sessionID != "warm-sess-123" {
+		t.Errorf("resume must reuse the recorded session id, got %q", rec.sessionID)
+	}
+	// The recorded session/date is unchanged on a resume.
+	o, _ := flowdb.GetOwner(db, "o1")
+	if o.TickSessionID.String != "warm-sess-123" || o.TickSessionDate.String != today {
+		t.Errorf("resume must not rewrite the session record: id=%q date=%q", o.TickSessionID.String, o.TickSessionDate.String)
+	}
+}
+
+// A tick with a session recorded for a PRIOR day must start FRESH: a new
+// session id, and the date advances to today. (Cross-day memory is the
+// journal, not a resumed transcript.)
+func TestCmdOwnerTickFreshSessionOnNewDay(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "o1", Name: "O", WorkDir: "/x", Every: "30m",
+		TickSessionID:   sql.NullString{String: "stale-sess-yesterday", Valid: true},
+		TickSessionDate: sql.NullString{String: yesterday, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var rec resumableCall
+	stubResumableRunner(t, &rec)
+
+	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if !rec.called || rec.resume {
+		t.Fatalf("new-day tick must run FRESH (resume=false), got called=%v resume=%v", rec.called, rec.resume)
+	}
+	if rec.sessionID == "" || rec.sessionID == "stale-sess-yesterday" {
+		t.Errorf("new-day tick must mint a NEW session id, got %q", rec.sessionID)
+	}
+	o, _ := flowdb.GetOwner(db, "o1")
+	if o.TickSessionID.String != rec.sessionID {
+		t.Errorf("tick_session_id = %q, want the new minted id %q", o.TickSessionID.String, rec.sessionID)
+	}
+	if o.TickSessionDate.String != time.Now().Format("2006-01-02") {
+		t.Errorf("tick_session_date = %q, want today", o.TickSessionDate.String)
 	}
 }
 

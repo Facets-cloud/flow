@@ -155,6 +155,72 @@ func TestAutoRunArgv(t *testing.T) {
 	}
 }
 
+// SkipPermissionsRunSession pins --session-id so the headless run is
+// resumable; SkipPermissionsResume resumes it via --resume. Both run
+// headless (-p) with skip-permissions. We capture argv via the exec seam.
+func TestSkipPermissionsSessionAndResumeArgv(t *testing.T) {
+	orig := SkipPermissionsArgvRunner
+	t.Cleanup(func() { SkipPermissionsArgvRunner = orig })
+
+	var got []string
+	SkipPermissionsArgvRunner = func(argv []string) error { got = argv; return nil }
+
+	h := New()
+	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
+	prompt := "tick now"
+
+	if err := h.SkipPermissionsRunSession(sessionID, prompt); err != nil {
+		t.Fatalf("SkipPermissionsRunSession: %v", err)
+	}
+	assertArgvHasFlag(t, "RunSession", got, "--session-id", sessionID)
+	assertArgvContains(t, "RunSession", got, "-p", prompt, "--dangerously-skip-permissions")
+	if hasArg(got, "--resume") {
+		t.Errorf("RunSession must NOT use --resume: %v", got)
+	}
+
+	if err := h.SkipPermissionsResume(sessionID, prompt); err != nil {
+		t.Fatalf("SkipPermissionsResume: %v", err)
+	}
+	assertArgvHasFlag(t, "Resume", got, "--resume", sessionID)
+	assertArgvContains(t, "Resume", got, "-p", prompt, "--dangerously-skip-permissions")
+	if hasArg(got, "--session-id") {
+		t.Errorf("Resume must NOT use --session-id: %v", got)
+	}
+}
+
+func hasArg(argv []string, want string) bool {
+	for _, a := range argv {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// assertArgvHasFlag asserts that flag appears immediately followed by value.
+func assertArgvHasFlag(t *testing.T, label string, argv []string, flag, value string) {
+	t.Helper()
+	for i, a := range argv {
+		if a == flag {
+			if i+1 < len(argv) && argv[i+1] == value {
+				return
+			}
+			t.Errorf("%s: %s not followed by %q in %v", label, flag, value, argv)
+			return
+		}
+	}
+	t.Errorf("%s: argv missing %s <%s>: %v", label, flag, value, argv)
+}
+
+func assertArgvContains(t *testing.T, label string, argv []string, wants ...string) {
+	t.Helper()
+	for _, w := range wants {
+		if !hasArg(argv, w) {
+			t.Errorf("%s: argv missing %q: %v", label, w, argv)
+		}
+	}
+}
+
 func TestResumeCmd_PreservesByteIdentity(t *testing.T) {
 	h := New()
 	sessionID := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
