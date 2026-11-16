@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -512,4 +513,21 @@ func TestDoHereAlreadyBoundHeals(t *testing.T) {
 		t.Fatalf("expected the already-bound path:\n%s", out)
 	}
 	assertHealedOnce(t, "drv")
+}
+
+func TestCRLFBriefWithRoleIsUnchanged(t *testing.T) {
+	setupFlowRoot(t)
+	for i, custom := range []string{
+		"```text\r\nexample\r\n```\r\n## Role: reviewer\r\n",
+		"# t\r\n\r\n## Role\r\nmine\r\n",
+	} {
+		slug := fmt.Sprintf("crlf%d", i)
+		seedTask(t, slug)
+		writeTaskBrief(t, slug, custom)
+		tagTask(t, slug, "driver")
+		healDriverRoleSection(openFlowDB(t), slug, false)
+		if got := briefOf(t, slug); got != custom {
+			t.Errorf("CRLF brief with a Role section must stay unchanged:\n%q", got)
+		}
+	}
 }

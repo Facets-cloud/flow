@@ -104,6 +104,8 @@ var fenceCloseRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})[ \t]*$")
 func scanBrief(brief []byte) (hasRole bool, openFence string) {
 	fence := ""
 	for _, line := range strings.Split(string(brief), "\n") {
+		// CRLF briefs: match without the line ending (content unchanged).
+		line = strings.TrimSuffix(line, "\r")
 		if fence != "" {
 			// A closer uses the opener's character, at least as many.
 			if m := fenceCloseRe.FindStringSubmatch(line); m != nil &&
