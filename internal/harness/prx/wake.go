@@ -3,9 +3,13 @@ package prx
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"flow/internal/harness"
@@ -25,25 +29,66 @@ import (
 var PeerSendRunner = runPeerSend
 
 func runPeerSend(argv []string, timeout time.Duration) (string, error) {
+	cmd, cancel := peerSendCmd(argv, timeout)
+	defer cancel()
+	err := cmd.Run()
+	return cmd.Stderr.(*bytes.Buffer).String(), err
+}
+
+// peerSendCmd builds the send, detached from the sender's terminal. An old prx
+// without `peer send` reads `peer send …` as a prompt and starts its TUI on
+// /dev/tty, which would take over the terminal of whoever ran `flow message`
+// (raw mode, left behind after the timeout kill) and leave a junk session. In
+// its own session (Setsid) it has no controlling terminal, so /dev/tty can't be
+// opened and it fails fast; stdin/stdout stay nil (/dev/null), stderr is captured.
+func peerSendCmd(argv []string, timeout time.Duration) (*exec.Cmd, context.CancelFunc) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stderr.String(), err
+	cmd.Stderr = &bytes.Buffer{}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return cmd, cancel
 }
 
-// WakeLive reports whether prx has a live owner for the session right now.
+// WakeLive reports whether the session has a live owner AND a peer watcher that
+// drains its inbox. `prx peer send` appends and exits 0 either way, so without
+// the watcher check a session with peers.enabled off (no watcher) would count
+// as woken while nothing reads the notice.
 func (p *prx) WakeLive(req harness.WakeRequest) bool {
 	live, err := p.LiveSessionIDs()
 	if err != nil {
 		return false
 	}
-	return live[strings.ToLower(req.SessionID)] > 0
+	return live[strings.ToLower(req.SessionID)] > 0 && peerWatching(req.SessionID)
+}
+
+// peerRecord is the part of prx's <sessionDir>/.peers/<id>.json flow reads.
+// prx's peer watcher publishes it while it runs and withdraws it on shutdown.
+type peerRecord struct {
+	SessionID string `json:"sessionId"`
+	Inbound   string `json:"inbound"`
+}
+
+// peerWatching reports whether a prx peer watcher is draining the session's
+// inbox: its record exists and does not refuse inbound messages. An
+// app-chat-only session publishes inbound "refuse" and never reads the inbox.
+// A false "no" is harmless: the mail is stored and the session's hooks deliver.
+func peerWatching(sessionID string) bool {
+	dir, err := sessionDir()
+	if err != nil || sessionID == "" || filepath.Base(sessionID) != sessionID {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".peers", sessionID+".json"))
+	if err != nil {
+		return false
+	}
+	var rec peerRecord
+	if json.Unmarshal(raw, &rec) != nil || rec.SessionID == "" {
+		return false
+	}
+	return !strings.EqualFold(strings.TrimSpace(rec.Inbound), "refuse")
 }
 
 // Wake delivers req.Notice into the live session. A session that went away

@@ -18,8 +18,9 @@
   another session, open the task in a new tab with `flow do <slug>`.
 - **Mail wakes idle prx sessions.** A flow-bus message to a task bound to a
   live prx session now starts a turn in that session, the same as for Claude
-  Code and Codex. It needs a Praxis that has `prx peer send`. Without it the
-  mail waits for the session's next turn, as before.
+  Code and Codex. It needs a Praxis that has `prx peer send`, with peer
+  messaging on (`peers.enabled`). Without either, the mail waits for the
+  session's next turn, as before.
 
 ## v0.1.0-alpha.38
 

@@ -1570,8 +1570,9 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 // parent with wake off (FLOW_NO_WAKE) still arms a Monitor.
 func parentListenerReminder() string {
 	if sessionHarness(nil) == harness.NamePrx {
-		return "  prx parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
-			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
+		return "  prx parent: no inbox listener — the child's reports surface as flow-bus notices: pushed into " +
+			"your session when it is idle (needs a prx with `prx peer send`; wake on), otherwise at your next tool " +
+			"call or prompt; then run a one-shot `flow inbox pop` in the foreground."
 	}
 	if sessionHarness(nil) == harness.NameCodex {
 		return "  Codex parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
