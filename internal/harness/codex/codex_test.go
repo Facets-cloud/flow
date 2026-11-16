@@ -322,9 +322,14 @@ func TestLiveSessionIDsPicksPositionalNotFlagValueOrProse(t *testing.T) {
 		LastMessagePath: "/tmp/flow " + other + " root/last.txt",
 	})
 	trust := New().ResumeCmd(testThreadID, harness.LaunchOpts{TrustDir: "/tmp/a b c"})
+	// Round 2: a boolean flag must not take the id as its "value" when the
+	// prompt itself starts with a UUID.
+	uuidPrompt := New().AutoRunArgv(testThreadID, other+" work", harness.LaunchOpts{SkipPermissions: true})
 	PSRunner = func() ([]byte, error) {
 		return []byte(strings.Join([]string{
 			"500 " + strings.Join(auto, " "),
+			"502 " + strings.Join(uuidPrompt, " "),
+			"503 codex resume -m gpt-5 " + testThreadID + " " + other + " go",
 			"501 " + strings.ReplaceAll(trust, `'`, ""),
 			"400 codex exec explain resume --help and then discuss task " + prose,
 			"401 codex exec please resume " + prose,
@@ -334,11 +339,11 @@ func TestLiveSessionIDsPicksPositionalNotFlagValueOrProse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if live[testThreadID] != 2 {
-		t.Errorf("live=%v, want the auto run and the trusted resume (%q) detected", live, trust)
+	if live[testThreadID] != 4 {
+		t.Errorf("live=%v, want the auto runs, the -m resume and the trusted resume (%q) detected", live, trust)
 	}
 	if live[other] != 0 {
-		t.Errorf("live=%v, a UUID inside the -o path value is not the session", live)
+		t.Errorf("live=%v, a UUID in the -o path value or a UUID-leading prompt is not the session", live)
 	}
 	if live[prose] != 0 {
 		t.Errorf("live=%v, `resume` inside prompt prose is not a session", live)

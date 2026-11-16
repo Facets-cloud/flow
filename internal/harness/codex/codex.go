@@ -197,22 +197,26 @@ func parseThreadID(out []byte) (string, error) {
 // override's `-c projects."<dir>"…`) is several tokens. So the match is
 // anchored on argv STRUCTURE, never "first UUID after resume":
 //
-//	codex[…] {exec | -c projects.….trust_level=… | -flag [value]}* resume
-//	         {-o ….last.txt | -flag [value]}* <id> (prompt…)
+//	codex[…] {exec | -c projects.….trust_level=… | -valueflag v | -flag}* resume
+//	         {-o ….last.txt | -valueflag v | -flag}* <id> (prompt…)
 //
 // Before `resume` only `exec` and flags may appear, so `resume` inside a
 // prompt ("codex exec explain resume --help … <id>") is not a command.
 // After it, the -o path is consumed up to its last.txt suffix, so a UUID
 // token inside that path is a flag value, not the session positional.
+// Only Codex's known value-taking flags take a value; any other flag is
+// boolean, so it can never swallow the id (a prompt that starts with a
+// UUID must not shift the match onto the prompt).
 var runningSessionRe = func() *regexp.Regexp {
 	const (
-		uuid    = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
-		flag    = `-\S+(?:\s+[^-\s]\S*)?` // -x, --x, -x value (value never starts with -)
-		trust   = `-c\s+projects\..*?\.trust_level=\S*`
-		lastMsg = `-o\s+\S.*?last\.txt`
+		uuid      = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+		valueFlag = `(?:-[mcpsaiCo]|--(?:model|config|profile|sandbox|ask-for-approval|image|cd|add-dir|output-last-message|output-schema|color|enable|disable|local-provider))\s+\S+`
+		boolFlag  = `-\S+` // -x, --x, --x=value: one token
+		trust     = `-c\s+projects\..*?\.trust_level=\S*`
+		lastMsg   = `-o\s+\S.*?last\.txt`
 	)
-	return regexp.MustCompile(`(?:^|[\s/])codex\S*(?:\s+(?:exec|` + trust + `|` + flag + `))*\s+resume` +
-		`(?:\s+(?:` + lastMsg + `|` + flag + `))*\s+(` + uuid + `)(?:\s|$)`)
+	return regexp.MustCompile(`(?:^|[\s/])codex\S*(?:\s+(?:exec|` + trust + `|` + valueFlag + `|` + boolFlag + `))*\s+resume` +
+		`(?:\s+(?:` + lastMsg + `|` + valueFlag + `|` + boolFlag + `))*\s+(` + uuid + `)(?:\s|$)`)
 }()
 
 func (c *codex) LiveSessionIDs() (map[string]int, error) {
