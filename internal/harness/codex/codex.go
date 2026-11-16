@@ -191,14 +191,29 @@ func parseThreadID(out []byte) (string, error) {
 	return "", fmt.Errorf("Codex probe output did not include a thread.started event")
 }
 
-// Flags may sit between `resume` and the id: AutoRunArgv emits
-// `codex exec resume --dangerously-bypass-approvals-and-sandbox -o <file> <id> ...`.
-// ps prints argv unquoted, so a flag value with whitespace is several
-// tokens: anything may sit between the first flag and the id. The id is
-// the first standalone UUID token after `resume`; text before it must
-// start with a flag, so prose like "resume work on <id>" in some other
-// command's prompt is not a session.
-var runningSessionRe = regexp.MustCompile(`\bresume(?:\s+-\S*(?:\s+\S+)*?)?\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\s|$)`)
+// runningSessionRe finds the thread id of a live `codex … resume <id>`.
+// ps prints argv unquoted, so a flag value with whitespace (a flow root
+// with a space in AutoRunArgv's `-o <last-message file>` or the trust
+// override's `-c projects."<dir>"…`) is several tokens. So the match is
+// anchored on argv STRUCTURE, never "first UUID after resume":
+//
+//	codex[…] {exec | -c projects.….trust_level=… | -flag [value]}* resume
+//	         {-o ….last.txt | -flag [value]}* <id> (prompt…)
+//
+// Before `resume` only `exec` and flags may appear, so `resume` inside a
+// prompt ("codex exec explain resume --help … <id>") is not a command.
+// After it, the -o path is consumed up to its last.txt suffix, so a UUID
+// token inside that path is a flag value, not the session positional.
+var runningSessionRe = func() *regexp.Regexp {
+	const (
+		uuid    = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+		flag    = `-\S+(?:\s+[^-\s]\S*)?` // -x, --x, -x value (value never starts with -)
+		trust   = `-c\s+projects\..*?\.trust_level=\S*`
+		lastMsg = `-o\s+\S.*?last\.txt`
+	)
+	return regexp.MustCompile(`(?:^|[\s/])codex\S*(?:\s+(?:exec|` + trust + `|` + flag + `))*\s+resume` +
+		`(?:\s+(?:` + lastMsg + `|` + flag + `))*\s+(` + uuid + `)(?:\s|$)`)
+}()
 
 func (c *codex) LiveSessionIDs() (map[string]int, error) {
 	out, err := PSRunner()
