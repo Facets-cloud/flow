@@ -32,8 +32,10 @@ import (
 // new Version and refreshes the skill (maybeAutoUpgradeSkill).
 const (
 	selfUpgradeArg = "__self-upgrade"
-	// selfUpgradeEnv stops the automatic upgrade. `flow upgrade` and the
-	// SessionStart stale-version hint stay.
+	// selfUpgradeEnv stops every automatic upgrade: the binary self-upgrade
+	// and the implicit skill + hook refresh (maybeAutoUpgradeSkill).
+	// `flow upgrade`, `flow skill update` and the SessionStart
+	// stale-version hint stay.
 	selfUpgradeEnv       = "FLOW_NO_AUTO_UPGRADE"
 	selfUpgradeStateFile = ".self-upgrade.json"
 	selfUpgradeClaimFile = ".self-upgrade.claim"
