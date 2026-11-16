@@ -727,6 +727,14 @@ func bgViewHint(h harness.Harness, sessionID string) string {
 	return "check your Agent View: `claude agents`"
 }
 
+// bgAttachHint names the command that opens a live background session.
+func bgAttachHint(h harness.Harness, a *harness.BackgroundAgent) string {
+	if h.Name() == harness.NamePrx {
+		return "prx -resume " + a.SessionID
+	}
+	return "claude attach " + a.ShortID
+}
+
 // bgStateLabel renders a background agent's coarse condition for user
 // messages, e.g. "busy/working" while live or just "stopped" once exited.
 func bgStateLabel(a *harness.BackgroundAgent) string {
@@ -827,6 +835,14 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 					forkSource, _ = fs.BackgroundForkSource(*a)
 				}
 				ancestorFrom, ancestorCwd, haveAncestor = transcriptAncestor(db, h, task, sid, forkSource)
+				// The process is the only record of a legacy fork's source,
+				// and it is about to be stopped: keep the source as lineage
+				// first, so a resume that then fails doesn't lose the history.
+				if haveAncestor && forkSource != "" {
+					if _, known := flowdb.SessionSource(db, sid); !known {
+						_ = flowdb.RecordSessionSource(db, sid, forkSource, task.Slug)
+					}
+				}
 			}
 			// Alive, idle, with a conversation: `claude --bg --resume` on
 			// it would only start a COPY under a new id. Hand it what this
@@ -839,12 +855,17 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 					task.Slug, a.ShortID, bgStateLabel(a), bgDeliveredWhat(inject, unread), bgViewHint(h, sid))
 				return 0
 			}
+			// Stopping a session discards whatever it has pending between
+			// turns — an unanswered ask, a permission prompt, background
+			// shells, an inbox Monitor — and a coarse "idle" status rules
+			// none of those out. Only a provably idle session is stopped.
+			quiet, notQuiet := a.ProvablyIdle()
 			switch {
 			case haveAncestor:
 				fmt.Fprintf(os.Stderr,
 					"note: %s's session %s is idle and never took a turn (no transcript); stopping it.\n",
 					task.Slug, a.ShortID)
-			case idleWithWork && canStop:
+			case idleWithWork && canStop && quiet:
 				fmt.Fprintf(os.Stderr,
 					"note: %s's session %s is idle with no wake channel; stopping it to resume it under the same id.\n",
 					task.Slug, a.ShortID)
@@ -854,10 +875,22 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				if !onDisk && a.Status == "idle" {
 					fmt.Printf("  it never took a turn and its history source is unknown; `flow do --fresh %s` replaces it\n", task.Slug)
 				}
+				why := "resuming it would start a copy"
+				switch {
+				case idleWithWork && canStop:
+					why = "no wake channel, and it was not stopped because it is not provably idle: " + notQuiet
+				case idleWithWork:
+					why = "no wake channel"
+				}
 				if inject != "" {
 					fmt.Fprintf(os.Stderr,
-						"note: --with was NOT delivered (the session is %s and resuming it would start a copy); send it with `flow message user/%s \"...\"`\n",
-						bgStateLabel(a), task.Slug)
+						"note: --with was NOT delivered (the session is %s; %s); send it with `flow message user/%s \"...\"`\n",
+						bgStateLabel(a), why, task.Slug)
+				}
+				if idleWithWork && unread > 0 {
+					fmt.Fprintf(os.Stderr,
+						"note: %d unread message(s) stay queued for %s (%s); it reads them on its next turn — `%s` to attend to it, or re-run flow do once it is idle\n",
+						unread, task.Slug, why, bgAttachHint(h, a))
 				}
 				return 0
 			}
@@ -913,6 +946,11 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		} else {
 			resumeOpts.ResumeRegistered = bgAgentInRegistry(bg, resumeFrom) != nil
 		}
+		if resumeOpts.ResumeRegistered && skipPerms {
+			fmt.Fprintf(os.Stderr,
+				"note: --dangerously-skip-permissions not applied: %s's session is resumed with its saved permission mode (a registered background session takes no launch flags; `flow do --fresh %s` starts over with the flag)\n",
+				task.Slug, task.Slug)
+		}
 		agent, err := bg.ResumeBackground(resumeCwd, title, resumeFrom, kickoff, resumeOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -920,7 +958,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		}
 		// The banner only proves the job registered; it can still fail
 		// seconds later. Never bind the task to a job that died.
-		if err := confirmBgResume(h, bg, resumeCwd, agent); err != nil {
+		if err := confirmBgResume(h, bg, resumeCwd, agent, agent.SessionID == resumeFrom); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v; %s stays bound to %s\n", err, task.Slug, sid)
 			return 1
 		}
@@ -942,7 +980,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 			stopForkedOriginal(bg, task.Slug, resumeFrom)
 		}
 		bumpWorkdirUsed(db, task.WorkDir)
-		if agent.SessionID == sid {
+		if agent.SessionID == resumeFrom {
 			fmt.Printf("Resumed %s in background (%s · session %s)\n  %s\n",
 				task.Slug, agent.ShortID, agent.SessionID, bgViewHint(h, agent.SessionID))
 		} else {
@@ -1525,17 +1563,24 @@ func transcriptAncestor(db *sql.DB, h harness.Harness, task *flowdb.Task, sid, f
 // is an error carrying the harness's detail. If neither happens within
 // bgResumeConfirmTimeout the resume is accepted unconfirmed: the lineage
 // recorded for it still lets the next resume recover the history.
-func confirmBgResume(h harness.Harness, bg harness.BackgroundLauncher, cwd string, agent harness.BackgroundAgent) error {
+func confirmBgResume(h harness.Harness, bg harness.BackgroundLauncher, cwd string, agent harness.BackgroundAgent, sameID bool) error {
 	deadline := time.Now().Add(bgResumeConfirmTimeout)
 	for {
-		if h.ValidateSession(cwd, agent.SessionID) == nil {
+		// A copy's transcript appears only once it took its kickoff turn.
+		// A same-id resume already had one, so that proves nothing there:
+		// only a failed job or a live process tells.
+		if !sameID && h.ValidateSession(cwd, agent.SessionID) == nil {
 			return nil
 		}
-		if a := bgAgentInRegistry(bg, agent.SessionID); a != nil && strings.EqualFold(a.State, "failed") {
+		a := bgAgentInRegistry(bg, agent.SessionID)
+		if a != nil && strings.EqualFold(a.State, "failed") {
 			if a.Detail != "" {
 				return fmt.Errorf("resumed background session %s failed: %s", a.ShortID, a.Detail)
 			}
 			return fmt.Errorf("resumed background session %s failed", a.ShortID)
+		}
+		if sameID && a != nil && a.PID > 0 {
+			return nil
 		}
 		if !time.Now().Before(deadline) {
 			if bgResumeConfirmTimeout > 0 {

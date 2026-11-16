@@ -25,6 +25,7 @@ package harness
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"time"
@@ -127,12 +128,50 @@ type BackgroundAgent struct {
 	Status    string // coarse liveness, e.g. "busy" / "idle"
 	State     string // finer state, e.g. "working" / "blocked" / "done"
 	Detail    string // why it failed, when the harness knows (state "failed")
+	// Activity is what a live session is doing between turns, when the
+	// harness knows (claude: its job's state.json). nil = unknown.
+	Activity *BackgroundActivity
+}
+
+// BackgroundActivity is a live background session's in-between-turns
+// work. A coarse "idle" status does not rule either out: claude reports a
+// session waiting on the user (a permission prompt or a question) as
+// status "idle" / state "blocked", and background shells or monitors keep
+// running while the session is idle.
+type BackgroundActivity struct {
+	NeedsInput bool // waiting on the user (pending ask / permission prompt)
+	InFlight   int  // background tasks, queued tasks and monitors still running
+}
+
+// ProvablyIdle reports whether stopping this live session would lose
+// nothing in progress: alive, idle, not waiting on the user, and with a
+// known activity record showing no background work in flight. Anything
+// less is not provably idle; the reason says why.
+func (a BackgroundAgent) ProvablyIdle() (bool, string) {
+	switch {
+	case a.PID <= 0:
+		return false, "not running"
+	case a.Status != "idle":
+		return false, "busy"
+	case a.State == "blocked":
+		return false, "waiting on you"
+	case a.Activity == nil:
+		return false, "its background work can't be checked"
+	case a.Activity.NeedsInput:
+		return false, "waiting on you"
+	case a.Activity.InFlight > 0:
+		return false, fmt.Sprintf("%d background task(s) in flight", a.Activity.InFlight)
+	}
+	return true, ""
 }
 
 // BackgroundStopper is an OPTIONAL BackgroundLauncher extension: stop a
 // live background session (claude: `claude stop <shortId>`). flow uses it
-// only on a session that is idle and never took a turn — it holds no
-// conversation, so stopping it loses nothing.
+// on a session that is idle and never took a turn (it holds no
+// conversation, so stopping it loses nothing), on a provably idle session
+// (BackgroundAgent.ProvablyIdle) that has work to deliver and no wake
+// channel — it is resumed under the same id right after — and on the
+// original of a last-resort copy.
 type BackgroundStopper interface {
 	StopBackground(shortID string) error
 }
