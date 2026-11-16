@@ -84,8 +84,12 @@ and you have verified it, not when the work has been handed off.
 var roleHeadingRe = regexp.MustCompile(`^ {0,3}##[ \t]+Role\b`)
 
 // fenceOpenRe matches a CommonMark fence opener: 0-3 spaces, then 3+
-// backticks or tildes.
-var fenceOpenRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
+// backticks or tildes, then the info string.
+var fenceOpenRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})(.*)$")
+
+// fenceCloseRe matches a CommonMark closing fence: 0-3 spaces (no tab),
+// 3+ backticks or tildes, then only spaces or tabs.
+var fenceCloseRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})[ \t]*$")
 
 // scanBrief reports whether brief carries a real `## Role` heading,
 // skipping fenced code blocks (``` or ~~~): a `## Role: reviewer` inside
@@ -95,14 +99,17 @@ func scanBrief(brief []byte) (hasRole bool, openFence string) {
 	fence := ""
 	for _, line := range strings.Split(string(brief), "\n") {
 		if fence != "" {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, fence) && strings.TrimLeft(trimmed, fence[:1]) == "" &&
-				len(line)-len(strings.TrimLeft(line, " ")) <= 3 {
+			// A closer uses the opener's character, at least as many.
+			if m := fenceCloseRe.FindStringSubmatch(line); m != nil &&
+				m[1][0] == fence[0] && len(m[1]) >= len(fence) {
 				fence = ""
 			}
 			continue
 		}
-		if m := fenceOpenRe.FindStringSubmatch(line); m != nil {
+		// A backtick opener's info string may not contain a backtick
+		// (CommonMark); tilde info strings are unrestricted.
+		if m := fenceOpenRe.FindStringSubmatch(line); m != nil &&
+			!(m[1][0] == '`' && strings.Contains(m[2], "`")) {
 			fence = m[1]
 			continue
 		}

@@ -384,9 +384,15 @@ func TestRoleHeadingIndentFollowsCommonMark(t *testing.T) {
 		{"# t\n## Role: driver\n", true},
 		{"# t\n ## Role: driver\n", true},
 		{"# t\n   ## Role: driver\n", true},
-		{"# t\n    ## Role: driver\n", false},     // 4 spaces: indented code
-		{"# t\n\t## Role: driver\n", false},       // tab: indented code
-		{"# t\n    ```\n## Role: driver\n", true}, // indented ``` is code, not a fence
+		{"# t\n    ## Role: driver\n", false},                     // 4 spaces: indented code
+		{"# t\n\t## Role: driver\n", false},                       // tab: indented code
+		{"# t\n    ```\n## Role: driver\n", true},                 // indented ``` is code, not a fence
+		{"```markdown\n\t```\n## Role: reviewer\n```\n", false},   // tab-indented closer does not close
+		{"```markdown\n    ```\n## Role: reviewer\n```\n", false}, // 4-space closer does not close
+		{"```markdown\n   ```\n## Role: driver\n", true},          // 3-space closer closes
+		{"```example `name`\n\n## Role: reviewer\n", true},        // backtick in info string: not a fence
+		{"~~~example `name`\n## Role: reviewer\n~~~\n", false},    // tilde info strings unrestricted
+		{"```go\n## Role\n```` \n## Role: driver\n", true},        // longer closer + trailing space closes
 	} {
 		if got := hasRoleHeading([]byte(tc.brief)); got != tc.want {
 			t.Errorf("hasRoleHeading(%q) = %v, want %v", tc.brief, got, tc.want)
@@ -420,5 +426,17 @@ func TestUnclosedFenceIsClosedBeforeAppendingRole(t *testing.T) {
 				t.Errorf("Role must be the last section:\n%s", b)
 			}
 		})
+	}
+}
+
+func TestBacktickInfoStringBriefWithRoleIsUnchanged(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "drv")
+	custom := "```example `name`\n\n## Role: reviewer\nCustom instructions\n"
+	writeTaskBrief(t, "drv", custom)
+	tagTask(t, "drv", "driver")
+	healDriverRoleSection(openFlowDB(t), "drv", false)
+	if got := briefOf(t, "drv"); got != custom {
+		t.Errorf("a brief whose Role section follows a non-fence line must stay unchanged:\n%s", got)
 	}
 }
