@@ -536,6 +536,41 @@ func TestInboxWaitRewakeNoOps(t *testing.T) {
 	_ = db
 }
 
+// A headless Claude run (`claude -p`, entrypoint sdk-*) waits for its
+// async hooks before it exits, so an armed waiter would hold it until the
+// 24h hook timeout. Bound but not a flow auto run (FLOW_AUTO_RUN unset):
+// the waiter must still exit at once, with the mail left for the hooks.
+func TestInboxWaitRewakeSkipsHeadlessClaude(t *testing.T) {
+	for _, ep := range []string{"sdk-cli", "sdk-ts", "sdk-py"} {
+		t.Run(ep, func(t *testing.T) {
+			db := wakeSetup(t)
+			stubWaker(t, &fakeWaker{live: false})
+			shortRewakeGrace(t)
+			_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+			sendTo(t, "w", "x")
+			t.Setenv("CLAUDE_CODE_ENTRYPOINT", ep)
+			start := time.Now()
+			rc, _, _ := runInboxWait(t, `{"session_id":"sid-w","hook_event_name":"Stop"}`, "--rewake", "--timeout", "5")
+			if rc != 0 || time.Since(start) > 2*time.Second {
+				t.Fatalf("headless %s: rc=%d after %s, want 0 at once", ep, rc, time.Since(start))
+			}
+			if got, _ := flowdb.ClaimUnsurfaced(db, "w"); len(got) != 1 {
+				t.Fatal("headless waiter claimed mail it never showed")
+			}
+		})
+	}
+	// An interactive session (entrypoint cli) keeps its waiter.
+	db := wakeSetup(t)
+	stubWaker(t, &fakeWaker{live: false})
+	shortRewakeGrace(t)
+	_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+	sendTo(t, "w", "x")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	if rc, _, _ := runInboxWait(t, `{"session_id":"sid-w","hook_event_name":"Stop"}`, "--rewake", "--timeout", "3"); rc != 2 {
+		t.Fatalf("interactive: rc=%d, want 2 (rewake)", rc)
+	}
+}
+
 func TestSkillInstallArmsRewakeHook(t *testing.T) {
 	home := withTempHome(t)
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
