@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 )
 
 // cmdMessage implements the directed half of the message bus:
@@ -231,6 +232,9 @@ func cmdMessage(args []string) int {
 			toAssignee, m.ID)
 	} else {
 		fmt.Printf("messaged session %s/%s [%s] — %s\n", toAssignee, toSlug, m.ID, wakeOutcome(m.ID))
+		if name := doorbellName(db, toSlug); name != "" {
+			fmt.Printf("doorbell: %s (SendMessage, content-free)\n", name)
+		}
 	}
 	_ = flowdb.SweepBus(db, time.Now())
 	pruneAttachments(db)
@@ -354,6 +358,25 @@ func parseBusAddress(db *sql.DB, addr string) (string, string, error) {
 	// addressed only as <assignee>/<task-slug>. Treating a bare token as a
 	// task slug first let a task slugged after a person capture their mail.
 	return canonicalAssignee(addr), "", nil
+}
+
+// doorbellName returns the Claude session name a Claude sender may ring
+// with SendMessage after `flow message` to task slug (a content-free
+// "flow mail waiting" doorbell; the bus row stays the record). "" when the
+// task's session is not a Claude session (codex/prx, or none yet).
+func doorbellName(db *sql.DB, slug string) string {
+	t, err := flowdb.GetTask(db, slug)
+	if err != nil || t == nil || !t.Harness.Valid || t.Harness.String != string(harness.NameClaude) {
+		return ""
+	}
+	if !t.SessionID.Valid || t.SessionID.String == "" {
+		return ""
+	}
+	name, err := claudeSessionName(db, t)
+	if err != nil {
+		return ""
+	}
+	return name
 }
 
 // deliverableTask rejects addressing a session that can never read the

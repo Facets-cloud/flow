@@ -770,17 +770,13 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		return 1
 	}
 
-	// Project lookup is only for the display title (same as the tab path).
-	var project *flowdb.Project
-	if task.ProjectSlug.Valid {
-		p, perr := flowdb.GetProject(db, task.ProjectSlug.String)
-		if perr != nil && !errors.Is(perr, sql.ErrNoRows) {
-			fmt.Fprintf(os.Stderr, "error: get project: %v\n", perr)
-			return 1
-		}
-		project = p
+	// The session name (--name) is also the doorbell address `flow
+	// message` prints, so both come from claudeSessionName.
+	title, err := claudeSessionName(db, task)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
 	}
-	title := buildTabTitle(project, task)
 	opts := harness.LaunchOpts{SkipPermissions: skipPerms, Inject: inject}
 	// claude --bg has no TTY for the trust dialog: an untrusted flow
 	// workspace dies with "Workspace not trusted". Pre-trust it.
@@ -1006,6 +1002,22 @@ func buildTabTitle(project *flowdb.Project, task *flowdb.Task) string {
 		return string(runes[:maxLen-1]) + "…"
 	}
 	return raw
+}
+
+// claudeSessionName is the Claude session name flow gives a task's session
+// (`claude --name`): buildTabTitle of the task and its project. It is the
+// address a Claude sender rings with SendMessage (the doorbell), so every
+// caller must go through here rather than rebuilding the format.
+func claudeSessionName(db *sql.DB, task *flowdb.Task) (string, error) {
+	var project *flowdb.Project
+	if task.ProjectSlug.Valid && task.ProjectSlug.String != "" {
+		p, err := flowdb.GetProject(db, task.ProjectSlug.String)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("get project: %w", err)
+		}
+		project = p
+	}
+	return buildTabTitle(project, task), nil
 }
 
 // findTask resolves a user-supplied ref to exactly one non-archived task.
