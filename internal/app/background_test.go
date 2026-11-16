@@ -496,14 +496,16 @@ func resumePrompt(argv []string) string {
 // hand the session a prompt — with none, `claude --bg --resume` sits idle
 // forever and mail queued while no session was live is never read. The
 // kickoff re-loads task context, names the unread count, and drains the
-// inbox.
+// inbox. It names the slug (flow show task bgt): flow records the resumed
+// session's (possibly new) id only after ResumeBackground returns, so a
+// no-arg reverse lookup can race and find no bound task.
 func TestCmdDoBackgroundResumeKicksOff(t *testing.T) {
 	argv := resumeExitedWithMail(t, []string{"bgt"})
 	p := resumePrompt(argv)
 	if p == "" {
 		t.Fatalf("bg resume passed no prompt; argv: %v", argv)
 	}
-	for _, want := range []string{"flow show task", "flow inbox pop", "2 unread"} {
+	for _, want := range []string{"flow show task bgt", "flow inbox pop", "2 unread"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("kickoff missing %q:\n%s", want, p)
 		}
