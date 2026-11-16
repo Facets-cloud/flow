@@ -301,7 +301,11 @@ type Harness interface {
 	// a one-shot to mint and capture an id). Always returns a real
 	// id on success — flow's caller has a single uniform spawn path.
 	// workDir is the task's work_dir; probing impls run there.
-	NewSessionID(workDir string) (string, error)
+	// opts.Model/Effort, when set, are the session's model and effort:
+	// a probing impl runs its probe on them too, so minting a session
+	// never falls back to the harness default model. Other fields are
+	// ignored.
+	NewSessionID(workDir string, opts LaunchOpts) (string, error)
 
 	// ValidateSessionID rejects strings that can't be a session id for
 	// this harness. Used by `flow do --here` to gate the env-var-
@@ -343,9 +347,12 @@ type Harness interface {
 
 	// SkipPermissionsRun executes a non-interactive prompt against
 	// the harness with per-tool approvals auto-allowed (used by
-	// `flow done`'s close-out sweep). Stdout/stderr are discarded;
-	// only the exit code matters.
-	SkipPermissionsRun(prompt string) error
+	// `flow done`'s close-out sweep and headless owner ticks).
+	// Stdout/stderr are discarded; only the exit code matters.
+	// opts.Model/Effort map to the harness's flags as in every other
+	// launch shape; empty values leave the argv unchanged. Other fields
+	// are ignored.
+	SkipPermissionsRun(prompt string, opts LaunchOpts) error
 
 	// AutoRunArgv builds the argv for a headless, self-completing
 	// autonomous run (`flow do --auto`) pinned to sessionID. This is a

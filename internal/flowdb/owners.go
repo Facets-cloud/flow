@@ -31,9 +31,14 @@ type Owner struct {
 	TickPID     sql.NullInt64
 	TickStarted sql.NullString
 	Harness     sql.NullString
-	CreatedAt   string
-	UpdatedAt   string
-	ArchivedAt  sql.NullString
+	// Model and Effort are the harness model and effort level every tick
+	// runs on (`--model` / `--effort`). NULL means the harness default.
+	// Tasks the owner dispatches keep their own values.
+	Model      sql.NullString
+	Effort     sql.NullString
+	CreatedAt  string
+	UpdatedAt  string
+	ArchivedAt sql.NullString
 }
 
 // OwnerFilter holds optional filters for ListOwners.
@@ -42,13 +47,14 @@ type OwnerFilter struct {
 	IncludeArchived bool
 }
 
-const OwnerCols = "slug, name, work_dir, project_slug, status, every, next_wake_at, last_tick_at, last_tick_status, tick_pid, tick_started, harness, created_at, updated_at, archived_at"
+const OwnerCols = "slug, name, work_dir, project_slug, status, every, next_wake_at, last_tick_at, last_tick_status, tick_pid, tick_started, harness, model, effort, created_at, updated_at, archived_at"
 
 func ScanOwner(row interface{ Scan(dest ...any) error }) (*Owner, error) {
 	var o Owner
 	err := row.Scan(
 		&o.Slug, &o.Name, &o.WorkDir, &o.ProjectSlug, &o.Status, &o.Every,
 		&o.NextWakeAt, &o.LastTickAt, &o.LastTickStatus, &o.TickPID, &o.TickStarted, &o.Harness,
+		&o.Model, &o.Effort,
 		&o.CreatedAt, &o.UpdatedAt, &o.ArchivedAt,
 	)
 	if err != nil {
@@ -71,10 +77,10 @@ func CreateOwner(db *sql.DB, o *Owner) error {
 	}
 	_, err := db.Exec(`
 		INSERT INTO owners (slug, name, work_dir, project_slug, status, every,
-			next_wake_at, last_tick_at, last_tick_status, tick_pid, tick_started, harness, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			next_wake_at, last_tick_at, last_tick_status, tick_pid, tick_started, harness, model, effort, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		o.Slug, o.Name, o.WorkDir, o.ProjectSlug, o.Status, o.Every,
-		o.NextWakeAt, o.LastTickAt, o.LastTickStatus, o.TickPID, o.TickStarted, o.Harness, o.CreatedAt, o.UpdatedAt,
+		o.NextWakeAt, o.LastTickAt, o.LastTickStatus, o.TickPID, o.TickStarted, o.Harness, o.Model, o.Effort, o.CreatedAt, o.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create owner %s: %w", o.Slug, err)
@@ -108,10 +114,12 @@ func UpdateOwner(db *sql.DB, o *Owner) error {
 			tick_pid         = ?,
 			tick_started     = ?,
 			harness          = ?,
+			model            = ?,
+			effort           = ?,
 			updated_at       = ?
 		WHERE slug = ?`,
 		o.Name, o.WorkDir, o.ProjectSlug, o.Status, o.Every,
-		o.NextWakeAt, o.LastTickAt, o.LastTickStatus, o.TickPID, o.TickStarted, o.Harness, o.UpdatedAt, o.Slug,
+		o.NextWakeAt, o.LastTickAt, o.LastTickStatus, o.TickPID, o.TickStarted, o.Harness, o.Model, o.Effort, o.UpdatedAt, o.Slug,
 	)
 	if err != nil {
 		return fmt.Errorf("update owner %s: %w", o.Slug, err)
@@ -152,6 +160,14 @@ func SetOwnerNextWake(db *sql.DB, slug, nextWakeAt string) error {
 		nextWakeAt, NowISO(), slug,
 	)
 	return affectedOwnerRow(res, err, "set next wake", slug)
+}
+
+// SetOwnerModel sets ONLY model and effort (targeted column write). Empty
+// strings are stored as NULL (harness default).
+func SetOwnerModel(db *sql.DB, slug, model, effort string) error {
+	res, err := db.Exec(`UPDATE owners SET model=?, effort=?, updated_at=? WHERE slug=?`,
+		NullIfEmpty(model), NullIfEmpty(effort), NowISO(), slug)
+	return affectedOwnerRow(res, err, "set model", slug)
 }
 
 // ActivateOwner marks an owner active, schedules its next wake, and CLEARS

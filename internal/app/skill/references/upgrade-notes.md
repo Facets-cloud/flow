@@ -16,7 +16,10 @@
   harness as given. The task keeps them, so resumes reuse them; `flow show
   task` prints `model:`/`effort:` when set. `--here` refuses both (exit 2).
   Drivers: see "Choosing the child's model" in references/delegation.md
-  before putting a routine child on a cheaper model.
+  before putting a routine child on a cheaper model. The task's close-out
+  sweep runs on its stored model too. Owners take the same flags on `flow
+  add owner` and `flow owner start`; every tick runs on them, and the tasks
+  an owner dispatches keep their own (references/owners.md).
 
 ## v0.1.0-alpha.38
 

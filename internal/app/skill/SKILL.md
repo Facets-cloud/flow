@@ -138,7 +138,7 @@ Create
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
                            [--tag <t> ...]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
+  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir] [--model/--effort]
 
 Sessions
   flow do               <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--force]
@@ -163,7 +163,7 @@ Playbook runs
 Owners (autonomous ownership — see §4.17)
   flow owner list                   all owners with status + next tick   (alias: flow list owners)
   flow owner show   <slug>          charter + what it owns (in-flight / playbook runs / questions) + next tick   (alias: flow show owner <slug>)
-  flow owner start  <slug>          begin ticking — first tick now, then every <dur> (reactivates a paused OR retired owner)
+  flow owner start  <slug> [--model/--effort]  begin ticking — first tick now, then every <dur> (reactivates a paused OR retired owner)
   flow owner pause  <slug>          stop ticking, keep all state
   flow owner tick   <slug>          wake the owner NOW, interactively (a tab you drive); --auto = headless now
   flow owner next   <slug> --in <dur> | --at <when>   set the next tick time (how a tick self-paces)

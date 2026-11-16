@@ -64,3 +64,16 @@ func TestModelEffortArgv(t *testing.T) {
 		t.Errorf("resume\n got=%q\nwant=%q", (*calls)[1], wantResume)
 	}
 }
+
+// The headless sweep / owner-tick argv: unchanged without model opts.
+func TestModelEffortSkipPermissionsArgv(t *testing.T) {
+	plain := []string{"prx", "run", "-permission-mode", bypass, "-max-turns", maxTurns, "-prompt", "p"}
+	if got := skipPermissionsArgv("p", harness.LaunchOpts{}); !reflect.DeepEqual(got, plain) {
+		t.Errorf("plain: got %q, want %q", got, plain)
+	}
+	want := []string{"prx", "run", "-permission-mode", bypass, "-max-turns", maxTurns,
+		"-model", "sonnet", "-thinking", "low", "-prompt", "p"}
+	if got := skipPermissionsArgv("p", harness.LaunchOpts{Model: "sonnet", Effort: "low"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("model: got %q, want %q", got, want)
+	}
+}

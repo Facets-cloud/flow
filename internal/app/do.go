@@ -320,7 +320,10 @@ func cmdDo(args []string) int {
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
 	if needsBootstrap {
-		id, err := h.NewSessionID(task.WorkDir)
+		// The codex probe that mints the id runs on the task's model too.
+		var mintOpts harness.LaunchOpts
+		applyTaskModel(task, &mintOpts)
+		id, err := h.NewSessionID(task.WorkDir, mintOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
 			return 1

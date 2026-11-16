@@ -41,8 +41,8 @@ var sessionIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-
 
 // The probe runs in workDir (the task's work_dir): codex exec records its
 // cwd in the thread rollout, and the resumed session should agree with it.
-func (c *codex) NewSessionID(workDir string) (string, error) {
-	out, err := ProbeRunner(workDir)
+func (c *codex) NewSessionID(workDir string, opts harness.LaunchOpts) (string, error) {
+	out, err := ProbeRunner(workDir, opts)
 	if err != nil {
 		return "", fmt.Errorf("mint Codex session: %w", err)
 	}
@@ -89,7 +89,9 @@ func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	return cmd
 }
 
-func (c *codex) SkipPermissionsRun(prompt string) error { return SkipPermissionsRunner(prompt) }
+func (c *codex) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) error {
+	return SkipPermissionsRunner(prompt, opts)
+}
 
 // DefersCloseoutInAutoRun: an inline sweep would be killed when the outer
 // `codex exec resume` exits (its shell tool backgrounds `flow done` after
@@ -157,12 +159,13 @@ func modelShell(opts harness.LaunchOpts) string {
 	return b.String()
 }
 
-func skipPermissionsArgv(prompt string) []string {
-	return []string{"exec", "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass, prompt}
+func skipPermissionsArgv(prompt string, opts harness.LaunchOpts) []string {
+	argv := append([]string{"exec"}, modelArgv(opts)...)
+	return append(argv, "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass, prompt)
 }
 
-func runSkipPermissions(prompt string) error {
-	cmd := exec.Command("codex", skipPermissionsArgv(prompt)...)
+func runSkipPermissions(prompt string, opts harness.LaunchOpts) error {
+	cmd := exec.Command("codex", skipPermissionsArgv(prompt, opts)...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()
@@ -186,13 +189,19 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	return append(argv, sessionID, prompt)
 }
 
-func runProbe(workDir string) ([]byte, error) {
+// probeArgv is the session-minting `codex exec` (args after "codex"). The
+// model/effort flags sit right after `exec` so the probe turn runs on the
+// session's model; with none set the argv is unchanged.
+func probeArgv(opts harness.LaunchOpts) []string {
+	argv := append([]string{"exec"}, modelArgv(opts)...)
+	return append(argv, "--json", "--sandbox", "read-only", "--skip-git-repo-check",
+		"Reply exactly with OK. Do not make any changes.")
+}
+
+func runProbe(workDir string, opts harness.LaunchOpts) ([]byte, error) {
 	// This probe intentionally persists its thread: the interactive `codex
 	// resume` started immediately afterwards must resume this exact id.
-	cmd := exec.Command(
-		"codex", "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
-		"Reply exactly with OK. Do not make any changes.",
-	)
+	cmd := exec.Command("codex", probeArgv(opts)...)
 	cmd.Dir = workDir // "" keeps the caller's cwd
 	return cmd.Output()
 }

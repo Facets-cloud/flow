@@ -102,3 +102,31 @@ func TestModelEffortBackgroundArgv(t *testing.T) {
 		})
 	}
 }
+
+// The headless sweep / owner-tick argv: unchanged without model opts,
+// flags appended with them.
+func TestModelEffortSkipPermissionsArgv(t *testing.T) {
+	if got, want := skipPermissionsArgv("p", harness.LaunchOpts{}),
+		[]string{"claude", "-p", "p", "--dangerously-skip-permissions"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("plain: got %q, want %q", got, want)
+	}
+	if got, want := skipPermissionsArgv("p", harness.LaunchOpts{Model: "haiku", Effort: "low"}),
+		[]string{"claude", "-p", "p", "--dangerously-skip-permissions", "--model", "haiku", "--effort", "low"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("model: got %q, want %q", got, want)
+	}
+}
+
+// SkipPermissionsRun hands its opts to the runner.
+func TestSkipPermissionsRunPassesOpts(t *testing.T) {
+	old := SkipPermissionsRunner
+	t.Cleanup(func() { SkipPermissionsRunner = old })
+	var got harness.LaunchOpts
+	SkipPermissionsRunner = func(_ string, opts harness.LaunchOpts) error { got = opts; return nil }
+	want := harness.LaunchOpts{Model: "opus", Effort: "high"}
+	if err := New().SkipPermissionsRun("p", want); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("runner got %+v, want %+v", got, want)
+	}
+}

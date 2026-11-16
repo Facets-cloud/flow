@@ -76,3 +76,50 @@ func TestLiveSessionIDsSeesModelFlags(t *testing.T) {
 		t.Errorf("live=%v err=%v", live, err)
 	}
 }
+
+// The headless sweep / owner-tick argv: unchanged without model opts,
+// model flags right after `exec` with them.
+func TestModelEffortSkipPermissionsArgv(t *testing.T) {
+	plain := []string{"exec", "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass, "p"}
+	if got := skipPermissionsArgv("p", harness.LaunchOpts{}); !reflect.DeepEqual(got, plain) {
+		t.Errorf("plain: got %q, want %q", got, plain)
+	}
+	want := []string{"exec", "-m", "gpt-5", "-c", `model_reasoning_effort="low"`,
+		"--dangerously-bypass-approvals-and-sandbox", hookTrustBypass, "p"}
+	if got := skipPermissionsArgv("p", harness.LaunchOpts{Model: "gpt-5", Effort: "low"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("model: got %q, want %q", got, want)
+	}
+}
+
+// The session-minting probe runs on the session's model; without one its
+// argv is what it was before.
+func TestModelEffortProbeArgv(t *testing.T) {
+	const ask = "Reply exactly with OK. Do not make any changes."
+	plain := []string{"exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", ask}
+	if got := probeArgv(harness.LaunchOpts{}); !reflect.DeepEqual(got, plain) {
+		t.Errorf("plain: got %q, want %q", got, plain)
+	}
+	want := []string{"exec", "-m", "gpt-5", "-c", `model_reasoning_effort="high"`,
+		"--json", "--sandbox", "read-only", "--skip-git-repo-check", ask}
+	if got := probeArgv(harness.LaunchOpts{Model: "gpt-5", Effort: "high"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("model: got %q, want %q", got, want)
+	}
+}
+
+// NewSessionID hands its opts to the probe.
+func TestNewSessionIDPassesModelToProbe(t *testing.T) {
+	old := ProbeRunner
+	t.Cleanup(func() { ProbeRunner = old })
+	var got harness.LaunchOpts
+	ProbeRunner = func(_ string, opts harness.LaunchOpts) ([]byte, error) {
+		got = opts
+		return []byte(`{"type":"thread.started","thread_id":"019ff4b1-6162-7263-974f-f5f1866ad0fe"}`), nil
+	}
+	want := harness.LaunchOpts{Model: "gpt-5", Effort: "low"}
+	if _, err := New().NewSessionID("", want); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("probe got %+v, want %+v", got, want)
+	}
+}

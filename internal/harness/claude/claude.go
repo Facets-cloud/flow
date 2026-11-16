@@ -77,7 +77,7 @@ var sessionIDRe = regexp.MustCompile(
 // implement this by probing the harness CLI to mint and capture an
 // id; claude doesn't need that — it accepts an externally-supplied
 // UUID via --session-id.)
-func (c *claude) NewSessionID(workDir string) (string, error) {
+func (c *claude) NewSessionID(workDir string, _ harness.LaunchOpts) (string, error) {
 	return NewUUID()
 }
 
@@ -197,8 +197,8 @@ func modelShell(opts harness.LaunchOpts) string {
 
 // ---------- headless ----------
 
-func (c *claude) SkipPermissionsRun(prompt string) error {
-	return SkipPermissionsRunner(prompt)
+func (c *claude) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) error {
+	return SkipPermissionsRunner(prompt, opts)
 }
 
 // AutoRunArgv builds `claude --session-id <uuid> -p <prompt>
@@ -223,12 +223,18 @@ func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) 
 	return append(argv, modelArgv(opts)...)
 }
 
+// skipPermissionsArgv is `claude -p <prompt> --dangerously-skip-permissions
+// [--model <m>] [--effort <e>]`.
+func skipPermissionsArgv(prompt string, opts harness.LaunchOpts) []string {
+	return append([]string{"claude", "-p", prompt, "--dangerously-skip-permissions"}, modelArgv(opts)...)
+}
+
 // runSkipPermissions is the default SkipPermissionsRunner — execs
-// `claude -p <prompt> --dangerously-skip-permissions`. Stdout/stderr
-// are discarded because the sweep prompt instructs claude to write
-// files silently with no chat output.
-func runSkipPermissions(prompt string) error {
-	cmd := exec.Command("claude", "-p", prompt, "--dangerously-skip-permissions")
+// skipPermissionsArgv. Stdout/stderr are discarded because the sweep
+// prompt instructs claude to write files silently with no chat output.
+func runSkipPermissions(prompt string, opts harness.LaunchOpts) error {
+	argv := skipPermissionsArgv(prompt, opts)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()

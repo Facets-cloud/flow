@@ -92,6 +92,34 @@ func checkModelForNewTask(harnessName, model, effort string) int {
 	return 0
 }
 
+// ownerModelFlags registers --model and --effort for the owner commands.
+func ownerModelFlags(fs *flag.FlagSet) (model, effort *string) {
+	model = fs.String("model", "", "model every tick of this owner runs on, passed through as given (e.g. opus, haiku); tasks the owner dispatches keep their own")
+	effort = fs.String("effort", "", "effort level every tick of this owner runs on, passed through as given (e.g. low, high)")
+	return model, effort
+}
+
+// checkOwnerModel refuses model/effort values the owner's harness (named by
+// hname; "" is the claude default every owner tick resolves to) can't
+// honour. Returns an exit code.
+func checkOwnerModel(hname, model, effort string) int {
+	h, err := harnessByName(hname)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if err := harness.CheckModelOpts(h, model, effort); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	return 0
+}
+
+// ownerModelOpts is the owner's stored model/effort as launch options.
+func ownerModelOpts(o *flowdb.Owner) harness.LaunchOpts {
+	return harness.LaunchOpts{Model: o.Model.String, Effort: o.Effort.String}
+}
+
 // applyTaskModel copies the task's stored model/effort into opts.
 func applyTaskModel(task *flowdb.Task, opts *harness.LaunchOpts) {
 	opts.Model = task.Model.String

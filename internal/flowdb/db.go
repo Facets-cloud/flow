@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS owners (
     tick_pid          INTEGER,
     tick_started      TEXT,
     harness           TEXT,
+    model             TEXT,
+    effort            TEXT,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     archived_at       TEXT
@@ -487,6 +489,11 @@ func runMigrations(db *sql.DB) error {
 	for _, col := range []struct{ name, ddl string }{
 		{"tick_pid", "ALTER TABLE owners ADD COLUMN tick_pid INTEGER"},
 		{"tick_started", "ALTER TABLE owners ADD COLUMN tick_started TEXT"},
+		// model / effort: the harness model and effort level every tick
+		// runs on (`flow add owner` / `flow owner start` --model/--effort).
+		// NULL = harness default.
+		{"model", "ALTER TABLE owners ADD COLUMN model TEXT"},
+		{"effort", "ALTER TABLE owners ADD COLUMN effort TEXT"},
 	} {
 		has, err := columnExists(db, "owners", col.name)
 		if err != nil {

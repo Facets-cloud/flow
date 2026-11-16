@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/harness/claude"
 	"flow/internal/harness/codex"
 	"flow/internal/iterm"
@@ -42,7 +43,7 @@ func stubNewUUID(t *testing.T, sid string) {
 func stubCodexProbe(t *testing.T, sid string) {
 	t.Helper()
 	old := codex.ProbeRunner
-	codex.ProbeRunner = func(string) ([]byte, error) {
+	codex.ProbeRunner = func(string, harness.LaunchOpts) ([]byte, error) {
 		return []byte(`{"type":"thread.started","thread_id":"` + sid + `"}`), nil
 	}
 	t.Cleanup(func() { codex.ProbeRunner = old })
@@ -1407,7 +1408,7 @@ func TestCmdDoCodexProbeRunsInTaskWorkDir(t *testing.T) {
 	const sid = "019ff4b1-6162-7263-974f-f5f1866ad0fe"
 	var gotDir string
 	old := codex.ProbeRunner
-	codex.ProbeRunner = func(workDir string) ([]byte, error) {
+	codex.ProbeRunner = func(workDir string, _ harness.LaunchOpts) ([]byte, error) {
 		gotDir = workDir
 		return []byte(`{"type":"thread.started","thread_id":"` + sid + `"}`), nil
 	}

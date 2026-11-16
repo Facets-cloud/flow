@@ -16,10 +16,10 @@ const testThreadID = "019ff4b1-6162-7263-974f-f5f1866ad0fe"
 func TestNewSessionIDParsesThreadStarted(t *testing.T) {
 	orig := ProbeRunner
 	t.Cleanup(func() { ProbeRunner = orig })
-	ProbeRunner = func(string) ([]byte, error) {
+	ProbeRunner = func(string, harness.LaunchOpts) ([]byte, error) {
 		return []byte("noise\n{\"type\":\"thread.started\",\"thread_id\":\"" + testThreadID + "\"}\n"), nil
 	}
-	got, err := New().NewSessionID("")
+	got, err := New().NewSessionID("", harness.LaunchOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,16 +31,18 @@ func TestNewSessionIDParsesThreadStarted(t *testing.T) {
 func TestNewSessionIDRejectsMissingOrInvalidThread(t *testing.T) {
 	orig := ProbeRunner
 	t.Cleanup(func() { ProbeRunner = orig })
-	ProbeRunner = func(string) ([]byte, error) { return []byte(`{"type":"thread.started","thread_id":"nope"}`), nil }
-	if _, err := New().NewSessionID(""); err == nil {
+	ProbeRunner = func(string, harness.LaunchOpts) ([]byte, error) {
+		return []byte(`{"type":"thread.started","thread_id":"nope"}`), nil
+	}
+	if _, err := New().NewSessionID("", harness.LaunchOpts{}); err == nil {
 		t.Error("NewSessionID accepted invalid thread id")
 	}
-	ProbeRunner = func(string) ([]byte, error) { return []byte(`{"type":"turn.started"}`), nil }
-	if _, err := New().NewSessionID(""); err == nil {
+	ProbeRunner = func(string, harness.LaunchOpts) ([]byte, error) { return []byte(`{"type":"turn.started"}`), nil }
+	if _, err := New().NewSessionID("", harness.LaunchOpts{}); err == nil {
 		t.Error("NewSessionID accepted output without thread.started")
 	}
-	ProbeRunner = func(string) ([]byte, error) { return nil, errors.New("not installed") }
-	if _, err := New().NewSessionID(""); err == nil {
+	ProbeRunner = func(string, harness.LaunchOpts) ([]byte, error) { return nil, errors.New("not installed") }
+	if _, err := New().NewSessionID("", harness.LaunchOpts{}); err == nil {
 		t.Error("NewSessionID swallowed probe error")
 	}
 }
@@ -186,11 +188,11 @@ func TestNewSessionIDProbesInWorkDir(t *testing.T) {
 	orig := ProbeRunner
 	t.Cleanup(func() { ProbeRunner = orig })
 	var gotDir string
-	ProbeRunner = func(workDir string) ([]byte, error) {
+	ProbeRunner = func(workDir string, _ harness.LaunchOpts) ([]byte, error) {
 		gotDir = workDir
 		return []byte(`{"type":"thread.started","thread_id":"` + testThreadID + `"}`), nil
 	}
-	if _, err := New().NewSessionID("/tmp/the-task-dir"); err != nil {
+	if _, err := New().NewSessionID("/tmp/the-task-dir", harness.LaunchOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if gotDir != "/tmp/the-task-dir" {
