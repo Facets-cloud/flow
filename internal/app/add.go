@@ -321,6 +321,9 @@ func addTask(args []string) int {
 		}
 	}
 	fmt.Printf("  work_dir: %s%s\n", absWorkDir, workDirSource)
+	if note := hereBindNote(slug, absWorkDir); note != "" {
+		fmt.Print(note)
+	}
 	if parent != nil {
 		fmt.Printf("  (parent: %q)\n", parent.Slug)
 		// The parent session watches its child so the child's broadcasts
@@ -391,4 +394,29 @@ func uniqueSlug(db *sql.DB, table, base string) (string, error) {
 
 func isValidPriority(p string) bool {
 	return p == "high" || p == "medium" || p == "low"
+}
+
+// hereBindNote warns when the harness session running `flow add task`
+// could not later bind itself to the new task with `flow do --here`,
+// because it was started somewhere other than workDir. Saying so at
+// creation, with the directory that would work, beats the refusal at bind
+// time (GH #173). Returns "" outside a harness session, when the bind
+// would succeed, or when the session's start directory is unknown.
+func hereBindNote(slug, workDir string) string {
+	h := ambientHarness()
+	if h == nil {
+		return ""
+	}
+	sid := os.Getenv(h.SessionIDEnvVar())
+	if h.ValidateSessionID(sid) != nil || h.ValidateSession(workDir, sid) == nil {
+		return ""
+	}
+	started := sessionStartDir(h, sid)
+	if started == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"  note: this session started in %s, so it can't bind to this task with `flow do --here %s`.\n"+
+			"        to continue the task in this session, use that directory as --work-dir; `flow do %s` in a new tab is unaffected.\n",
+		started, slug, slug)
 }

@@ -1556,3 +1556,69 @@ func TestCmdDoNoTerminalFallbackReservedNeverStarted(t *testing.T) {
 		t.Errorf("never-started session must not be resumed; got:\n%s", out)
 	}
 }
+
+// TestCmdDoHereRefusalNamesSessionStartDir pins GH #173: when --here
+// refuses because the session was started outside work_dir, the error
+// gives the session's start directory as a ready command, and following
+// it makes the bind succeed. A `<real-cwd>` placeholder invites `$PWD`,
+// which is wrong once the session has cd'ed.
+func TestCmdDoHereRefusalNamesSessionStartDir(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const sid = "22222222-3333-4444-8555-666666666666"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+	if rc := cmdAdd([]string{"task", "started-elsewhere", "--work-dir", elsewhere}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+
+	stderr := captureStderr(t)
+	if rc := cmdDoHere("started-elsewhere", false); rc != 1 {
+		t.Fatalf("cmdDoHere rc=%d, want 1", rc)
+	}
+	got := stderr()
+	want := "flow update task started-elsewhere --work-dir " + spawner.ShellQuote(started)
+	if !strings.Contains(got, want) {
+		t.Errorf("stderr missing %q; got:\n%s", want, got)
+	}
+	if strings.Contains(got, "<real-cwd>") {
+		t.Errorf("stderr still carries the <real-cwd> placeholder:\n%s", got)
+	}
+
+	if rc := cmdUpdate([]string{"task", "started-elsewhere", "--work-dir", started}); rc != 0 {
+		t.Fatalf("update rc=%d", rc)
+	}
+	if rc := cmdDoHere("started-elsewhere", false); rc != 0 {
+		t.Errorf("cmdDoHere after following the hint rc=%d, want 0", rc)
+	}
+}
+
+// TestCmdAddTaskNotesHereBindMismatch pins the creation-time half of GH
+// #173: a harness session that adds a task at a work_dir it was not
+// started in is told so, with the directory that would bind. No note when
+// the session could bind.
+func TestCmdAddTaskNotesHereBindMismatch(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const sid = "33333333-4444-4555-8666-777777777777"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+
+	out := captureStdout(t, func() {
+		if rc := cmdAdd([]string{"task", "note-mismatch", "--work-dir", elsewhere}); rc != 0 {
+			t.Errorf("add rc=%d", rc)
+		}
+	})
+	if want := "note: this session started in " + started; !strings.Contains(out, want) {
+		t.Errorf("output missing %q; got:\n%s", want, out)
+	}
+
+	out = captureStdout(t, func() {
+		if rc := cmdAdd([]string{"task", "note-match", "--work-dir", started}); rc != 0 {
+			t.Errorf("add rc=%d", rc)
+		}
+	})
+	if strings.Contains(out, "note: this session started in") {
+		t.Errorf("bindable work_dir should print no note; got:\n%s", out)
+	}
+}

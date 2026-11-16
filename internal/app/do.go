@@ -1459,9 +1459,9 @@ func cmdDoHere(query string, force bool) int {
 				"this means claude was started in a different directory than task.work_dir, OR work_dir is set wrong.\n"+
 				"pick one of:\n"+
 				"  - open it in a new tab (recommended):           flow do %s\n"+
-				"  - point work_dir at where claude actually runs: flow update task %s --work-dir <real-cwd>\n"+
+				"%s"+
 				"    (allowed because the new work_dir must match the session's real on-disk location)\n",
-			task.Slug, err, task.Slug, task.Slug)
+			task.Slug, err, task.Slug, repointHint(task.Slug, sessionStartDir(h, sid)))
 		return 1
 	}
 
@@ -1496,6 +1496,37 @@ func cmdDoHere(query string, force bool) int {
 		fmt.Println(strings.TrimSpace(blk))
 	}
 	return 0
+}
+
+// sessionStartDir returns the directory the session sid was started in,
+// or "" when the harness can't tell. This is the only work_dir a `flow do
+// --here` bind of that session accepts. The shell's current directory is
+// not a substitute: a session that has cd'ed (into a worktree, say) still
+// keys its transcript on where it started (GH #173).
+func sessionStartDir(h harness.Harness, sid string) string {
+	loc, ok := h.(harness.SessionLocator)
+	if !ok {
+		return ""
+	}
+	started, _ := loc.LocateSession(sid)
+	return started
+}
+
+// repointHint is the "point work_dir at the session" option of the --here
+// refusal. With a known start directory it is a command to run as is;
+// otherwise it says which directory to look for, since `pwd` is the
+// obvious wrong guess.
+func repointHint(slug, started string) string {
+	if started == "" {
+		return fmt.Sprintf(
+			"  - point work_dir at where claude actually runs: flow update task %s --work-dir <real-cwd>\n"+
+				"    (<real-cwd> is the directory this session was STARTED in — not the shell's current directory if it has cd'ed)\n",
+			slug)
+	}
+	return fmt.Sprintf(
+		"  - point work_dir at where this session started:  flow update task %s --work-dir %s\n"+
+			"    then bind:                                     flow do --here %s\n",
+		slug, spawner.ShellQuote(started), slug)
 }
 
 // printParentListenerReminder tells whoever launched an auto run of a
