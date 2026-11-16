@@ -279,6 +279,36 @@ func TestParsePositional(t *testing.T) {
 	}
 }
 
+// CodeRabbit #132 (round 2): after a `--` the parser consumed, every token
+// stays positional — `--status done -- pb --status backlog` keeps done and
+// `-- pb --help` is not a help request. A `--` that is a flag's VALUE is
+// not a terminator, and flags after the positional still parse.
+func TestParsePositionalRespectsConsumedTerminator(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		pos     string
+		status  string
+		verbose bool
+		extra   int
+	}{
+		{[]string{"--status", "done", "--", "pb", "--status", "backlog"}, "pb", "done", false, 2},
+		{[]string{"--status", "done", "--", "pb", "--help"}, "pb", "done", false, 1},
+		{[]string{"--verbose", "--", "pb", "--status", "x"}, "pb", "", true, 2},
+		{[]string{"--status", "done", "pb", "--status", "backlog"}, "pb", "backlog", false, 0},
+		{[]string{"--status", "--", "pb", "--status", "backlog"}, "pb", "backlog", false, 0},
+		{[]string{"--status=--", "--", "pb", "--verbose"}, "pb", "--", false, 1},
+	} {
+		fs := flagSet("t")
+		status := fs.String("status", "", "")
+		verbose := fs.Bool("verbose", false, "")
+		pos, err := parsePositional(fs, tc.args)
+		if err != nil || pos != tc.pos || *status != tc.status || *verbose != tc.verbose || fs.NArg() != tc.extra {
+			t.Errorf("parsePositional(%q) = pos %q err %v status %q verbose %v extra %d; want %q nil %q %v %d",
+				tc.args, pos, err, *status, *verbose, fs.NArg(), tc.pos, tc.status, tc.verbose, tc.extra)
+		}
+	}
+}
+
 func ownerStates(t *testing.T) string {
 	t.Helper()
 	db := openFlowDB(t)
