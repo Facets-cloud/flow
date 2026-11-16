@@ -66,6 +66,34 @@ work_dir: <path>
 session will prompt you to fill in the deferred sections.*
 ```
 
+**Driver brief (Start a driver, SKILL.md §4.2):** the default brief for
+work the user states. The goal is a section here, never a separate entity.
+Write it over the stub `flow add task --tag driver` created (Read first),
+keeping the Role section flow appended as the last section.
+
+```markdown
+# <name>
+
+## Goal
+<the user's words, verbatim>
+
+## Done when
+*Agree with the user on the first turn.*
+
+## Context
+project: <slug or floating>; work_dir: <path>; <what the user said that matters>
+
+## Decisions
+- YYYY-MM-DD: <one line per user decision>
+
+## Role: driver
+<flow appends this section; keep it last (text below)>
+```
+
+The driver fills `## Done when` in conversation on its first turn (restate
+the goal, agree the criteria in chat, write them here); it is not a
+deferred section and gets no §9 prompt.
+
 **Driver task: the Role section.** When a task becomes a driver (`flow
 add task --tag driver` or `flow update task --tag driver`), flow appends
 this section as the LAST section of `brief.md` if the brief has no `## Role`

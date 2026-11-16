@@ -96,12 +96,17 @@ func showTaskCmd(args []string) int {
 // current Claude session.
 func showProjectCmd(args []string) int {
 	fs := flagSet("show project")
+	all := fs.Bool("all", false, "include done driver tasks in the drivers: list")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	ref := ""
 	if fs.NArg() > 0 {
 		ref = fs.Arg(0)
+		// Allow flags after the ref (`flow show project p --all`).
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return 2
+		}
 	}
 
 	dbPath, err := flowDBPath()
@@ -150,6 +155,7 @@ func showProjectCmd(args []string) int {
 		return 1
 	}
 	printProjectMetadata(db, p, root)
+	printProjectDrivers(db, p.Slug, *all)
 	return 0
 }
 

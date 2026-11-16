@@ -238,17 +238,28 @@ func TestCompletedChildSendsNoCrashNotice(t *testing.T) {
 	}
 }
 
-// The intake driver question must be spelled out in the resident core:
-// a pointer to a reference file alone gets skipped in practice.
+// Driver-first UX: the resident core's §4.2 creates a driver task
+// directly (`--tag driver`, no "Driver?" question); the "How should this
+// task run?" question survives only in the plain-task interview
+// (references/intake-task.md). See driver_first_test.go.
 func TestSkillCoreIntakeAsksDriverQuestion(t *testing.T) {
 	core, err := fs.ReadFile(skillFiles(), "SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(core)
+	if !strings.Contains(string(core), "--tag driver") {
+		t.Error("SKILL.md §4.2 must create the driver with --tag driver")
+	}
+	if strings.Contains(string(core), "How should this task run?") {
+		t.Error("the Driver? question belongs in references/intake-task.md, not the core user path")
+	}
+	ref, err := fs.ReadFile(skillFiles(), "references/intake-task.md")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{"How should this task run?", "--tag driver", "Driver (Recommended)"} {
-		if !strings.Contains(s, want) {
-			t.Errorf("SKILL.md intake missing %q", want)
+		if !strings.Contains(string(ref), want) {
+			t.Errorf("intake-task.md missing %q", want)
 		}
 	}
 }

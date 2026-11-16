@@ -281,11 +281,14 @@ func emitAmbientSkillHint() int {
 		"days, and maintains a central knowledge base of durable facts about them, " +
 		"their org, and their work. Their tasks, projects, and KB already exist. " +
 		"Load the `flow` skill now — " + flowSkillHow() + " — and let it run alongside the " +
-		"conversation. When the user starts any work in this session, before doing it, " +
-		"confirm with them (AskUserQuestion if your harness has it, else ask in chat): is this part of an existing flow task, " +
-		"or should we create a new one? The user's work belongs in flow — don't " +
-		"silently proceed in an unbound transcript. The skill knows how to list " +
-		"candidates, run intake, and `flow do` the chosen task. " +
+		"conversation. Driver first: when the user states work they want done in this " +
+		"session (a goal, feature, bug, investigation), BEFORE doing it and before any other process skill " +
+		"(brainstorming, planning, debugging), create a driver task for it via the skill's §4.2 \"Start a driver\": " +
+		"at most one question, \"what goal do you want to achieve?\" (AskUserQuestion if your harness has it, else ask in chat; " +
+		"skip it when the goal is already stated). If a live driver or an existing flow task already owns that work, " +
+		"route it there instead of creating a new one. Then bind this session to the new driver and continue here; " +
+		"brainstorming and planning run inside the driver. The user's work belongs in flow, don't " +
+		"silently proceed in an unbound transcript. A one-off question needs no task. " +
 		"\n\n" +
 		"If the user's message uses unfamiliar terminology — an internal codename, a " +
 		"person, a customer, a product line, a tool you don't recognize — consult " +
@@ -332,9 +335,10 @@ func emitHookContext(event, ctx string) int {
 // the current prompt — drift (§4.11 → offer a new task) and close-out
 // (§4.7 → offer to mark done) — so those passive disciplines don't
 // decay over a long session the way a SessionStart-only reminder does.
-// Unbound sessions are a pure no-op: the "go bind a task" nudge lives
-// in SessionStart, and repeating it per prompt was retired in
-// v0.1.0-alpha.7 for its token cost.
+// Unbound sessions get one line on their FIRST human prompt only
+// (firstPromptNudge: "create a driver task first"); every later prompt
+// is a no-op apart from bus/upgrade notices. Repeating the nudge per
+// prompt was retired in v0.1.0-alpha.7 for its token cost.
 //
 // The semantic judgment is Claude's — the hook only supplies which task
 // the session is bound to (a free, deterministic DB lookup); whether
@@ -351,8 +355,12 @@ func cmdHookUserPromptSubmit(args []string) int {
 	}
 	pageCtx := busPromptSubmitContext() + upgradeNoticeContext(t)
 	if t == nil {
-		// Unbound — page-bus context (an unbound session can still have
-		// paged the user) and the upgrade notice are the only payloads.
+		// Unbound — the once-per-session driver nudge, page-bus context
+		// (an unbound session can still have paged the user) and the
+		// upgrade notice are the only payloads.
+		if n := firstPromptNudge(nil); n != "" {
+			pageCtx = n + pageCtx
+		}
 		if pageCtx == "" {
 			return 0
 		}
