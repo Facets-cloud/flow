@@ -122,16 +122,6 @@ func cmdUpdateTask(args []string) int {
 		return 2
 	}
 
-	var absWorkDir string
-	if *workDir != "" {
-		abs, err := resolveWorkDir(*workDir, *mkdir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			return 1
-		}
-		absWorkDir = abs
-	}
-
 	var dueParsed string
 	if *dueDate != "" {
 		d, err := parseDueDate(*dueDate, time.Now())
@@ -189,6 +179,18 @@ func cmdUpdateTask(args []string) int {
 				"    flow do --here %s   (binds this Claude session to the task)\n",
 			*status, task.Slug, task.Slug)
 		return 1
+	}
+
+	// Resolve (and --mkdir) only after every refusal above: a refused
+	// update must leave nothing behind, not even the new directory.
+	var absWorkDir string
+	if *workDir != "" {
+		abs, err := resolveWorkDir(*workDir, *mkdir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		absWorkDir = abs
 	}
 
 	now := flowdb.NowISO()

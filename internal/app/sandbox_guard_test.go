@@ -1,9 +1,11 @@
 package app
 
 import (
+	"database/sql"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"flow/internal/flowdb"
 )
@@ -102,4 +104,57 @@ func taskStates(t *testing.T) string {
 		b.WriteString(tk.Slug + ":" + tk.Status + ":" + tk.Priority + ":" + tk.SessionID.String + ";")
 	}
 	return b.String()
+}
+
+// CodeRabbit #132: the scheduler pass `owner tick-due` launches headless
+// owner ticks too, so it must refuse inside the sandbox before dispatching
+// or advancing next_wake_at.
+func TestSandboxRefusesOwnerTickDue(t *testing.T) {
+	setupFlowRoot(t)
+	db := openFlowDB(t)
+	past := sql.NullString{String: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339), Valid: true}
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{Slug: "due", Name: "D", WorkDir: "/x", Every: "30m", NextWakeAt: past}); err != nil {
+		t.Fatal(err)
+	}
+	launched := 0
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) { launched++; return 7, nil }
+	t.Cleanup(func() { ownerTickLauncher = old })
+
+	t.Setenv("CODEX_SANDBOX", "seatbelt")
+	var rc int
+	out := captureStdout(t, func() { rc = Run([]string{"owner", "tick-due"}) })
+	if rc == 0 || !strings.Contains(out, "escalated") {
+		t.Errorf("tick-due inside the sandbox: rc=%d, want a refusal\n%s", rc, out)
+	}
+	if launched != 0 {
+		t.Errorf("launched %d owner ticks inside the sandbox", launched)
+	}
+	o, err := flowdb.GetOwner(db, "due")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.NextWakeAt.String != past.String {
+		t.Errorf("next_wake_at advanced to %q inside the sandbox", o.NextWakeAt.String)
+	}
+}
+
+// CodeRabbit #132: a refused `update --status done --work-dir X --mkdir`
+// said "nothing was changed" but had already created X.
+func TestSandboxRefusedUpdateCreatesNoWorkDir(t *testing.T) {
+	setupFlowRoot(t)
+	stubClaudeRunner(t, nil)
+	seedStartedTask(t, "started")
+	newDir := t.TempDir() + "/new-workspace"
+	t.Setenv("CODEX_SANDBOX", "seatbelt")
+	var rc int
+	out := captureStdout(t, func() {
+		rc = Run([]string{"update", "task", "started", "--status", "done", "--work-dir", newDir, "--mkdir"})
+	})
+	if rc == 0 {
+		t.Fatalf("rc=0, want a refusal\n%s", out)
+	}
+	if _, err := os.Stat(newDir); !os.IsNotExist(err) {
+		t.Errorf("refused update created %s (stat err=%v)", newDir, err)
+	}
 }

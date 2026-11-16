@@ -211,6 +211,9 @@ func ownerTickDue(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return flagParseRC(err)
 	}
+	if rc := refuseInCodexSandbox("flow owner tick-due"); rc != 0 {
+		return rc
+	}
 
 	dbPath, err := flowDBPath()
 	if err != nil {
