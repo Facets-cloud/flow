@@ -40,10 +40,13 @@ var (
 const (
 	// SessionStart matcher for ~/.claude/settings.json. "compact" makes
 	// the hook re-fire after compaction, which is what restores the
-	// listener discipline the compacted context lost. installHook keys
+	// listener discipline the compacted context lost. "fork" covers
+	// `claude --bg --resume`, which runs `--fork-session` under a NEW id:
+	// without it the hook never runs there, so the resumed session gets
+	// no wake endpoint, no asyncRewake waiter and no task reload. installHook keys
 	// on the command, not the matcher, and migrates an older matcher
 	// (e.g. "startup|resume") in place, so changing it is safe.
-	hookMatcher = "startup|resume|compact"
+	hookMatcher = "startup|resume|compact|fork"
 )
 
 // New returns a fresh claude harness. The struct is stateless; we
@@ -91,7 +94,8 @@ func (c *claude) ValidateSessionID(s string) error {
 // `flow do <slug>` resume find the right conversation": comparing
 // os.Getwd() to work_dir is fooled by chained `cd && flow do --here`
 // from inside a claude Bash invocation, but the filesystem cannot lie
-// about where the jsonl actually lives.
+// about where the jsonl actually lives. workDir is tried as given and
+// with symlinks resolved (see transcriptCwds).
 //
 // StatFn is the indirection point so tests can stub the on-disk
 // check without materializing fake jsonl files under a temp $HOME.
@@ -105,14 +109,22 @@ func (c *claude) ValidateSession(workDir, sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("read home dir: %w", err)
 	}
-	expected := filepath.Join(home, ".claude", "projects", EncodeCwd(workDir), sessionID+".jsonl")
-	if err := StatFn(expected); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("transcript not found at %s", expected)
+	var firstErr error
+	for _, cwd := range transcriptCwds(workDir) {
+		expected := filepath.Join(home, ".claude", "projects", EncodeCwd(cwd), sessionID+".jsonl")
+		err := StatFn(expected)
+		if err == nil {
+			return nil
 		}
-		return fmt.Errorf("stat %s: %w", expected, err)
+		if firstErr == nil {
+			if os.IsNotExist(err) {
+				firstErr = fmt.Errorf("transcript not found at %s", expected)
+			} else {
+				firstErr = fmt.Errorf("stat %s: %w", expected, err)
+			}
+		}
 	}
-	return nil
+	return firstErr
 }
 
 // newUUID generates a v4 UUID in the 8-4-4-4-12 hex format that

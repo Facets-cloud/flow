@@ -96,6 +96,7 @@ flow/
 - **Skill file is the source of truth** for how Claude sessions interact with flow. If the skill says something, the code must support it.
 - **Skill embed path:** the entire `internal/app/skill/` directory — the lean resident `SKILL.md` plus `references/*.md` — is embedded at compile time via `//go:embed skill` (an `embed.FS`) in `internal/app/skill.go`. `Harness.InstallSkill(fs.FS)` walks the tree and writes it under `~/.claude/skills/flow/`, so `SKILL.md` lands next to `references/`. After editing any of them, rebuild for `flow skill update` to pick up changes.
 - **Progressive disclosure / lean core:** `SKILL.md` is loaded resident by the Skill tool and re-billed as cache on every turn, so it's the dominant token cost — keep it lean. Rarely-needed workflows live in `references/*.md` (loaded on demand via Read), each reachable from a one-line trigger in `SKILL.md`. `TestSkillCoreIsLean` caps `SKILL.md` size; `TestSkillReferencesAreReachable` forbids orphan references; content assertions run against the full corpus (`skillCorpus`) so relocating a section never loses it. Move new low-frequency workflows into `references/`, not the core.
+- **Upgrade notes:** a PR that changes agent-facing behaviour (hook context, skill workflows, bus etiquette, harness rules) adds a bullet under `## Unreleased` in `internal/app/skill/references/upgrade-notes.md`; rename the heading to the tag at release. Running sessions are pointed there by the one-time `[flow-upgrade]` hook notice (`internal/app/upgradenotice.go`).
 
 ## Data directory layout
 

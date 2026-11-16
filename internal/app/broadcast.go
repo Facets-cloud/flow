@@ -64,6 +64,7 @@ func cmdBroadcast(args []string) int {
 		return 1
 	}
 	delivered := 0
+	var outcomes []string
 	for _, w := range watchers {
 		toAssignee, toSlug := splitWatcherAddr(w)
 		if toSlug == slug {
@@ -79,13 +80,20 @@ func cmdBroadcast(args []string) int {
 			return 1
 		}
 		delivered++
+		if toSlug != "" {
+			outcomes = append(outcomes, wakeOutcome(m.ID))
+		}
 	}
 	_ = flowdb.ResetNudges(db, slug) // a broadcast restarts the Stop-nudge backoff cycle
 	_ = flowdb.SweepBus(db, time.Now())
 	if delivered == 0 {
 		fmt.Printf("broadcast from %s — no watchers yet (subscribe with: flow watch %s)\n", slug, slug)
 	} else {
-		fmt.Printf("broadcast from %s to %d watcher(s)\n", slug, delivered)
+		fmt.Printf("broadcast from %s to %d watcher(s)", slug, delivered)
+		if len(outcomes) > 0 {
+			fmt.Printf(" — %s", strings.Join(outcomes, "; "))
+		}
+		fmt.Println()
 	}
 	return 0
 }

@@ -25,8 +25,10 @@ func assertMonitorRecipe(t *testing.T, where, text string) {
 	}
 }
 
+// The Monitor recipe is the fallback when harness wake is off.
 func TestBusSessionStartContextMonitorRecipe(t *testing.T) {
 	setupFlowRoot(t)
+	t.Setenv(wakeOffEnv, "1")
 	if rc := cmdAdd([]string{"task", "Parent"}); rc != 0 {
 		t.Fatal("add task")
 	}
@@ -114,7 +116,7 @@ func TestDoAutoPrintsParentListenerReminder(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("do --auto rc=%d", rc)
 	}
-	for _, want := range []string{"user/papa is watching kid", "Monitor"} {
+	for _, want := range []string{"user/papa is watching kid", "wake the parent session automatically"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("do --auto output missing %q, got:\n%s", want, out)
 		}

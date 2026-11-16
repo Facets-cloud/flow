@@ -24,8 +24,11 @@
 package harness
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"time"
 )
 
 // Name is the short identifier persisted on tasks.harness and used to
@@ -35,6 +38,7 @@ type Name string
 const (
 	NameClaude Name = "claude"
 	NameCodex  Name = "codex"
+	NamePrx    Name = "prx"
 )
 
 // InjectionMarker prefixes any first-user-message text injected via
@@ -42,6 +46,20 @@ const (
 // typed user input. Shared across harnesses — the receiver only needs
 // to recognize the literal string.
 const InjectionMarker = "[via flow do --with]"
+
+// WithInjection appends a `flow do --with` instruction to prompt behind
+// InjectionMarker. With no prompt the marked instruction stands alone;
+// with no instruction prompt is returned unchanged.
+func WithInjection(prompt, inject string) string {
+	if inject == "" {
+		return prompt
+	}
+	marked := InjectionMarker + "\n" + inject
+	if prompt == "" {
+		return marked
+	}
+	return prompt + "\n\n" + marked
+}
 
 // LaunchOpts are options forwarded into the spawn command builder.
 // Harness adapters translate to per-CLI flags (Claude:
@@ -60,6 +78,16 @@ type LaunchOpts struct {
 	// (claude: --resume instead of --session-id, which it rejects for an
 	// existing session as "already in use").
 	Resume bool
+
+	// ResumeRegistered marks a background resume of a session that still
+	// has a record in the harness's background registry (claude: listed by
+	// `claude agents --json --all`, any state). Claude keeps such a
+	// session's launch options ("saved options") and treats ANY flag on
+	// `claude --bg --resume <id>` (even the same --name) as a request for a
+	// COPY under a new id. With this set the harness passes no launch flags
+	// — just the id and the prompt — so the SAME session wakes with its
+	// saved name and permission mode.
+	ResumeRegistered bool
 
 	// LastMessagePath, when set on a headless run, asks the harness to
 	// write the session's final message to this file (codex: -o). Impls
@@ -99,6 +127,61 @@ type BackgroundAgent struct {
 	PID       int
 	Status    string // coarse liveness, e.g. "busy" / "idle"
 	State     string // finer state, e.g. "working" / "blocked" / "done"
+	Detail    string // why it failed, when the harness knows (state "failed")
+	// Activity is what a live session is doing between turns, when the
+	// harness knows (claude: its job's state.json). nil = unknown.
+	Activity *BackgroundActivity
+}
+
+// BackgroundActivity is a live background session's in-between-turns
+// work. A coarse "idle" status does not rule either out: claude reports a
+// session waiting on the user (a permission prompt or a question) as
+// status "idle" / state "blocked", and background shells or monitors keep
+// running while the session is idle.
+type BackgroundActivity struct {
+	NeedsInput bool // waiting on the user (pending ask / permission prompt)
+	InFlight   int  // background tasks, queued tasks and monitors still running
+}
+
+// ProvablyIdle reports whether stopping this live session would lose
+// nothing in progress: alive, idle, not waiting on the user, and with a
+// known activity record showing no background work in flight. Anything
+// less is not provably idle; the reason says why.
+func (a BackgroundAgent) ProvablyIdle() (bool, string) {
+	switch {
+	case a.PID <= 0:
+		return false, "not running"
+	case a.Status != "idle":
+		return false, "busy"
+	case a.State == "blocked":
+		return false, "waiting on you"
+	case a.Activity == nil:
+		return false, "its background work can't be checked"
+	case a.Activity.NeedsInput:
+		return false, "waiting on you"
+	case a.Activity.InFlight > 0:
+		return false, fmt.Sprintf("%d background task(s) in flight", a.Activity.InFlight)
+	}
+	return true, ""
+}
+
+// BackgroundStopper is an OPTIONAL BackgroundLauncher extension: stop a
+// live background session (claude: `claude stop <shortId>`). flow uses it
+// on a session that is idle and never took a turn (it holds no
+// conversation, so stopping it loses nothing), on a provably idle session
+// (BackgroundAgent.ProvablyIdle) that has work to deliver and no wake
+// channel — it is resumed under the same id right after — and on the
+// original of a last-resort copy.
+type BackgroundStopper interface {
+	StopBackground(shortID string) error
+}
+
+// BackgroundForkSourcer is an OPTIONAL BackgroundLauncher extension: name
+// the session a live background agent was forked from (claude: the
+// process's `--fork-session --resume <source>` arguments). It recovers the
+// history source of forks recorded before flow kept session lineage.
+type BackgroundForkSourcer interface {
+	BackgroundForkSource(a BackgroundAgent) (string, bool)
 }
 
 // BackgroundLauncher is an OPTIONAL harness capability: hosting
@@ -123,19 +206,21 @@ type BackgroundLauncher interface {
 	// BackgroundAgent.SessionID is what flow records on the task.
 	SpawnBackground(workDir, name, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
-	// ResumeBackground brings a no-longer-tracked background session's
-	// conversation back as a fresh background agent, seeded from the
-	// prior session's transcript. NOTE: a backgrounding harness manages
-	// its own id, so this MINTS A NEW session id (the prior history is
-	// inherited, but `claude --bg --resume <id>` does not preserve the
-	// id — verified against the CLI and documented behavior). The
-	// returned BackgroundAgent carries the NEW id, which flow re-records
-	// on the task. workDir is where the resumed agent begins (the task's
-	// work_dir). name is the display name, the same one SpawnBackground
-	// got, so the resumed agent keeps its title instead of being named
-	// after the injected prompt. opts.Inject, if set, is delivered as the
-	// first message after resume.
-	ResumeBackground(workDir, name, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// ResumeBackground brings a background session that is NOT running
+	// back as a background agent, seeded from its transcript. Claude
+	// (2.1.325) keeps the SAME session id when the session is not alive
+	// and either has no background record or gets no launch flags (see
+	// LaunchOpts.ResumeRegistered); it starts a COPY under a new id when
+	// the session is still alive or a registered session gets flags. The
+	// returned BackgroundAgent carries whichever id actually came up, and
+	// flow records it (and the lineage, if it is a copy). workDir is where
+	// the resumed agent begins (the task's work_dir). name is the display
+	// name, the same one SpawnBackground got (ignored when the registry
+	// already holds it). prompt is the first message after resume (flow's
+	// resume kickoff): without one a resumed background session never
+	// takes a turn. opts.Inject, if set, is appended behind
+	// InjectionMarker, exactly as SpawnBackground appends it.
+	ResumeBackground(workDir, name, sessionID, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /
@@ -366,4 +451,74 @@ type CloseoutDeferrer interface {
 func DefersCloseoutInAutoRun(h Harness) bool {
 	d, ok := h.(CloseoutDeferrer)
 	return ok && d.DefersCloseoutInAutoRun()
+}
+
+// WakeMarker tags every wake notice flow pushes into a session. A notice
+// can arrive as an ordinary user prompt (Codex queue; Claude socket mail
+// is framed as a teammate message), so flow's UserPromptSubmit handling
+// keys on this marker to never treat a wake as the human typing.
+const WakeMarker = "[flow-bus wake]"
+
+// ErrWakeUnavailable means the session has no live wake channel right now
+// (closed, never recorded an endpoint, process gone). Not a failure: the
+// caller just skips the push (and a fallback path may still deliver).
+var ErrWakeUnavailable = errors.New("no live wake channel")
+
+// WakeRequest asks a harness to push Notice into the live session
+// SessionID. StateDir ($FLOW_ROOT/wake) is where harnesses keep per-session
+// endpoint records; Timeout bounds the whole push.
+type WakeRequest struct {
+	SessionID string
+	Notice    string
+	StateDir  string
+	Timeout   time.Duration
+}
+
+// Waker is an OPTIONAL capability: pushing a short notice into a live
+// session so it starts a turn without any listener armed. A harness
+// without a push channel does not implement it.
+type Waker interface {
+	// WakeLive reports whether the session has a live push channel now
+	// (cheap: no model cost, no message sent).
+	WakeLive(req WakeRequest) bool
+	// Wake pushes req.Notice. detail carries a non-fatal note worth
+	// reporting (e.g. Codex's "queued but not resumed" warning).
+	Wake(req WakeRequest) (detail string, err error)
+}
+
+// TurnStateChecker is an OPTIONAL cross-check of a session's turn state
+// from the harness itself (Claude: `claude agents --json`). known=false
+// when the harness cannot tell.
+type TurnStateChecker interface {
+	SessionBusy(sessionID string, timeout time.Duration) (busy, known bool)
+}
+
+// RewakeHookInstaller is an OPTIONAL capability for harnesses with async
+// hooks that can wake an idle session on exit (Claude's asyncRewake). The
+// hook runs `command` on SessionStart and Stop; it blocks until mail lands,
+// then exits 2 and the harness starts a turn prefixed with rewakeMessage.
+// Used as the fallback when the primary Waker push is unavailable.
+type RewakeHookInstaller interface {
+	InstallRewakeHook(command, rewakeMessage string) (added bool, err error)
+	UninstallRewakeHook(command string) (removed bool, err error)
+	RewakeHookInstalled(command string) bool
+}
+
+// SessionLocator is an optional capability for harnesses that key a
+// session's on-disk transcript by the directory the session was started
+// in (claude). ValidateSession answers "is the transcript where workDir
+// says it should be"; LocateSession answers the question a resume has
+// when that check fails: does the session exist at all, and if so where
+// was it started.
+//
+// A task can end up with a session that is not keyed under its work_dir
+// (GH #59: a `flow do --here` bind made before the bind-time gate
+// existed). Every resume path consults this before deciding the session
+// has no history.
+type SessionLocator interface {
+	// LocateSession reports whether a transcript for sessionID exists
+	// anywhere on disk (found), and the directory that session was
+	// started in (cwd). cwd is "" when the session is found but its
+	// start directory can't be established from the transcript.
+	LocateSession(sessionID string) (cwd string, found bool)
 }

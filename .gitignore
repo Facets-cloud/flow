@@ -14,3 +14,6 @@
 # python
 __pycache__/
 *.pyc
+
+# assembled GitHub Pages tree (make site)
+/out/

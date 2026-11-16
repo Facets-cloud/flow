@@ -226,6 +226,14 @@ It is not built for that, and I will not pretend it is.
 **Do I have to learn a CLI?** No. The agent runs it. The commands exist for
 scripts and for the curious; I use two of them a month.
 
+**Will it nag me?** Once. When you cross 25 closed tasks, `flow done` prints
+one note with your real count asking for a GitHub star and your agent relays
+it, then never again; `FLOW_QUIET=1` turns even that off.
+
+**Why is there a flow line on my PRs?** Sessions bound to a flow task are told
+to end a PR description with "Shipped from a flow task." It is an instruction
+to the agent, not a rewrite of your command; `FLOW_PR_TRAILER=off` drops it.
+
 **Why should I believe you?** You should not. Read the next two sections.
 
 ## Works with, does not work with
@@ -314,7 +322,9 @@ means. Those two commands are the last ones you need to type.
 
 flow upgrades itself: after a command, it installs a newer release in the
 background (checksum-verified). `flow upgrade` does it now;
-`FLOW_NO_AUTO_UPGRADE=1` turns it off. Source builds, CI, root and a binary
+`FLOW_NO_AUTO_UPGRADE=1` turns it off (and the skill + hook refresh that
+follows an upgrade). That refresh only ever moves forward: an older or source
+build never rewrites a newer install's skill or hooks. Source builds, CI, root and a binary
 folder flow cannot write are skipped; the same install command works there.
 Uninstall by deleting the binary and `~/.flow`.
 

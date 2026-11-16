@@ -704,11 +704,13 @@ func TestF9LoopRecipeEverywhere(t *testing.T) {
 	db := openFlowDB(t)
 	mkBusTask(t, db, "t9", "sid-t9")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-t9")
+	t.Setenv(wakeOffEnv, "1") // the Monitor loop is the wake-off fallback
 	for where, text := range map[string]string{
 		"SessionStart hook": busSessionStartContext(),
 		"do.go":             readRepoFile(t, "do.go"),
-		"SKILL.md":          readSkillFile(t, "SKILL.md"),
-		"messaging.md":      readSkillFile(t, "references/messaging.md"),
+		// SKILL.md no longer carries the recipe: harness wake replaced the
+		// listener, and the Monitor fallback lives in messaging.md.
+		"messaging.md": readSkillFile(t, "references/messaging.md"),
 	} {
 		flat := strings.Join(strings.Fields(text), " ")
 		if strings.Contains(flat, "|| true; done") {

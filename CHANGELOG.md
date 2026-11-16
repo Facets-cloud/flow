@@ -7,7 +7,134 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **prx (praxis-harness) is a third harness.** `flow do --harness prx`,
+  `flow auto --harness prx`, `flow do --here`, `flow transcript` and the
+  close-out sweep work with prx as they do with Claude Code and Codex.
+  `flow skill install` writes the skill and hooks under
+  `$PRAXIS_CODING_AGENT_DIR` (default `~/.praxis/agent`). prx has no wake
+  push, so a prx session gets mail from its hooks (next prompt, tool call or
+  turn end) and pops it in the foreground. `FLOW_TERM=bg` runs a
+  task in a detached prx host and needs prx v0.6.56 or later; resuming
+  it keeps the session id.
+
 ### Fixed
+
+- **The automatic skill refresh never downgrades.** On every command flow
+  refreshed the skill and hooks whenever the installed version differed from
+  the binary's, so an older binary (a `.bak` copy, a rollback, a repro of an
+  old release) run with the real `HOME` replaced a newer install's hooks with
+  its own. It now refreshes only when the binary is strictly newer; it leaves
+  a `dev` or unparsable install alone, and `flow init` leaves a newer
+  install's hooks alone. `FLOW_NO_AUTO_UPGRADE=1` now stops this refresh as
+  well as the binary self-upgrade. `flow skill update` still installs on
+  request and warns when it replaces a newer install.
+
+## [0.1.0-alpha.39] — 2026-11-13
+
+### Fixed
+
+- **A swallowed wake push no longer hides mail.** Wake and the hooks used
+  one shared "announced" claim, so a push that never arrived (Claude socket
+  held/refused or a stale token; `codex queue` printing a Warning with exit
+  0) left the mail invisible to PreToolUse, the Stop check and the waiter.
+  They now keep separate records: hooks track what they showed in context
+  (`bus_surfaced`), wake tracks what it pushed (`bus_wake_nudged`, used
+  only to coalesce). A delivered wake prompt records the hook side, so
+  there is no extra turn. The Claude asyncRewake waiter re-nudges an idle
+  session once per batch when a push is still unread and unshown 30s
+  later; the waiter's own nudge records the hook side, so PreToolUse and
+  Stop do not repeat it. Codex has no waiter, so a swallowed `codex queue`
+  waits for the next prompt or send (the hooks still show the mail then).
+  The re-nudge clock (`nudged_at`) uses a fixed-width timestamp so its
+  text comparison matches time order. Upgrading frees any pending mail an
+  alpha.38 wake claimed.
+
+## [0.1.0-alpha.38] — 2026-11-13
+
+### Added
+
+- **One star nudge, ever.** When `flow done` leaves 25 or more closed tasks
+  behind, it prints one `note for the user:` block naming the real count and
+  asking for a GitHub star, relayed by your agent, then drops
+  `state/nudge-star-25` under the flow root so it never says it again.
+  Installs already past 25 see it on their next `flow done`. `FLOW_QUIET=1`
+  suppresses it; nothing is written to the bus, and a nudge that cannot be
+  recorded never fails `flow done`.
+- **PR trailer for flow-bound sessions.** The SessionStart hook now tells
+  every bound session (tab or headless child) to end a pull request
+  description with the line `Shipped from a [flow](https://github.com/Facets-cloud/flow) task.`
+  after any harness footer. An instruction in context, not an enforcement:
+  no command rewriting, no PreToolUse check, nothing added to the line.
+  `FLOW_PR_TRAILER=off` (also `0`/`false`) drops it; unbound sessions never
+  see it.
+- **Harness wake: bus mail reaches a bound session with no listener.**
+  After every bus insert (`flow message`, watched `flow broadcast`, child
+  reports, dead-child pings, driver notices, attachments) flow checks the
+  recipient task's session. Idle → it pushes a short notice that starts a
+  turn: Claude through the session's cross-session socket (recorded by the
+  SessionStart hook, 0600 under `$FLOW_ROOT/wake/`), with an asyncRewake
+  waiter (`flow inbox wait --rewake`, SessionStart + Stop) as the
+  fallback; Codex through `codex queue --thread <id>` into the live TUI.
+  Busy → the session's own hooks deliver: PreToolUse before the next tool
+  call, and a new Stop-hook check that blocks the turn's end with the
+  notice when mail landed after the last tool call. Busy/idle is tracked
+  by flow's hooks (UserPromptSubmit/PreToolUse busy, Stop idle). An
+  Esc-interrupt ends a turn without a Stop hook, so a "busy" session whose
+  hooks are quiet for 30s is cross-checked with `claude agents --json`
+  (Claude), and counts as idle after 2 min when the harness can't tell. Every announcing path claims rows atomically in
+  `bus_surfaced`, so each message is announced once. Never woken: closed
+  tasks, auto runs, the human. The notice is a count + "run `flow inbox
+  pop`" tagged `[flow-bus wake]`, never taken for the human typing.
+  `flow message` / `flow broadcast` now print `woke <slug>` or `stored:
+  <reason>`. `FLOW_NO_WAKE=1` turns it off.
+- **Upgrade notice for running sessions.** When the flow binary changes
+  while a Claude or Codex session is running, that session's next prompt
+  or tool call carries one `[flow-upgrade]` notice: flow was upgraded
+  (old → new), re-load the flow skill, and read the installed
+  `references/upgrade-notes.md` for what changed. SessionStart records
+  the session's version silently; the UserPromptSubmit and PreToolUse
+  hooks compare-and-set it per session id (new `session_versions` table),
+  so concurrent hooks announce it once and every later version change
+  announces again. Sessions that started before this release are told
+  once ("an earlier version"). Dev builds (`Version=dev`) skip it.
+- **`flow inbox wait`** — the non-acking wait: returns when unannounced
+  mail lands in this session's inbox, leaves it unread.
+
+- **Skill: report a flow bug.** A new on-demand reference
+  (`references/report-issue.md`, one trigger line in the core) tells agents
+  how to file a GitHub issue about flow (`Facets-cloud/flow`) or a connector
+  (`Facets-cloud/flow-connectors`): gather version/OS/harness/connectors and a
+  minimal repro, redact paths, secrets, names and ids, draft a fixed
+  template, and file with `gh issue create` only after the human says
+  "File it" (headless runs never file). The issue URL is recorded as a
+  task update note.
+
+### Changed
+
+- **Regular Codex sessions run sandboxed.** A non-skip-permissions `flow do`
+  in Codex now starts with `-s workspace-write -a on-request`. `flow skill
+  install` writes a flow-owned `$CODEX_HOME/rules/flow.rules` that lets the
+  bus and read-only flow commands (`message`, `inbox`, `broadcast`, `watch`,
+  `show`, `list`, `transcript`) run outside the sandbox without a prompt;
+  other flow commands ask for approval. (#143)
+
+- **No more inbox Monitor.** With harness wake on, SessionStart tells a
+  bound Claude session not to arm a listener; the Monitor recipe left the
+  SessionStart/driver/auto-spawn/PreToolUse text and SKILL.md §4.18 and is
+  kept in references/messaging.md only as the `FLOW_NO_WAKE=1` fallback.
+
+### Fixed
+
+- **`flow do` resumes a session from where it lives.** When a task's session
+  was started in another directory, or `work_dir` is (or sits under) a
+  symlink, flow used to treat the session as missing. Resume paths now find
+  the transcript and resume from the directory it was started in. (#59, #135)
+
+- **`--since` compares instants.** `flow list tasks --since` compared
+  timestamps as strings, so rows written with a different UTC offset were
+  dropped near midnight. It now compares them as times. (#134)
 
 - **flow-created work dirs are pre-trusted, so headless spawns no longer die
   with "Workspace not trusted".** `claude --bg` (`FLOW_TERM=bg`, flow-mesh

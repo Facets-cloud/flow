@@ -83,8 +83,13 @@
       const code = frame.querySelector('pre.codeblock');
       if (!code) return;
 
-      // Strip a leading "> " prompt sigil so the copied text is the bare command.
-      let text = code.textContent.replace(/^>\s+/, '').trimEnd();
+      // Strip a leading "> " or "$ " prompt sigil from every line so the
+      // copied text is the bare command(s).
+      let text = code.textContent
+        .split('\n')
+        .map((line) => line.replace(/^[>$]\s+/, ''))
+        .join('\n')
+        .trimEnd();
 
       copyText(text).then(
         () => {

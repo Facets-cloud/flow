@@ -41,7 +41,8 @@ func TestHookSessionStartInteractiveCodexArmsNoListener(t *testing.T) {
 		}
 	}
 
-	// Claude keeps the Monitor recipe unchanged.
+	// Claude keeps the Monitor recipe as the fallback when wake is off.
+	t.Setenv(wakeOffEnv, "1")
 	mkBusTask(t, db, "cl", "sid-cl")
 	ctx = hookRun(t, `{"session_id":"sid-cl"}`, cmdHookSessionStart)
 	if !strings.Contains(ctx, "arm ONE inbox Monitor") {
@@ -154,8 +155,12 @@ func TestAutoSpawnParentReminderCodexSaysNoMonitor(t *testing.T) {
 	}
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-cl")
+	if out := parentListenerReminder(); strings.Contains(out, "Monitor(") || !strings.Contains(out, "foreground") {
+		t.Errorf("Claude parent with wake on must not arm a Monitor: %s", out)
+	}
+	t.Setenv(wakeOffEnv, "1")
 	if out := parentListenerReminder(); !strings.Contains(out, "Monitor(") {
-		t.Errorf("Claude parent reminder lost the Monitor recipe: %s", out)
+		t.Errorf("Claude parent with wake off lost the Monitor fallback: %s", out)
 	}
 }
 

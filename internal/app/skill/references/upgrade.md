@@ -57,14 +57,19 @@ cannot run or its last attempt failed. The log is
    (`~/.claude/settings.json` and/or `$CODEX_HOME/hooks.json`, default
    `~/.codex`; `--harness claude|codex` limits it to one). (The auto-upgrade path runs the same
    refresh on the next `flow` invocation, but explicit is better and
-   surfaces any errors immediately.)
+   surfaces any errors immediately.) The implicit refresh only moves
+   forward: it never runs when `FLOW_NO_AUTO_UPGRADE` is set, never
+   touches a `dev` install, and never lets an older binary replace a
+   newer skill or its hooks. `flow skill update` always installs, and
+   warns when it replaces a newer install.
 5. Run `flow --version` again and confirm the version changed. If it
    did not change, the binary on `$PATH` is still the old one —
    check `command -v flow` against the path you wrote to.
 
 **Why flow did not upgrade itself** — tell the user the cause:
 
-- `FLOW_NO_AUTO_UPGRADE` is set (the user turned it off), or `CI` is set.
+- `FLOW_NO_AUTO_UPGRADE` is set (the user turned it off — this also
+  stops the implicit skill + hook refresh), or `CI` is set.
 - The binary is a source build (`make install`, version like
   `v0.1.0-alpha.24-1-g7ad6e4e` or `dev`).
 - flow runs as root, or cannot write to the folder of its binary.
