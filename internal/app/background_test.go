@@ -615,22 +615,36 @@ func TestCmdDoBackgroundResumeWithoutTranscriptSpawnsFresh(t *testing.T) {
 // markDoneNow simulates the spawned/resumed agent running `flow done` on
 // itself before cmdDo records the session (the agent is a separate
 // process that starts working as soon as the harness launches it).
+// The done timestamp is a fixed sentinel so a test can prove the record
+// left status_changed_at alone.
+const concurrentDoneAt = "2001-02-03T04:05:06Z"
+
 func markDoneNow(t *testing.T, slug string) {
 	t.Helper()
 	db := openFlowDB(t)
-	if _, err := db.Exec(`UPDATE tasks SET status='done', status_changed_at=? WHERE slug=?`, flowdb.NowISO(), slug); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET status='done', status_changed_at=? WHERE slug=?`, concurrentDoneAt, slug); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func taskStatusAndSession(t *testing.T, slug string) (string, string) {
+// assertConcurrentDoneKept checks the record kept the agent's done (status
+// and its timestamp) and still bound the session the agent runs under.
+func assertConcurrentDoneKept(t *testing.T, slug, wantSID string) {
 	t.Helper()
 	var st string
-	var sid sql.NullString
-	if err := openFlowDB(t).QueryRow(`SELECT status, session_id FROM tasks WHERE slug=?`, slug).Scan(&st, &sid); err != nil {
+	var sid, changed sql.NullString
+	if err := openFlowDB(t).QueryRow(`SELECT status, session_id, status_changed_at FROM tasks WHERE slug=?`, slug).Scan(&st, &sid, &changed); err != nil {
 		t.Fatal(err)
 	}
-	return st, sid.String
+	if st != "done" {
+		t.Errorf("status = %q, want done (the record must not reopen a task the agent closed)", st)
+	}
+	if changed.String != concurrentDoneAt {
+		t.Errorf("status_changed_at = %q, want the agent's done time %q", changed.String, concurrentDoneAt)
+	}
+	if sid.String != wantSID {
+		t.Errorf("session_id = %q, want the new session %q", sid.String, wantSID)
+	}
 }
 
 // TestCmdDoBackgroundResumeKeepsConcurrentDone: if the resumed agent runs
@@ -648,21 +662,19 @@ func TestCmdDoBackgroundResumeKeepsConcurrentDone(t *testing.T) {
 		t.Fatalf("first cmdDo rc=%d", rc)
 	}
 	writeBoundTranscript(t, "bgt")
+	// claude brings it back under a NEW id (the copy path), so the test
+	// proves the record still binds the new session after the done.
+	const newSID = "77665544-0000-4000-8000-000000000000"
 	reg = bgAgentsJSONExited(bgFullSID, "stopped")
+	c.resumeBanner = "backgrounded · 77665544 · bgt\n"
 	c.onResume = func() {
-		reg = bgAgentsJSON(bgFullSID)
+		reg = bgAgentsJSON(newSID)
 		markDoneNow(t, "bgt")
 	}
 	if rc := cmdDo([]string{"bgt"}); rc != 0 {
 		t.Fatalf("resume cmdDo rc=%d", rc)
 	}
-	st, sid := taskStatusAndSession(t, "bgt")
-	if st != "done" {
-		t.Errorf("status = %q, want done (resume record must not reopen a task the agent closed)", st)
-	}
-	if sid != bgFullSID {
-		t.Errorf("session_id = %q, want %q", sid, bgFullSID)
-	}
+	assertConcurrentDoneKept(t, "bgt", newSID)
 }
 
 // TestCmdDoBackgroundFreshSpawnKeepsConcurrentDone: same race on a fresh
@@ -678,19 +690,15 @@ func TestCmdDoBackgroundFreshSpawnKeepsConcurrentDone(t *testing.T) {
 	if rc := cmdDo([]string{"bgt"}); rc != 0 {
 		t.Fatalf("first cmdDo rc=%d", rc)
 	}
+	const newSID = "99887766-0000-4000-8000-000000000000"
 	reg = bgAgentsJSONExited(bgFullSID, "stopped")
+	c.spawnBanner = "backgrounded · 99887766 · bgt\n"
 	c.onSpawn = func() {
-		reg = bgAgentsJSON(bgFullSID)
+		reg = bgAgentsJSON(newSID)
 		markDoneNow(t, "bgt")
 	}
 	if rc := cmdDo([]string{"--fresh", "bgt"}); rc != 0 {
 		t.Fatalf("cmdDo rc=%d", rc)
 	}
-	st, sid := taskStatusAndSession(t, "bgt")
-	if st != "done" {
-		t.Errorf("status = %q, want done (spawn record must not reopen a task the agent closed)", st)
-	}
-	if sid != bgFullSID {
-		t.Errorf("session_id = %q, want %q", sid, bgFullSID)
-	}
+	assertConcurrentDoneKept(t, "bgt", newSID)
 }
