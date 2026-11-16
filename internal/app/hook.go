@@ -28,6 +28,9 @@ import (
 //     in time); inform-only, announced once per message. Everything else
 //     (unbound, nothing new) is a no-op.
 func cmdHook(args []string) int {
+	if groupHelp("hook", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit|pre-tool-use|stop)")
 		return 2
@@ -113,7 +116,7 @@ func readHookPayload() (p hookPayload, ok bool) {
 func cmdHookSessionStart(args []string) int {
 	fs := flagSet("hook session-start")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	readHookPayload()
 	// Claude socket push: only this hook process sees the session's
@@ -341,7 +344,7 @@ func emitHookContext(event, ctx string) int {
 func cmdHookUserPromptSubmit(args []string) int {
 	fs := flagSet("hook user-prompt-submit")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	readHookPayload()
 	t := lookupBoundTask()
@@ -387,7 +390,7 @@ func cmdHookUserPromptSubmit(args []string) int {
 func cmdHookPreToolUse(args []string) int {
 	fs := flagSet("hook pre-tool-use")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	readHookPayload()
 	ctx := busPreToolUseContext() + upgradeNoticeContext(nil)

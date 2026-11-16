@@ -91,7 +91,10 @@ type LaunchOpts struct {
 
 	// LastMessagePath, when set on a headless run, asks the harness to
 	// write the session's final message to this file (codex: -o). Impls
-	// without an equivalent ignore it.
+	// without an equivalent ignore it. For codex the path must end in
+	// `last.txt` (autoRunLastMessagePath does): codex.LiveSessionIDs skips
+	// the -o value up to that suffix to find the resumed thread id, so any
+	// other name hides the run from the live-session guard.
 	LastMessagePath string
 
 	// TrustDir, when set, is a flow-created work dir (never a user repo —

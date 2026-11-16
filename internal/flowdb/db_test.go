@@ -597,6 +597,7 @@ func TestMigrationDeduplicatesSessionIDs(t *testing.T) {
 	}
 	// Drop the unique index that the migration just created so we
 	// can simulate a pre-migration state with duplicates.
+	markPreFingerprint(t, db)
 	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_tasks_session_id`); err != nil {
 		t.Fatal(err)
 	}

@@ -24,20 +24,39 @@ func Run(args []string) int {
 	// has changed since the last install. Skipped for `init`, `skill`,
 	// and `--version` — those manage the skill themselves or need to
 	// run before any install state exists. See maybeAutoUpgradeSkill.
+	// A help request after a subcommand (`flow run --help`) is exempt from
+	// both upgrade paths, like top-level --help: help has no side effects.
+	wantsHelp := helpRequested(rest)
 	switch cmd {
 	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec", "__owner-tick", selfUpgradeArg:
 		// no auto-upgrade
 	default:
-		maybeAutoUpgradeSkill()
+		if !wantsHelp {
+			maybeAutoUpgradeSkill()
+		}
 	}
 
 	rc := runCommand(cmd, rest)
 	// Upgrade the binary after the command, so the command never waits.
 	// See maybeSelfUpgrade.
-	if selfUpgradeTrigger(cmd) {
+	if selfUpgradeTrigger(cmd) && !wantsHelp {
 		maybeSelfUpgrade()
 	}
 	return rc
+}
+
+// helpRequested reports whether args carry a help flag before any `--`
+// (after `--` the word is a literal name, not a help request).
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if isHelpArg(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // runCommand runs the subcommand cmd and returns its exit code.
@@ -133,14 +152,14 @@ Setup:
                                                 FLOW_NO_AUTO_UPGRADE=1 stops both)
 
 Create:
-  flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
-  flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>]
+  flow add project "<name>" --work-dir <path> [--slug <s>] [--priority high|medium|low] [--mkdir]
+  flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority high|medium|low] [--due <date>]
                    (from a task-bound session: records that task as parent, inherits its project)
 
 Sessions:
   flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions]
   flow do --auto         <ref> [--harness claude|codex|prx] (run headlessly in the background; self-completes via flow done)
-  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx]
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority high|medium|low] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx]
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>
@@ -158,13 +177,13 @@ Read:
 Edit / mutate:
   flow edit        <ref>
   flow update task    <ref> [--work-dir <path>] [--mkdir]
-                            [--status <s>] [--priority h|m|l]
+                            [--status <s>] [--priority high|medium|low]
                             [--assignee <name>] [--clear-assignee]
                             [--due-date <date>] [--clear-due]
                             [--waiting "<who or what>"] [--clear-waiting]
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
                             [--project <slug>] [--clear-project]
-  flow update project <ref> [--priority h|m|l] [--terminal-group <name>] [--clear-terminal-group]
+  flow update project <ref> [--priority high|medium|low] [--terminal-group <name>] [--clear-terminal-group]
   flow do        <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard)
   flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>

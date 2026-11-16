@@ -42,7 +42,7 @@ func cmdInit(args []string) int {
 	fs := flagSet("init")
 	only := harnessFlag(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "error: init takes no positional arguments")

@@ -225,10 +225,16 @@ func TestF3MigrationStampsLegacyHumanMailSeen(t *testing.T) {
 	if _, err := db.Exec(`ALTER TABLE bus_messages DROP COLUMN seen_at`); err != nil {
 		t.Fatal(err)
 	}
+	// A pre-fingerprint DB (user_version 0) runs the full migration pass.
+	if _, err := db.Exec(`PRAGMA user_version = 0`); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 	db2 := openFlowDB(t) // re-open runs the migration
 	var n int
-	_ = db2.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE seen_at IS NULL`).Scan(&n)
+	if err := db2.QueryRow(`SELECT COUNT(*) FROM bus_messages WHERE seen_at IS NULL`).Scan(&n); err != nil {
+		t.Fatalf("seen_at not migrated back: %v", err)
+	}
 	if n != 0 {
 		t.Errorf("legacy human rows not stamped seen: %d unseen", n)
 	}

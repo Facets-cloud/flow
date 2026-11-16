@@ -14,6 +14,9 @@ import (
 
 // cmdShow dispatches `flow show task|project|playbook|owner`. Per spec §5.4.
 func cmdShow(args []string) int {
+	if groupHelp("show", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: show requires 'task', 'project', 'playbook', or 'owner'")
 		return 2
@@ -37,12 +40,9 @@ func cmdShow(args []string) int {
 // showTaskCmd implements `flow show task [<ref>]`.
 func showTaskCmd(args []string) int {
 	fs := flagSet("show task")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	ref := ""
-	if fs.NArg() > 0 {
-		ref = fs.Arg(0)
+	ref, err := parsePositional(fs, args)
+	if err != nil {
+		return flagParseRC(err)
 	}
 
 	dbPath, err := flowDBPath()
@@ -96,12 +96,9 @@ func showTaskCmd(args []string) int {
 // current Claude session.
 func showProjectCmd(args []string) int {
 	fs := flagSet("show project")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	ref := ""
-	if fs.NArg() > 0 {
-		ref = fs.Arg(0)
+	ref, err := parsePositional(fs, args)
+	if err != nil {
+		return flagParseRC(err)
 	}
 
 	dbPath, err := flowDBPath()
@@ -156,12 +153,9 @@ func showProjectCmd(args []string) int {
 // showPlaybookCmd implements `flow show playbook [<ref>]`.
 func showPlaybookCmd(args []string) int {
 	fs := flagSet("show playbook")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	ref := ""
-	if fs.NArg() > 0 {
-		ref = fs.Arg(0)
+	ref, err := parsePositional(fs, args)
+	if err != nil {
+		return flagParseRC(err)
 	}
 	if ref == "" {
 		fmt.Fprintln(os.Stderr, "error: no playbook ref given")

@@ -91,6 +91,19 @@ const codexSandboxRule = " flow in Codex's sandbox: run flow commands BARE — n
 	"flow message/inbox/broadcast/watch/show/list/transcript run without a prompt; other flow " +
 	"commands need approval: run them with escalated permissions so the user gets Codex's prompt."
 
+// codexSessionRules rides with codexSandboxRule and covers what an
+// interactive Codex session lacks beyond the inbox (live test 2026-11-10):
+// it has no question tool, so a driver "confirmed" its own close-out and
+// flipped the status with `flow update task --status done`, skipping the
+// sweep; and the launchers flow refuses inside the sandbox must be
+// escalated on the first try rather than retried sandboxed.
+const codexSessionRules = " Codex session rules: you have no AskUserQuestion tool — wherever the flow " +
+	"skill says to confirm via AskUserQuestion, ask in plain chat (numbered options) and wait for the user's " +
+	"reply before acting; never answer for them. Close a task only with `flow done <slug>` (it runs the " +
+	"close-out sweep), never `flow update task --status done`, and only after the user said yes. flow " +
+	"commands that launch a harness run (`flow auto`, `flow do`, `flow do --auto`, `flow run playbook`, " +
+	"`flow owner tick`, `flow done`) refuse inside your sandbox: run them escalated on the first try."
+
 // wakeNoListenerRule replaces the Monitor discipline in an interactive
 // Claude session while harness wake is on: flow pushes a notice into the
 // session itself (socket, or the asyncRewake fallback), so a listener
@@ -174,6 +187,7 @@ func busSessionStartContext() string {
 		case harness.NameCodex:
 			b.WriteString(codexNoListenerRule)
 			b.WriteString(codexSandboxRule)
+			b.WriteString(codexSessionRules)
 			return b.String()
 		case harness.NamePrx:
 			b.WriteString(prxNoListenerRule)
@@ -415,7 +429,7 @@ func nudgeBackoffFor(attempts int) time.Duration {
 func cmdHookStop(args []string) int {
 	fs := flagSet("hook stop")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	// A missing or malformed payload: when in doubt, don't block.
 	p, ok := readHookPayload()

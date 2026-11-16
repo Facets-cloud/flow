@@ -106,14 +106,14 @@ func cmdDo(args []string) int {
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
 	force := fs.Bool("force", false, "open even if the task's harness session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires a supported harness session")
-	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
+	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via flow done. Implies --dangerously-skip-permissions")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
 	// Two-pass parse so the slug positional may appear before OR after
 	// the flags: first absorb any leading flags, then take the next
 	// non-flag as the slug, then absorb any trailing flags.
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 	if fs.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
@@ -121,7 +121,16 @@ func cmdDo(args []string) int {
 	}
 	query := fs.Arg(0)
 	if err := fs.Parse(fs.Args()[1:]); err != nil {
-		return 2
+		return flagParseRC(err)
+	}
+	if !*here {
+		what := "flow do"
+		if *auto {
+			what = "flow do --auto"
+		}
+		if rc := refuseInCodexSandbox(what); rc != 0 {
+			return rc
+		}
 	}
 
 	injectionText, rc := loadInjectionText(fs, *withInstr, *withFile)
@@ -264,6 +273,23 @@ func cmdDo(args []string) int {
 		}
 	}
 
+	// Mint the session id BEFORE taking the write lock. For probing
+	// harnesses (Codex) NewSessionID is a full model round-trip — often
+	// 10-40s — and holding BEGIN IMMEDIATE across it stalled every other
+	// flow writer past busy_timeout (parallel `flow auto` launches died
+	// with SQLITE_BUSY). If a racer binds the task first, the in-tx
+	// re-read below resumes its session and this id is simply unused.
+	var minted string
+	if (!task.SessionID.Valid || task.SessionID.String == "" || *fresh) &&
+		(task.Status != "done" || injectionText != "") {
+		id, err := h.NewSessionID(task.WorkDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
+			return 1
+		}
+		minted = id
+	}
+
 	// Step 2: atomic status flip inside a transaction. Captures preSessionID
 	// and other fields for later steps. Per spec §6 this commit is the
 	// durability boundary — even if bootstrap or iTerm spawn fails below,
@@ -307,15 +333,32 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
 	}
+	// We minted because the pre-read saw no session; a session here means
+	// another `flow do` bound the task while our probe ran (and is
+	// launching it now). Resuming it would skip the live-session and
+	// auto-run guards above — and ps may not show its process yet — so
+	// refuse; a re-run takes the normal guarded path. --force opts in.
+	if minted != "" && !*fresh && !*force && curSessionID.Valid && curSessionID.String != "" {
+		fmt.Fprintf(os.Stderr,
+			"error: task %q was bound to session %s by another flow do while this one was allocating a session — "+
+				"it is being opened there; re-run flow do %s to switch to it, or pass --force to open another\n",
+			task.Slug, curSessionID.String, task.Slug)
+		return 1
+	}
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
 	if needsBootstrap {
-		id, err := h.NewSessionID(task.WorkDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
-			return 1
+		if minted == "" {
+			// Rare: the session was cleared between the pre-read and
+			// this tx. Mint now (under the lock) rather than fail.
+			id, err := h.NewSessionID(task.WorkDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
+				return 1
+			}
+			minted = id
 		}
-		sessionID = id
+		sessionID = minted
 	} else {
 		sessionID = curSessionID.String
 	}

@@ -144,6 +144,7 @@ func TestBusPeerColumnsMigrate(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+	markPreFingerprint(t, db)
 	db.Close()
 	db, err = OpenDB(path)
 	if err != nil {

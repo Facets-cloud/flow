@@ -309,3 +309,23 @@ func stderrOf(t *testing.T, f func()) string {
 	os.Stderr = orig
 	return out
 }
+
+// CodeRabbit #132: `flow auto -- "-5 degrees fix"` must forward the `--`
+// so addTask reads the dash-prefixed name literally.
+func TestFlowAutoDashPrefixedName(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	stubAutoLauncher(t, 1)
+	bp := writeBrief(t, "do it\n")
+	if rc := cmdAuto([]string{"--", "-5 degrees fix", "--slug", "minus-five", "--brief", bp}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	task, err := flowdb.GetTask(openFlowDB(t), "minus-five")
+	if err != nil {
+		t.Fatalf("task missing: %v", err)
+	}
+	if task.Name != "-5 degrees fix" {
+		t.Errorf("name = %q", task.Name)
+	}
+}

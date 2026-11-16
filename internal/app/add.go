@@ -26,6 +26,9 @@ Open questions.
 
 // cmdAdd dispatches `flow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
+	if groupHelp("add", args) {
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: add requires 'project', 'task', or 'playbook'")
 		return 2
@@ -45,17 +48,17 @@ func cmdAdd(args []string) int {
 }
 
 func addProject(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: add project requires a name")
-		return 2
-	}
-	name := args[0]
+	name, flagArgs, missing := splitPositional(args)
 	fs := flagSet("add project")
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	workDir := fs.String("work-dir", "", "absolute path to the project's work directory (required)")
 	priority := fs.String("priority", "medium", "high|medium|low")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: add project requires a name")
 		return 2
 	}
 
@@ -140,11 +143,7 @@ func addProject(args []string) int {
 }
 
 func addTask(args []string) int {
-	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintln(os.Stderr, "error: add task requires a name")
-		return 2
-	}
-	name := args[0]
+	name, flagArgs, missing := splitPositional(args)
 	fs := flagSet("add task")
 	slugFlag := fs.String("slug", "", "short user-chosen slug (default: auto-generated from name)")
 	project := fs.String("project", "", "parent project slug (optional)")
@@ -155,7 +154,11 @@ func addTask(args []string) int {
 	var tags stringSliceFlag
 	fs.Var(&tags, "tag", "attach a tag (repeatable: --tag foo --tag bar)")
 	mkdir := fs.Bool("mkdir", false, "with --work-dir: create it if missing; alone: give the task a fresh workspace dir (ignores the project dir)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
+		return flagParseRC(err)
+	}
+	if missing {
+		fmt.Fprintln(os.Stderr, "error: add task requires a name")
 		return 2
 	}
 

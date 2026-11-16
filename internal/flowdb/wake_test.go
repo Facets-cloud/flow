@@ -219,9 +219,12 @@ func TestUpgradeFromSharedClaimFreesPendingRows(t *testing.T) {
 	if ok, _ := ClaimDelivered(db, done.ID, Consumer{By: "pop"}); !ok {
 		t.Fatal("pop")
 	}
-	// Roll the DB back to the alpha.38 shape.
-	if _, err := db.Exec(`DROP TABLE bus_wake_nudged`); err != nil {
-		t.Fatal(err)
+	// Roll the DB back to the alpha.38 shape. alpha.38 never stamped a
+	// schema fingerprint, so user_version reads 0.
+	for _, s := range []string{`DROP TABLE bus_wake_nudged`, `PRAGMA user_version = 0`} {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
 	}
 	db.Close()
 

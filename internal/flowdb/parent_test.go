@@ -26,6 +26,7 @@ func TestMigrationAddsParentSlugToOldDB(t *testing.T) {
 	if _, err := db.Exec(`ALTER TABLE tasks DROP COLUMN parent_slug`); err != nil {
 		t.Fatalf("drop column: %v", err)
 	}
+	markPreFingerprint(t, db)
 	db.Close()
 
 	db, err = OpenDB(path)

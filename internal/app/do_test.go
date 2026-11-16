@@ -709,10 +709,12 @@ func TestCmdDoSpawnsClaudeNotFlowde(t *testing.T) {
 
 // TestCmdDoConcurrentFreshTasks verifies two concurrent cmdDo calls on a
 // fresh task don't corrupt DB state. The BEGIN IMMEDIATE lock serializes
-// the txs: the winner allocates a UUID and writes it; the loser sees
-// session_id already set and falls through to the resume path (spawning
-// `claude --resume <winner-uuid>`). Both tabs end up pointing at the same
-// session — pre-existing documented race outcome, no lost UUIDs.
+// the txs: the winner allocates a UUID and writes it. A loser that had
+// already minted (pre-read saw no session) finds the winner's binding in
+// its tx and refuses rather than open a second writer on that session
+// (CodeRabbit #132); a loser that ran fully after the winner takes the
+// normal guarded resume path. Either way: no lost UUIDs, and every
+// successful call spawned exactly one tab.
 func TestCmdDoConcurrentFreshTasks(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "race-task")
@@ -721,22 +723,35 @@ func TestCmdDoConcurrentFreshTasks(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([]int, 2)
 	wg.Add(2)
+	stderr := captureStderr(t)
 	go func() { defer wg.Done(); results[0] = cmdDo([]string{"race-task"}) }()
 	go func() { defer wg.Done(); results[1] = cmdDo([]string{"race-task"}) }()
 	wg.Wait()
+	errOut := stderr()
 
+	ok := 0
 	for i, rc := range results {
-		if rc != 0 {
+		switch rc {
+		case 0:
+			ok++
+		case 1:
+			if !strings.Contains(errOut, "by another flow do while this one was allocating") {
+				t.Errorf("goroutine %d rc=1 without the racer refusal:\n%s", i, errOut)
+			}
+		default:
 			t.Errorf("goroutine %d rc=%d", i, rc)
 		}
+	}
+	if ok == 0 {
+		t.Errorf("no cmdDo succeeded: %v\n%s", results, errOut)
 	}
 	db := openFlowDB(t)
 	task, _ := flowdb.GetTask(db, "race-task")
 	if !task.SessionID.Valid || task.SessionID.String == "" {
 		t.Errorf("session_id should be populated after races (got %+v)", task.SessionID)
 	}
-	if n := atomic.LoadInt64(spawns); n != 2 {
-		t.Errorf("iTerm spawn count=%d, want 2", n)
+	if n := atomic.LoadInt64(spawns); n != int64(ok) {
+		t.Errorf("iTerm spawn count=%d, want %d (one per successful call)", n, ok)
 	}
 }
 

@@ -97,6 +97,35 @@ func TestLiveSessionIDsSeesAutoRunArgv(t *testing.T) {
 	}
 }
 
+// ps prints argv unquoted, so a flow root with a space turns a path
+// flag value (AutoRunArgv's `-o <last-message file>`, the interactive
+// trust override) into several tokens. The guard must still find the
+// thread id, or `flow do` starts a second `codex resume` on a live thread.
+func TestLiveSessionIDsSeesThreadBehindWhitespacePath(t *testing.T) {
+	orig := PSRunner
+	t.Cleanup(func() { PSRunner = orig })
+	other := "22222222-2222-4222-8222-222222222222"
+	PSRunner = func() ([]byte, error) {
+		return []byte(strings.Join([]string{
+			"300 codex exec resume --dangerously-bypass-approvals-and-sandbox -o /tmp/flow root/tasks/x/last.txt " + testThreadID + " work",
+			"301 codex exec resume -o /tmp/my flow root/last.txt --dangerously-bypass-hook-trust " + testThreadID + " keep going on " + other,
+			"303 codex -s workspace-write -a on-request -c projects./tmp/flow root.trust_level=trusted resume " + testThreadID + " work",
+			// Prose after a non-resume codex command is not a session.
+			"302 codex exec please resume work on " + other,
+		}, "\n")), nil
+	}
+	live, err := New().LiveSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live[testThreadID] != 3 {
+		t.Errorf("live=%v, want all three whitespace-path codex processes detected", live)
+	}
+	if live[other] != 0 {
+		t.Errorf("live=%v, an id in the prompt text must not count as a live session", live)
+	}
+}
+
 func TestRenderJSONL(t *testing.T) {
 	input := strings.Join([]string{
 		`{"type":"session_meta","payload":{"id":"` + testThreadID + `"}}`,
@@ -276,5 +305,47 @@ func TestInstallSkillWritesFlowRules(t *testing.T) {
 	// Uninstall with no rules file present is fine.
 	if err := h.UninstallSkill(); err != nil {
 		t.Errorf("second UninstallSkill: %v", err)
+	}
+}
+
+// CodeRabbit #132: the id is the session POSITIONAL, not the first UUID
+// after `resume` — a flag value (a whitespace -o path holding a standalone
+// UUID token) must not win; and `resume` only counts in command position,
+// not inside prompt prose of another codex command.
+func TestLiveSessionIDsPicksPositionalNotFlagValueOrProse(t *testing.T) {
+	orig := PSRunner
+	t.Cleanup(func() { PSRunner = orig })
+	other := "22222222-2222-4222-8222-222222222222"
+	prose := "33333333-3333-4333-8333-333333333333"
+	auto := New().AutoRunArgv(testThreadID, "work", harness.LaunchOpts{
+		SkipPermissions: true,
+		LastMessagePath: "/tmp/flow " + other + " root/last.txt",
+	})
+	trust := New().ResumeCmd(testThreadID, harness.LaunchOpts{TrustDir: "/tmp/a b c"})
+	// Round 2: a boolean flag must not take the id as its "value" when the
+	// prompt itself starts with a UUID.
+	uuidPrompt := New().AutoRunArgv(testThreadID, other+" work", harness.LaunchOpts{SkipPermissions: true})
+	PSRunner = func() ([]byte, error) {
+		return []byte(strings.Join([]string{
+			"500 " + strings.Join(auto, " "),
+			"502 " + strings.Join(uuidPrompt, " "),
+			"503 codex resume -m gpt-5 " + testThreadID + " " + other + " go",
+			"501 " + strings.ReplaceAll(trust, `'`, ""),
+			"400 codex exec explain resume --help and then discuss task " + prose,
+			"401 codex exec please resume " + prose,
+		}, "\n")), nil
+	}
+	live, err := New().LiveSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live[testThreadID] != 4 {
+		t.Errorf("live=%v, want the auto runs, the -m resume and the trusted resume (%q) detected", live, trust)
+	}
+	if live[other] != 0 {
+		t.Errorf("live=%v, a UUID in the -o path value or a UUID-leading prompt is not the session", live)
+	}
+	if live[prose] != 0 {
+		t.Errorf("live=%v, `resume` inside prompt prose is not a session", live)
 	}
 }

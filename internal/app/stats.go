@@ -22,7 +22,7 @@ func cmdStats(args []string) int {
 	png := fs.Bool("png", false, "render a shareable PNG card (no browser needed)")
 	out := fs.String("out", "", "output path for --card/--png; default <flow-root>/stats-card.{html,png}")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return flagParseRC(err)
 	}
 
 	root, err := flowRoot()

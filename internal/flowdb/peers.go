@@ -37,6 +37,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bus_messages_peer_origin
     ON bus_messages(peer, origin_ref) WHERE origin_ref IS NOT NULL;
 `
 
+// peerBusColumns are the nullable TEXT columns migratePeers adds to
+// bus_messages. Part of the schema fingerprint: adding one changes it.
+var peerBusColumns = []string{"peer", "origin_ref", "delivery", "delivery_error", "attachments"}
+
 // Delivery states of an outbound peer row.
 const (
 	DeliveryDispatched = "dispatched"
@@ -52,7 +56,7 @@ func migratePeers(db *sql.DB) error {
 	}
 	// attachments (JSON array of {name,size,sha256}) arrived with peer
 	// desk primitives; additive and nullable like the peer columns.
-	for _, col := range []string{"peer", "origin_ref", "delivery", "delivery_error", "attachments"} {
+	for _, col := range peerBusColumns {
 		has, err := columnExists(db, "bus_messages", col)
 		if err != nil {
 			return err
