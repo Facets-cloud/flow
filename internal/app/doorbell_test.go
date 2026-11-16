@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -76,5 +77,35 @@ func TestSessionNameMatchesTabTitle(t *testing.T) {
 	}
 	if want := "a-rather-long-project-slug/a-…"; got != want {
 		t.Errorf("claudeSessionName = %q, want %q", got, want)
+	}
+}
+
+// The skill teaches the doorbell: a one-line trigger in the resident core
+// (§4.18) and the full recipe + limits in references/messaging.md.
+func TestSkillTeachesDoorbell(t *testing.T) {
+	core, err := fs.ReadFile(skillFiles(), "SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(core), "doorbell:") {
+		t.Errorf("SKILL.md §4.18 must point at the doorbell line")
+	}
+	ref, err := fs.ReadFile(skillFiles(), "references/messaging.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"## Claude doorbell",
+		"ListAgents",
+		"SendMessage",
+		"flow mail waiting: run `flow inbox pop`",
+		"Never for broadcasts",
+		"never secrets",
+		"stopped",
+		"Codex",
+	} {
+		if !strings.Contains(string(ref), want) {
+			t.Errorf("references/messaging.md missing %q", want)
+		}
 	}
 }
