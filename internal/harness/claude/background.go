@@ -136,32 +136,75 @@ func (c *claude) BackgroundAgents() ([]harness.BackgroundAgent, error) {
 		return nil, err
 	}
 	for i := range agents {
+		if agents[i].State != "failed" && agents[i].PID <= 0 {
+			continue
+		}
+		st, ok := readJobState(agents[i].ShortID)
+		if !ok {
+			continue
+		}
 		if agents[i].State == "failed" {
-			agents[i].Detail = jobDetail(agents[i].ShortID)
+			agents[i].Detail = st.Detail
+		}
+		if agents[i].PID > 0 {
+			agents[i].Activity = st.activity()
 		}
 	}
 	return agents, nil
 }
 
-// jobDetail reads the failure reason of background job shortID from
-// ~/.claude/jobs/<shortID>/state.json — `claude agents --json` omits it,
-// but it is what says why a resume died ("source session … not found").
-func jobDetail(shortID string) string {
+// jobState mirrors the parts of ~/.claude/jobs/<shortID>/state.json flow
+// reads. `claude agents --json` omits all of them.
+type jobState struct {
+	State    string          `json:"state"`
+	Tempo    string          `json:"tempo"`
+	Detail   string          `json:"detail"` // why a failed job died ("source session … not found")
+	Needs    json.RawMessage `json:"needs"`
+	NeedsAsk json.RawMessage `json:"needsAsk"`
+	InFlight *struct {
+		Tasks             int `json:"tasks"`
+		Queued            int `json:"queued"`
+		DrainableMonitors int `json:"drainableMonitors"`
+	} `json:"inFlight"`
+}
+
+// activity reports what the live job is doing between turns. Verified on
+// 2.1.325: a session waiting on the user is state/tempo "blocked" with
+// needs/needsAsk set (its registry status is still "idle"); background
+// shells and monitors are counted under inFlight. A state file with no
+// inFlight record is treated as unknown (nil).
+func (st jobState) activity() *harness.BackgroundActivity {
+	if st.InFlight == nil {
+		return nil
+	}
+	return &harness.BackgroundActivity{
+		NeedsInput: st.State == "blocked" || st.Tempo == "blocked" ||
+			jsonSet(st.Needs) || jsonSet(st.NeedsAsk),
+		InFlight: st.InFlight.Tasks + st.InFlight.Queued + st.InFlight.DrainableMonitors,
+	}
+}
+
+// jsonSet reports whether a raw JSON field is present and not null/"".
+func jsonSet(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s != "" && s != "null" && s != `""`
+}
+
+// readJobState reads ~/.claude/jobs/<shortID>/state.json.
+func readJobState(shortID string) (jobState, bool) {
 	home, err := os.UserHomeDir()
 	if err != nil || shortID == "" {
-		return ""
+		return jobState{}, false
 	}
 	raw, err := os.ReadFile(filepath.Join(home, ".claude", "jobs", filepath.Base(shortID), "state.json"))
 	if err != nil {
-		return ""
+		return jobState{}, false
 	}
-	var st struct {
-		Detail string `json:"detail"`
-	}
+	var st jobState
 	if json.Unmarshal(raw, &st) != nil {
-		return ""
+		return jobState{}, false
 	}
-	return st.Detail
+	return st, true
 }
 
 // StopBackground runs `claude stop <shortID>`.
