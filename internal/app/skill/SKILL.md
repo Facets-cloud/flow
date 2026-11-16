@@ -309,12 +309,16 @@ user path.
    `## Goal` (the user's words, verbatim), `## Done when` (*Agree with the
    user on the first turn.*), `## Context`, `## Decisions`, and keep the
    `## Role: driver` section flow appended, last.
-5. **Bind.** Unbound session → `flow do --here <slug>` and continue here
-   (no ask). Already bound → `flow do <slug>` (new tab). Announce one
-   line: "Created driver task <name>; continuing here."
-6. **Driver's first turn.** Restate the goal, agree "Done when" with the
-   user in chat, write it to the brief (one dated line per user decision
-   under Decisions), then plan / brainstorm / spawn children (§4.4a).
+5. **Bind + announce.** Unbound session → `flow do --here <slug>` and
+   continue here (no ask). Already bound → `flow do <slug>` (new tab).
+   The announcement is mandatory, verbatim shape: "Created driver task
+   <name>; continuing here." (never "I've tracked this as a task").
+6. **The intake turn ENDS** after you restate the goal, propose Done when
+   (concrete, checkable) and close with a numbered "Needs from you:" list.
+   No building or implementation in that turn, even when the goal is
+   detailed, unless the user already stated Done when. Next turn: write
+   the agreed Done when (and one dated line per user decision under
+   Decisions) to the brief, then plan / brainstorm / spawn children (§4.4a).
 
 ### 4.3 Add a project
 

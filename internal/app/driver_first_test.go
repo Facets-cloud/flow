@@ -351,3 +351,26 @@ func TestSkillTemplatesHaveDriverBrief(t *testing.T) {
 		last = j
 	}
 }
+
+// E2E finding (PR #181): with a detailed goal the driver built everything
+// in the intake turn and said "I've tracked this as a task". Step 5's
+// announcement is mandatory and verbatim; step 6 ends the intake turn
+// after goal + proposed Done when + "Needs from you:".
+func TestSkillStartADriverIntakeTurnStops(t *testing.T) {
+	s := sectionOf(t, readSkill(t, "SKILL.md"), "### 4.2 Start a driver")
+	flat := strings.Join(strings.Fields(s), " ")
+	for _, want := range []string{
+		"announcement is mandatory",
+		`"Created driver task <name>; continuing here."`,
+		`never "I've tracked this as a task"`,
+		"intake turn ENDS",
+		"propose Done when",
+		`"Needs from you:"`,
+		"No building or implementation in that turn, even when the goal is detailed",
+		"unless the user already stated Done when",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("§4.2 missing %q", want)
+		}
+	}
+}
