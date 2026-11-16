@@ -72,11 +72,15 @@ this section as the LAST section of `brief.md` if the brief has no `## Role`
 section yet; it never overwrites or duplicates one. The SessionStart hook
 then just says "follow the ## Role section in your brief.md". When you
 overwrite a driver task's stub with the drafted brief, Read it first and
-keep this section at the end (edit it per task if the user wants). Removing
-the driver tag leaves the section in place.
+keep this section at the end (edit it per task if the user wants); if it
+is lost anyway, flow re-appends it on the next `flow do` or SessionStart.
+Removing the driver tag leaves the section in place, and it is then ignored.
 
 ```markdown
 ## Role: driver
+
+This section applies only while this task is tagged `driver`; once the
+tag is removed, ignore it.
 
 You own this task's outcome end to end. It is done when "Done when" is met
 and you have verified it, not when the work has been handed off.

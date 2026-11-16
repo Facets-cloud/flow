@@ -32,9 +32,11 @@ func TestSessionStartDriverTaskGetsDriverBlock(t *testing.T) {
 	if !strings.Contains(out, driverRoleMarker) {
 		t.Fatalf("driver task should get the driver block, got:\n%s", out)
 	}
+	// SessionStart self-heals the brief's Role section and points at it;
+	// the full block survives as the fallback when the brief has none.
 	for _, want := range []string{"end to end", "flow auto", "Needs from you", "Agent"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("driver block missing %q", want)
+		if !strings.Contains(driverRoleBlock(), want) {
+			t.Errorf("fallback driver block missing %q", want)
 		}
 	}
 }

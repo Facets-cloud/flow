@@ -170,6 +170,9 @@ func cmdDo(args []string) int {
 	if rc != 0 {
 		return rc
 	}
+	// A driver opened by a human gets its Role section back if a brief
+	// rewrite dropped it; --auto runs never do.
+	healDriverRoleSection(db, task.Slug, *auto)
 
 	// Live-session guard: if this task's session_id is already running
 	// in another claude process (e.g., the user has a tab open for it),

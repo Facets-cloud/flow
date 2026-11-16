@@ -49,13 +49,18 @@ The driver role lives in the task's own `brief.md` as a `## Role: driver`
 section, the LAST section (template: references/templates.md). Flow
 appends it when the task becomes a driver (`flow add task --tag driver`,
 `flow update task --tag driver`) unless a `## Role` section is already
-there; it never overwrites one, so edit it per task freely. With the
-section present the hook prints only "flow DRIVER task: follow the ## Role
-section in your brief.md."; without it (older briefs, or a brief
-overwritten without keeping the section) the hook prints the full driver
+there (headings inside fenced code blocks don't count); it never
+overwrites one, so edit it per task freely. If a rewrite drops it, flow
+re-appends it (last, once) on `flow do` / `flow do --here` and at
+SessionStart for a human-driven driver session; auto children are never
+touched. With the section present the hook prints only "flow DRIVER task:
+follow the ## Role section in your brief.md."; if the brief still has no
+Role section (e.g. it cannot be written) the hook prints the full driver
 block as a fallback. When you rewrite a driver brief, keep the section at
-the end. Removing the tag leaves the section; the hook stops pointing at
-it.
+the end. Removing the tag leaves the section in the brief, but a retained
+Role section is ignored once the `driver` tag is removed: the hook stops
+pointing at it, and the section itself says it applies only while the
+task is tagged `driver`.
 
 ### Intake question (§4.2 step 5)
 

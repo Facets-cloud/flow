@@ -52,6 +52,9 @@ func isDriverSlug(slug string) bool {
 // verbatim (TestRoleTemplateMatchesTemplatesReference).
 const driverRoleSection = `## Role: driver
 
+This section applies only while this task is tagged ` + "`driver`" + `; once the
+tag is removed, ignore it.
+
 You own this task's outcome end to end. It is done when "Done when" is met
 and you have verified it, not when the work has been handed off.
 
@@ -75,9 +78,34 @@ and you have verified it, not when the work has been handed off.
 - When Done when is met and verified, offer to close the task out.
 `
 
-// roleHeadingRe matches any `## Role` heading line, so a user-edited or
+// roleHeadingRe matches a `## Role` heading line, so a user-edited or
 // renamed Role section is never duplicated.
-var roleHeadingRe = regexp.MustCompile(`(?m)^##\s+Role\b`)
+var roleHeadingRe = regexp.MustCompile(`^##\s+Role\b`)
+
+// hasRoleHeading reports whether brief carries a real `## Role` heading,
+// skipping fenced code blocks (``` or ~~~): a `## Role: reviewer` inside
+// an example child brief is not this task's Role section.
+func hasRoleHeading(brief []byte) bool {
+	fence := ""
+	for _, line := range strings.Split(string(brief), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if fence != "" {
+			if strings.HasPrefix(trimmed, fence) && strings.TrimLeft(trimmed, fence[:1]) == "" {
+				fence = ""
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			ch := trimmed[:1]
+			fence = trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, ch))]
+			continue
+		}
+		if roleHeadingRe.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
 
 func taskBriefPath(slug string) (string, error) {
 	root, err := flowRoot()
@@ -98,7 +126,7 @@ func briefHasRoleSection(slug string) bool {
 	if err != nil {
 		return false
 	}
-	return roleHeadingRe.Match(b)
+	return hasRoleHeading(b)
 }
 
 // ensureDriverRoleSection appends driverRoleSection as the last section of
@@ -115,7 +143,7 @@ func ensureDriverRoleSection(slug string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if roleHeadingRe.Match(b) {
+	if hasRoleHeading(b) {
 		return nil
 	}
 	sep := ""
@@ -136,6 +164,33 @@ func ensureDriverRoleSection(slug string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// healDriverRoleSection re-appends a lost Role section for a human-driven
+// driver session: the §4.2 intake rewrites the stub after `--tag driver`
+// and can drop it. Auto children are never touched (callers pass
+// auto=true for them). Errors are best-effort: the fallback block covers
+// a brief that still lacks the section.
+func healDriverRoleSection(db *sql.DB, slug string, auto bool) {
+	if auto || !isDriverTask(db, slug) {
+		return
+	}
+	_ = ensureDriverRoleSection(slug)
+}
+
+// healDriverRoleSlug is healDriverRoleSection for callers without an
+// open DB (the SessionStart hook, which already excluded auto runs).
+func healDriverRoleSlug(slug string) {
+	path, err := flowDBPath()
+	if err != nil {
+		return
+	}
+	db, err := flowdb.OpenDB(path)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	healDriverRoleSection(db, slug, false)
 }
 
 // driverRolePointer is what a driver session gets when its brief carries
@@ -201,6 +256,7 @@ func roleBlockFor(db *sql.DB, t *flowdb.Task) string {
 		return ""
 	}
 	if isDriverTask(db, t.Slug) {
+		healDriverRoleSection(db, t.Slug, false)
 		return driverRoleBlockFor(t.Slug)
 	}
 	return driverDelegationBlock()

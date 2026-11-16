@@ -123,6 +123,12 @@ func TestSessionStartDriverWithoutRoleSectionGetsFallback(t *testing.T) {
 	t.Setenv("FLOW_AUTO_RUN", "")
 	seedTask(t, "old")
 	tagTask(t, "old", "driver") // tagged directly: brief has no Role section
+	// A brief the hook cannot heal (read-only) keeps the full fallback.
+	p := filepath.Join(os.Getenv("FLOW_ROOT"), "tasks", "old", "brief.md")
+	if err := os.Chmod(p, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(p, 0o644) })
 	bindSession(t, "old", "sid-old")
 	out := sessionStartOutput(t)
 	if !strings.Contains(out, fallbackOnlyPhrase) {
@@ -205,5 +211,160 @@ func TestRoleSectionContent(t *testing.T) {
 	}
 	if strings.ContainsRune(s, '\u2014') {
 		t.Error("Role section contains an em dash")
+	}
+}
+
+// --- Round 2: self-heal + fenced headings -------------------------------
+
+// rewriteWithoutRole simulates §4.2 intake overwriting a driver's stub
+// with a drafted brief that dropped the Role section.
+const rewrittenBrief = "# drv\n\n## What\nx\n\n## Open questions\nz\n"
+
+func newDriverWithRewrittenBrief(t *testing.T, slug string) {
+	t.Helper()
+	cwd, _ := os.Getwd()
+	if rc := cmdAdd([]string{"task", slug, "--work-dir", cwd, "--tag", "driver"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	writeTaskBrief(t, slug, rewrittenBrief)
+}
+
+func assertHealedOnce(t *testing.T, slug string) {
+	t.Helper()
+	b := briefOf(t, slug)
+	if n := strings.Count(b, roleHeading); n != 1 {
+		t.Fatalf("want exactly one %q after self-heal, got %d:\n%s", roleHeading, n, b)
+	}
+	if !strings.HasPrefix(b, rewrittenBrief) {
+		t.Errorf("self-heal must not touch existing content:\n%s", b)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(b), strings.TrimSpace(driverRoleSection)) {
+		t.Errorf("healed Role section must be last:\n%s", b)
+	}
+}
+
+func TestSessionStartReappendsLostRoleSection(t *testing.T) {
+	setupFlowRoot(t)
+	newDriverWithRewrittenBrief(t, "drv")
+	bindSession(t, "drv", "sid-drv")
+	out := sessionStartOutput(t)
+	sessionStartOutput(t) // a resume must not append a second copy
+	assertHealedOnce(t, "drv")
+	if !strings.Contains(out, "follow the ## Role section in your brief.md") {
+		t.Errorf("after self-heal the hook should point at the section:\n%s", out)
+	}
+}
+
+func TestDoReappendsLostRoleSection(t *testing.T) {
+	setupFlowRoot(t)
+	newDriverWithRewrittenBrief(t, "drv")
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	stubClaudeStatOK(t)
+	stubITerm(t)
+	captureStdout(t, func() {
+		if rc := cmdDo([]string{"drv"}); rc != 0 {
+			t.Fatalf("cmdDo rc=%d", rc)
+		}
+	})
+	assertHealedOnce(t, "drv")
+}
+
+func TestDoHereReappendsLostRoleSection(t *testing.T) {
+	setupFlowRoot(t)
+	newDriverWithRewrittenBrief(t, "drv")
+	stubClaudeStatOK(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "f00ba111-2222-4333-8444-555555555557")
+	stubITerm(t)
+	out := captureStdout(t, func() {
+		if rc := cmdDo([]string{"drv", "--here"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	assertHealedOnce(t, "drv")
+	if !strings.Contains(out, "follow the ## Role section in your brief.md") {
+		t.Errorf("--here should point at the healed section:\n%s", out)
+	}
+}
+
+func TestSelfHealKeepsExistingRoleAndSkipsNonDrivers(t *testing.T) {
+	setupFlowRoot(t)
+	// Existing (custom) Role section on a driver: untouched.
+	newDriverWithRewrittenBrief(t, "own")
+	custom := "# own\n\n## Role: driver\nmine\n"
+	writeTaskBrief(t, "own", custom)
+	bindSession(t, "own", "sid-own")
+	sessionStartOutput(t)
+	if got := briefOf(t, "own"); got != custom {
+		t.Errorf("existing Role section must be kept as is:\n%s", got)
+	}
+	// Non-driver: never gets a Role section.
+	seedTask(t, "plain")
+	writeTaskBrief(t, "plain", rewrittenBrief)
+	bindSession(t, "plain", "sid-plain")
+	sessionStartOutput(t)
+	if got := briefOf(t, "plain"); got != rewrittenBrief {
+		t.Errorf("non-driver brief must be untouched:\n%s", got)
+	}
+}
+
+func TestSelfHealSkipsAutoChild(t *testing.T) {
+	setupFlowRoot(t)
+	newDriverWithRewrittenBrief(t, "kid")
+	bindSession(t, "kid", "sid-kid")
+	t.Setenv("FLOW_AUTO_RUN", "kid")
+	sessionStartOutput(t)
+	if got := briefOf(t, "kid"); got != rewrittenBrief {
+		t.Errorf("auto child's brief must be untouched by the hook:\n%s", got)
+	}
+	t.Setenv("FLOW_AUTO_RUN", "")
+	stubAutoLauncher(t, 4242)
+	captureStdout(t, func() { cmdDo([]string{"kid", "--auto"}) })
+	if got := briefOf(t, "kid"); got != rewrittenBrief {
+		t.Errorf("flow do --auto must not touch the brief:\n%s", got)
+	}
+}
+
+// CodeRabbit: a `## Role` heading inside a fenced code block is an
+// example, not the task's Role section.
+const fencedRoleBrief = "# drv\n\n## What\nExample child brief:\n\n```markdown\n## Role: reviewer\nreview only\n```\n\n~~~\n## Role\n~~~\n"
+
+func TestFencedRoleHeadingDoesNotCount(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "drv")
+	writeTaskBrief(t, "drv", fencedRoleBrief)
+	tagTask(t, "drv", "driver") // DB-only: brief still lacks a real Role
+	if briefHasRoleSection("drv") {
+		t.Fatal("fenced ## Role example must not count as a Role section")
+	}
+	if !strings.Contains(driverRoleBlockFor("drv"), fallbackOnlyPhrase) {
+		t.Error("without a real Role section the fallback block must be chosen")
+	}
+	if err := ensureDriverRoleSection("drv"); err != nil {
+		t.Fatal(err)
+	}
+	b := briefOf(t, "drv")
+	if !strings.HasPrefix(b, fencedRoleBrief) || strings.Count(b, roleHeading) != 1 {
+		t.Fatalf("Role section should be appended after the fenced example:\n%s", b)
+	}
+	if !briefHasRoleSection("drv") ||
+		!strings.Contains(driverRoleBlockFor("drv"), "follow the ## Role section in your brief.md") {
+		t.Error("after insertion the pointer must be chosen")
+	}
+}
+
+// CodeRabbit: a Role section left behind after untagging must say it is
+// inactive, in both the section itself and delegation.md.
+func TestRetainedRoleSectionIsMarkedInactiveWithoutTag(t *testing.T) {
+	if !strings.Contains(driverRoleSection, "only while this task is tagged `driver`") {
+		t.Error("Role section must say it applies only while the task is tagged driver")
+	}
+	ref, err := fs.ReadFile(skillFiles(), "references/delegation.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ref), "is ignored once the `driver` tag is removed") {
+		t.Error("delegation.md must say a retained Role section is ignored once the driver tag is removed")
 	}
 }

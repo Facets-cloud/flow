@@ -136,6 +136,7 @@ func cmdHookSessionStart(args []string) int {
 	// never sees this block, so delegation cannot recurse.
 	if !isAutoRunSession(bound) {
 		if isDriverSlug(slug) {
+			healDriverRoleSlug(slug)
 			pageCtx += driverRoleBlockFor(slug)
 		} else {
 			pageCtx += driverDelegationBlock()
