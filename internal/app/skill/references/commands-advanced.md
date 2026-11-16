@@ -34,7 +34,7 @@ find the follow-ups a task fanned out.
 
 ### `flow auto`: one-shot auto child
 
-`flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l]
+`flow auto "<name>" --brief <file|-> [--slug <s>] [--priority high|medium|low]
 [--work-dir <p>] [--mkdir] [--harness claude|codex]` is `flow add task`
 (same parent link, project inheritance and auto-watch from a bound
 session) + writing the given text as the child's `brief.md` + `flow do

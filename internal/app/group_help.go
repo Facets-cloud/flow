@@ -6,8 +6,8 @@ import "fmt"
 // --help lists its flags.
 var groupUsage = map[string]string{
 	"add": `usage: flow add <project|task|playbook|owner> "<name>" [flags]
-  flow add project  "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
-  flow add task     "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority h|m|l] [--due <date>]
+  flow add project  "<name>" --work-dir <path> [--slug <s>] [--priority high|medium|low] [--mkdir]
+  flow add task     "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir] [--priority high|medium|low] [--due <date>]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
   flow add owner    "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--mkdir]
   (a name that starts with a dash goes after "--": flow add task -- "-5 degrees fix")`,
@@ -28,8 +28,8 @@ var groupUsage = map[string]string{
   flow list tags
   flow list owners`,
 	"update": `usage: flow update <task|project> <ref> [flags]
-  flow update task    <ref> [--status <s>] [--priority h|m|l] [--work-dir <path>] [--tag <t> ...] ...
-  flow update project <ref> [--priority h|m|l] [--terminal-group <name>] [--clear-terminal-group]
+  flow update task    <ref> [--status <s>] [--priority high|medium|low] [--work-dir <path>] [--tag <t> ...] ...
+  flow update project <ref> [--priority high|medium|low] [--terminal-group <name>] [--clear-terminal-group]
   (flow update task --help lists every flag)`,
 	"owner": `usage: flow owner <list|show|start|pause|tick|next|retire> [<slug>] [flags]
   flow owner list

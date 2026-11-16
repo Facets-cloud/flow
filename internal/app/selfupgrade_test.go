@@ -554,3 +554,28 @@ func TestReplaceSelfRemovesStaleDownloads(t *testing.T) {
 		t.Errorf("fresh download removed (stat err %v); it may belong to a live upgrade", err)
 	}
 }
+
+// CodeRabbit #132: top-level --help skipped both upgrade paths, but a help
+// flag after a subcommand (`flow run --help`, `flow add task --help`) still
+// rewrote the skill and could start a binary upgrade.
+func TestHelpRequestSkipsUpgrades(t *testing.T) {
+	for _, rest := range [][]string{
+		{"--help"},
+		{"-h"},
+		{"task", "--help"},
+		{"start", "own", "-help"},
+	} {
+		if !helpRequested(rest) {
+			t.Errorf("helpRequested(%q) = false, want true", rest)
+		}
+	}
+	for _, rest := range [][]string{
+		nil,
+		{"task", "x"},
+		{"task", "--", "--help"}, // after --, a literal name
+	} {
+		if helpRequested(rest) {
+			t.Errorf("helpRequested(%q) = true, want false", rest)
+		}
+	}
+}

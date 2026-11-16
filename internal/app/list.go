@@ -828,17 +828,14 @@ func listRunsCmd(args []string) int {
 	status := fs.String("status", "", "backlog|in-progress|done")
 	includeArchived := fs.Bool("include-archived", false, "include archived")
 	opts := addListFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	playbookSlug, err := parsePositional(fs, args)
+	if err != nil {
 		return flagParseRC(err)
 	}
 	fmtKind, err := listfmt.ParseFormat(*opts.format)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
-	}
-	var playbookSlug string
-	if fs.NArg() > 0 {
-		playbookSlug = fs.Arg(0)
 	}
 
 	dbPath, err := flowDBPath()

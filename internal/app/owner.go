@@ -63,14 +63,14 @@ func cmdOwner(args []string) int {
 // owns the returned *sql.DB and must Close it.
 func loadOwnerArg(args []string, name string) (*flowdb.Owner, *sql.DB, int) {
 	fs := flagSet(name)
-	if err := fs.Parse(args); err != nil {
+	slug, err := parsePositional(fs, args)
+	if err != nil {
 		return nil, nil, flagParseRC(err)
 	}
-	if fs.NArg() < 1 {
+	if slug == "" {
 		fmt.Fprintf(os.Stderr, "error: %s requires an owner slug\n", name)
 		return nil, nil, 2
 	}
-	slug := fs.Arg(0)
 
 	dbPath, err := flowDBPath()
 	if err != nil {

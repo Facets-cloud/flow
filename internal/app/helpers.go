@@ -79,3 +79,23 @@ func splitPositional(args []string) (pos string, rest []string, missing bool) {
 	}
 	return args[0], args[1:], false
 }
+
+// parsePositional parses fs over args that carry one optional leading-or-
+// trailing positional (a ref/slug) and returns it ("" if none). Unlike a
+// bare fs.Parse, flags AFTER the positional are parsed too — package flag
+// stops at the first non-flag, so `flow owner start x --help` used to run
+// instead of printing usage. A leading `--` still escapes a dash-prefixed
+// positional; anything after the positional stays in fs.Args().
+func parsePositional(fs *flag.FlagSet, args []string) (string, error) {
+	pos, rest, missing := splitPositional(args)
+	if err := fs.Parse(rest); err != nil {
+		return "", err
+	}
+	if missing && fs.NArg() > 0 {
+		pos = fs.Arg(0)
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return "", err
+		}
+	}
+	return pos, nil
+}

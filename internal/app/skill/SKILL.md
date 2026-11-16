@@ -133,7 +133,7 @@ Setup
   flow skill update                         install --force after upgrading the binary
 
 Create
-  flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
+  flow add project "<name>" --work-dir <path> [--slug <s>] [--priority high|medium|low] [--mkdir]
   flow add task    "<name>" [--slug <s>] [--project <slug>] [--work-dir <path>] [--mkdir]
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
                            [--tag <t> ...]

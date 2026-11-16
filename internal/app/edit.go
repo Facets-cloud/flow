@@ -14,14 +14,14 @@ import (
 // Per spec §5.5. Bumps updated_at after a clean editor exit.
 func cmdEdit(args []string) int {
 	fs := flagSet("edit")
-	if err := fs.Parse(args); err != nil {
+	ref, err := parsePositional(fs, args)
+	if err != nil {
 		return flagParseRC(err)
 	}
-	if fs.NArg() == 0 {
+	if ref == "" {
 		fmt.Fprintln(os.Stderr, "error: edit requires a ref")
 		return 2
 	}
-	ref := fs.Arg(0)
 
 	dbPath, err := flowDBPath()
 	if err != nil {
