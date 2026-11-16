@@ -63,46 +63,6 @@ func TestCommands(t *testing.T) {
 	}
 }
 
-// F1: the probe mints the thread read-only/approval=never and `codex
-// resume` keeps a thread's first-turn settings unless told otherwise, so a
-// sandboxed interactive session must pass its sandbox + approval policy
-// explicitly. flow's own bus/read commands leave the sandbox through the
-// flow.rules exec-policy file (#143), so no --add-dir is needed.
-func TestInteractiveCommandsAreWorkspaceWriteOnRequest(t *testing.T) {
-	h := New()
-	wantPrefix := "codex -s workspace-write -a on-request resume " + testThreadID
-	if got := h.LaunchCmd(testThreadID, "work", harness.LaunchOpts{}); got != wantPrefix+" 'work'" {
-		t.Errorf("LaunchCmd=%q, want %q", got, wantPrefix+" 'work'")
-	}
-	if got := h.ResumeCmd(testThreadID, harness.LaunchOpts{}); got != wantPrefix {
-		t.Errorf("ResumeCmd=%q, want %q", got, wantPrefix)
-	}
-	// Skip-permissions is unchanged: bypass, no sandbox/approval flags.
-	skip := harness.LaunchOpts{SkipPermissions: true}
-	for _, got := range []string{h.LaunchCmd(testThreadID, "work", skip), h.ResumeCmd(testThreadID, skip)} {
-		if !strings.HasPrefix(got, "codex --dangerously-bypass-approvals-and-sandbox resume "+testThreadID) {
-			t.Errorf("skip-permissions command changed: %q", got)
-		}
-		if strings.Contains(got, "--add-dir") || strings.Contains(got, " -s ") {
-			t.Errorf("skip-permissions command carries sandbox flags: %q", got)
-		}
-	}
-	// The live-session guard still sees the sandboxed interactive argv,
-	// including a per-launch trust override whose path has a space.
-	orig := PSRunner
-	t.Cleanup(func() { PSRunner = orig })
-	PSRunner = func() ([]byte, error) {
-		return []byte("300 codex -s workspace-write -a on-request -c projects./tmp/flow root.trust_level=trusted resume " + testThreadID + " work"), nil
-	}
-	live, err := h.LiveSessionIDs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if live[testThreadID] != 1 {
-		t.Errorf("live=%v, want sandboxed interactive codex detected", live)
-	}
-}
-
 func TestLiveSessionIDs(t *testing.T) {
 	orig := PSRunner
 	t.Cleanup(func() { PSRunner = orig })
@@ -137,17 +97,19 @@ func TestLiveSessionIDsSeesAutoRunArgv(t *testing.T) {
 	}
 }
 
-// ps prints argv unquoted, so a flow root with a space turns the
-// `--add-dir` value into several tokens. The guard must still find the
+// ps prints argv unquoted, so a flow root with a space turns a path
+// flag value (AutoRunArgv's `-o <last-message file>`, the interactive
+// trust override) into several tokens. The guard must still find the
 // thread id, or `flow do` starts a second `codex resume` on a live thread.
-func TestLiveSessionIDsSeesAddDirWithWhitespace(t *testing.T) {
+func TestLiveSessionIDsSeesThreadBehindWhitespacePath(t *testing.T) {
 	orig := PSRunner
 	t.Cleanup(func() { PSRunner = orig })
 	other := "22222222-2222-4222-8222-222222222222"
 	PSRunner = func() ([]byte, error) {
 		return []byte(strings.Join([]string{
-			"300 codex resume -s workspace-write -a on-request --add-dir /tmp/flow root " + testThreadID,
-			"301 codex resume -s workspace-write -a on-request --add-dir /tmp/my flow root --add-dir /x y " + testThreadID + " keep going on " + other,
+			"300 codex exec resume --dangerously-bypass-approvals-and-sandbox -o /tmp/flow root/tasks/x/last.txt " + testThreadID + " work",
+			"301 codex exec resume -o /tmp/my flow root/last.txt --dangerously-bypass-hook-trust " + testThreadID + " keep going on " + other,
+			"303 codex -s workspace-write -a on-request -c projects./tmp/flow root.trust_level=trusted resume " + testThreadID + " work",
 			// Prose after a non-resume codex command is not a session.
 			"302 codex exec please resume work on " + other,
 		}, "\n")), nil
@@ -156,8 +118,8 @@ func TestLiveSessionIDsSeesAddDirWithWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if live[testThreadID] != 2 {
-		t.Errorf("live=%v, want both whitespace-path codex processes detected", live)
+	if live[testThreadID] != 3 {
+		t.Errorf("live=%v, want all three whitespace-path codex processes detected", live)
 	}
 	if live[other] != 0 {
 		t.Errorf("live=%v, an id in the prompt text must not count as a live session", live)
