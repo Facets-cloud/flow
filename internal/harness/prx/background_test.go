@@ -45,7 +45,7 @@ func TestSpawnBackground(t *testing.T) {
 func TestResumeBackgroundKeepsID(t *testing.T) {
 	calls := stubBG(t, hostJSON, nil)
 	bg := New().(harness.BackgroundLauncher)
-	a, err := bg.ResumeBackground("/w", "title", testID, harness.LaunchOpts{})
+	a, err := bg.ResumeBackground("/w", "title", testID, "", harness.LaunchOpts{})
 	if err != nil || a.SessionID != testID {
 		t.Fatalf("agent=%+v err=%v", a, err)
 	}
@@ -62,7 +62,7 @@ func TestDetachErrors(t *testing.T) {
 		t.Error("spawn swallowed a prx failure")
 	}
 	stubBG(t, "no json here", nil)
-	if _, err := bg.ResumeBackground("/w", "title", testID, harness.LaunchOpts{}); err == nil {
+	if _, err := bg.ResumeBackground("/w", "title", testID, "", harness.LaunchOpts{}); err == nil {
 		t.Error("resume accepted output without a session id")
 	}
 }
@@ -110,5 +110,18 @@ func TestBackgroundAgents(t *testing.T) {
 	}
 	if !reflect.DeepEqual(agents, want) {
 		t.Errorf("agents=%+v\nwant   %+v", agents, want)
+	}
+}
+
+func TestResumeBackgroundPrompt(t *testing.T) {
+	calls := stubBG(t, hostJSON, nil)
+	bg := New().(harness.BackgroundLauncher)
+	if _, err := bg.ResumeBackground("/w", "title", testID, "kick", harness.LaunchOpts{Inject: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"dir=/w", "run", "-sdk", "-detach", "-cwd", "/w", "-max-turns", "5000", "-session", testID,
+		"-prompt", "kick\n\n" + harness.InjectionMarker + "\nx"}
+	if !reflect.DeepEqual((*calls)[0], want) {
+		t.Errorf("argv=%q\nwant %q", (*calls)[0], want)
 	}
 }

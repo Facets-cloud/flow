@@ -776,6 +776,22 @@ func TestBuildBootstrapPromptForRegularTask(t *testing.T) {
 	}
 }
 
+// TestBootstrapPromptsNameTheSlug: a background spawn records the
+// session id only after the agent starts, so a no-arg `flow show task`
+// (session-id reverse lookup) can race and find no bound task. Every
+// bootstrap prompt names the slug explicitly.
+func TestBootstrapPromptsNameTheSlug(t *testing.T) {
+	if got := buildBootstrapPromptForKindV2("foo", "regular", "", false); !strings.Contains(got, "Run: flow show task foo.") {
+		t.Errorf("regular prompt must run flow show task foo:\n%s", got)
+	}
+	for _, first := range []bool{false, true} {
+		got := buildBootstrapPromptForKindV2("pb-run-1", "playbook_run", "pb", first)
+		if !strings.Contains(got, "Run: flow show task pb-run-1.") {
+			t.Errorf("playbook run prompt (first=%v) must run flow show task pb-run-1:\n%s", first, got)
+		}
+	}
+}
+
 func TestBuildBootstrapPromptForKindWithEmptyKind(t *testing.T) {
 	// Defensive: an empty kind string (legacy rows that somehow didn't
 	// migrate) should fall through to the regular-task variant.

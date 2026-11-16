@@ -272,6 +272,10 @@ func OpenDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply session version schema: %w", err)
 	}
+	if _, err := db.Exec(sessionLineageDDL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply session lineage schema: %w", err)
+	}
 	if err := migrateBusSelfToUser(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate bus assignee: %w", err)
