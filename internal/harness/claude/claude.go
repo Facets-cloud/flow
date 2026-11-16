@@ -141,7 +141,7 @@ func newUUID() (string, error) {
 
 // ---------- launching ----------
 
-// LaunchCmd builds `claude --session-id <uuid> <quoted-prompt> [--dangerously-skip-permissions]`.
+// LaunchCmd builds `claude --session-id <uuid> <quoted-prompt> [--dangerously-skip-permissions] [--model <m>] [--effort <e>]`.
 // Injection text (opts.Inject) is appended to the prompt with the
 // shared harness.InjectionMarker so the receiving session can
 // distinguish it from typed user input.
@@ -153,10 +153,10 @@ func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) st
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
-	return cmd
+	return cmd + modelShell(opts)
 }
 
-// ResumeCmd builds `claude --resume <uuid> [<quoted-injection>] [--dangerously-skip-permissions]`.
+// ResumeCmd builds `claude --resume <uuid> [<quoted-injection>] [--dangerously-skip-permissions] [--model <m>] [--effort <e>]`.
 func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	cmd := "claude --resume " + sessionID
 	if opts.Inject != "" {
@@ -165,7 +165,34 @@ func (c *claude) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
 	}
-	return cmd
+	return cmd + modelShell(opts)
+}
+
+// SelectsModel: claude honours --model and --effort in every launch shape
+// (harness.ModelSelector).
+func (c *claude) SelectsModel() bool { return true }
+
+// modelArgv maps LaunchOpts.Model/Effort to `--model <m> --effort <e>`;
+// nil when both are empty, so a launch without them is unchanged.
+func modelArgv(opts harness.LaunchOpts) []string {
+	var a []string
+	if opts.Model != "" {
+		a = append(a, "--model", opts.Model)
+	}
+	if opts.Effort != "" {
+		a = append(a, "--effort", opts.Effort)
+	}
+	return a
+}
+
+// modelShell is modelArgv rendered for a shell command string.
+func modelShell(opts harness.LaunchOpts) string {
+	a := modelArgv(opts)
+	var b strings.Builder
+	for i := 0; i+1 < len(a); i += 2 {
+		b.WriteString(" " + a[i] + " " + spawner.ShellQuote(a[i+1]))
+	}
+	return b.String()
 }
 
 // ---------- headless ----------
@@ -193,7 +220,7 @@ func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) 
 	if opts.SkipPermissions {
 		argv = append(argv, "--dangerously-skip-permissions")
 	}
-	return argv
+	return append(argv, modelArgv(opts)...)
 }
 
 // runSkipPermissions is the default SkipPermissionsRunner — execs

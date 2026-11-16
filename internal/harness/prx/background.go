@@ -63,7 +63,7 @@ func detachArgs(workDir string, opts harness.LaunchOpts) []string {
 	if opts.SkipPermissions {
 		args = append(args, "-permission-mode", bypass)
 	}
-	return args
+	return append(args, modelArgv(opts)...)
 }
 
 // detach runs a `prx run -sdk -detach` command and decodes the one JSON line

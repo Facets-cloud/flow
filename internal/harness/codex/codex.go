@@ -78,11 +78,11 @@ func (c *codex) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) str
 	if opts.Inject != "" {
 		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
 	}
-	return interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
+	return interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume" + modelShell(opts) + " " + sessionID + " " + spawner.ShellQuote(prompt)
 }
 
 func (c *codex) ResumeCmd(sessionID string, opts harness.LaunchOpts) string {
-	cmd := interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume " + sessionID
+	cmd := interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume" + modelShell(opts) + " " + sessionID
 	if opts.Inject != "" {
 		cmd += " " + spawner.ShellQuote(harness.InjectionMarker+"\n"+opts.Inject)
 	}
@@ -128,6 +128,35 @@ func trustShell(dir string) string {
 	return " " + a[0] + " " + spawner.ShellQuote(a[1])
 }
 
+// SelectsModel: codex honours --model and --effort in every launch shape
+// (harness.ModelSelector).
+func (c *codex) SelectsModel() bool { return true }
+
+// modelArgv maps LaunchOpts.Model/Effort to `-m <m>` and
+// `-c model_reasoning_effort="<e>"`, both options of `codex resume` and
+// `codex exec resume`. nil when both are empty. harness.CheckModelOpts has
+// already refused a '"' or '\' that would break the TOML string.
+func modelArgv(opts harness.LaunchOpts) []string {
+	var a []string
+	if opts.Model != "" {
+		a = append(a, "-m", opts.Model)
+	}
+	if opts.Effort != "" {
+		a = append(a, "-c", `model_reasoning_effort="`+opts.Effort+`"`)
+	}
+	return a
+}
+
+// modelShell is modelArgv rendered for the interactive shell command.
+func modelShell(opts harness.LaunchOpts) string {
+	a := modelArgv(opts)
+	var b strings.Builder
+	for i := 0; i+1 < len(a); i += 2 {
+		b.WriteString(" " + a[i] + " " + spawner.ShellQuote(a[i+1]))
+	}
+	return b.String()
+}
+
 func skipPermissionsArgv(prompt string) []string {
 	return []string{"exec", "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass, prompt}
 }
@@ -147,6 +176,7 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	// `resume … <id>` tail LiveSessionIDs matches never contains a path.
 	argv := append([]string{"codex", "exec"}, trustArgv(opts.TrustDir)...)
 	argv = append(argv, "resume")
+	argv = append(argv, modelArgv(opts)...)
 	if opts.SkipPermissions {
 		argv = append(argv, "--dangerously-bypass-approvals-and-sandbox", hookTrustBypass)
 	}

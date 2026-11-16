@@ -173,6 +173,34 @@ harness. No DB edits, no re-pinning. The same applies to the driver
 itself: if its own harness hits its limit, the user can open
 the work in the other harness (references/harness-transfer.md).
 
+## Choosing the child's model
+
+`flow auto` takes `--model <m>` and `--effort <e>` and passes them to the
+child's harness as given (claude `--model`/`--effort`, codex `-m` and
+`model_reasoning_effort`, prx `-model`/`-thinking`). The task keeps them,
+so a resumed or woken child stays on the same model. Leave both off and
+the child gets the harness default.
+
+Routine or CLI-heavy children (run these commands, check this output,
+apply this known fix) can run on a cheaper model. A cheaper model can't
+look things up as well, so prepare the brief first and put in it
+everything the child would otherwise have to discover:
+
+- real ids: project, environment, resource names, paths
+- the exact `--help` text of each subcommand it will run, not just the
+  top-level help
+- 2-3 example commands in the right shape
+- the steps, in order
+
+Keep the brief small. Pasting a whole skill doesn't help. In the
+2026-11-15 raptor benchmark a 4B model scored 14/24 with only top-level
+help, 20/24 with the exact subcommand help, and 19/24 when handed the
+whole skill.
+
+For a tiny job (a skill wording change, a one-line fix) the prep pass
+costs more than it saves. Skip it and give the child the normal brief,
+or ask the user which model they want.
+
 ## Child brief template
 
 ```markdown

@@ -100,7 +100,28 @@ func interactive(sessionID string, opts harness.LaunchOpts) string {
 	if opts.SkipPermissions {
 		cmd += " -permission-mode " + bypass
 	}
+	a := modelArgv(opts)
+	for i := 0; i+1 < len(a); i += 2 {
+		cmd += " " + a[i] + " " + spawner.ShellQuote(a[i+1])
+	}
 	return cmd
+}
+
+// SelectsModel: prx honours --model and --effort in every launch shape
+// (harness.ModelSelector).
+func (p *prx) SelectsModel() bool { return true }
+
+// modelArgv maps LaunchOpts.Model/Effort to `-model <m> -thinking <e>`,
+// flags of both `prx` (chat) and `prx run`. nil when both are empty.
+func modelArgv(opts harness.LaunchOpts) []string {
+	var a []string
+	if opts.Model != "" {
+		a = append(a, "-model", opts.Model)
+	}
+	if opts.Effort != "" {
+		a = append(a, "-thinking", opts.Effort)
+	}
+	return a
 }
 
 func (p *prx) SkipPermissionsRun(prompt string) error { return SkipPermissionsRunner(prompt) }
@@ -130,6 +151,7 @@ func (p *prx) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []s
 	if opts.SkipPermissions {
 		argv = append(argv, "-permission-mode", bypass)
 	}
+	argv = append(argv, modelArgv(opts)...)
 	return append(argv, "-prompt", prompt)
 }
 

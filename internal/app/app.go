@@ -138,9 +138,9 @@ Create:
                    (from a task-bound session: records that task as parent, inherits its project)
 
 Sessions:
-  flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions]
-  flow do --auto         <ref> [--harness claude|codex|prx] (run headlessly in the background; self-completes via flow done)
-  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx]
+  flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--model <m>] [--effort <e>]
+  flow do --auto         <ref> [--harness claude|codex|prx] [--model <m>] [--effort <e>] (run headlessly in the background; self-completes via flow done)
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx] [--model <m>] [--effort <e>]
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>
@@ -215,7 +215,7 @@ Workdirs:
 
 Playbooks:
   flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow run playbook   <slug> [--dangerously-skip-permissions]   (spawn a new tab)
+  flow run playbook   <slug> [--dangerously-skip-permissions] [--model <m>] [--effort <e>]   (spawn a new tab; --model/--effort also work with --auto)
   flow run playbook   <slug> --here                              (bind THIS harness session to the new run; no new tab)
   flow run playbook   <slug> --auto                              (run the playbook headlessly in the background)
   flow show playbook  <ref>

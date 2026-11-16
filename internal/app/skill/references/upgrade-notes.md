@@ -11,6 +11,13 @@
 
 ## Unreleased
 
+- **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
+  `flow run playbook` take `--model <m>` and `--effort <e>`, passed to the
+  harness as given. The task keeps them, so resumes reuse them; `flow show
+  task` prints `model:`/`effort:` when set. `--here` refuses both (exit 2).
+  Drivers: see "Choosing the child's model" in references/delegation.md
+  before putting a routine child on a cheaper model.
+
 ## v0.1.0-alpha.38
 
 - **Mail reaches you automatically (harness wake).** flow now pushes a

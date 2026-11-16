@@ -143,6 +143,7 @@ Create
 Sessions
   flow do               <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--force]
                               [--with "<instruction>" | --with-file <path>]
+                              [--model <m>] [--effort <e>]  (kept on task; also auto/run; not --here)
   flow do --here        <ref> [--force]   (bind THIS harness session to the task — no new tab)
   flow do --auto        <ref> [--with "<instruction>" | --with-file <path>]
                               (run headlessly in the background — no tab, no human; the

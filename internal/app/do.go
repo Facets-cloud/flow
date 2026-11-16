@@ -109,6 +109,7 @@ func cmdDo(args []string) int {
 	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
+	model, effort := modelFlags(fs)
 	// Two-pass parse so the slug positional may appear before OR after
 	// the flags: first absorb any leading flags, then take the next
 	// non-flag as the slug, then absorb any trailing flags.
@@ -139,6 +140,9 @@ func cmdDo(args []string) int {
 
 	if *auto && *here {
 		fmt.Fprintln(os.Stderr, "error: --auto cannot be used with --here (--auto launches its own detached session; --here binds the current one)")
+		return 2
+	}
+	if *here && rejectModelWithHere(*model, *effort) {
 		return 2
 	}
 	// --auto + --with IS allowed: the instruction is forwarded to the
@@ -194,6 +198,12 @@ func cmdDo(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	// --model/--effort: refuse what h can't honour, and store a flag value
+	// on the task before any launch path (tab, --auto supervisor, bg) reads
+	// it back, so resumes and wakes keep the same model.
+	if rc := applyModelFlags(db, task, h, *model, *effort); rc != 0 {
+		return rc
 	}
 	// A task can be bound to the thread that is running this very flow
 	// command (for example after `flow do --here`). Starting `codex resume`
@@ -462,6 +472,7 @@ func cmdDo(args []string) int {
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
 	}
+	applyTaskModel(task, &launchOpts)
 	applyWorkspaceTrust(h, cwd, &launchOpts)
 	// bootstrapCmd builds the first-start command. For pre-allocating
 	// harnesses (claude), PrepareSpawn already minted the sessionID and
@@ -796,6 +807,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	}
 	title := buildTabTitle(project, task)
 	opts := harness.LaunchOpts{SkipPermissions: skipPerms, Inject: inject}
+	applyTaskModel(task, &opts)
 	// claude --bg has no TTY for the trust dialog: an untrusted flow
 	// workspace dies with "Workspace not trusted". Pre-trust it.
 	applyWorkspaceTrust(h, task.WorkDir, &opts)

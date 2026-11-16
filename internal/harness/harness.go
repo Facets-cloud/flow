@@ -28,7 +28,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // Name is the short identifier persisted on tasks.harness and used to
@@ -101,6 +103,47 @@ type LaunchOpts struct {
 	// persisted to config.toml). Claude ignores it — its trust lives in
 	// ~/.claude.json and is persisted via WorkspaceTruster instead.
 	TrustDir string
+
+	// Model and Effort pick the model and reasoning-effort level for this
+	// launch (`flow do --model/--effort`). Empty adds no flag, so the
+	// harness uses its own default. flow keeps no list of model names:
+	// values pass through to the harness CLI as given, so new models work
+	// without a flow release. Only harnesses that implement ModelSelector
+	// receive them; CheckModelOpts gates everything else.
+	Model  string
+	Effort string
+}
+
+// ModelSelector is an OPTIONAL capability: honouring LaunchOpts.Model and
+// LaunchOpts.Effort in every launch shape (tab, resume, auto run,
+// background). A harness that does not implement it makes flow fail with
+// a clear error when --model/--effort is given, never drop the values.
+type ModelSelector interface {
+	SelectsModel() bool
+}
+
+// CheckModelOpts rejects model/effort values h can't honour. Empty values
+// always pass. A value must also be safe to hand to a harness CLI as one
+// flag argument: no leading '-' (it would read as a flag), no whitespace or
+// control characters, no '"' or '\' (codex embeds effort in a TOML string).
+func CheckModelOpts(h Harness, model, effort string) error {
+	if model == "" && effort == "" {
+		return nil
+	}
+	if s, ok := h.(ModelSelector); !ok || !s.SelectsModel() {
+		return fmt.Errorf("harness %s does not support --model/--effort", h.Name())
+	}
+	for _, v := range []struct{ flag, val string }{{"--model", model}, {"--effort", effort}} {
+		if v.val != "" && !safeFlagValue(v.val) {
+			return fmt.Errorf("invalid %s value %q: must not start with '-' or contain whitespace, quotes or backslashes", v.flag, v.val)
+		}
+	}
+	return nil
+}
+
+func safeFlagValue(v string) bool {
+	return !strings.HasPrefix(v, "-") && !strings.ContainsAny(v, "\"\\") &&
+		strings.IndexFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
 // WorkspaceTruster is an OPTIONAL harness capability: persistently
