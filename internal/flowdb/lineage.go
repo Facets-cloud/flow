@@ -6,8 +6,10 @@ import (
 )
 
 // session_lineage records, per harness session id, the session it was
-// forked from. `claude --bg --resume <src>` runs `--fork-session` under a
-// NEW id: the history lives in <src>'s transcript until the fork takes a
+// forked from. flow resumes under the same id whenever claude allows it,
+// but `claude --bg --resume <src>` still starts a COPY (`--fork-session`,
+// NEW id) when <src> is alive, or was for sessions resumed by older flow
+// builds: the history lives in <src>'s transcript until the copy takes a
 // turn. If the fork never does (it failed, or was left idle), the task
 // is bound to an id with no transcript; the lineage lets flow resume from
 // the nearest ancestor that has one instead of starting fresh and losing

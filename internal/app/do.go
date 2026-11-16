@@ -752,8 +752,13 @@ func bgStateLabel(a *harness.BackgroundAgent) string {
 //
 // Resume/already-running protocol:
 //   - no session yet (or --fresh) → spawn fresh + capture id
-//   - session bound AND alive in the registry → report, don't double-spawn
-//   - session bound but gone → resume by id (transcript preserved)
+//   - session alive and busy → report, don't double-spawn
+//   - session alive and idle, with --with or unread mail → push it
+//     through the wake channel; with no channel, stop it and resume the
+//     same id
+//   - session not running (exited or removed) → resume under the SAME id
+//     (no launch flags for a registered session; a copy is the last
+//     resort and gets lineage + its original stopped)
 func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, skipPerms bool, inject string) int {
 	bg, err := backgroundLauncherFor(h)
 	if err != nil {
@@ -796,6 +801,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	// the bound id or, when the bound id never took a turn, the nearest
 	// fork ancestor that did. onDisk reports whether one was found.
 	resumeFrom, resumeCwd, onDisk := "", task.WorkDir, false
+	// sidRec is the bound session's background-registry record (nil when
+	// it has none).
+	var sidRec *harness.BackgroundAgent
 	if hasSession && !fresh {
 		sid := task.SessionID.String
 		resumeCwd, onDisk = resumeTarget(h, task, sid)
@@ -810,7 +818,8 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// this task forever. When its history source is known, stop it and
 		// resume from that source.
 		ancestorFrom, ancestorCwd, haveAncestor := "", "", false
-		if a := bgAgentInRegistry(bg, sid); a != nil && a.PID > 0 {
+		sidRec = bgAgentInRegistry(bg, sid)
+		if a := sidRec; a != nil && a.PID > 0 {
 			stopper, canStop := bg.(harness.BackgroundStopper)
 			if !onDisk && a.Status == "idle" && canStop {
 				forkSource := ""
@@ -819,19 +828,49 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				}
 				ancestorFrom, ancestorCwd, haveAncestor = transcriptAncestor(db, h, task, sid, forkSource)
 			}
-			if !haveAncestor {
+			// Alive, idle, with a conversation: `claude --bg --resume` on
+			// it would only start a COPY under a new id. Hand it what this
+			// run brings (--with, queued mail) instead: push it through the
+			// session's wake channel, or — with no channel — stop it and
+			// resume the SAME id below with the kickoff as its prompt.
+			idleWithWork := onDisk && a.Status == "idle" && (inject != "" || unread > 0)
+			if idleWithWork && deliverToIdleBg(db, task, sid, inject, unread) {
+				fmt.Printf("%s is running in the background (%s, %s); delivered %s to it — %s\n",
+					task.Slug, a.ShortID, bgStateLabel(a), bgDeliveredWhat(inject, unread), bgViewHint(h, sid))
+				return 0
+			}
+			switch {
+			case haveAncestor:
+				fmt.Fprintf(os.Stderr,
+					"note: %s's session %s is idle and never took a turn (no transcript); stopping it.\n",
+					task.Slug, a.ShortID)
+			case idleWithWork && canStop:
+				fmt.Fprintf(os.Stderr,
+					"note: %s's session %s is idle with no wake channel; stopping it to resume it under the same id.\n",
+					task.Slug, a.ShortID)
+			default:
 				fmt.Printf("%s is running in the background (%s, %s) — %s\n",
 					task.Slug, a.ShortID, bgStateLabel(a), bgViewHint(h, sid))
 				if !onDisk && a.Status == "idle" {
 					fmt.Printf("  it never took a turn and its history source is unknown; `flow do --fresh %s` replaces it\n", task.Slug)
 				}
+				if inject != "" {
+					fmt.Fprintf(os.Stderr,
+						"note: --with was NOT delivered (the session is %s and resuming it would start a copy); send it with `flow message user/%s \"...\"`\n",
+						bgStateLabel(a), task.Slug)
+				}
 				return 0
 			}
-			fmt.Fprintf(os.Stderr,
-				"note: %s's session %s is idle and never took a turn (no transcript); stopping it.\n",
-				task.Slug, a.ShortID)
 			if err := stopper.StopBackground(a.ShortID); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			// Resuming the same id before its process is gone would start
+			// a copy, so wait for the exit to land.
+			if !haveAncestor && !waitBgStopped(bg, sid) {
+				fmt.Fprintf(os.Stderr,
+					"error: %s's session %s did not exit within %s of `claude stop`; re-run flow do once it has (resuming now would start a copy)\n",
+					task.Slug, a.ShortID, bgStopWaitTimeout)
 				return 1
 			}
 		} else if !onDisk {
@@ -858,16 +897,23 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		sid := task.SessionID.String
 		// Not running (exited: stopped/failed/done) or removed: bring the
 		// conversation back as a background agent seeded from its
-		// transcript. `claude --bg --resume` mints a NEW id (history
-		// inherited — it can't keep the id under --bg), so capture and
-		// re-record it; otherwise flow would keep pointing at the dead id
-		// (the phantom-id bug). Plain `--resume` would preserve the id but
-		// wouldn't be a background agent, so it can't be used in bg mode.
+		// transcript, under the SAME id whenever claude allows it. Claude
+		// keeps the id unless the session is alive (handled above) or a
+		// session with a background record gets launch flags, so a
+		// registered session is resumed with none (its saved name and
+		// permission mode come back with it). Whatever id comes up is
+		// captured and recorded; a copy (last resort) also gets lineage.
 		// A resumed background session takes no turn without a prompt:
 		// it would sit idle and never read mail queued while nothing was
 		// live. Always kick it off; --with rides behind the kickoff.
 		kickoff := buildBgResumeKickoff(task.Slug, unread)
-		agent, err := bg.ResumeBackground(resumeCwd, title, resumeFrom, kickoff, opts)
+		resumeOpts := opts
+		if resumeFrom == sid {
+			resumeOpts.ResumeRegistered = sidRec != nil
+		} else {
+			resumeOpts.ResumeRegistered = bgAgentInRegistry(bg, resumeFrom) != nil
+		}
+		agent, err := bg.ResumeBackground(resumeCwd, title, resumeFrom, kickoff, resumeOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -890,15 +936,19 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 			return 1
 		}
 		if agent.SessionID != resumeFrom {
+			// Claude started a copy (last resort): keep the lineage, and
+			// stop the original if it is alive and idle so two sessions
+			// don't both act for this task.
 			_ = flowdb.RecordSessionSource(db, agent.SessionID, resumeFrom, task.Slug)
+			stopForkedOriginal(bg, task.Slug, resumeFrom)
 		}
 		bumpWorkdirUsed(db, task.WorkDir)
 		if agent.SessionID == sid {
 			fmt.Printf("Resumed %s in background (%s · session %s)\n  %s\n",
 				task.Slug, agent.ShortID, agent.SessionID, bgViewHint(h, agent.SessionID))
 		} else {
-			fmt.Printf("Resumed %s in background (prior session was no longer tracked; brought the conversation back as %s · session %s)\n  %s\n",
-				task.Slug, agent.ShortID, agent.SessionID, bgViewHint(h, agent.SessionID))
+			fmt.Printf("Resumed %s in background (claude started a copy of %s; brought the conversation back as %s · session %s)\n  %s\n",
+				task.Slug, resumeFrom, agent.ShortID, agent.SessionID, bgViewHint(h, agent.SessionID))
 		}
 		return 0
 	}
@@ -938,6 +988,94 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  %s\n",
 		task.Slug, agent.SessionID, agent.ShortID, title, bgViewHint(h, agent.SessionID))
 	return 0
+}
+
+// bgStopWaitTimeout bounds how long flow waits, after `claude stop`
+// returns, for the session's process to actually exit. claude stop returns
+// first; resuming before the exit lands makes claude see the session as
+// "already running" and start a copy (verified live).
+var (
+	bgStopWaitTimeout = 15 * time.Second
+	bgStopWaitPoll    = 500 * time.Millisecond
+)
+
+// waitBgStopped polls the registry until sessionID has no live process (or
+// is gone), up to bgStopWaitTimeout. It reports whether the exit landed.
+func waitBgStopped(bg harness.BackgroundLauncher, sessionID string) bool {
+	deadline := time.Now().Add(bgStopWaitTimeout)
+	for {
+		if a := bgAgentInRegistry(bg, sessionID); a == nil || a.PID <= 0 {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(bgStopWaitPoll)
+	}
+}
+
+// deliverToIdleBg pushes this run's --with text and/or an unread-mail
+// notice into slug's live, idle background session through the harness
+// wake channel. It reports whether the push went through; on false the
+// caller falls back to stop + same-id resume.
+func deliverToIdleBg(db *sql.DB, task *flowdb.Task, sessionID, inject string, unread int) bool {
+	if !wakeActive() {
+		return false
+	}
+	w := wakeAdapterFor(task)
+	if w == nil {
+		return false
+	}
+	req := harness.WakeRequest{SessionID: sessionID, StateDir: wakeStateDir(), Timeout: wakePushTimeout}
+	if !w.WakeLive(req) {
+		return false
+	}
+	req.Notice = bgDeliverNotice(task.Slug, inject, unread)
+	if _, err := w.Wake(req); err != nil {
+		return false
+	}
+	_ = flowdb.SetSessionState(db, task.Slug, flowdb.SessionBusy, time.Now())
+	return true
+}
+
+// bgDeliverNotice is what flow do pushes into an idle live session.
+func bgDeliverNotice(slug, inject string, unread int) string {
+	msg := fmt.Sprintf("flow do %s was run again while this session was idle.", slug)
+	if unread > 0 {
+		msg += " " + wakeNotice(unread)
+	}
+	return harness.WithInjection(msg, inject)
+}
+
+func bgDeliveredWhat(inject string, unread int) string {
+	switch {
+	case inject != "" && unread > 0:
+		return fmt.Sprintf("the --with instruction and a notice of %d unread message(s)", unread)
+	case inject != "":
+		return "the --with instruction"
+	default:
+		return fmt.Sprintf("a notice of %d unread message(s)", unread)
+	}
+}
+
+// stopForkedOriginal stops sessionID after claude resumed it as a copy,
+// when it is alive and idle (a busy one is left alone, with a note).
+func stopForkedOriginal(bg harness.BackgroundLauncher, slug, sessionID string) {
+	a := bgAgentInRegistry(bg, sessionID)
+	if a == nil || a.PID <= 0 {
+		return
+	}
+	stopper, ok := bg.(harness.BackgroundStopper)
+	if !ok || a.Status != "idle" {
+		fmt.Fprintf(os.Stderr, "note: %s's original session %s is still running (%s); stop it with `claude stop %s` if it is no longer needed.\n",
+			slug, a.ShortID, bgStateLabel(a), a.ShortID)
+		return
+	}
+	if err := stopper.StopBackground(a.ShortID); err != nil {
+		fmt.Fprintf(os.Stderr, "note: could not stop %s's original session %s: %v\n", slug, a.ShortID, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "note: stopped %s's original session %s (the copy now owns the task).\n", slug, a.ShortID)
 }
 
 // bgPlaybookContext computes (playbookSlug, isFirstRun) for a task's

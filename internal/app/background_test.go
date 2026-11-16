@@ -218,8 +218,10 @@ func TestCmdDoBackgroundAlreadyRunning(t *testing.T) {
 }
 
 // TestCmdDoBackgroundResumeWhenGone: a bound session ABSENT from the
-// registry is brought back via --bg --resume <oldid>, and because --bg
-// mints a fresh id, flow re-records the NEW captured id (not the dead one).
+// registry is brought back via --bg --resume <oldid>. flow records whatever
+// id the resume captured — here the stub models a copy under a new id, so
+// the NEW id (not the dead one) is re-recorded. (Live claude keeps the id
+// for an unregistered session; see bg_nofork_test.go.)
 func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "bgt")
@@ -265,8 +267,8 @@ func TestCmdDoBackgroundResumeWhenGone(t *testing.T) {
 }
 
 // TestCmdDoBackgroundResumeWhenExited: a bound session that's still listed
-// but no longer running (exited, no pid) is resumed (forked + re-recorded),
-// not left as "already open".
+// but no longer running (exited, no pid) is resumed, not left as "already
+// open". The stub models claude starting a copy; flow records the copy.
 func TestCmdDoBackgroundResumeWhenExited(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "bgt")
@@ -281,7 +283,7 @@ func TestCmdDoBackgroundResumeWhenExited(t *testing.T) {
 	writeBoundTranscript(t, "bgt")
 
 	// Session now present but EXITED (stopped, no pid): the alive-check must
-	// see it as not-running → resume. The resume forks a new id, so flip the
+	// see it as not-running → resume. The stub's resume yields a new id, so flip the
 	// registry to that new session when the resume command fires (so the
 	// capture lookup resolves it).
 	const newSID = "77665544-0000-4000-8000-000000000000"

@@ -210,7 +210,7 @@ func (c *claude) BackgroundForkSource(a harness.BackgroundAgent) (string, bool) 
 // that short id in the agent registry. One deterministic lookup — no
 // polling, no race — because `--bg` only prints the banner after the
 // session is registered. Shared by SpawnBackground and ResumeBackground
-// (which differ only in their argv; --bg mints a fresh id either way).
+// (which differ only in their argv; a resume may keep the id or start a copy).
 func (c *claude) launchAndCapture(workDir string, args []string, what string) (harness.BackgroundAgent, error) {
 	out, err := BGCommandRunner(workDir, args)
 	if err != nil {
@@ -245,21 +245,33 @@ func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.Laun
 	return c.launchAndCapture(workDir, args, "spawn")
 }
 
-// ResumeBackground runs `claude --bg --name <name> --resume <sessionID>
+// ResumeBackground runs `claude --bg [--name <name>] --resume <sessionID>
 // [<prompt>] [--dangerously-skip-permissions]`. opts.Inject is appended to
-// prompt behind InjectionMarker, as in SpawnBackground. --name keeps the same
-// display name SpawnBackground used; without it claude names the new
-// background session after the injected prompt. `--bg` does not honor
-// `--resume`'s id — it starts a fresh background process that *inherits
-// the prior conversation* under a NEW id (verified against the CLI). So
-// this captures and returns the new id exactly like SpawnBackground; the
-// caller re-records it on the task.
+// prompt behind InjectionMarker, as in SpawnBackground.
+//
+// When claude keeps the id vs starts a copy (verified live, 2.1.325):
+//
+//	session                              flags   result
+//	alive (busy or idle)                 any     copy, new id ("already running")
+//	registered in Agent View, exited     none    SAME id, saved options reapplied
+//	registered in Agent View, exited     some    copy ("keeps its own saved options")
+//	unregistered (rm'd / never bg)       any     SAME id
+//
+// So with opts.ResumeRegistered no flags are passed: the registry's saved
+// --name and permission mode come back with the same session. Otherwise
+// --name keeps the display name SpawnBackground used (without it claude
+// names the session after the prompt). Either way the id that came up is
+// captured from the banner and returned; the caller records it.
 func (c *claude) ResumeBackground(workDir, name, sessionID, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
-	args := []string{"--bg", "--name", name, "--resume", sessionID}
+	args := []string{"--bg"}
+	if !opts.ResumeRegistered {
+		args = append(args, "--name", name)
+	}
+	args = append(args, "--resume", sessionID)
 	if p := harness.WithInjection(prompt, opts.Inject); p != "" {
 		args = append(args, p)
 	}
-	if opts.SkipPermissions {
+	if opts.SkipPermissions && !opts.ResumeRegistered {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 	return c.launchAndCapture(workDir, args, "resume")
