@@ -826,6 +826,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		// this task forever. When its history source is known, stop it and
 		// resume from that source.
 		ancestorFrom, ancestorCwd, haveAncestor := "", "", false
+		lineageErr := error(nil)
 		sidRec = bgAgentInRegistry(bg, sid)
 		if a := sidRec; a != nil && a.PID > 0 {
 			stopper, canStop := bg.(harness.BackgroundStopper)
@@ -840,7 +841,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				// first, so a resume that then fails doesn't lose the history.
 				if haveAncestor && forkSource != "" {
 					if _, known := flowdb.SessionSource(db, sid); !known {
-						_ = flowdb.RecordSessionSource(db, sid, forkSource, task.Slug)
+						lineageErr = flowdb.RecordSessionSource(db, sid, forkSource, task.Slug)
 					}
 				}
 			}
@@ -860,8 +861,28 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 			// shells, an inbox Monitor — and a coarse "idle" status rules
 			// none of those out. Only a provably idle session is stopped.
 			quiet, notQuiet := a.ProvablyIdle()
+			if idleWithWork && canStop && quiet && !haveAncestor {
+				// The delivery attempt above can take a while; look again
+				// right before the stop so a session that started a turn
+				// meanwhile is left alone.
+				if fresh := bgAgentInRegistry(bg, sid); fresh != nil {
+					a = fresh
+					quiet, notQuiet = a.ProvablyIdle()
+				} else {
+					quiet, notQuiet = false, "its state could not be re-read"
+				}
+			}
+			if haveAncestor && lineageErr != nil {
+				fmt.Fprintf(os.Stderr,
+					"error: record the history source of %s's session %s: %v; not stopping it (it is the only record of where the conversation lives)\n",
+					task.Slug, a.ShortID, lineageErr)
+				return 1
+			}
 			switch {
 			case haveAncestor:
+				// A transcript-less session never took a turn: a "blocked"
+				// state here is it waiting for a first prompt, not a pending
+				// ask, so it holds nothing to lose.
 				fmt.Fprintf(os.Stderr,
 					"note: %s's session %s is idle and never took a turn (no transcript); stopping it.\n",
 					task.Slug, a.ShortID)

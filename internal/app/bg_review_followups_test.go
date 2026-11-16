@@ -231,3 +231,57 @@ func TestCmdDoBackgroundAncestorSameIDNotReportedAsCopy(t *testing.T) {
 		t.Errorf("output lacks the resumed session id:\n%s", out)
 	}
 }
+
+// The idle snapshot is re-read right before the stop: the delivery attempt
+// in between can take a while, and a session that started a turn in that
+// window must not be stopped.
+func TestCmdDoBackgroundIdleRecheckedBeforeStop(t *testing.T) {
+	c, reg := spawnBound(t)
+	setConfirmTimeout(t, 0)
+	stubWaker(t, &fakeWaker{live: false})
+	*reg = "[" + bgAgentLive(bgFullSID, 4242, "idle", "working") + "]"
+	writeJobState(t, bgFullSID[:8], jobStateQuiet)
+	reads := 0
+	old := claude.BGCommandRunner
+	claude.BGCommandRunner = func(workDir string, args []string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "agents" {
+			reads++
+			if reads == 2 { // it started a turn after the first look
+				*reg = "[" + bgAgentLive(bgFullSID, 4242, "busy", "working") + "]"
+			}
+		}
+		return old(workDir, args)
+	}
+	errOut := captureStderr(t)
+	rc := cmdDo([]string{"--with", "x", "bgt"})
+	stderr := errOut()
+	if rc != 0 || c.stop != 0 || c.resume != 0 {
+		t.Fatalf("rc=%d stop=%d resume=%d, want the now-busy session left running", rc, c.stop, c.resume)
+	}
+	if !strings.Contains(stderr, "NOT delivered") {
+		t.Errorf("stderr should say --with was not delivered:\n%s", stderr)
+	}
+}
+
+// If the legacy fork's source can't be recorded, don't stop the process
+// that is the only record of it.
+func TestCmdDoBackgroundLegacyForkNotStoppedWhenLineageWriteFails(t *testing.T) {
+	c, reg := spawnBound(t)
+	bindFork(t, false)
+	if _, err := openFlowDB(t).Exec(`CREATE TRIGGER lineage_boom BEFORE INSERT ON session_lineage BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	*reg = "[" + bgAgentLive(forkSID, 4242, "idle", "blocked") + "]"
+	oldPS := claude.PSRunner
+	claude.PSRunner = func() ([]byte, error) {
+		return []byte("  PID COMMAND\n 4242 claude --session-id " + forkSID +
+			" --fork-session --resume " + bgFullSID + " --name flow/bgt\n"), nil
+	}
+	t.Cleanup(func() { claude.PSRunner = oldPS })
+	if rc := cmdDo([]string{"bgt"}); rc == 0 {
+		t.Fatal("rc=0 though the fork source could not be recorded")
+	}
+	if c.stop != 0 || c.resume != 0 {
+		t.Fatalf("stop=%d resume=%d, want the fork left running", c.stop, c.resume)
+	}
+}
