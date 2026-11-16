@@ -19,6 +19,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   task in a detached prx host and needs prx v0.6.56 or later; resuming
   it keeps the session id.
 
+### Fixed
+
+- **The automatic skill refresh never downgrades.** On every command flow
+  refreshed the skill and hooks whenever the installed version differed from
+  the binary's, so an older binary (a `.bak` copy, a rollback, a repro of an
+  old release) run with the real `HOME` replaced a newer install's hooks with
+  its own. It now refreshes only when the binary is strictly newer; it leaves
+  a `dev` or unparsable install alone, and `flow init` leaves a newer
+  install's hooks alone. `FLOW_NO_AUTO_UPGRADE=1` now stops this refresh as
+  well as the binary self-upgrade. `flow skill update` still installs on
+  request and warns when it replaces a newer install.
+
 ## [0.1.0-alpha.39] — 2026-11-13
 
 ### Fixed

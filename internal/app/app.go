@@ -129,7 +129,8 @@ Setup:
   flow skill update [--harness claude|codex|prx]
   (default: every present harness — binary on PATH or config home exists)
   flow upgrade [--check] [--force]             (install the latest release now; flow also upgrades
-                                                itself after a command — FLOW_NO_AUTO_UPGRADE=1 stops that)
+                                                itself after a command and refreshes an older skill —
+                                                FLOW_NO_AUTO_UPGRADE=1 stops both)
 
 Create:
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]

@@ -322,7 +322,9 @@ means. Those two commands are the last ones you need to type.
 
 flow upgrades itself: after a command, it installs a newer release in the
 background (checksum-verified). `flow upgrade` does it now;
-`FLOW_NO_AUTO_UPGRADE=1` turns it off. Source builds, CI, root and a binary
+`FLOW_NO_AUTO_UPGRADE=1` turns it off (and the skill + hook refresh that
+follows an upgrade). That refresh only ever moves forward: an older or source
+build never rewrites a newer install's skill or hooks. Source builds, CI, root and a binary
 folder flow cannot write are skipped; the same install command works there.
 Uninstall by deleting the binary and `~/.flow`.
 
