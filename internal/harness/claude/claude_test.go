@@ -257,3 +257,23 @@ func TestAutoRunArgv_ResumesExistingSession(t *testing.T) {
 		t.Errorf("got %v\nwant %v", got, want)
 	}
 }
+
+// A tab session gets the same --name a background session does, so the
+// Claude doorbell (SendMessage by name) can reach it. Empty Name keeps
+// the legacy command byte-identical (asserted above).
+func TestLaunchAndResumeCmdCarryName(t *testing.T) {
+	h := New()
+	sid := "658bf2be-5ae3-4842-a8a4-e0d0b785514d"
+	opts := harness.LaunchOpts{Name: "flow/doorbell"}
+
+	got := h.LaunchCmd(sid, "go", opts)
+	want := "claude --session-id " + sid + " --name 'flow/doorbell' 'go'"
+	if got != want {
+		t.Errorf("LaunchCmd name:\n got=%q\nwant=%q", got, want)
+	}
+	got = h.ResumeCmd(sid, opts)
+	want = "claude --resume " + sid + " --name 'flow/doorbell'"
+	if got != want {
+		t.Errorf("ResumeCmd name:\n got=%q\nwant=%q", got, want)
+	}
+}

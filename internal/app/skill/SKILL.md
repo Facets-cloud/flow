@@ -798,7 +798,7 @@ flow-bus notice: one-shot `flow inbox pop` in the foreground, repeat until
 empty, act on each. Wake off (`FLOW_NO_WAKE=1`) → only a BOUND session
 (never unbound) arms the Monitor fallback in references/messaging.md. `flow watch <task|project|assignee>` subscribes
 you; tasks you create from a bound session are auto-watched. Hooks NEVER
-consume.
+consume. Output has `doorbell: <name>` → ring it (references/messaging.md).
 
 Full workflow, address grammar, etiquette → read **references/messaging.md**.
 
