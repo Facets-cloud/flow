@@ -46,6 +46,20 @@ const (
 // to recognize the literal string.
 const InjectionMarker = "[via flow do --with]"
 
+// WithInjection appends a `flow do --with` instruction to prompt behind
+// InjectionMarker. With no prompt the marked instruction stands alone;
+// with no instruction prompt is returned unchanged.
+func WithInjection(prompt, inject string) string {
+	if inject == "" {
+		return prompt
+	}
+	marked := InjectionMarker + "\n" + inject
+	if prompt == "" {
+		return marked
+	}
+	return prompt + "\n\n" + marked
+}
+
 // LaunchOpts are options forwarded into the spawn command builder.
 // Harness adapters translate to per-CLI flags (Claude:
 // --dangerously-skip-permissions, Codex: --dangerously-bypass-…, etc).
@@ -63,6 +77,16 @@ type LaunchOpts struct {
 	// (claude: --resume instead of --session-id, which it rejects for an
 	// existing session as "already in use").
 	Resume bool
+
+	// ResumeRegistered marks a background resume of a session that still
+	// has a record in the harness's background registry (claude: listed by
+	// `claude agents --json --all`, any state). Claude keeps such a
+	// session's launch options ("saved options") and treats ANY flag on
+	// `claude --bg --resume <id>` (even the same --name) as a request for a
+	// COPY under a new id. With this set the harness passes no launch flags
+	// — just the id and the prompt — so the SAME session wakes with its
+	// saved name and permission mode.
+	ResumeRegistered bool
 
 	// LastMessagePath, when set on a headless run, asks the harness to
 	// write the session's final message to this file (codex: -o). Impls
@@ -102,6 +126,23 @@ type BackgroundAgent struct {
 	PID       int
 	Status    string // coarse liveness, e.g. "busy" / "idle"
 	State     string // finer state, e.g. "working" / "blocked" / "done"
+	Detail    string // why it failed, when the harness knows (state "failed")
+}
+
+// BackgroundStopper is an OPTIONAL BackgroundLauncher extension: stop a
+// live background session (claude: `claude stop <shortId>`). flow uses it
+// only on a session that is idle and never took a turn — it holds no
+// conversation, so stopping it loses nothing.
+type BackgroundStopper interface {
+	StopBackground(shortID string) error
+}
+
+// BackgroundForkSourcer is an OPTIONAL BackgroundLauncher extension: name
+// the session a live background agent was forked from (claude: the
+// process's `--fork-session --resume <source>` arguments). It recovers the
+// history source of forks recorded before flow kept session lineage.
+type BackgroundForkSourcer interface {
+	BackgroundForkSource(a BackgroundAgent) (string, bool)
 }
 
 // BackgroundLauncher is an OPTIONAL harness capability: hosting
@@ -126,19 +167,21 @@ type BackgroundLauncher interface {
 	// BackgroundAgent.SessionID is what flow records on the task.
 	SpawnBackground(workDir, name, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
-	// ResumeBackground brings a no-longer-tracked background session's
-	// conversation back as a fresh background agent, seeded from the
-	// prior session's transcript. NOTE: a backgrounding harness manages
-	// its own id, so this MINTS A NEW session id (the prior history is
-	// inherited, but `claude --bg --resume <id>` does not preserve the
-	// id — verified against the CLI and documented behavior). The
-	// returned BackgroundAgent carries the NEW id, which flow re-records
-	// on the task. workDir is where the resumed agent begins (the task's
-	// work_dir). name is the display name, the same one SpawnBackground
-	// got, so the resumed agent keeps its title instead of being named
-	// after the injected prompt. opts.Inject, if set, is delivered as the
-	// first message after resume.
-	ResumeBackground(workDir, name, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// ResumeBackground brings a background session that is NOT running
+	// back as a background agent, seeded from its transcript. Claude
+	// (2.1.325) keeps the SAME session id when the session is not alive
+	// and either has no background record or gets no launch flags (see
+	// LaunchOpts.ResumeRegistered); it starts a COPY under a new id when
+	// the session is still alive or a registered session gets flags. The
+	// returned BackgroundAgent carries whichever id actually came up, and
+	// flow records it (and the lineage, if it is a copy). workDir is where
+	// the resumed agent begins (the task's work_dir). name is the display
+	// name, the same one SpawnBackground got (ignored when the registry
+	// already holds it). prompt is the first message after resume (flow's
+	// resume kickoff): without one a resumed background session never
+	// takes a turn. opts.Inject, if set, is appended behind
+	// InjectionMarker, exactly as SpawnBackground appends it.
+	ResumeBackground(workDir, name, sessionID, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /
