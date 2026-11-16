@@ -440,3 +440,76 @@ func TestBacktickInfoStringBriefWithRoleIsUnchanged(t *testing.T) {
 		t.Errorf("a brief whose Role section follows a non-fence line must stay unchanged:\n%s", got)
 	}
 }
+
+// --- Round 4: Anuj's review ---------------------------------------------
+
+func TestRoleSectionCarriesDriverHabits(t *testing.T) {
+	for _, want := range []string{
+		"Children cannot spawn grandchildren.",
+		"Don't idle while children run; use the time on open decisions.",
+		"End any turn that needs the user with a numbered \"Needs from you:\" list.",
+		"In a headless `flow auto` run, do the work yourself; delegation applies only to the interactive driver session.",
+	} {
+		if !strings.Contains(driverRoleSection, want) {
+			t.Errorf("Role section missing %q", want)
+		}
+	}
+}
+
+func TestPlaybookRunBriefIsNeverGivenARole(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "run")
+	writeTaskBrief(t, "run", rewrittenBrief)
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET kind='playbook_run' WHERE slug='run'`); err != nil {
+		t.Fatal(err)
+	}
+	// Tagging, flow do, and SessionStart must all leave the frozen snapshot alone.
+	if rc := cmdUpdate([]string{"task", "run", "--tag", "driver"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	healDriverRoleSection(db, "run", false)
+	bindSession(t, "run", "sid-run")
+	sessionStartOutput(t)
+	if got := briefOf(t, "run"); got != rewrittenBrief {
+		t.Errorf("a playbook_run brief is a frozen snapshot and must be untouched:\n%s", got)
+	}
+}
+
+func TestRoleHeadingMustBeTheRoleSection(t *testing.T) {
+	for _, tc := range []struct {
+		brief string
+		want  bool
+	}{
+		{"## Role\n", true},
+		{"## Role: driver\n", true},
+		{"## Role : driver\n", true},
+		{"## Role ##\n", true},
+		{"## Role   \n", true},
+		{"## Role of this service\n", false},
+		{"## Roles\n", false},
+		{"## Role-based access\n", false},
+	} {
+		if got := hasRoleHeading([]byte(tc.brief)); got != tc.want {
+			t.Errorf("hasRoleHeading(%q) = %v, want %v", tc.brief, got, tc.want)
+		}
+	}
+}
+
+func TestDoHereAlreadyBoundHeals(t *testing.T) {
+	setupFlowRoot(t)
+	newDriverWithRewrittenBrief(t, "drv")
+	sid := "f00ba111-2222-4333-8444-555555555558"
+	bindSession(t, "drv", sid)
+	stubClaudeStatOK(t)
+	stubITerm(t)
+	out := captureStdout(t, func() {
+		if rc := cmdDo([]string{"drv", "--here"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "already bound") {
+		t.Fatalf("expected the already-bound path:\n%s", out)
+	}
+	assertHealedOnce(t, "drv")
+}

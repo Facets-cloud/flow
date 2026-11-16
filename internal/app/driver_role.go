@@ -57,12 +57,15 @@ tag is removed, ignore it.
 
 You own this task's outcome end to end. It is done when "Done when" is met
 and you have verified it, not when the work has been handed off.
+In a headless ` + "`flow auto`" + ` run, do the work yourself; delegation applies only to the interactive driver session.
 
 - Delegate: hand self-contained work (implementation, research, debugging,
   fix + PR + test, scans, audits) to headless ` + "`flow auto`" + ` children, not the
   harness's built-in subagents. Keep the conversation, decisions, verifying
   results and live/prod applies yourself. How to split the work is your
   call (optional shapes: flow skill references/delegation.md).
+- Children cannot spawn grandchildren.
+- Don't idle while children run; use the time on open decisions.
 - Every child brief states: the goal; where (repo, path, branch); the
   output file you will read (an update note on its task); Done when; its
   gates; what NOT to do; where questions go; report via ` + "`flow message`" + ` at
@@ -75,13 +78,16 @@ and you have verified it, not when the work has been handed off.
   with approval of the exact text or action; a newer HOLD beats an older GO.
 - Work with the user (or Command Center) the way a dev lead would. If this
   task has a parent, ask through it with ` + "`flow message`" + `, never AskUserQuestion.
+- End any turn that needs the user with a numbered "Needs from you:" list.
 - When Done when is met and verified, offer to close the task out.
 `
 
-// roleHeadingRe matches a `## Role` ATX heading with 0-3 leading spaces
-// (CommonMark; 4+ spaces or a tab is indented code), so a user-edited or
-// renamed Role section is never duplicated.
-var roleHeadingRe = regexp.MustCompile(`^ {0,3}##[ \t]+Role\b`)
+// roleHeadingRe matches the Role section's ATX heading with 0-3 leading
+// spaces (CommonMark; 4+ spaces or a tab is indented code): `## Role`
+// alone, with optional closing #s, or followed by a `:` label
+// (`## Role: driver`), so a user-edited Role section is never
+// duplicated. `## Role of this service` is an unrelated heading.
+var roleHeadingRe = regexp.MustCompile(`^ {0,3}##[ \t]+Role[ \t]*(:.*|#*[ \t]*)$`)
 
 // fenceOpenRe matches a CommonMark fence opener: 0-3 spaces, then 3+
 // backticks or tildes, then the info string.
@@ -205,10 +211,21 @@ func appendToFile(p, text string) error {
 // auto=true for them). Errors are best-effort: the fallback block covers
 // a brief that still lacks the section.
 func healDriverRoleSection(db *sql.DB, slug string, auto bool) {
-	if auto || !isDriverTask(db, slug) {
+	if auto || !roleSectionAllowed(db, slug) {
 		return
 	}
 	_ = ensureDriverRoleSection(slug)
+}
+
+// roleSectionAllowed reports whether flow may append a Role section to
+// slug's brief: the task is a driver and not a playbook run, whose brief
+// is a frozen snapshot of the playbook.
+func roleSectionAllowed(db *sql.DB, slug string) bool {
+	if !isDriverTask(db, slug) {
+		return false
+	}
+	t, err := flowdb.GetTask(db, slug)
+	return err == nil && t != nil && t.Kind != "playbook_run"
 }
 
 // healDriverRoleSlug is healDriverRoleSection for callers without an

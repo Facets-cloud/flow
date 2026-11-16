@@ -347,7 +347,7 @@ func cmdUpdateTask(args []string) int {
 		}
 		fmt.Printf("tag + %s\n", t)
 	}
-	if !wasDriver && isDriverTask(db, task.Slug) {
+	if !wasDriver && roleSectionAllowed(db, task.Slug) {
 		if err := ensureDriverRoleSection(task.Slug); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: append Role section to brief: %v\n", err)
 		}

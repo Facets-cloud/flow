@@ -311,7 +311,7 @@ func addTask(args []string) int {
 			return 1
 		}
 	}
-	if isDriverTask(db, slug) {
+	if roleSectionAllowed(db, slug) {
 		if err := ensureDriverRoleSection(slug); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: append Role section to brief: %v\n", err)
 		}

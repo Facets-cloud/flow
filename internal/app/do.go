@@ -1126,7 +1126,9 @@ func cmdDoHere(query string, force bool) int {
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		if task.SessionID.String == sid {
-			// Already bound to this same session — idempotent no-op.
+			// Already bound to this same session — idempotent no-op,
+			// except a driver's lost Role section is restored.
+			healDriverRoleSection(db, task.Slug, isAutoRunSession(task))
 			fmt.Printf("%s already bound to this session (%s)\n", task.Slug, sid)
 			return 0
 		}
