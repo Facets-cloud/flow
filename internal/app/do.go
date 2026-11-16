@@ -926,8 +926,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		}
 		now := flowdb.NowISO()
 		if _, err := db.Exec(
-			`UPDATE tasks SET status='in-progress',
-			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+			`UPDATE tasks SET `+bgKeepConcurrentDoneSQL+`,
 			 session_id=?, session_started=COALESCE(session_started, ?), session_last_resumed=?, updated_at=?
 			 WHERE slug=?`,
 			now, agent.SessionID, now, now, now, task.Slug,
@@ -974,8 +973,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	// Record the harness-minted REAL session id alongside status + harness.
 	// COALESCE on harness mirrors the interactive bootstrap: set-once.
 	if _, err := db.Exec(
-		`UPDATE tasks SET status='in-progress',
-		 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
+		`UPDATE tasks SET `+bgKeepConcurrentDoneSQL+`,
 		 session_id=?, session_started=?,
 		 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
 		 updated_at=? WHERE slug=?`,
@@ -989,6 +987,17 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		task.Slug, agent.SessionID, agent.ShortID, title, bgViewHint(h, agent.SessionID))
 	return 0
 }
+
+// bgKeepConcurrentDoneSQL is the status half of a background spawn/resume
+// record. The agent is a separate process that starts working as soon as
+// the harness launches it, so it can run `flow done` before flow records
+// the session. A task that went done in that window stays done (status and
+// status_changed_at untouched); otherwise it flips to in-progress as
+// before. (flow do refuses to background-run a task that was already done,
+// so a done status here can only have landed during the spawn.) Arg: the
+// timestamp.
+const bgKeepConcurrentDoneSQL = `status = CASE WHEN status = 'done' THEN 'done' ELSE 'in-progress' END,
+			 status_changed_at = CASE WHEN status NOT IN ('in-progress', 'done') THEN ? ELSE status_changed_at END`
 
 // bgStopWaitTimeout bounds how long flow waits, after `claude stop`
 // returns, for the session's process to actually exit. claude stop returns

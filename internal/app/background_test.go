@@ -109,6 +109,8 @@ type bgCalls struct {
 	onResume func()
 	// onStop, if set, fires on `claude stop <id>`.
 	onStop func()
+	// onSpawn, if set, fires when a fresh (non --resume) spawn is issued.
+	onSpawn func()
 }
 
 // stubBGCommand swaps claude.BGCommandRunner with a recorder that
@@ -147,6 +149,9 @@ func stubBGCommand(t *testing.T, agentsJSON *string) *bgCalls {
 		}
 		c.spawn++
 		c.lastSpawn = args
+		if c.onSpawn != nil {
+			c.onSpawn()
+		}
 		return []byte(c.spawnBanner), nil
 	}
 	t.Cleanup(func() { claude.BGCommandRunner = old })
@@ -604,5 +609,88 @@ func TestCmdDoBackgroundResumeWithoutTranscriptSpawnsFresh(t *testing.T) {
 	task, _ := flowdb.GetTask(db, "bgt")
 	if task.SessionID.String != newSID {
 		t.Errorf("session_id = %q, want %q", task.SessionID.String, newSID)
+	}
+}
+
+// markDoneNow simulates the spawned/resumed agent running `flow done` on
+// itself before cmdDo records the session (the agent is a separate
+// process that starts working as soon as the harness launches it).
+func markDoneNow(t *testing.T, slug string) {
+	t.Helper()
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET status='done', status_changed_at=? WHERE slug=?`, flowdb.NowISO(), slug); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func taskStatusAndSession(t *testing.T, slug string) (string, string) {
+	t.Helper()
+	var st string
+	var sid sql.NullString
+	if err := openFlowDB(t).QueryRow(`SELECT status, session_id FROM tasks WHERE slug=?`, slug).Scan(&st, &sid); err != nil {
+		t.Fatal(err)
+	}
+	return st, sid.String
+}
+
+// TestCmdDoBackgroundResumeKeepsConcurrentDone: if the resumed agent runs
+// `flow done` before flow records the resume, the record must not reopen
+// the task — it still captures the session id the agent runs under.
+func TestCmdDoBackgroundResumeKeepsConcurrentDone(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv(wakeOffEnv, "1")
+	seedTask(t, "bgt")
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+	if rc := cmdDo([]string{"bgt"}); rc != 0 {
+		t.Fatalf("first cmdDo rc=%d", rc)
+	}
+	writeBoundTranscript(t, "bgt")
+	reg = bgAgentsJSONExited(bgFullSID, "stopped")
+	c.onResume = func() {
+		reg = bgAgentsJSON(bgFullSID)
+		markDoneNow(t, "bgt")
+	}
+	if rc := cmdDo([]string{"bgt"}); rc != 0 {
+		t.Fatalf("resume cmdDo rc=%d", rc)
+	}
+	st, sid := taskStatusAndSession(t, "bgt")
+	if st != "done" {
+		t.Errorf("status = %q, want done (resume record must not reopen a task the agent closed)", st)
+	}
+	if sid != bgFullSID {
+		t.Errorf("session_id = %q, want %q", sid, bgFullSID)
+	}
+}
+
+// TestCmdDoBackgroundFreshSpawnKeepsConcurrentDone: same race on a fresh
+// background spawn. Only reachable with --fresh on a bound task: a
+// never-bound task cannot be marked done (status CHECK needs a session).
+func TestCmdDoBackgroundFreshSpawnKeepsConcurrentDone(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bgt")
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+	if rc := cmdDo([]string{"bgt"}); rc != 0 {
+		t.Fatalf("first cmdDo rc=%d", rc)
+	}
+	reg = bgAgentsJSONExited(bgFullSID, "stopped")
+	c.onSpawn = func() {
+		reg = bgAgentsJSON(bgFullSID)
+		markDoneNow(t, "bgt")
+	}
+	if rc := cmdDo([]string{"--fresh", "bgt"}); rc != 0 {
+		t.Fatalf("cmdDo rc=%d", rc)
+	}
+	st, sid := taskStatusAndSession(t, "bgt")
+	if st != "done" {
+		t.Errorf("status = %q, want done (spawn record must not reopen a task the agent closed)", st)
+	}
+	if sid != bgFullSID {
+		t.Errorf("session_id = %q, want %q", sid, bgFullSID)
 	}
 }
