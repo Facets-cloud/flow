@@ -332,6 +332,18 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
 	}
+	// We minted because the pre-read saw no session; a session here means
+	// another `flow do` bound the task while our probe ran (and is
+	// launching it now). Resuming it would skip the live-session and
+	// auto-run guards above — and ps may not show its process yet — so
+	// refuse; a re-run takes the normal guarded path. --force opts in.
+	if minted != "" && !*fresh && !*force && curSessionID.Valid && curSessionID.String != "" {
+		fmt.Fprintf(os.Stderr,
+			"error: task %q was bound to session %s by another flow do while this one was allocating a session — "+
+				"it is being opened there; re-run flow do %s to switch to it, or pass --force to open another\n",
+			task.Slug, curSessionID.String, task.Slug)
+		return 1
+	}
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
 	if needsBootstrap {
