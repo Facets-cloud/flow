@@ -495,3 +495,23 @@ func TestSkillStartADriverWordingSaysDriverTask(t *testing.T) {
 		}
 	}
 }
+
+// CodeRabbit #181 (SKILL.md:325, major): the already-bound branch opens the
+// driver in a new tab, so the announcement must not say "continuing here"
+// and the Done-when agreement belongs to the new driver session.
+// (SKILL.md:336): Done when the user already supplied is written in step 4.
+func TestSkillStartADriverBindingBranchesAndSuppliedDoneWhen(t *testing.T) {
+	s := sectionOf(t, readSkill(t, "SKILL.md"), "### 4.2 Start a driver")
+	flat := strings.Join(strings.Fields(s), " ")
+	for _, want := range []string{
+		`"Created driver task <name> in project <p>; opened it in a new tab."`,
+		"the new tab's driver session runs step 6 on its first turn",
+		"this session stays on its own task",
+		"Done when the user already stated goes into `## Done when` now",
+		"placeholder only when agreement is still needed",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("§4.2 missing %q", want)
+		}
+	}
+}

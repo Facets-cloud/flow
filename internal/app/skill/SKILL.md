@@ -318,17 +318,21 @@ user path.
 4. **Create.** `flow add task "<short name>" --tag driver --project <p>`
    (auto slug, default priority, no confirm step).
    Read the stub, then Write the driver brief (references/templates.md):
-   `## Goal` (the user's words, verbatim), `## Done when` (*Agree with the
-   user on the first turn.*), `## Context`, `## Decisions`, and keep the
-   `## Role: driver` section flow appended, last.
-5. **Bind + announce.** Unbound session → `flow do --here <slug>` and
-   continue here (no ask). Already bound → `flow do <slug>` (new tab).
-   The announcement is mandatory and must name "driver task", verbatim
-   shape: "Created driver task <name> in project <p>; continuing here."
-   (picked "New project": "Created project <p> and driver task <name>;
-   continuing here."); never say "I've tracked this as a task" or "tracked
-   task", here or in the step 2 question.
-6. **The intake turn ENDS** after you restate the goal, propose Done when
+   `## Goal` (the user's words, verbatim), `## Done when`, `## Context`,
+   `## Decisions`, and keep the `## Role: driver` section flow appended,
+   last. Done when the user already stated goes into `## Done when` now;
+   the *Agree with the user on the first turn.* placeholder only when
+   agreement is still needed.
+5. **Bind + announce.** The announcement is mandatory and must name
+   "driver task". Unbound session → `flow do --here <slug>` (no ask):
+   "Created driver task <name> in project <p>; continuing here." (picked
+   "New project": "Created project <p> and driver task <name>; continuing
+   here."). Already bound → `flow do <slug>`: "Created driver task <name>
+   in project <p>; opened it in a new tab." Then the new tab's driver
+   session runs step 6 on its first turn (its brief carries the goal) and
+   this session stays on its own task; never say "I've tracked this as a
+   task" or "tracked task", here or in the step 2 question.
+6. **The intake turn ENDS** (the driver's session) after you restate the goal, propose Done when
    (concrete, checkable) and close with a numbered "Needs from you:" list.
    No building or implementation in that turn, even when the goal is
    detailed, unless the user already stated Done when. Next turn: write

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"flow/internal/flowdb"
@@ -169,6 +170,21 @@ func ensureDriverRoleSection(slug string) error {
 	if err != nil {
 		return err
 	}
+	// Serialize read→check→append across processes (two healers, e.g. a
+	// `flow do` and a SessionStart hook, must not both append): flock a
+	// sidecar lock file, then (re-)read the brief under the lock.
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	lf, err := os.OpenFile(p+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
 	b, err := os.ReadFile(p)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -196,8 +212,12 @@ func ensureDriverRoleSection(slug string) error {
 	default:
 		sep = "\n\n"
 	}
+	beforeRoleAppend()
 	return appendToFile(p, closer+sep+driverRoleSection)
 }
+
+// beforeRoleAppend is a test seam between the Role check and the append.
+var beforeRoleAppend = func() {}
 
 func appendToFile(p, text string) error {
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
