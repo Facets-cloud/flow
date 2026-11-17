@@ -431,6 +431,10 @@ func cmdHookStop(args []string) int {
 	if t == nil {
 		return 0
 	}
+	// Keep flow's harness-agnostic transcript copy current: append this
+	// turn's new records from the saved offset. Best-effort — it never
+	// fails or blocks the turn (swallowed + logged).
+	captureTranscriptSafe(t)
 	slug := t.Slug
 	if !isAutoRunSession(t) {
 		_ = flowdb.SetSessionState(db, slug, flowdb.SessionIdle, time.Now())

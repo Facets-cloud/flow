@@ -46,6 +46,9 @@ flow/
 │   │   ├── show.go                  # flow show task|project
 │   │   ├── skill.go                 # flow skill install|uninstall|update
 │   │   ├── transcript.go            # flow transcript — session jsonl reader
+│   │   ├── recall.go                # flow recall — lookback CLI (bound/slug/text/--prompt, train, eval)
+│   │   ├── recallindex.go           # read-only flow.db scan + fingerprint + hydrate for recall
+│   │   ├── matchcache.go            # on-disk per-task index cache ($FLOW_ROOT/match/)
 │   │   ├── waiting.go               # flow waiting
 │   │   ├── workdir.go               # flow workdir
 │   │   ├── bootstrap.go             # UUID gen, session file scanning
@@ -57,6 +60,17 @@ flow/
 │   ├── flowdb/                      # SQLite data layer
 │   │   ├── db.go                    # schema, models, CRUD queries
 │   │   └── db_test.go
+│   ├── match/                       # recall ranking engine (see doc.go for the pipeline)
+│   │   ├── doc.go                   # package doc — the L0-L4 pipeline + ASCII diagram
+│   │   ├── pairs.go                 # QueryRec / Pair / PairSet scoring primitives
+│   │   ├── model.go                 # BM25/cosine term index (the shipped index)
+│   │   ├── lsa.go / lsa_scorer.go   # LSA latent space + the bm25+0.25lsa fusion scorer
+│   │   ├── idcard.go                # identity-card precision signal (fused into L2)
+│   │   ├── related.go / prompt.go   # the L0-L4 pipeline: slug, free-text and prompt modes
+│   │   ├── confidence.go            # L3 calibrated confidence model (strong/possible cut)
+│   │   ├── calibrate.go             # train --calibrate: refit the confidence model on user links
+│   │   ├── lookback.go / *_report.go# the held-out eval behind `flow recall eval`
+│   │   └── text.go                  # tokenization + prompt cleaning
 │   ├── iterm/                       # iTerm2 tab spawning
 │   │   └── iterm.go
 │   ├── terminal/                    # macOS Terminal.app tab spawning
@@ -79,6 +93,7 @@ flow/
 
 - **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `flowdb` and `spawner`.
 - **`internal/flowdb`** — schema DDL, model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, migrations. All DB access via `database/sql` + `modernc.org/sqlite`.
+- **`internal/match`** — the `flow recall` ranking engine: a layered lookback pipeline (L0 filters → L1 candidates → L2 `bm25+0.25lsa+card` re-rank → L3 calibrated confidence → L4 one-liners) learned from the user's own flow history. Reads flow state read-only (via `internal/app`'s scan/hydrate); the only writes are the on-disk index cache and the per-user calibration under `$FLOW_ROOT/match/`. Pure Go, no network. The pipeline and the kept/dropped experiment ledger are documented in `internal/match/doc.go` and `docs/recall.md`. Only the shipped path lives here; every experiment that lost stays on the `exp/*` branches.
 - **`internal/spawner`** — picks a terminal backend at runtime (`$ZELLIJ` > `$FLOW_TERM` > `$TERM_PROGRAM` > historical iTerm default) and forwards `SpawnTab` to it. Exposes `Override` for test pinning.
 - **`internal/iterm`** — osascript-based iTerm2 tab spawning. Exposes `iterm.Runner` for test mocking.
 - **`internal/terminal`** — osascript-based macOS Terminal.app tab spawning. Requires Accessibility for the cmd-T keystroke via System Events.

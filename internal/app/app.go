@@ -92,8 +92,12 @@ func runCommand(cmd string, rest []string) int {
 		return cmdSkill(rest)
 	case "transcript":
 		return cmdTranscript(rest)
+	case "config":
+		return cmdConfig(rest)
 	case "stats":
 		return cmdStats(rest)
+	case "recall":
+		return cmdRecall(rest)
 	case "hook":
 		return cmdHook(rest)
 	case "message", "msg":
@@ -149,11 +153,17 @@ Sessions:
 Read:
   flow show task       [<ref>]
   flow show project    [<ref>]
-  flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
+  flow transcript      [<ref>] [--compact]           (readable transcript; flow's own copy when the harness's is gone)
+  flow transcript backfill [--all|<ref>] [--dry-run] (seed flow's transcript copies from surviving harness transcripts)
+  flow transcript purge    [<ref>|--all]             (delete flow's transcript copies — harness transcripts untouched)
+  flow config get|set|list <key> [<value>]           (settings in $FLOW_ROOT/settings.json; e.g. transcripts.copy off)
   flow stats           [--since all|<N>d] [--project <slug>] [--card] [--out <path>]
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
   flow list tags                                            (every tag in use, with per-tag task counts)
+  flow recall          [<task-slug> | "<free text>"] [--prompt "<text>"] [--k N] [--min P] [--json]
+                                                            (related past work, from your own flow history; see flow recall --help)
+  flow recall train    [--calibrate]                        (rebuild the recall index; --calibrate refits the confidence model)
 
 Edit / mutate:
   flow edit        <ref>

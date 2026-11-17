@@ -522,3 +522,11 @@ type SessionLocator interface {
 	// start directory can't be established from the transcript.
 	LocateSession(sessionID string) (cwd string, found bool)
 }
+
+// TranscriptPather is an optional capability: report the on-disk path of
+// a session's transcript without decoding it. `flow match update` stats
+// the file to detect sessions that grew since the last train, so only
+// changed tasks are re-read and re-indexed.
+type TranscriptPather interface {
+	TranscriptPath(cwd, sessionID string) (string, error)
+}

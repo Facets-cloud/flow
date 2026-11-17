@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"flow/internal/flowdb"
 	"fmt"
 	"os"
@@ -13,6 +14,16 @@ import (
 // schema (claude jsonl, codex event log, gemini single-object json).
 // The harness writes a normalized human-readable form to stdout.
 func cmdTranscript(args []string) int {
+	// Management subcommands come before the read path.
+	if len(args) > 0 {
+		switch args[0] {
+		case "backfill":
+			return cmdTranscriptBackfill(args[1:])
+		case "purge":
+			return cmdTranscriptPurge(args[1:])
+		}
+	}
+
 	// Positional arg first, then flags (same pattern as cmdDo).
 	ref := ""
 	flagArgs := args
@@ -80,15 +91,29 @@ func cmdTranscript(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if err := h.RenderTranscript(task.WorkDir, task.SessionID.String, *compact, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		fmt.Fprintf(os.Stderr,
-			"hint: flow assumed the harness was started at work_dir=%q. "+
-				"if the session was actually started elsewhere (e.g. an older `flow do --here` bind), "+
-				"the transcript lives under that other directory. release the session and re-bind from "+
-				"the correct cwd to fix the row.\n",
-			task.WorkDir)
-		return 1
+	// Prefer the harness's own transcript when it is still on disk — it is
+	// authoritative and may hold the live turn the flow copy's Stop-hook
+	// capture hasn't appended yet. Fall back to flow's harness-agnostic copy
+	// when the harness has deleted/rotated its transcript (the gap this
+	// store exists to close).
+	var buf bytes.Buffer
+	if err := h.RenderTranscript(task.WorkDir, task.SessionID.String, *compact, &buf); err == nil {
+		os.Stdout.Write(buf.Bytes())
+		return 0
 	}
-	return 0
+	if copyPath, ok := flowCopyPathForTask(task); ok {
+		var fbuf bytes.Buffer
+		if rerr := renderFlowCopy(copyPath, *compact, &fbuf); rerr == nil {
+			os.Stdout.Write(fbuf.Bytes())
+			return 0
+		}
+	}
+	fmt.Fprintf(os.Stderr, "error: no transcript found for %q (harness transcript gone and no flow copy)\n", task.Slug)
+	fmt.Fprintf(os.Stderr,
+		"hint: flow assumed the harness was started at work_dir=%q. "+
+			"if the session was actually started elsewhere (e.g. an older `flow do --here` bind), "+
+			"the transcript lives under that other directory. a `flow transcript backfill` while the "+
+			"harness transcript still exists would have seeded a flow copy.\n",
+		task.WorkDir)
+	return 1
 }

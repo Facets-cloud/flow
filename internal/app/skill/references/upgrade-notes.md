@@ -11,6 +11,39 @@
 
 ## Unreleased
 
+- **Progress-note nudge.** In a bound, human-driven session the existing
+  `UserPromptSubmit` hook now injects one extra line once you've gone a
+  base number of user turns (default 15) since the task's last progress
+  note, then again at each compounding step (15, 18, 22, 26, 32, …). When
+  you see a `flow:` line saying *N turns since the last progress note*,
+  treat it as a §4.5 trigger: offer to save a note via AskUserQuestion —
+  never write one silently. Writing a note resets the count. Auto runs and
+  unbound sessions never see it. Tunables (`nudge.notes.enabled`,
+  `base_turns`, `step`, per-task override) and `flow config get/list` now
+  showing documented keys with their defaults: `docs/settings.md`.
+
+- **Flow keeps its own transcript copy.** Flow now captures a normalized
+  copy of each task's session transcript (one schema for every harness) via
+  the existing Stop/UserPromptSubmit hooks, under
+  `~/.flow/tasks/<slug>/transcripts/`, so recall and `flow transcript` no
+  longer depend on harness retention. It is **on by default** (the full
+  transcript). The user opts out with `flow config set transcripts.copy off`
+  (global) or `transcripts.tasks.<slug>.copy off` (per task), seeds older
+  history with `flow transcript backfill`, and deletes copies with `flow
+  transcript purge`. When surfacing the privacy note (KB §4.10 guardrail 6),
+  include `tasks/*/transcripts/` alongside `kb/`. Details: `docs/transcripts.md`.
+
+- **`flow recall` — surface the user's relevant past work.** The lookback
+  ranker is now a first-class command: `flow recall` (bound task), `flow
+  recall <slug>`, `flow recall "<free text>"`, and `flow recall [<slug>]
+  --prompt "<text>"`, each returning a short **strong**/**possible** list
+  from the user's own history. Use it at task start, before building
+  something that may already exist, and on intake to catch duplicates —
+  treat every hit as evidence (open it with `flow show task <slug>`), never
+  act blind. New skill workflow: §4.20 → references/recall.md. `flow recall
+  train [--calibrate]` rebuilds/retunes the index; `flow recall eval` is
+  dev-only. The old experimental `flow match` command has been removed.
+
 ## v0.1.0-alpha.38
 
 - **Mail reaches you automatically (harness wake).** flow now pushes a
