@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -161,6 +162,20 @@ func captureTranscript(t *flowdb.Task) (addedRecords int, addedBytes int64, err 
 		return 0, 0, nil
 	}
 
+	// The first capture of a very large source must never read it from byte 0
+	// inside the hook: a live task whose harness transcript is already
+	// hundreds of MB (e.g. the first Stop after a flow upgrade) would stall
+	// the turn for seconds. Seed the copy at EOF instead — an empty copy whose
+	// saved offset is the current tail — so the hook stays O(1); later
+	// captures append only the bytes that arrive after the seed, and
+	// `flow transcript backfill` re-reads the whole source on demand to
+	// recover the pre-seed history. (Only the fresh-copy case: a rotation or
+	// an existing small copy still takes the normal rebuild/incremental path.)
+	if st == nil && size > transcriptHookEOFThreshold() {
+		n, err := seedFlowCopyAtEOF(sourcePath, copyPath, statePath, size, inode)
+		return n, size, err
+	}
+
 	isGz := strings.HasSuffix(sourcePath, ".gz")
 	rebuild := isGz || st == nil || st.SourcePath != sourcePath || st.SourceInode != inode || st.Offset > size
 
@@ -251,6 +266,80 @@ func rebuildFlowCopy(norm harness.TranscriptNormalizer, hName, sid, sourcePath, 
 		return len(recs), err
 	}
 	return len(recs), nil
+}
+
+// transcriptHookEOFThreshold is the source size above which the FIRST hook
+// capture seeds the copy at EOF instead of reading the whole file (point 3:
+// the Stop/UserPromptSubmit capture must never read a large source from byte
+// 0). Default 8 MiB; overridable via $FLOW_TRANSCRIPT_HOOK_EOF_BYTES (an env
+// var, so it stays out of settings.json and its validation surface) for tests
+// and tuning.
+func transcriptHookEOFThreshold() int64 {
+	const def = 8 << 20 // 8 MiB
+	if v := os.Getenv("FLOW_TRANSCRIPT_HOOK_EOF_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+// seedFlowCopyAtEOF creates an empty copy and records a capture state whose
+// offset is the source's current tail, so subsequent captures append only
+// the bytes that arrive afterwards. It reads only a small window at the end
+// of the source to land the offset on a complete-line boundary (so the first
+// incremental read does not begin mid-record); it never reads the whole file.
+// The pre-seed history is left for `flow transcript backfill`.
+func seedFlowCopyAtEOF(sourcePath, copyPath, statePath string, size int64, inode uint64) (int, error) {
+	offset := eofLineBoundary(sourcePath, size)
+	// Create (truncate) an empty copy so the copy "exists" for readers and
+	// later appends open it in append mode.
+	f, err := os.Create(copyPath)
+	if err != nil {
+		return 0, err
+	}
+	if err := f.Close(); err != nil {
+		return 0, err
+	}
+	st := &captureState{
+		SourcePath: sourcePath, SourceSize: size, SourceInode: inode,
+		Offset: offset, Turn: 0, Records: 0,
+	}
+	return 0, saveCaptureState(statePath, st)
+}
+
+// eofLineBoundary returns the byte offset just past the last newline at or
+// before size, scanning only a bounded tail window (never the whole file).
+// Falls back to size when no newline is found in the window or on any read
+// error — one partial record may then be skipped by the next capture, which
+// is harmless.
+func eofLineBoundary(sourcePath string, size int64) int64 {
+	const window = 1 << 20 // 1 MiB tail
+	if size <= 0 {
+		return 0
+	}
+	start := size - window
+	if start < 0 {
+		start = 0
+	}
+	f, err := os.Open(sourcePath)
+	if err != nil {
+		return size
+	}
+	defer f.Close()
+	if _, err := f.Seek(start, 0); err != nil {
+		return size
+	}
+	buf := make([]byte, size-start)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return size
+	}
+	buf = buf[:n]
+	if idx := bytes.LastIndexByte(buf, '\n'); idx >= 0 {
+		return start + int64(idx) + 1
+	}
+	return size
 }
 
 // captureIncremental reads the source from st.Offset to its current size,

@@ -143,13 +143,57 @@ are admitted only through the identifier shape.
 
 A live corpus is always drifting — an active session's transcript keeps
 growing — so the index is cached to disk and keyed **per task** by a
-stat-based fingerprint (`$FLOW_ROOT/match/lookback-cache.gob`). Every recall
-call re-hydrates only the tasks that actually changed, folds them into the
-existing LSA space (no SVD refit), and updates the term index in place; the
-expensive SVD is re-fit only when enough has drifted. The first-ever call
-builds the whole index (printing `building index…` on stderr); `flow recall
-train` forces a full rebuild. Warm calls are well under a second (cold is
-~12 s).
+stat-based fingerprint. The cache is split so that a warm call only ever
+rewrites the tasks that changed, never the whole corpus:
+
+- **`$FLOW_ROOT/match/lookback-cache.gob`** — the *base* index (slim task
+  list, term index, fitted LSA space, identity-card index). It is written
+  **only** by a full build / `flow recall train` — never by a warm recall
+  call.
+- **`$FLOW_ROOT/match/tasks/<slug>.gob`** — a *per-task delta*: one task that
+  changed since the base was written, as a vocabulary-independent snapshot
+  that re-applies to the base on load (exact BM25/DF via `Model.ApplyEntry`).
+- **`$FLOW_ROOT/match/manifest.json`** — a tiny index of which tasks have a
+  delta (slug → fingerprint) and which base tasks were removed.
+
+A warm call loads the base once, folds in the deltas (fold-in on the existing
+basis — **never** an SVD refit), then re-hydrates only the tasks whose
+fingerprint drifted and writes just their per-task delta plus the manifest. A
+growing active-task transcript is detected by a cheap `stat` and re-indexed
+from its brief and notes **without reading the transcript** (its prompt index
+is kept from the base — a live task is almost always the query task, excluded
+from its own candidates, so slightly stale prompts don't change which *past*
+tasks rank). The first-ever call builds the whole index (printing `building
+index…` on stderr).
+
+**Refits happen only in `flow recall train`.** An interactive recall call
+never re-fits the SVD and never rewrites the base; it only folds in and writes
+deltas. The base is kept fresh by a **background train**: the existing
+SessionStart hook opportunistically launches a fully-detached, niced,
+single-flight `flow recall train` when the base is older than
+`recall.train_interval` (default `24h`) **and** something changed since — it
+returns immediately, logs to `$FLOW_ROOT/match/train.log`, and never surfaces
+an error. It is skipped inside headless auto runs, and can be disabled with
+`FLOW_NO_BG_TRAIN=1`. No new hook and no hook command-string change.
+
+### Scale (benchmark: `FLOW_BENCH=1 go test -run TestRecallScaleBench`)
+
+A synthetic generator stands up 2,500 tasks (briefs, notes, transcripts —
+including one ~600 MB "live" transcript) under a temp `FLOW_ROOT`. On that
+corpus (Apple Silicon, seed 42):
+
+| phase                         | time     |
+|-------------------------------|----------|
+| cold build (first run)        | ~13.9 s  |
+| warm, no change               | ~0.27 s  |
+| warm, 1 task changed          | ~0.23 s  |
+| warm, live transcript grew    | ~0.23 s  |
+
+Peak process RSS is ~2.4 GB during the cold build (it reads the 600 MB
+transcript and fits the SVD); warm calls run in a fresh process at a small
+fraction of that. The warm-with-growing-live number is the load-bearing one:
+it stays flat as the 600 MB transcript grows, i.e. **no call scales with total
+transcript bytes**. On the real ~500-task history warm calls are tens of ms.
 
 ## Memory
 

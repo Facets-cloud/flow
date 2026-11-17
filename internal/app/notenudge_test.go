@@ -322,6 +322,55 @@ func TestCountUserTurnsSinceFiltersAndRespectsBoundary(t *testing.T) {
 	}
 }
 
+// TestCountUserTurnsFromIncremental checks the incremental counter reads only
+// the appended bytes on the second call and advances its offset (point 6).
+func TestCountUserTurnsFromIncremental(t *testing.T) {
+	setupFlowRoot(t)
+	const sid = "77777777-7777-4777-8777-777777777777"
+	ref := time.Now().Add(-30 * time.Minute)
+	after := ref.Add(5 * time.Minute).Format(time.RFC3339)
+	recs := []harness.NormalizedRecord{
+		{Role: harness.RoleUser, TS: after, Text: "u1"},
+		{Role: harness.RoleAssistant, TS: after, Text: "a"},
+		{Role: harness.RoleUser, TS: after, Text: "u2"},
+	}
+	writeCopyRecords(t, "inc-count", sid, recs)
+	copyPath, _, _ := flowCopyPaths("inc-count", "claude", sid)
+
+	added, off, reset := countUserTurnsFrom(copyPath, ref, 0)
+	if added != 2 || reset {
+		t.Fatalf("first pass: added=%d reset=%v, want 2,false", added, reset)
+	}
+	if off <= 0 {
+		t.Fatalf("offset did not advance: %d", off)
+	}
+
+	// No new bytes → nothing more to count, offset unchanged.
+	if a2, o2, _ := countUserTurnsFrom(copyPath, ref, off); a2 != 0 || o2 != off {
+		t.Fatalf("no-change pass: added=%d off=%d, want 0,%d", a2, o2, off)
+	}
+
+	// Append two more user turns; the incremental pass reads only those.
+	recs = append(recs,
+		harness.NormalizedRecord{Role: harness.RoleUser, TS: after, Text: "u3"},
+		harness.NormalizedRecord{Role: harness.RoleUser, TS: after, Injected: true, Text: "wake"},
+		harness.NormalizedRecord{Role: harness.RoleUser, TS: after, Text: "u4"},
+	)
+	writeCopyRecords(t, "inc-count", sid, recs)
+	a3, o3, _ := countUserTurnsFrom(copyPath, ref, off)
+	if a3 != 2 { // u3 and u4; the injected one is skipped
+		t.Fatalf("incremental pass: added=%d, want 2", a3)
+	}
+	if o3 <= off {
+		t.Fatalf("offset did not advance on append: %d <= %d", o3, off)
+	}
+
+	// A smaller copy than the saved offset (rebuild) signals a reset.
+	if _, _, reset := countUserTurnsFrom(copyPath, ref, o3+1_000_000); !reset {
+		t.Fatal("offset past EOF should signal reset")
+	}
+}
+
 // ---------- primary (transcript copy) path end to end ----------
 
 func TestNoteNudgePrimaryCopyPath(t *testing.T) {

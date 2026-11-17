@@ -25,7 +25,7 @@ func Run(args []string) int {
 	// and `--version` — those manage the skill themselves or need to
 	// run before any install state exists. See maybeAutoUpgradeSkill.
 	switch cmd {
-	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec", "__owner-tick", selfUpgradeArg:
+	case "init", "skill", "--version", "-v", "version", "-h", "--help", "help", "__auto-exec", "__owner-tick", "__recall-train-bg", selfUpgradeArg:
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
@@ -62,6 +62,10 @@ func runCommand(cmd string, rest []string) int {
 		// Hidden: the detached owner-tick supervisor. Invoked only by
 		// ownerTickLauncher (via `flow owner tick-due`).
 		return cmdOwnerTick(rest)
+	case "__recall-train-bg":
+		// Hidden: the detached background recall-index trainer. Invoked only
+		// by the SessionStart hook via maybeLaunchBackgroundTrain.
+		return cmdRecallTrainBG()
 	case selfUpgradeArg:
 		// Hidden: the detached automatic upgrade. Invoked only by
 		// startDetachedSelfUpgrade.

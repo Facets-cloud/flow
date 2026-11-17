@@ -123,6 +123,11 @@ func cmdHookSessionStart(args []string) int {
 	// silently so the prompt/tool hooks don't announce an upgrade.
 	recordSessionVersion()
 
+	// Opportunistically refresh the recall index in a fully-detached, niced,
+	// single-flight background train (only if stale AND something changed).
+	// Returns immediately; never blocks or surfaces errors.
+	maybeLaunchBackgroundTrain()
+
 	bound := lookupBoundTask()
 	if bound != nil && !isAutoRunSession(bound) {
 		markSessionState(bound.Slug, flowdb.SessionIdle)

@@ -51,6 +51,14 @@ type noteNudgeState struct {
 	// Fallback is the user-turn counter used ONLY when the transcript copy
 	// is off: incremented once per human prompt since Reference.
 	Fallback int `json:"fallback"`
+	// Offset and Count make the primary (copy) path incremental: Offset is
+	// the byte of the copy the counter has consumed, and Count is the running
+	// count of qualifying user turns since Reference. Each prompt reads ONLY
+	// the bytes appended since Offset rather than rescanning the whole copy.
+	// Both reset to 0 with Reference (a new note) and self-heal if the copy is
+	// rebuilt smaller than Offset.
+	Offset int64 `json:"offset"`
+	Count  int   `json:"count"`
 }
 
 // noteNudgeConfig reads the nudge settings with their documented defaults.
@@ -197,21 +205,50 @@ type minRecord struct {
 }
 
 // countUserTurnsSince counts genuine (non-injected) user records in the
-// flow transcript copy whose timestamp is after since. A missing copy or a
-// read error yields 0. An unparseable timestamp counts the record (never
-// lose a turn to a formatting quirk). It streams the file line by line and
-// skips non-user lines via roleUserMarker, so it stays fast on large copies.
+// flow transcript copy whose timestamp is after since, scanning the WHOLE
+// copy. Retained for callers that want a one-shot count; the nudge itself
+// uses the incremental countUserTurnsFrom.
 func countUserTurnsSince(copyPath string, since time.Time) int {
+	n, _, _ := countUserTurnsFrom(copyPath, since, 0)
+	return n
+}
+
+// countUserTurnsFrom counts genuine (non-injected) user records whose
+// timestamp is after since, reading the copy ONLY from byte fromOffset
+// through the last complete (newline-terminated) line — so a per-prompt call
+// touches just the bytes appended since the previous one, not the whole copy
+// (point 6 of the review: the nudge must not rescan a large copy every
+// prompt). It returns the count found in that window and the new offset (just
+// past the last complete line). reset is true when fromOffset is past EOF
+// (the copy was rebuilt/truncated), signalling the caller to recount from 0.
+// A missing copy or read error yields (0, fromOffset, false). An unparseable
+// timestamp counts the record (never lose a turn to a formatting quirk).
+func countUserTurnsFrom(copyPath string, since time.Time, fromOffset int64) (added int, newOffset int64, reset bool) {
 	f, err := os.Open(copyPath)
 	if err != nil {
-		return 0
+		return 0, fromOffset, false
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	n := 0
-	for sc.Scan() {
-		line := sc.Bytes()
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, fromOffset, false
+	}
+	if fromOffset > fi.Size() {
+		return 0, 0, true // copy shrank/rebuilt — caller recounts from 0
+	}
+	if fromOffset > 0 {
+		if _, err := f.Seek(fromOffset, 0); err != nil {
+			return 0, fromOffset, false
+		}
+	}
+	br := bufio.NewReaderSize(f, 64*1024)
+	consumed := fromOffset
+	for {
+		line, err := br.ReadBytes('\n')
+		if err != nil {
+			break // no trailing newline: leave the partial line for next time
+		}
+		consumed += int64(len(line))
 		if !bytes.Contains(line, roleUserMarker) {
 			continue
 		}
@@ -222,16 +259,11 @@ func countUserTurnsSince(copyPath string, since time.Time) int {
 		if r.Role != harness.RoleUser || r.Injected {
 			continue
 		}
-		ts, err := time.Parse(time.RFC3339, r.TS)
-		if err != nil {
-			n++
-			continue
-		}
-		if ts.After(since) {
-			n++
+		if ts, perr := time.Parse(time.RFC3339, r.TS); perr != nil || ts.After(since) {
+			added++
 		}
 	}
-	return n
+	return added, consumed, false
 }
 
 // noteNudgeContext returns the one-line nudge to append to the bound
@@ -263,18 +295,28 @@ func noteNudgeContext(t *flowdb.Task) string {
 	ref := noteNudgeReference(t)
 	refKey := ref.Format(time.RFC3339Nano)
 	if st.Reference != refKey {
-		// A new note (or the first prompt): reset both counters.
+		// A new note (or the first prompt): reset every counter.
 		st.Reference = refKey
 		st.LastFired = 0
 		st.Fallback = 0
+		st.Offset = 0
+		st.Count = 0
 	}
 
 	var count int
 	if transcriptsCopyEnabled(t.Slug) {
 		// Primary path: the UserPromptSubmit capture already appended this
 		// turn's prompt to the copy, so counting it includes the current turn.
+		// Incremental: read only the bytes appended since the last prompt.
 		if copyPath, _, perr := flowCopyPaths(t.Slug, taskHarnessName(t), t.SessionID.String); perr == nil {
-			count = countUserTurnsSince(copyPath, ref)
+			added, newOff, reset := countUserTurnsFrom(copyPath, ref, st.Offset)
+			if reset {
+				st.Count, st.Offset = 0, 0
+				added, newOff, _ = countUserTurnsFrom(copyPath, ref, 0)
+			}
+			st.Count += added
+			st.Offset = newOff
+			count = st.Count
 		}
 	} else {
 		// Fallback path (copy disabled): self-count one turn per human prompt.

@@ -132,6 +132,80 @@ func TestCapturePartialLineDeferred(t *testing.T) {
 	}
 }
 
+// TestCaptureLargeSourceSeedsAtEOF verifies point 3: the first capture of a
+// source above the hook threshold does NOT read it from byte 0 — it seeds the
+// copy at EOF (empty copy, offset at the tail) and only later turns are
+// captured incrementally. The pre-seed history is recoverable via backfill.
+func TestCaptureLargeSourceSeedsAtEOF(t *testing.T) {
+	initTempFlowRoot(t)
+	t.Setenv("FLOW_TRANSCRIPT_HOOK_EOF_BYTES", "200") // tiny threshold for the test
+	wd := t.TempDir()
+	task := transcriptTask("big", wd, "sid-big")
+
+	// A source already larger than the threshold at first sight.
+	big := line1 + line2 + line3
+	for len(big) < 400 {
+		big += line2
+	}
+	writeClaudeJSONL(t, wd, "sid-big", big)
+
+	n, _, err := captureTranscript(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("first capture of a large source: got %d records, want 0 (seeded at EOF)", n)
+	}
+	// The copy exists but is empty (no pre-seed history read in the hook).
+	if recs := copyRecords(t, "big", "sid-big"); len(recs) != 0 {
+		t.Fatalf("seeded copy should be empty, has %d records", len(recs))
+	}
+
+	// A NEW turn appended after the seed is captured incrementally.
+	writeClaudeJSONL(t, wd, "sid-big", big+`{"type":"user","timestamp":"2026-11-17T11:00:00Z","message":{"role":"user","content":"after seed"}}`+"\n")
+	n, _, err = captureTranscript(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("post-seed capture: got %d records, want 1", n)
+	}
+	recs := copyRecords(t, "big", "sid-big")
+	if countRole(recs, harness.RoleUser, "after seed") != 1 {
+		t.Fatalf("post-seed prompt not captured: %+v", recs)
+	}
+	if countRole(recs, harness.RoleUser, "first prompt") != 0 {
+		t.Fatalf("pre-seed history must NOT be read in the hook: %+v", recs)
+	}
+
+	// `flow transcript backfill` re-reads the whole source and recovers the
+	// pre-seed history.
+	if _, _, _, err := backfillOne(task, false); err != nil {
+		t.Fatal(err)
+	}
+	recs = copyRecords(t, "big", "sid-big")
+	if countRole(recs, harness.RoleUser, "first prompt") != 1 {
+		t.Fatalf("backfill should recover pre-seed history: %+v", recs)
+	}
+}
+
+// TestCaptureSmallSourceReadsFromZero confirms the EOF fast path only triggers
+// above the threshold: a small first source is still fully captured.
+func TestCaptureSmallSourceReadsFromZero(t *testing.T) {
+	initTempFlowRoot(t)
+	t.Setenv("FLOW_TRANSCRIPT_HOOK_EOF_BYTES", "100000000") // 100 MB — never hit here
+	wd := t.TempDir()
+	task := transcriptTask("small", wd, "sid-small")
+	writeClaudeJSONL(t, wd, "sid-small", line1+line2+line3)
+	n, _, err := captureTranscript(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("small first capture: got %d records, want 3", n)
+	}
+}
+
 func TestCaptureTruncationRebuilds(t *testing.T) {
 	initTempFlowRoot(t)
 	wd := t.TempDir()

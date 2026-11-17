@@ -53,13 +53,3 @@ func TestLookbackCacheRoundTrip(t *testing.T) {
 		t.Fatal("space lost points after round-trip/reindex")
 	}
 }
-
-// TestMaxChurnRefitThreshold documents the fold-in vs refit boundary.
-func TestMaxChurnRefitThreshold(t *testing.T) {
-	if maxChurn(10) != lsaRefitFloor {
-		t.Fatalf("small corpus churn floor = %d", maxChurn(10))
-	}
-	if maxChurn(1000) != 200 {
-		t.Fatalf("large corpus churn = %d, want 200", maxChurn(1000))
-	}
-}
