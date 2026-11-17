@@ -115,6 +115,20 @@ func CleanPrompt(raw string) (string, bool) {
 	return s, true
 }
 
+// IsInjectedPrompt reports whether a raw user turn is entirely harness/flow
+// boilerplate — a hook-context block, a skill body, a <task-notification>, a
+// bus delivery, a bootstrap prompt — rather than genuine human input. It is
+// the inverse of CleanPrompt's ok and shares the same dropPrefixes list, so
+// recall and the transcript store agree on what counts as a real user turn
+// from a SINGLE source of truth. A turn that merely carries an injected
+// block alongside real typed text (e.g. a system-reminder prepended to a
+// genuine prompt) is NOT injected: CleanPrompt strips the block and keeps the
+// text, so it still counts as a user turn.
+func IsInjectedPrompt(raw string) bool {
+	_, ok := CleanPrompt(raw)
+	return !ok
+}
+
 // userHeader is the section label every harness renderer (claude, codex,
 // prx) emits for a user turn in RenderTranscript's normalized output.
 const userHeader = "─── User ───"

@@ -11,18 +11,30 @@ flow config set <key> <value>  # set one value (on/off/yes/no, ints and floats c
 flow config list               # print the whole file
 ```
 
-A malformed file is treated as all-defaults, so a hand-edit typo can never
-wedge capture or the hooks.
+Keys and values are **validated**: an unknown key is refused with a "did you
+mean" hint (e.g. `transcript.copy` → `transcripts.copy`), and a value of the
+wrong type (a string where a bool is wanted, say) is rejected. A per-task key
+`X.tasks.<slug>.Y` is accepted whenever its global `X.Y` is a known setting.
+
+For read-only display (`get`/`list`) a malformed file is treated as
+all-defaults so a hand-edit typo can never wedge the hooks. But `flow config
+set` **refuses** to overwrite a malformed `settings.json` (which would drop
+every other key) — fix or delete the file first. Privacy-sensitive readers
+(transcript copy) **fail closed**: a malformed file disables copying rather
+than assuming a permissive default.
 
 ## Transcript copy
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `transcripts.copy` | `true` | Keep flow's own copy of each task transcript. |
+| `transcripts.copy` | `false` | Keep flow's own copy of each task transcript (opt-in). |
 | `transcripts.tasks.<slug>.copy` | — | Per-task override of the above. |
-| `transcripts.max_tool_result_bytes` | `0` | Per-record cap on tool-result text (`0` = unlimited). |
+| `transcripts.max_tool_result_bytes` | `16384` | Per-record cap on tool-result text (`0` = unlimited). |
+| `transcripts.retention_days` | `0` | Prune copies older than N days on backfill/purge (`0` = keep forever). |
 
-See [transcripts.md](transcripts.md) for the full store.
+Copying is **off by default**; enabling it prints a one-time notice and
+writes private `0600` copies in `0700` dirs. See
+[transcripts.md](transcripts.md) for the full store.
 
 ## Progress-note nudge
 

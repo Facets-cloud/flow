@@ -1,3 +1,5 @@
+//go:build recalleval
+
 package match
 
 import (

@@ -51,6 +51,40 @@ type captureState struct {
 	PendingPrompt string `json:"pending_prompt,omitempty"`
 }
 
+// Flow's transcript copies can hold a full session's prompts, tool output and
+// model text, so they are kept private: 0600 files inside 0700 dirs. Copies
+// written by an older flow (0644/0755) are tightened on the next write.
+const (
+	transcriptFileMode = 0o600
+	transcriptDirMode  = 0o700
+)
+
+// secureMkdirAll creates dir (and parents) 0700.
+func secureMkdirAll(dir string) error {
+	return os.MkdirAll(dir, transcriptDirMode)
+}
+
+// secureAppendFile opens path for append, creating it 0600, and tightens the
+// mode of a pre-existing copy (e.g. a 0644 file from an older flow) to 0600.
+func secureAppendFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, transcriptFileMode)
+	if err != nil {
+		return nil, err
+	}
+	_ = os.Chmod(path, transcriptFileMode)
+	return f, nil
+}
+
+// secureCreateFile truncates/creates path 0600 for a full (atomic) rewrite.
+func secureCreateFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, transcriptFileMode)
+	if err != nil {
+		return nil, err
+	}
+	_ = os.Chmod(path, transcriptFileMode)
+	return f, nil
+}
+
 // taskTranscriptsDir is $FLOW_ROOT/tasks/<slug>/transcripts.
 func taskTranscriptsDir(slug string) (string, error) {
 	root, err := flowRoot()
@@ -96,7 +130,7 @@ func saveCaptureState(path string, st *captureState) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, transcriptFileMode); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -151,7 +185,7 @@ func captureTranscript(t *flowdb.Task) (addedRecords int, addedBytes int64, err 
 	if err != nil {
 		return 0, 0, err
 	}
-	if err := os.MkdirAll(filepath.Dir(copyPath), 0o755); err != nil {
+	if err := secureMkdirAll(filepath.Dir(copyPath)); err != nil {
 		return 0, 0, err
 	}
 	st := loadCaptureState(statePath)
@@ -221,7 +255,7 @@ func rebuildFlowCopy(norm harness.TranscriptNormalizer, hName, sid, sourcePath, 
 	turn := assignTurns(recs, 0)
 
 	tmp := copyPath + ".tmp"
-	out, err := os.Create(tmp)
+	out, err := secureCreateFile(tmp)
 	if err != nil {
 		return 0, err
 	}
@@ -299,7 +333,7 @@ func captureIncremental(norm harness.TranscriptNormalizer, hName, sid, sourcePat
 	startTurn := st.Turn
 	turn := assignTurnsSkippingFirstPending(recs, startTurn)
 
-	f2, err := os.OpenFile(copyPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f2, err := secureAppendFile(copyPath)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -357,7 +391,7 @@ func stampRecords(recs []harness.NormalizedRecord, hName, sid string) {
 		if recs[i].TS == "" {
 			recs[i].TS = now
 		}
-		if !recs[i].Injected && isInjectedText(recs[i].Text) {
+		if !recs[i].Injected && isInjectedRecord(recs[i]) {
 			recs[i].Injected = true
 		}
 		if maxTR > 0 && recs[i].Role == harness.RoleToolResult && len(recs[i].Text) > maxTR {
@@ -366,16 +400,29 @@ func stampRecords(recs []harness.NormalizedRecord, hName, sid string) {
 	}
 }
 
-// injectedMarkers are substrings that mark a record as a hook/skill/system
-// payload rather than genuine user or model content. Flagged, never
-// dropped, so a reader can filter them (recall drops them) without losing
-// the audit trail.
+// injectedMarkers are flow-specific substrings that mark a record as a
+// bus/injection payload rather than genuine user or model content, and which
+// can appear in ANY role (so a substring match, not a prefix, is right).
+// Flagged, never dropped, so a reader can filter them (recall drops them)
+// without losing the audit trail. The broader set of injected USER openers —
+// hook context, skill bodies, <task-notification>, bootstrap prompts — is
+// NOT duplicated here: it comes from match's dropPrefixes via
+// match.IsInjectedPrompt, so the copy and recall share one source of truth.
 var injectedMarkers = []string{
 	harness.WakeMarker,      // "[flow-bus wake]"
 	harness.InjectionMarker, // "[via flow do --with]"
-	"<system-reminder>",
-	"SessionStart hook additional context",
-	"UserPromptSubmit hook additional context",
+}
+
+// isInjectedRecord reports whether a normalized record is flow/harness
+// boilerplate rather than genuine content. Flow markers are matched in any
+// role; the dropPrefixes-based check (shared with recall) applies to user
+// turns, where mis-counting an injected payload as a turn would skew turn
+// numbers and the note nudge.
+func isInjectedRecord(r harness.NormalizedRecord) bool {
+	if isInjectedText(r.Text) {
+		return true
+	}
+	return r.Role == harness.RoleUser && match.IsInjectedPrompt(r.Text)
 }
 
 func isInjectedText(s string) bool {
@@ -446,7 +493,11 @@ func captureUserPrompt(t *flowdb.Task, prompt string) error {
 	if t == nil || !t.SessionID.Valid || t.SessionID.String == "" || prompt == "" {
 		return nil
 	}
-	if isInjectedText(prompt) {
+	// An injected opener (wake push, --with injection, hook/skill/task-
+	// notification payload) is left for the Stop capture to record (flagged);
+	// writing it here would count it as a genuine turn. Shares the same
+	// injected-detection as the Stop path.
+	if isInjectedText(prompt) || match.IsInjectedPrompt(prompt) {
 		return nil
 	}
 	if !transcriptsCopyEnabled(t.Slug) {
@@ -458,7 +509,7 @@ func captureUserPrompt(t *flowdb.Task, prompt string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(copyPath), 0o755); err != nil {
+	if err := secureMkdirAll(filepath.Dir(copyPath)); err != nil {
 		return err
 	}
 	st := loadCaptureState(statePath)
@@ -476,7 +527,7 @@ func captureUserPrompt(t *flowdb.Task, prompt string) error {
 		TS: time.Now().Format(time.RFC3339), Harness: hName, SessionID: sid,
 		Turn: turn, Role: harness.RoleUser, Text: prompt,
 	}
-	f, err := os.OpenFile(copyPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := secureAppendFile(copyPath)
 	if err != nil {
 		return err
 	}
@@ -496,6 +547,60 @@ func captureUserPrompt(t *flowdb.Task, prompt string) error {
 	st.Records++
 	st.PendingPrompt = prompt
 	return saveCaptureState(statePath, st)
+}
+
+// enforceTranscriptRetention deletes flow copy files (and their offset
+// sidecars) whose copy mtime is older than transcripts.retention_days, across
+// every task under $FLOW_ROOT/tasks. 0 days (the default) keeps copies forever
+// and is a no-op. Called by backfill and purge so retention is enforced on the
+// paths a user already runs. Returns how many files it removed.
+func enforceTranscriptRetention() (removed int, err error) {
+	days := transcriptsRetentionDays()
+	if days <= 0 {
+		return 0, nil
+	}
+	root, err := flowRoot()
+	if err != nil {
+		return 0, err
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	tasksDir := filepath.Join(root, "tasks")
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(tasksDir, e.Name(), "transcripts")
+		files, derr := os.ReadDir(dir)
+		if derr != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+				continue
+			}
+			p := filepath.Join(dir, f.Name())
+			info, serr := os.Stat(p)
+			if serr != nil || !info.ModTime().Before(cutoff) {
+				continue
+			}
+			if os.Remove(p) == nil {
+				removed++
+			}
+			// Drop the matching offset sidecar too.
+			sidecar := strings.TrimSuffix(p, ".jsonl") + ".offset.json"
+			if os.Remove(sidecar) == nil {
+				removed++
+			}
+		}
+	}
+	return removed, nil
 }
 
 // ----- safe (hook-side) wrappers: never fail or block the harness -----

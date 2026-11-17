@@ -1,15 +1,21 @@
+//go:build recalleval
+
 package match
 
 import (
 	"fmt"
-	"hash/fnv"
 	"math"
 	"math/rand/v2"
 	"sort"
 	"strings"
 )
 
-// ---------- lookback eval ----------
+// ---------- lookback eval (behind the `recalleval` build tag) ----------
+//
+// The held-out benchmark and its report ship only when the binary is built
+// with `-tags recalleval` (see cmd docs / docs/recall.md). The default `flow`
+// binary carries just the recall path; the shared query/ranking primitives
+// this file still uses live in lookback_shared.go (untagged).
 //
 // Query = task Q as it looked near its start: its name + brief (mode
 // "brief"), or that plus its first PromptsN informative prompts (mode
@@ -22,15 +28,10 @@ import (
 // leak. Structure-derived truth (parent, project, family, playbook,
 // tag) is never a feature of any scorer here.
 
-// Query modes.
-const (
-	ModeBrief   = "brief"
-	ModePrompts = "brief+prompts"
-)
-
 // ModeBriefSubset is a report-only slice: mode brief restricted to the
 // tasks that also have a brief+prompts query, so the two modes compare on
-// the same tasks.
+// the same tasks. (ModeBrief / ModePrompts and LookbackOptions live in
+// lookback_shared.go so the calibration path can build the same queries.)
 const ModeBriefSubset = "brief@prompt-tasks"
 
 // LookbackModes lists the query modes in report order.
@@ -42,28 +43,8 @@ const (
 	VarCutoff = "notes<=Q"
 )
 
-// LookbackQueryTokens caps a lookback query's tokens (briefs are long;
-// prompts keep MaxPromptTokens).
-const LookbackQueryTokens = 1500
-
 // LookbackRef is the reference scorer for paired deltas.
 const LookbackRef = "bm25-only"
-
-// LookbackOptions configures RunLookback.
-type LookbackOptions struct {
-	Seed       uint64
-	Weights    Weights
-	PromptsN   int      // mode brief+prompts: first N informative prompts (default 3)
-	Folds      int      // test folds (default EvalFolds); one extra, oldest fold only trains
-	Boot       int      // bootstrap resamples (default 1000)
-	Examples   int      // example queries to list (default 5)
-	StripSlugs []string // extra slugs to strip from queries (e.g. excluded tasks)
-	GenericTag []string // generic tags (default DefaultGenericTags)
-	NoLSA      bool     // skip the LSA fusion scorer
-	NoCutoff   bool     // skip the notes<=Q variant
-	Structure  bool     // add the structure-prior experiment (structure.go); needs LSA
-	NoConf     bool     // skip the confidence cut-off analysis
-}
 
 // LBQuery is one lookback query (never carries its text out).
 type LBQuery struct {
@@ -184,14 +165,6 @@ type LBExample struct {
 	Ranks  map[string]int      `json:"truth_ranks"`
 }
 
-// LBHit is one ranked candidate.
-type LBHit struct {
-	Slug     string   `json:"slug"`
-	Score    float64  `json:"score"`
-	Cov      float64  `json:"cov,omitempty"`      // query coverage of this candidate
-	Relevant []string `json:"relevant,omitempty"` // truth sources, if relevant
-}
-
 // MissCount buckets truth items the best scorer ranked below 20.
 type MissCount struct {
 	Source     string `json:"source"`
@@ -204,12 +177,6 @@ type MissCount struct {
 	Outranked  int    `json:"outranked"`           // shares distinctive name words too, still crowded out
 	EmptyCand  int    `json:"empty_candidate"`     // candidate has almost no text
 }
-
-// Miss-bucket document-frequency cuts (share of indexed tasks).
-const (
-	CommonDF   = 0.30 // template / ubiquitous words ("goal", "done", "scope")
-	DistinctDF = 0.05 // a word this rare is distinctive
-)
 
 // LeakCheck is one leakage measurement.
 type LeakCheck struct {
@@ -269,105 +236,6 @@ func lookbackLineup(noLSA bool) []lbScorer {
 		ls = append(ls, lbScorer{name: RelatedScorer, fixed: relatedScorer(), noCut: true})
 	}
 	return ls
-}
-
-// queryText renders Q's query side for mode (unstripped).
-func queryText(td TaskData, mode string, n int) (string, bool) {
-	t := td.Name + "\n" + td.Brief
-	if mode == ModeBrief {
-		return t, true
-	}
-	inf := informativePrompts(td)
-	if len(inf) == 0 {
-		return "", false
-	}
-	if len(inf) > n {
-		inf = inf[:n]
-	}
-	return t + "\n" + strings.Join(inf, "\n"), true
-}
-
-// termCache memoizes candidates' unigram term sets for Jaccard.
-type termCache struct {
-	m *Model
-	t map[string]map[string]bool
-}
-
-func (tc *termCache) of(slug string) map[string]bool {
-	if x, ok := tc.t[slug]; ok {
-		return x
-	}
-	var x map[string]bool
-	if e := tc.m.Tasks[slug]; e != nil {
-		x = unigramSet(e.termStrings(tc.m))
-	}
-	tc.t[slug] = x
-	return x
-}
-
-// newQueryRec measures q against cands on m (as BuildPairs does).
-func newQueryRec(m *Model, tc *termCache, owner string, q Query, cands []string) QueryRec {
-	qr := QueryRec{Owner: owner, Q: q, Cands: cands, sig: map[string]Signals{},
-		jac: map[string]float64{}, ovl: map[string]float64{}}
-	qterms := map[string]bool{}
-	for t := range q.tf {
-		qterms[t] = true
-	}
-	qterms = unigramSet(qterms)
-	for _, c := range cands {
-		sg := m.SignalsFor(q, c)
-		qr.sig[c] = sg
-		qr.jac[c], qr.ovl[c] = setSims(qterms, tc.of(c))
-		qr.top[0].add(c, sg.Sim)
-		qr.top[1].add(c, sg.KNN)
-		qr.top[2].add(c, sg.Cov)
-		qr.top[3].add(c, sg.BM25)
-		qr.primary = append(qr.primary, sg.Primary())
-	}
-	sort.Sort(sort.Reverse(sort.Float64Slice(qr.primary)))
-	return qr
-}
-
-func lbQuery(m *Model, text string) Query {
-	return m.queryFromCounts(Counts(text, LookbackQueryTokens))
-}
-
-func slugHash(seed uint64, s string) uint64 {
-	h := fnv.New64a()
-	var b [8]byte
-	for i := range b {
-		b[i] = byte(seed >> (8 * i))
-	}
-	h.Write(b[:])
-	h.Write([]byte(s))
-	return h.Sum64()
-}
-
-// rankAll scores every candidate of query qi with s (bound/prepared on
-// ps) and returns them best first (ties by seeded slug hash).
-func rankAll(s Scorer, ps *PairSet, qi int, seed uint64) []LBHit {
-	qr := &ps.Queries[qi]
-	out := make([]LBHit, 0, len(qr.Cands))
-	for _, c := range qr.Cands {
-		// Quantize: scores sum over map-ordered terms, so float order noise
-		// (~1e-16) would otherwise flip exact ties between runs.
-		out = append(out, LBHit{Slug: c, Score: math.Round(s.Score(qr.pair(qi, c, false))*1e9) / 1e9, Cov: qr.sig[c].Cov})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		return slugHash(seed, out[i].Slug) < slugHash(seed, out[j].Slug)
-	})
-	return out
-}
-
-// bindTo lets a scorer that builds its own per-PairSet index (the LSA and
-// identity-card scorers) prepare against ps before it is scored.
-func bindTo(s Scorer, ps *PairSet) {
-	if p, ok := s.(Preparer); ok {
-		p.Prepare(ps)
-	}
 }
 
 // lbResult is one query's ranking under one scorer.

@@ -9,30 +9,30 @@ import (
 func TestConfigGetSetRoundtrip(t *testing.T) {
 	initTempFlowRoot(t)
 
-	// Default (no file): copy enabled.
-	if !transcriptsCopyEnabled("any") {
-		t.Fatal("default transcripts.copy should be true")
+	// Default (no file): copy DISABLED — it is opt-in.
+	if transcriptsCopyEnabled("any") {
+		t.Fatal("default transcripts.copy should be false (opt-in)")
 	}
-	// set / get a bool.
-	if rc := cmdConfig([]string{"set", "transcripts.copy", "false"}); rc != 0 {
+	// set / get a bool: turn it on globally.
+	if rc := cmdConfig([]string{"set", "transcripts.copy", "true"}); rc != 0 {
 		t.Fatalf("config set rc=%d", rc)
 	}
-	if transcriptsCopyEnabled("any") {
-		t.Fatal("after set false, copy should be disabled")
+	if !transcriptsCopyEnabled("any") {
+		t.Fatal("after set true, copy should be enabled")
 	}
 	out := captureStdout(t, func() { cmdConfig([]string{"get", "transcripts.copy"}) })
-	if strings.TrimSpace(out) != "false" {
-		t.Fatalf("config get = %q, want false", out)
+	if strings.TrimSpace(out) != "true" {
+		t.Fatalf("config get = %q, want true", out)
 	}
-	// per-task override wins.
-	if rc := cmdConfig([]string{"set", "transcripts.tasks.special.copy", "true"}); rc != 0 {
+	// per-task override wins: disable it for one task while the global is on.
+	if rc := cmdConfig([]string{"set", "transcripts.tasks.special.copy", "false"}); rc != 0 {
 		t.Fatalf("config set rc=%d", rc)
 	}
-	if !transcriptsCopyEnabled("special") {
-		t.Fatal("per-task override should re-enable copy")
+	if transcriptsCopyEnabled("special") {
+		t.Fatal("per-task override should disable copy for that task")
 	}
-	if transcriptsCopyEnabled("other") {
-		t.Fatal("non-overridden task should stay disabled")
+	if !transcriptsCopyEnabled("other") {
+		t.Fatal("non-overridden task should follow the global (on)")
 	}
 	// int knob.
 	if rc := cmdConfig([]string{"set", "transcripts.max_tool_result_bytes", "2048"}); rc != 0 {
@@ -73,10 +73,12 @@ func TestConfigGetUnknownKey(t *testing.T) {
 func TestConfigGetShowsDefaults(t *testing.T) {
 	initTempFlowRoot(t)
 	cases := map[string]string{
-		"transcripts.copy":       "true (default)",
-		"nudge.notes.enabled":    "true (default)",
-		"nudge.notes.base_turns": "15 (default)",
-		"nudge.notes.step":       "0.2 (default)",
+		"transcripts.copy":                  "false (default)",
+		"transcripts.max_tool_result_bytes": "16384 (default)",
+		"transcripts.retention_days":        "0 (default)",
+		"nudge.notes.enabled":               "true (default)",
+		"nudge.notes.base_turns":            "15 (default)",
+		"nudge.notes.step":                  "0.2 (default)",
 	}
 	for key, want := range cases {
 		out := captureStdout(t, func() {
@@ -110,8 +112,9 @@ func TestConfigListShowsDefaults(t *testing.T) {
 		}
 	})
 	for _, want := range []string{
-		"transcripts.copy = true (default)",
-		"transcripts.max_tool_result_bytes = 0 (default)",
+		"transcripts.copy = false (default)",
+		"transcripts.max_tool_result_bytes = 16384 (default)",
+		"transcripts.retention_days = 0 (default)",
 		"nudge.notes.enabled = true (default)",
 		"nudge.notes.base_turns = 15 (default)",
 		"nudge.notes.step = 0.2 (default)",
@@ -142,6 +145,7 @@ func TestConfigListShowsDefaults(t *testing.T) {
 // task note records.
 func TestCaptureLatency(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("lat", wd, "sid-lat")
 
