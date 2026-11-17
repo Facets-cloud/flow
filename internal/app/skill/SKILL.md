@@ -492,14 +492,9 @@ that…", "record that I…", "document that I just…".
      `~/.flow/tasks/<run-slug>/updates/` (runs are tasks).
    - For a **playbook definition**, notes go under
      `~/.flow/playbooks/<slug>/updates/` for cross-invocation observations
-     ("noticed flaky output when X", "next iteration should consolidate
-     steps 2 and 3"). Use this when capturing things that should inform
-     the playbook itself, not a single run.
+     that should inform the playbook itself, not a single run.
    - For an **owner**, notes go under `~/.flow/owners/<slug>/updates/` —
-     this is the owner's cross-tick **journal** (§4.17). Each headless
-     tick reads the recent notes here to recover what it dispatched and
-     what to check, and appends a new note before exiting. Same `updates/`
-     convention as tasks and playbooks.
+     its cross-tick **journal** (§4.17; see references/owners.md).
 5. Use the `Write` tool to create
    `~/.flow/tasks/<slug>/updates/<filename>.md` with the confirmed
    content. If the user is noting project-level progress, use
@@ -507,6 +502,10 @@ that…", "record that I…", "document that I just…".
 6. Confirm to the user: "saved: <absolute path>".
 
 Do NOT run any `flow` command for this — updates are just files.
+
+**Note-nudge.** A `flow:` line in context saying *N turns since the last
+progress note* is a §4.5 trigger — offer to save a note via
+AskUserQuestion; never write one silently. Tunables: docs/settings.md.
 
 ### 4.6 Waiting on someone
 
@@ -616,7 +615,7 @@ becomes one entry per item.
 3. **Never invent** — only what the user literally said or clearly implied.
 4. **Never edit existing entries** — append-only log; a changed fact is a new dated entry.
 5. **One bucket per fact** — if it fits two, pick the more specific; don't cross-post.
-6. **Privacy** — if the user inits a git repo in `~/.flow/`, remind them to `.gitignore` `kb/`.
+6. **Privacy** — `~/.flow/` git repo? remind them to `.gitignore` `kb/` + `tasks/*/transcripts/`.
 
 **Reading is lazy; writing stays eager.** KB files are NOT loaded at
 session start (the hook and §9 skip them). Read at most the one file you
@@ -807,6 +806,12 @@ Full workflow, address grammar, etiquette → read **references/messaging.md**.
 "file a bug" / "report this" / "open an issue" about flow or a connector, or
 you hit a clear flow bug (offer; never file without a yes) → read
 **references/report-issue.md**.
+
+### 4.20 Recall past work
+
+Reusing past work beats rediscovery, so before anything substantial (or on
+intake, to catch dupes) surface relevant PAST work (strong/possible); verify
+via `flow show task`, never act blind → **references/recall.md**.
 
 ## 6. The `work_dir` question — rules
 

@@ -158,3 +158,8 @@ func truncate(s string, max int) string {
 	}
 	return s[:max] + "…"
 }
+
+// TranscriptPath implements harness.TranscriptPather.
+func (p *prx) TranscriptPath(_ string, sessionID string) (string, error) {
+	return transcriptPath(sessionID)
+}

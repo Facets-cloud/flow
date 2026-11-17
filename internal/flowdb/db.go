@@ -1230,3 +1230,25 @@ func UpsertPlaybook(db *sql.DB, pb *Playbook) error {
 	}
 	return nil
 }
+
+// OpenReadOnly opens an existing flow.db without applying schema DDL or
+// migrations, with SQLite's read-only mode enforced. Used by read-only
+// commands (`flow recall`) that must never mutate the database.
+func OpenReadOnly(path string) (*sql.DB, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
+	}
+	q := url.Values{}
+	q.Set("mode", "ro")
+	q.Add("_pragma", "busy_timeout(30000)")
+	q.Add("_pragma", "query_only(1)")
+	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
+	}
+	return db, nil
+}

@@ -356,6 +356,32 @@ One person, one laptop. An existence proof, not a benchmark.
 You will not type these. The agent does. They are here so the words on
 this page match the binary, and because three tests in the repo insist.
 
+### Recall past work
+
+Before the agent designs or builds something, it can ask flow what you have
+already done — ranked from your own task history, no network, nothing learned
+off your machine. It returns a short **strong**/**possible** list, and the
+agent reads the matching task before acting on it.
+
+```bash
+flow recall                                  # related past work for the current task
+flow recall rotate-api-keys                  # ... for a specific task
+flow recall "set up CI caching"              # free-text lookback
+flow recall --prompt "has anyone done X?"     # mid-session, with the task brief as context
+flow recall train --calibrate                 # rebuild the index, retune confidence on your links
+```
+
+How it works — the layered ranker, what was tried and dropped, and how to
+evaluate and tune it — is in [`docs/recall.md`](docs/recall.md) and the package
+doc [`internal/match/doc.go`](internal/match/doc.go).
+
+Recall learns from your past prompts, but harnesses delete old session
+transcripts. So flow keeps its own normalized copy of each task's
+transcript (one schema for every harness), captured through the existing
+hooks — on by default, opt out with `flow config set transcripts.copy off`,
+seed older history with `flow transcript backfill`. Details, schema, and
+privacy are in [`docs/transcripts.md`](docs/transcripts.md).
+
 ### Human connectors
 
 When a task needs your decision and you are away, it asks on the bus and

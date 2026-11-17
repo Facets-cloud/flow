@@ -348,6 +348,11 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if t != nil && !isAutoRunSession(t) {
 		markSessionState(t.Slug, flowdb.SessionBusy)
 	}
+	// Append the just-submitted human prompt to flow's transcript copy
+	// immediately (deduped against the Stop capture). Best-effort.
+	if t != nil && hookPromptKnown {
+		captureUserPromptSafe(t, hookPrompt)
+	}
 	pageCtx := busPromptSubmitContext() + upgradeNoticeContext(t)
 	if t == nil {
 		// Unbound — page-bus context (an unbound session can still have
@@ -367,7 +372,7 @@ func cmdHookUserPromptSubmit(args []string) int {
 			"offer to close it out. Else proceed silently.",
 		t.Name, t.Slug, role,
 	)
-	return emitHookContext("UserPromptSubmit", anchor+pageCtx)
+	return emitHookContext("UserPromptSubmit", anchor+noteNudgeContextSafe(t)+pageCtx)
 }
 
 // cmdHookPreToolUse implements `flow hook pre-tool-use`, wired as a
