@@ -152,7 +152,7 @@ func closeoutDeferred(h harness.Harness, task *flowdb.Task) bool {
 	if !harness.DefersCloseoutInAutoRun(h) {
 		return false
 	}
-	if os.Getenv(autoRunEnvVar) == task.Slug {
+	if os.Getenv(autoRunEnvVar) == task.Slug && !isTabAutoRun(task) { // a tab run has no supervisor to sweep
 		return true
 	}
 	return task.AutoRunStatus.Valid && task.AutoRunStatus.String == "running" &&

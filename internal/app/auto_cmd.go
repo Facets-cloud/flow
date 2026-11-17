@@ -109,7 +109,8 @@ func cmdAuto(args []string) int {
 		return rc
 	}
 	if *mkdir && !preExisting {
-		if resolved, err := filepath.EvalSymlinks(*workDir); err == nil {
+		abs, _ := filepath.Abs(*workDir)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 			mkdirCreatedWorkDir = resolved
 			defer func() { mkdirCreatedWorkDir = "" }()
 		}

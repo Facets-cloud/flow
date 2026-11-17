@@ -1,12 +1,15 @@
 package app
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
+	"flow/internal/harness/claude"
 	"flow/internal/harness/prx"
 )
 
@@ -633,5 +636,122 @@ func TestCmdAutoTabMkdirExistingDirNotTrusted(t *testing.T) {
 	}
 	if s := script(); strings.Contains(s, "-trust-workspace") {
 		t.Errorf("an existing user dir must keep prx's trust prompt; got:\n%s", s)
+	}
+}
+
+// Review round (Pramod): tab runs get the headless guards, flow-injected
+// prompt recognition, resume/bootstrap fallback, hermetic env default.
+
+func TestTabRunSpawnEnvMarksAutoRun(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "tab-env")
+	stubNewUUID(t, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	if rc := cmdDo([]string{"tab-env", "--auto", "--tab", "--harness", "prx"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if s := script(); !strings.Contains(s, "FLOW_AUTO_RUN='tab-env'") {
+		t.Errorf("tab env missing FLOW_AUTO_RUN; got:\n%s", s)
+	}
+}
+
+func TestTabBootstrapPromptIsNotHumanPrompt(t *testing.T) {
+	p := buildAutoTabBootstrapPrompt("x", "regular", "", "")
+	if isHumanPrompt(true, p, func(string) string { return "" }) {
+		t.Error("tab bootstrap prompt counted as human-typed")
+	}
+}
+
+func TestAutoTabDefaultIgnoredInsideAutoRun(t *testing.T) {
+	t.Setenv(autoTabEnvVar, "1")
+	t.Setenv(autoRunEnvVar, "")
+	if !autoTabDefault() {
+		t.Fatal("want tab default outside an auto run")
+	}
+	t.Setenv(autoRunEnvVar, "owner")
+	if autoTabDefault() {
+		t.Error("an unattended run must never default to a tab")
+	}
+}
+
+func TestCloseoutNotDeferredForTabRun(t *testing.T) {
+	t.Setenv(autoRunEnvVar, "tt")
+	task := &flowdb.Task{Slug: "tt", AutoRunMode: sql.NullString{String: autoRunModeTab, Valid: true}}
+	if closeoutDeferred(claude.New(), task) {
+		t.Error("tab run has no supervisor; sweep must not be deferred")
+	}
+}
+
+func TestCmdDoAutoTabResumeMarkerOnce(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "tab-once")
+	stubClaudeStatOK(t)
+	sid := fakeSessionID("tab-once")
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', session_id=?, session_started=?, harness='claude' WHERE slug='tab-once'`,
+		sid, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	if rc := cmdDo([]string{"tab-once", "--auto", "--tab", "--with", "x"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if n := strings.Count(script(), harness.InjectionMarker); n != 1 {
+		t.Errorf("injection marker count = %d, want 1", n)
+	}
+}
+
+// A reserved session with no transcript must launch via bootstrap, not --resume.
+func TestCmdDoAutoTabResumeMissingTranscriptBootstraps(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "tab-nodisk")
+	stubClaudeStatMissing(t)
+	sid := fakeSessionID("tab-nodisk")
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', session_id=?, session_started=?, harness='claude' WHERE slug='tab-nodisk'`,
+		sid, flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	if rc := cmdDo([]string{"tab-nodisk", "--auto", "--tab"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	s := script()
+	if strings.Contains(s, "--resume") || !strings.Contains(s, "--session-id "+sid) {
+		t.Errorf("want bootstrap with --session-id %s, got:\n%s", sid, s)
+	}
+}
+
+func TestCmdAutoTabMkdirRelativeWorkDirTrusted(t *testing.T) {
+	setupFlowRoot(t)
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	t.Chdir(t.TempDir())
+	brief := writeFile(t, t.TempDir(), "b.md", "# goal\nDone when: x\n")
+	if rc := cmdAuto([]string{"rel child", "--slug", "rel", "--brief", brief, "--tab", "--harness", "prx", "--work-dir", "newdir", "--mkdir"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if s := script(); !strings.Contains(s, "-trust-workspace") {
+		t.Errorf("relative --mkdir dir should be trusted; got:\n%s", s)
+	}
+}
+
+func TestCmdDoAutoTabRunningGuardSaysTab(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "tab-g")
+	stubNewUUID(t, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+	stubITerm(t)
+	noHeadlessLaunch(t)
+	if rc := cmdDo([]string{"tab-g", "--auto", "--tab"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	read := captureStderr(t)
+	cmdDo([]string{"tab-g", "--auto", "--tab"})
+	errOut := read()
+	if strings.Contains(errOut, "pid 0") || !strings.Contains(errOut, "tab run") {
+		t.Errorf("guard message = %q", errOut)
 	}
 }

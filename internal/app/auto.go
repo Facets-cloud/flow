@@ -237,6 +237,9 @@ const autoTabStartupGrace = 90 * time.Second
 // autoTabDefault reports whether $FLOW_AUTO_TAB opts this user into tab
 // auto runs by default.
 func autoTabDefault() bool {
+	if os.Getenv(autoRunEnvVar) != "" {
+		return false // an unattended run (owner tick, auto child) never opens tabs
+	}
 	v := strings.TrimSpace(os.Getenv(autoTabEnvVar))
 	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 }

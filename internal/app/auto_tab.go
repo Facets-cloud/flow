@@ -164,15 +164,6 @@ func autoTabPrompt(task *flowdb.Task) string {
 	return buildAutoTabBootstrapPrompt(task.Slug, task.Kind, playbookSlug, parentSlug)
 }
 
-// joinInjection appends a --with instruction to the autonomous prompt
-// behind the injection marker, the way AutoRunArgv does for a headless run.
-func joinInjection(prompt, inject string) string {
-	if inject == "" {
-		return prompt
-	}
-	return prompt + "\n\n" + harness.InjectionMarker + "\n" + inject
-}
-
 // deadRunEvidence names where to look when an auto run ended dead: the
 // supervisor's log for a headless run; a tab run has no log (its tab was
 // closed or its harness exited before flow done), so its transcript.

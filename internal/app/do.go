@@ -266,9 +266,13 @@ func cmdDo(args []string) int {
 	if *auto && !*force {
 		reconcileAutoRun(db, task)
 		if task.AutoRunStatus.Valid && task.AutoRunStatus.String == "running" {
+			where := fmt.Sprintf("pid %d", task.AutoRunPID.Int64)
+			if isTabAutoRun(task) {
+				where = "tab run"
+			}
 			fmt.Fprintf(os.Stderr,
-				"error: task %q already has an autonomous run in progress (pid %d) — wait for it to finish, or pass --force to launch another\n",
-				task.Slug, task.AutoRunPID.Int64)
+				"error: task %q already has an autonomous run in progress (%s) — wait for it to finish, or pass --force to launch another\n",
+				task.Slug, where)
 			return 1
 		}
 	}
@@ -496,7 +500,7 @@ func cmdDo(args []string) int {
 		}
 		return h.LaunchCmd(sessionID, prompt, launchOpts)
 	}
-	if needsBootstrap {
+	if needsBootstrap || (autoTab && !sessionOnDisk) {
 		command = bootstrapCmd()
 	} else {
 		// Resume path: the UUID we already have in the DB is what the
@@ -505,7 +509,10 @@ func cmdDo(args []string) int {
 		// message after resume, as the headless supervisor does.
 		resumeOpts := launchOpts
 		if autoTab {
-			resumeOpts.Inject = joinInjection(autoTabPrompt(task), injectionText)
+			resumeOpts.Inject = autoTabPrompt(task)
+			if injectionText != "" {
+				resumeOpts.Inject += "\n\n" + injectionText
+			}
 		}
 		command = h.ResumeCmd(sessionID, resumeOpts)
 	}
@@ -514,6 +521,9 @@ func cmdDo(args []string) int {
 	// It forwards only its own: $FLOW_ROOT and the pinned launcher binary
 	// (pinnedFlowEnv).
 	spawnEnv := pinnedFlowEnv()
+	if autoTab {
+		spawnEnv[autoRunEnvVar] = task.Slug // same hook/inbox/self-upgrade guards as a headless run
+	}
 	// The project's terminal group (Rex session) decides where the tab
 	// opens; floating tasks and ungrouped projects open where flow ran.
 	group := ""

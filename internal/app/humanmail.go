@@ -14,6 +14,7 @@ var flowPromptPrefixes = []string{
 	"You are the execution session for flow task",
 	"You are running playbook `",
 	"You are an AUTONOMOUS, headless execution session",
+	"You are an AUTONOMOUS execution session",
 	"You are the autonomous OWNER",
 	"You are running ONE tick of the flow OWNER",
 	"You are running an automated close-out sweep",
