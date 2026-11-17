@@ -11,6 +11,12 @@
 
 ## Unreleased
 
+- **`flow do --here` needs the directory the session STARTED in.** If you
+  `cd` into a worktree, `$PWD` is not that directory. When the bind is
+  refused, run the `flow update task … --work-dir` command only if it shows
+  a real path. If it shows `<real-cwd>`, or says the task is still bound to
+  another session, open the task in a new tab with `flow do <slug>`.
+
 ## v0.1.0-alpha.38
 
 - **Mail reaches you automatically (harness wake).** flow now pushes a

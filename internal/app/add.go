@@ -139,7 +139,12 @@ func addProject(args []string) int {
 	return 0
 }
 
-func addTask(args []string) int {
+func addTask(args []string) int { return createTask(args, true) }
+
+// createTask is `flow add task`. hereNote=false skips hereBindNote: `flow
+// auto` creates a child for a new session, so binding the creating session
+// to it with --here is never the plan.
+func createTask(args []string, hereNote bool) int {
 	if len(args) == 0 || args[0] == "" {
 		fmt.Fprintln(os.Stderr, "error: add task requires a name")
 		return 2
@@ -242,6 +247,7 @@ func addTask(args []string) int {
 	taskDir := filepath.Join(root, "tasks", slug)
 
 	var absWorkDir, workDirSource string
+	newWorkspace := false
 	switch {
 	case *workDir != "":
 		absWorkDir, err = resolveWorkDir(*workDir, *mkdir)
@@ -256,6 +262,7 @@ func addTask(args []string) int {
 	default:
 		absWorkDir = filepath.Join(taskDir, "workspace")
 		workDirSource = " (new workspace)"
+		newWorkspace = true
 		if err := os.MkdirAll(absWorkDir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error: create workspace %s: %v\n", absWorkDir, err)
 			return 1
@@ -321,8 +328,13 @@ func addTask(args []string) int {
 		}
 	}
 	fmt.Printf("  work_dir: %s%s\n", absWorkDir, workDirSource)
-	if note := hereBindNote(slug, absWorkDir); note != "" {
-		fmt.Print(note)
+	// No note for a new workspace (no session ever starts there) or under
+	// a parent (this session is bound to the parent, so --here refuses
+	// the child whatever its work_dir).
+	if hereNote && parent == nil && !newWorkspace {
+		if note := hereBindNote(slug, absWorkDir); note != "" {
+			fmt.Print(note)
+		}
 	}
 	if parent != nil {
 		fmt.Printf("  (parent: %q)\n", parent.Slug)
