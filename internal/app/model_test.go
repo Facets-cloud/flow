@@ -146,16 +146,52 @@ func TestStoreModelFlagsWritesOnlyGivenColumns(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "sc")
 	db := openFlowDB(t)
-	if err := storeModelFlags(db, "sc", "haiku", "low"); err != nil {
+	task := &flowdb.Task{Slug: "sc"}
+	if err := storeModelFlags(db, task, "haiku", "low"); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeModelFlags(db, "sc", "opus", ""); err != nil { // concurrent --model
+	if err := storeModelFlags(db, &flowdb.Task{Slug: "sc"}, "opus", ""); err != nil { // concurrent --model
 		t.Fatal(err)
 	}
-	if err := storeModelFlags(db, "sc", "", "high"); err != nil { // --effort only
+	if err := storeModelFlags(db, task, "", "high"); err != nil { // --effort only
 		t.Fatal(err)
 	}
 	if m, e := taskModel(t, "sc"); m != "opus" || e != "high" {
+		t.Errorf("stored model=%q effort=%q, want opus/high", m, e)
+	}
+	// task carries the merged row, not its stale haiku.
+	if task.Model.String != "opus" || task.Effort.String != "high" {
+		t.Errorf("task model=%q effort=%q, want opus/high", task.Model.String, task.Effort.String)
+	}
+}
+
+// A background launch uses the merged stored values: a model another
+// command stored after this one loaded the task reaches the spawn argv.
+func TestCmdDoBackgroundUsesMergedModel(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bgr")
+	stubBGMode(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET model='haiku', effort='low' WHERE slug='bgr'`); err != nil {
+		t.Fatal(err)
+	}
+	task, err := flowdb.GetTask(db, "bgr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another command stores --model opus after this one read the task.
+	if _, err := db.Exec(`UPDATE tasks SET model='opus' WHERE slug='bgr'`); err != nil {
+		t.Fatal(err)
+	}
+	if rc := cmdDoBackground(db, task, defaultHarness(), bgLaunch{effort: "high"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if !pairArg(c.lastSpawn, "--model", "opus") || !pairArg(c.lastSpawn, "--effort", "high") {
+		t.Errorf("bg spawn argv want opus/high: %v", c.lastSpawn)
+	}
+	if m, e := taskModel(t, "bgr"); m != "opus" || e != "high" {
 		t.Errorf("stored model=%q effort=%q, want opus/high", m, e)
 	}
 }

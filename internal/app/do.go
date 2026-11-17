@@ -319,7 +319,7 @@ func cmdDo(args []string) int {
 	// The launch proceeds from here, so store the --model/--effort flags
 	// now, then read model/effort back in this tx: the probe below and the
 	// launch (from the re-select) both use this one snapshot.
-	if err := storeModelFlags(tx, task.Slug, *model, *effort); err != nil {
+	if err := storeModelFlags(tx, task, *model, *effort); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -328,6 +328,11 @@ func cmdDo(args []string) int {
 		Scan(&curSessionID, &task.Model, &task.Effort); err != nil {
 		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
+	}
+	// Another command may have stored model/effort after checkModelFlags.
+	if err := harness.CheckModelOpts(h, task.Model.String, task.Effort.String); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
 	}
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
@@ -1013,10 +1018,11 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 				"note: --model/--effort not applied now: %s's session is resumed with its saved settings (a registered background session takes no launch flags); they are stored for the next fresh launch\n",
 				task.Slug)
 		}
-		if err := storeModelFlags(db, task.Slug, in.model, in.effort); err != nil {
+		if err := storeModelFlags(db, task, in.model, in.effort); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
+		applyTaskModel(task, &resumeOpts)
 		agent, err := bg.ResumeBackground(resumeCwd, title, resumeFrom, kickoff, resumeOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -1066,10 +1072,11 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 		prompt += "\n" + bgUnreadMailLine(unread)
 	}
 
-	if err := storeModelFlags(db, task.Slug, in.model, in.effort); err != nil {
+	if err := storeModelFlags(db, task, in.model, in.effort); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	applyTaskModel(task, &opts)
 	agent, err := bg.SpawnBackground(task.WorkDir, title, prompt, opts)
 	if err != nil {
 		// Nothing was written to the DB yet — clean failure, next attempt retries.

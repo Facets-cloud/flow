@@ -62,21 +62,24 @@ func checkModelFlags(task *flowdb.Task, h harness.Harness, model, effort string)
 	return 0
 }
 
-// execer is satisfied by both *sql.DB and *sql.Tx.
-type execer interface {
-	Exec(query string, args ...any) (sql.Result, error)
+// queryer is satisfied by both *sql.DB and *sql.Tx.
+type queryer interface {
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // storeModelFlags writes the given --model/--effort flag values to the
 // task row so later launches without the flag reuse them. Only the columns
 // whose flag was given are written; an omitted flag keeps whatever is
-// stored, even if another command changed it meanwhile.
-func storeModelFlags(db execer, slug, model, effort string) error {
+// stored, even if another command changed it meanwhile. task.Model and
+// task.Effort are set to the merged values the row now holds, so a launch
+// built from task matches the row.
+func storeModelFlags(db queryer, task *flowdb.Task, model, effort string) error {
 	if model == "" && effort == "" {
 		return nil
 	}
-	if _, err := db.Exec(`UPDATE tasks SET model = COALESCE(?, model), effort = COALESCE(?, effort), updated_at = ? WHERE slug = ?`,
-		flowdb.NullIfEmpty(model), flowdb.NullIfEmpty(effort), flowdb.NowISO(), slug); err != nil {
+	if err := db.QueryRow(`UPDATE tasks SET model = COALESCE(?, model), effort = COALESCE(?, effort), updated_at = ? WHERE slug = ? RETURNING model, effort`,
+		flowdb.NullIfEmpty(model), flowdb.NullIfEmpty(effort), flowdb.NowISO(), task.Slug).
+		Scan(&task.Model, &task.Effort); err != nil {
 		return fmt.Errorf("store model/effort: %w", err)
 	}
 	return nil
