@@ -318,6 +318,7 @@ func addTask(args []string) int {
 	}
 
 	if projectSlug == nil {
+		warnDriverWithoutProject(db, slug)
 		fmt.Printf("Created floating task %q at %s\n", slug, taskDir)
 	} else {
 		fmt.Printf("Created task %q in project %q\n", slug, *project)

@@ -295,16 +295,20 @@ user path.
 1. **Goal.** Not stated yet → ask ONE question: "I'll create a driver
    task for this — what goal do you want to achieve?" (AskUserQuestion
    with free-text Other, else chat). Already stated → skip it.
-2. **Project.** Infer it from the repo/cwd and conversation (`flow list
-   projects`, §6). Ask (one option per candidate + "None (floating)")
-   only when not obvious. work_dir = the project's, else the current
-   repo, else floating (`--mkdir`).
+2. **Project.** A driver task ALWAYS belongs to a project. Match an
+   existing one (`flow list projects`; by repo/work_dir path, then by
+   name/goal) and use it; ask only if 2+ fit. No match → CREATE one
+   without asking: `flow add project "<name>" --work-dir <current repo,
+   else cwd>` (name from the repo dir or goal; `--mkdir` only if missing),
+   thin brief (What = the goal; Where = work_dir). The driver task is its
+   first task, so skip the first-task follow-up in
+   references/intake-project.md. Pass `--project <p>` in step 4.
 3. **Route.** `flow list tasks --project <p> --tag driver`: if a
    live driver already owns this goal, route there (say so in one line; open it
    via §4.4, and `flow message <assignee>/<slug> "<ask>"` when the request
    adds to its scope). Ask only when two drivers fit or it is ambiguous.
-4. **Create.** `flow add task "<short name>" --tag driver [--project <p>]
-   [--work-dir <wd>]` (auto slug, default priority, no confirm step).
+4. **Create.** `flow add task "<short name>" --tag driver --project <p>`
+   (auto slug, default priority, no confirm step).
    Read the stub, then Write the driver brief (references/templates.md):
    `## Goal` (the user's words, verbatim), `## Done when` (*Agree with the
    user on the first turn.*), `## Context`, `## Decisions`, and keep the
@@ -312,7 +316,9 @@ user path.
 5. **Bind + announce.** Unbound session → `flow do --here <slug>` and
    continue here (no ask). Already bound → `flow do <slug>` (new tab).
    The announcement is mandatory, verbatim shape: "Created driver task
-   <name>; continuing here." (never "I've tracked this as a task").
+   <name>; continuing here." (with a new project: "Created project <p>
+   and driver task <name>; continuing here."; never "I've tracked this as
+   a task").
 6. **The intake turn ENDS** after you restate the goal, propose Done when
    (concrete, checkable) and close with a numbered "Needs from you:" list.
    No building or implementation in that turn, even when the goal is

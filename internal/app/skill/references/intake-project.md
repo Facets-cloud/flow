@@ -16,6 +16,8 @@ Do not offer `flow do` on the project itself — you `do` tasks, not
 projects.
 
 **MANDATORY follow-up: start the first driver under the project.**
+(Skip this when the project was created by SKILL.md §4.2 Start a driver:
+that driver task already is its first task.)
 A project with zero tasks is a dead container — the user will forget
 why they made it. Immediately after `flow add project` succeeds:
 

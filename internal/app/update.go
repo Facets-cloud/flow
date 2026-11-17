@@ -353,6 +353,9 @@ func cmdUpdateTask(args []string) int {
 		}
 	}
 	announceDriverChange(db, task, wasDriver)
+	if len(addTags) > 0 {
+		warnDriverWithoutProject(db, task.Slug)
+	}
 	return 0
 }
 

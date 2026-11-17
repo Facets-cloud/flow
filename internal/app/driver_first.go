@@ -173,3 +173,17 @@ func warnOpenChildren(db *sql.DB, slug string) {
 	fmt.Fprintf(os.Stderr, "warning: driver %s has %d open %s: %s. Done does not close them; finish, reassign or archive them.\n",
 		slug, len(kids), noun, strings.Join(names, ", "))
 }
+
+// warnDriverWithoutProject prints a stderr hint when slug is a driver task
+// with no project: a driver always belongs to a project (SKILL.md §4.2).
+// Informational only; the add/update still succeeds.
+func warnDriverWithoutProject(db *sql.DB, slug string) {
+	if !isDriverTask(db, slug) {
+		return
+	}
+	t, err := flowdb.GetTask(db, slug)
+	if err != nil || (t.ProjectSlug.Valid && t.ProjectSlug.String != "") {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "hint: %s is a driver with no project; drivers belong to a project; pass --project <slug> (flow update task %s --project <slug>)\n", slug, slug)
+}

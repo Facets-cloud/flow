@@ -374,3 +374,95 @@ func TestSkillStartADriverIntakeTurnStops(t *testing.T) {
 		}
 	}
 }
+
+// ---------- drivers always belong to a project ----------
+
+const driverProjectHint = "drivers belong to a project; pass --project <slug>"
+
+func TestAddDriverWithoutProjectHints(t *testing.T) {
+	setupFlowRoot(t)
+	var rc int
+	out := captureStdout(t, func() {
+		rc = cmdAdd([]string{"task", "Loose driver", "--slug", "ld", "--work-dir", t.TempDir(), "--tag", "driver"})
+	})
+	if rc != 0 {
+		t.Fatalf("add must still succeed; rc=%d\n%s", rc, out)
+	}
+	if !strings.Contains(out, driverProjectHint) {
+		t.Errorf("missing project hint; got:\n%s", out)
+	}
+	db := openFlowDB(t)
+	defer db.Close()
+	if _, err := flowdb.GetTask(db, "ld"); err != nil {
+		t.Errorf("task should still be created: %v", err)
+	}
+}
+
+func TestAddDriverWithProjectNoHint(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"project", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal(rc)
+	}
+	out := captureStdout(t, func() {
+		cmdAdd([]string{"task", "Good driver", "--slug", "gd", "--project", "p", "--tag", "driver"})
+	})
+	if strings.Contains(out, driverProjectHint) {
+		t.Errorf("no hint expected with --project; got:\n%s", out)
+	}
+	// A plain floating task gets no hint either.
+	out = captureStdout(t, func() {
+		cmdAdd([]string{"task", "Plain", "--slug", "pl", "--work-dir", wd})
+	})
+	if strings.Contains(out, driverProjectHint) {
+		t.Errorf("no hint expected for a plain task; got:\n%s", out)
+	}
+}
+
+func TestUpdateTagDriverOnFloatingTaskHints(t *testing.T) {
+	setupFlowRoot(t)
+	wd := t.TempDir()
+	if rc := cmdAdd([]string{"task", "Floater", "--slug", "fl", "--work-dir", wd}); rc != 0 {
+		t.Fatal(rc)
+	}
+	var rc int
+	out := captureStdout(t, func() { rc = cmdUpdate([]string{"task", "fl", "--tag", "driver"}) })
+	if rc != 0 {
+		t.Fatalf("update must still succeed; rc=%d\n%s", rc, out)
+	}
+	if !strings.Contains(out, driverProjectHint) {
+		t.Errorf("missing project hint; got:\n%s", out)
+	}
+	if rc := cmdAdd([]string{"project", "P", "--slug", "p", "--work-dir", wd}); rc != 0 {
+		t.Fatal(rc)
+	}
+	if rc := cmdAdd([]string{"task", "In project", "--slug", "ip", "--project", "p"}); rc != 0 {
+		t.Fatal(rc)
+	}
+	out = captureStdout(t, func() { cmdUpdate([]string{"task", "ip", "--tag", "driver"}) })
+	if strings.Contains(out, driverProjectHint) {
+		t.Errorf("no hint expected for a task in a project; got:\n%s", out)
+	}
+}
+
+func TestSkillStartADriverAlwaysHasAProject(t *testing.T) {
+	s := sectionOf(t, readSkill(t, "SKILL.md"), "### 4.2 Start a driver")
+	flat := strings.Join(strings.Fields(s), " ")
+	for _, want := range []string{
+		"A driver task ALWAYS belongs to a project",
+		"by repo/work_dir path, then by name/goal",
+		"ask only if 2+ fit",
+		"CREATE one without asking",
+		`flow add project "<name>"`,
+		"thin brief",
+		`"Created project <p> and driver task <name>; continuing here."`,
+		"skip the first-task follow-up in references/intake-project.md",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("§4.2 missing %q", want)
+		}
+	}
+	if strings.Contains(s, "None (floating)") {
+		t.Error("§4.2 driver path must not offer None (floating)")
+	}
+}
