@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,9 @@ const (
 	// the driver, not a child) and tells the supervisor which prompt and
 	// final status to use. autoChildEnv strips it.
 	reviveEnvVar = "FLOW_AUTO_REVIVE"
+	// reviveHolderEnvVar is the pid of the sender whose claim started the
+	// revive; the supervisor adopts the row only while it still holds it.
+	reviveHolderEnvVar = "FLOW_AUTO_REVIVE_HOLDER"
 	// reviveStatus is the auto_run_status a revive ends with when the
 	// driver did not close itself (the normal case).
 	reviveStatus = "revived"
@@ -103,7 +107,10 @@ func isChildReport(db *sql.DB, m *flowdb.BusMessage) bool {
 		return false
 	}
 	from, err := flowdb.GetTask(db, m.FromTaskSlug)
-	return err == nil && from != nil && from.ParentSlug.Valid && from.ParentSlug.String == m.ToTaskSlug
+	// Only an auto run's child: a child the human runs in its own tab has no
+	// auto-run record and must not revive its driver.
+	return err == nil && from != nil && from.ParentSlug.Valid && from.ParentSlug.String == m.ToTaskSlug &&
+		from.AutoRunStatus.Valid
 }
 
 // maybeRevive upgrades a "not live" wake result into a revive when every
@@ -200,7 +207,8 @@ func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
 	var pid int
 	var logPath string
 	if err == nil {
-		pid, logPath, err = launchAutoRunEnv(t, root, "", reviveEnvVar+"="+t.Slug)
+		pid, logPath, err = launchAutoRunEnv(t, root, "",
+			reviveEnvVar+"="+t.Slug, reviveHolderEnvVar+"="+strconv.Itoa(os.Getpid()))
 	}
 	if err != nil {
 		_ = flowdb.ReleaseRevive(db, t.Slug, os.Getpid(), now, prev)
@@ -208,7 +216,12 @@ func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
 		noteReviveLaunchFailed(db, t.Slug, err)
 		return r
 	}
-	_ = recordReviveLaunched(db, t.Slug, os.Getpid(), pid, logPath)
+	if err := recordReviveLaunchedRetry(db, t.Slug, os.Getpid(), pid, logPath); err != nil {
+		// The run is live and the supervisor adopts the row itself, but the
+		// human must know the bookkeeping failed.
+		fyiHumanOnce(db, t.Slug, fmt.Sprintf(reviveFailedPrefix+"%s: revive launched but its bookkeeping failed", t.Slug),
+			fmt.Sprintf("revive of %s started (pid %d) but its run record could not be written (%v)", t.Slug, pid, err))
+	}
 	r.Woke, r.Reason = true, "revived its exited session headlessly, pid "+fmt.Sprint(pid)
 	return r
 }
@@ -236,9 +249,32 @@ func recordReviveLaunched(db *sql.DB, slug string, holderPID, pid int, logPath s
 
 // adoptReviveRun runs first in a revive's supervisor: the claim stamped
 // the SENDER's pid, so the supervisor takes the row over, or a run that
-// ends before the sender records the pid could not finalize it.
-func adoptReviveRun(db *sql.DB, slug string) {
-	_, _ = db.Exec(`UPDATE tasks SET auto_run_pid=? WHERE slug=? AND auto_run_status='running'`, supervisorPID(), slug)
+// ends before the sender records the pid could not finalize it. It takes
+// the row only while it still holds the claim (the sender's pid or its own):
+// a newer run that replaced the claim keeps its row, and false tells the
+// caller to start no harness.
+func adoptReviveRun(db *sql.DB, slug string) bool {
+	holder, _ := strconv.Atoi(os.Getenv(reviveHolderEnvVar))
+	res, err := db.Exec(`UPDATE tasks SET auto_run_pid=? WHERE slug=? AND auto_run_status='running' AND auto_run_pid IN (?,?)`,
+		supervisorPID(), slug, holder, supervisorPID())
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n == 1
+}
+
+// recordReviveLaunchedRetry retries recordReviveLaunched across a busy
+// database (a concurrent writer holds the lock).
+func recordReviveLaunchedRetry(db *sql.DB, slug string, holderPID, pid int, logPath string) error {
+	var err error
+	for i := 0; i < 3; i++ {
+		if err = recordReviveLaunched(db, slug, holderPID, pid, logPath); err == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+	}
+	return err
 }
 
 // isReviveRun reports whether this process belongs to the revive run of

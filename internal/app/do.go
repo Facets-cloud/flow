@@ -398,8 +398,25 @@ func cmdDo(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: task %q has no work_dir\n", task.Slug)
 			return 1
 		}
+		// Claim the run before launching, in one conditional write: a revive
+		// (or a second --auto) that starts meanwhile sees the row in flight.
+		prev := flowdb.AutoRunRecord{
+			Status: task.AutoRunStatus.String, Started: task.AutoRunStarted.String, Finished: task.AutoRunFinished.String,
+		}
+		claimed, cerr := flowdb.ClaimAutoRun(db, task.Slug, os.Getpid(), *force)
+		if cerr != nil {
+			fmt.Fprintf(os.Stderr, "error: claim auto run: %v\n", cerr)
+			return 1
+		}
+		if !claimed {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q already has an autonomous run in progress — wait for it to finish, or pass --force to launch another\n",
+				task.Slug)
+			return 1
+		}
 		pid, logPath, err := launchAutoRun(task, root, injectionText)
 		if err != nil {
+			_ = flowdb.ReleaseAutoRunClaim(db, task.Slug, os.Getpid(), prev)
 			// Launch failed before claude could write its jsonl. Mirror the
 			// spawn-failure recovery: undo a fresh bootstrap's pre-allocated
 			// session + status flip so the next attempt retries cleanly.

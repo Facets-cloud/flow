@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -258,6 +259,18 @@ func TestReviveIfMailLandedBounds(t *testing.T) {
 	}
 }
 
+// A child the human runs in its own tab has no auto-run record: its mail
+// must not revive the driver.
+func TestInteractiveChildIsNotAReviveTrigger(t *testing.T) {
+	db, _ := reviveSetup(t)
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status=NULL WHERE slug='c'`); err != nil {
+		t.Fatal(err)
+	}
+	if isChildReport(db, &flowdb.BusMessage{Kind: "message", FromTaskSlug: "c", ToTaskSlug: "d"}) {
+		t.Error("interactive child counted as a revive trigger")
+	}
+}
+
 func TestIsChildReportEdges(t *testing.T) {
 	db, _ := reviveSetup(t)
 	mk := func(from, to string) *flowdb.BusMessage {
@@ -379,6 +392,11 @@ func TestReviveFastSupervisorFinalizes(t *testing.T) {
 		// The supervisor runs to completion before launch returns.
 		supervisorPID = func() int { return 9301 }
 		t.Setenv(reviveEnvVar, slug)
+		for _, kv := range env { // the real supervisor gets the claim holder via its env
+			if v, ok := strings.CutPrefix(kv, reviveHolderEnvVar+"="); ok {
+				t.Setenv(reviveHolderEnvVar, v)
+			}
+		}
 		cmdAutoExec([]string{slug})
 		return 9301, nil
 	}
@@ -467,5 +485,68 @@ func TestReviveNoRefusalFYIForNormalHolds(t *testing.T) {
 	ms, _ := flowdb.UnreadForHuman(db, busUser)
 	if len(*envs) != 1 || len(ms) != 0 {
 		t.Errorf("launches=%d human mail=%d, want 1 and 0", len(*envs), len(ms))
+	}
+}
+
+// Review #168-1: a reconcile working from a stale snapshot (dead pid) must
+// not settle a newer claim that replaced that run after the read.
+func TestReconcileStaleSnapshotSparesNewerClaim(t *testing.T) {
+	db, _ := reviveSetup(t)
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=4444,
+		auto_run_started='2026-01-01T00:00:00Z' WHERE slug='d'`); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := flowdb.GetTask(db, "d")
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_pid=?, auto_run_started='2026-01-01T00:00:05Z' WHERE slug='d'`,
+		os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAutoRun(db, stale)
+	task, _ := flowdb.GetTask(db, "d")
+	if task.AutoRunStatus.String != "running" || task.AutoRunPID.Int64 != int64(os.Getpid()) {
+		t.Fatalf("newer claim settled by a stale reconcile: %q pid %v", task.AutoRunStatus.String, task.AutoRunPID)
+	}
+}
+
+// Review #168-1: a revive supervisor whose claim was replaced (flow do --auto
+// --force) adopts nothing and starts no harness.
+func TestSupersededReviveSupervisorStartsNoHarness(t *testing.T) {
+	db, _ := reviveSetup(t)
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=7777 WHERE slug='d'`); err != nil {
+		t.Fatal(err)
+	}
+	oldPID := supervisorPID
+	t.Cleanup(func() { supervisorPID = oldPID })
+	supervisorPID = func() int { return 9999 }
+	t.Setenv(reviveEnvVar, "d")
+	t.Setenv(reviveHolderEnvVar, "1234")
+	ran := false
+	stubAutoRunner(t, func(harness.Harness, string, string, harness.LaunchOpts) error { ran = true; return nil })
+	cmdAutoExec([]string{"d"})
+	task, _ := flowdb.GetTask(db, "d")
+	if ran || task.AutoRunPID.Int64 != 7777 {
+		t.Fatalf("superseded revive ran=%v pid=%v, want no run and pid 7777 kept", ran, task.AutoRunPID)
+	}
+}
+
+// Review #168-2: --auto claims before launching, so it refuses a run already
+// in flight (a revive) unless forced.
+func TestClaimAutoRunRefusesInFlight(t *testing.T) {
+	db, _ := reviveSetup(t)
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=7777 WHERE slug='d'`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := flowdb.ClaimAutoRun(db, "d", os.Getpid(), false); err != nil || ok {
+		t.Fatalf("claim over an in-flight run = %v, %v; want refused", ok, err)
+	}
+	if ok, err := flowdb.ClaimAutoRun(db, "d", os.Getpid(), true); err != nil || !ok {
+		t.Fatalf("forced claim = %v, %v; want claimed", ok, err)
+	}
+	prev := flowdb.AutoRunRecord{Status: "completed"}
+	if err := flowdb.ReleaseAutoRunClaim(db, "d", os.Getpid(), prev); err != nil {
+		t.Fatal(err)
+	}
+	if task, _ := flowdb.GetTask(db, "d"); task.AutoRunStatus.String != "completed" || task.AutoRunPID.Valid {
+		t.Fatalf("release = %q pid %v, want completed and no pid", task.AutoRunStatus.String, task.AutoRunPID)
 	}
 }

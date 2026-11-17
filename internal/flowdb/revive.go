@@ -109,15 +109,38 @@ type AutoRunRecord struct {
 // go back to prev only while the claimant still holds the row, and the
 // rate-limit row is dropped.
 func ReleaseRevive(db *sql.DB, slug string, holderPID int, claimedAt time.Time, prev AutoRunRecord) error {
-	if _, err := db.Exec(`UPDATE tasks SET auto_run_status=?, auto_run_pid=NULL, auto_run_started=?, auto_run_finished=?
-        WHERE slug=? AND auto_run_status='running' AND auto_run_pid=?`,
-		NullIfEmpty(prev.Status), NullIfEmpty(prev.Started), NullIfEmpty(prev.Finished), slug, holderPID); err != nil {
+	if err := ReleaseAutoRunClaim(db, slug, holderPID, prev); err != nil {
 		return err
 	}
 	// One row: another revive may share the second.
 	_, err := db.Exec(`DELETE FROM bus_revives WHERE rowid =
         (SELECT rowid FROM bus_revives WHERE task_slug=? AND revived_at=? ORDER BY rowid DESC LIMIT 1)`,
 		slug, claimedAt.UTC().Format(time.RFC3339))
+	return err
+}
+
+// ClaimAutoRun marks slug's auto run as launched by holderPID before the
+// launch starts, so a revive (or a second --auto) sees it in flight. It refuses
+// (false) while another run is 'running', unless force.
+func ClaimAutoRun(db *sql.DB, slug string, holderPID int, force bool) (bool, error) {
+	now := NowISO()
+	res, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=?,
+		auto_run_finished=NULL, updated_at=?
+		WHERE slug=? AND (? OR auto_run_status IS NULL OR auto_run_status != 'running')`,
+		holderPID, now, now, slug, force)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// ReleaseAutoRunClaim puts the auto-run columns back to prev, but only while
+// holderPID still holds the row (a claim that was never launched).
+func ReleaseAutoRunClaim(db *sql.DB, slug string, holderPID int, prev AutoRunRecord) error {
+	_, err := db.Exec(`UPDATE tasks SET auto_run_status=?, auto_run_pid=NULL, auto_run_started=?, auto_run_finished=?
+        WHERE slug=? AND auto_run_status='running' AND auto_run_pid=?`,
+		NullIfEmpty(prev.Status), NullIfEmpty(prev.Started), NullIfEmpty(prev.Finished), slug, holderPID)
 	return err
 }
 

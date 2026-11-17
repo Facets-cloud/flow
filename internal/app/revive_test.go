@@ -21,7 +21,8 @@ func reviveSetup(t *testing.T) (*sql.DB, *[][]string) {
 	mkBusTask(t, db, "d", "sid-d")
 	mkBusTask(t, db, "c", "sid-c")
 	mkBusTask(t, db, "o", "sid-o")
-	if _, err := db.Exec(`UPDATE tasks SET parent_slug='d' WHERE slug='c'`); err != nil {
+	// c is an auto child: it has an auto-run record (only those may revive d).
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='d', auto_run_status='completed' WHERE slug='c'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := flowdb.AddTaskTag(db, "d", driverTag); err != nil {

@@ -178,7 +178,8 @@ var harnessSessionEnv = []string{
 func isSessionEnv(kv string) bool {
 	// A stale auto marker from an enclosing auto run never leaks: the
 	// launcher re-adds the right one for the run it starts.
-	if strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, reviveEnvVar+"=") {
+	if strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, reviveEnvVar+"=") ||
+		strings.HasPrefix(kv, reviveHolderEnvVar+"=") {
 		return true
 	}
 	for _, h := range allHarnesses() {
@@ -309,12 +310,14 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	now := flowdb.NowISO()
 	started := t.AutoRunStarted.String
 	var status, finished string
+	// Match the snapshot's pid and start too: a stale snapshot must not
+	// settle a newer run that replaced it between the read and this write.
 	if err := db.QueryRow(
 		`UPDATE tasks SET auto_run_status = CASE WHEN status='done' THEN 'completed' ELSE 'dead' END,
 		 auto_run_finished=COALESCE(auto_run_finished, ?), auto_run_pid=NULL
-		 WHERE slug=? AND auto_run_status='running'
+		 WHERE slug=? AND auto_run_status='running' AND auto_run_pid IS ? AND auto_run_started IS ?
 		 RETURNING auto_run_status, auto_run_finished`,
-		now, t.Slug,
+		now, t.Slug, t.AutoRunPID, t.AutoRunStarted,
 	).Scan(&status, &finished); err != nil {
 		return
 	}
@@ -393,7 +396,11 @@ func cmdAutoExec(args []string) int {
 	reviveStarted := task.AutoRunStarted.String
 	if revive {
 		prompt = buildRevivePrompt(slug)
-		adoptReviveRun(db, slug)
+		if !adoptReviveRun(db, slug) {
+			// A newer run replaced the claim: it owns the session now.
+			fmt.Fprintf(os.Stderr, "note: revive of %q superseded by a newer run; not starting\n", slug)
+			return 0
+		}
 	}
 
 	// Resolve the task's harness (claude today; codex/gemini once their
