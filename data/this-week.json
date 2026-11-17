@@ -1,0 +1,1189 @@
+{
+  "counts": {
+    "asks_to_human": 1,
+    "children": 88,
+    "dead": 7,
+    "done": 72,
+    "messages_between_tasks": 135,
+    "notes": 103,
+    "refs": 68,
+    "running": 2,
+    "tasks": 93
+  },
+  "dead_reasons": {
+    "exited without closing": 2,
+    "no log written": 5
+  },
+  "generated_at": "2026-11-17T11:32:05+05:30",
+  "leaves_behind": [
+    {
+      "items": 0,
+      "name": "brief.md",
+      "tasks": 93
+    },
+    {
+      "items": 103,
+      "name": "updates/",
+      "tasks": 93
+    },
+    {
+      "items": 92,
+      "name": "auto-runs/",
+      "tasks": 77
+    },
+    {
+      "items": 96,
+      "name": "evidence/",
+      "tasks": 8
+    },
+    {
+      "items": 21,
+      "name": "other files",
+      "tasks": 7
+    },
+    {
+      "items": 0,
+      "name": "workspace/",
+      "tasks": 6
+    },
+    {
+      "items": 25,
+      "name": "artifacts/",
+      "tasks": 1
+    },
+    {
+      "items": 11,
+      "name": "e2e/",
+      "tasks": 1
+    },
+    {
+      "items": 9,
+      "name": "scratch/",
+      "tasks": 1
+    },
+    {
+      "items": 9,
+      "name": "verify/",
+      "tasks": 1
+    }
+  ],
+  "projects": [
+    "flow"
+  ],
+  "repo": "Facets-cloud/flow",
+  "shown": 12,
+  "table_cap": 12,
+  "tasks": [
+    {
+      "auto_run_status": "running",
+      "child": false,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "site-daily--2026-11-17-06-00",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        138,
+        182
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-16-19-49",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "viral-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        132,
+        170,
+        178,
+        179,
+        180
+      ],
+      "shown": true,
+      "slug": "pr132-remerge",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "driver-first-impl",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "role-smoke-m165",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        170,
+        180
+      ],
+      "shown": true,
+      "slug": "bg-resume-review-followups",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "exited without closing",
+      "notes": 1,
+      "refs": [
+        179
+      ],
+      "shown": true,
+      "slug": "skill-refresh-no-downgrade",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "role-smoke-r4",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        6,
+        7,
+        8,
+        10,
+        97,
+        120,
+        126,
+        130,
+        136
+      ],
+      "shown": false,
+      "slug": "mt-stale-own",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        132
+      ],
+      "shown": false,
+      "slug": "pr132-coderabbit",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        170,
+        171,
+        172
+      ],
+      "shown": false,
+      "slug": "pr170-coderabbit",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "no log written",
+      "notes": 0,
+      "refs": [],
+      "shown": true,
+      "slug": "mt-review-wake",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "no log written",
+      "notes": 0,
+      "refs": [],
+      "shown": true,
+      "slug": "mt-review-small",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "no log written",
+      "notes": 0,
+      "refs": [],
+      "shown": true,
+      "slug": "mt-review-175",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "no log written",
+      "notes": 0,
+      "refs": [],
+      "shown": true,
+      "slug": "mt-stale-triage",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 7,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-merge-train",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "auto-waiter-exit",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "role-smoke",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        132,
+        143
+      ],
+      "shown": false,
+      "slug": "pr132-drop-f1",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        165,
+        181
+      ],
+      "shown": true,
+      "slug": "driver-first-ux",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        132
+      ],
+      "shown": false,
+      "slug": "ab-validate-132",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        172
+      ],
+      "shown": false,
+      "slug": "bg-resume-no-fork",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "claude-doorbell-pr",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "doorbell-probe",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "desk-lazy-restart",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        165
+      ],
+      "shown": false,
+      "slug": "driver-role-ab",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 6,
+      "refs": [],
+      "shown": false,
+      "slug": "driver-role-section",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "bgfork-probe",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        170,
+        171,
+        172
+      ],
+      "shown": false,
+      "slug": "bg-resume-phantom-id",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        170
+      ],
+      "shown": false,
+      "slug": "bg-resume-kickoff",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        132,
+        165,
+        170,
+        171,
+        172,
+        178,
+        179,
+        180
+      ],
+      "shown": true,
+      "slug": "bg-resume-wake",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        132,
+        143,
+        152
+      ],
+      "shown": false,
+      "slug": "pr132-resolve-main",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "brief-shapes-docs",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        11,
+        29,
+        74,
+        165
+      ],
+      "shown": false,
+      "slug": "driver-brief-knowhow",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "cc-linkedin-post",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "tray-settings",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        153,
+        154
+      ],
+      "shown": false,
+      "slug": "pr153-review",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 6,
+      "refs": [
+        176
+      ],
+      "shown": false,
+      "slug": "flow-hub-role",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "wake-option-c",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 4,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-coord",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        151
+      ],
+      "shown": false,
+      "slug": "pr151-conflicts",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-folder-trust",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        146
+      ],
+      "shown": false,
+      "slug": "rebase-146",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "bg-resume-name",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        146,
+        149
+      ],
+      "shown": false,
+      "slug": "upgrade-notice",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "desk-wake-text",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "wake-build-v1",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "connectors-autoupdate",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "no log written",
+      "notes": 0,
+      "refs": [],
+      "shown": true,
+      "slug": "harness-wake-build",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "pr143-sandbox-rules",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "codex-sandbox-modes",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "codex-unsandboxed-default",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        1,
+        4,
+        5,
+        11,
+        17,
+        28,
+        35,
+        71,
+        87
+      ],
+      "shown": false,
+      "slug": "review-pr138",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        113,
+        132,
+        136,
+        142
+      ],
+      "shown": false,
+      "slug": "pr132-fold-notes",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "selfupgrade-fixes",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        113,
+        127,
+        132,
+        140,
+        141
+      ],
+      "shown": false,
+      "slug": "review-pr113",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        1,
+        2,
+        101,
+        113,
+        132,
+        140
+      ],
+      "shown": false,
+      "slug": "review-pr101",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "codex-wake-spike",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "claude-wake-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        144,
+        146,
+        155,
+        162,
+        163,
+        164
+      ],
+      "shown": false,
+      "slug": "harness-wake",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        138
+      ],
+      "shown": false,
+      "slug": "site-daily--2026-11-12-05-03",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": false,
+      "dead_reason": "exited without closing",
+      "notes": 1,
+      "refs": [
+        138
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-12-00-34",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 4,
+      "refs": [],
+      "shown": false,
+      "slug": "star-nudge",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        140
+      ],
+      "shown": false,
+      "slug": "skill-report-issue",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "connectors-release",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        138,
+        139
+      ],
+      "shown": false,
+      "slug": "site-polish",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "feedback-outreach-list",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        136,
+        138,
+        139
+      ],
+      "shown": false,
+      "slug": "site-hybrid-page",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        138
+      ],
+      "shown": false,
+      "slug": "site-daily--2026-11-11-10-12",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        1,
+        4,
+        5,
+        11,
+        17
+      ],
+      "shown": false,
+      "slug": "site-daily-playbook",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        59,
+        135
+      ],
+      "shown": false,
+      "slug": "verify-pr135",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        132
+      ],
+      "shown": false,
+      "slug": "review-notes-132",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-pain-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-usage-playbooks",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        1,
+        4,
+        11,
+        17,
+        39,
+        62,
+        63,
+        65,
+        81,
+        83,
+        94,
+        99,
+        105,
+        119,
+        120,
+        123,
+        133
+      ],
+      "shown": false,
+      "slug": "flow-git-evolution",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        28,
+        35,
+        71,
+        87,
+        108
+      ],
+      "shown": false,
+      "slug": "flow-usage-skoop",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "since-today-tz",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        127,
+        131
+      ],
+      "shown": false,
+      "slug": "pr127-checkname",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131,
+        132
+      ],
+      "shown": false,
+      "slug": "pr132-merge-main",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131,
+        132
+      ],
+      "shown": false,
+      "slug": "pr132-rebase",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        130
+      ],
+      "shown": false,
+      "slug": "flow-schedule-fix",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        127
+      ],
+      "shown": false,
+      "slug": "flow-tmux-fix",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131
+      ],
+      "shown": false,
+      "slug": "attach-prune-race",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "help-15",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "p2p-desk-resume",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "codex-driver-fixes",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "p2p-desk-project",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "help-14",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "help-13",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "spike-bg-desk",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        131
+      ],
+      "shown": false,
+      "slug": "flow-desk-primitives",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-p2p-desks",
+      "status": "done"
+    }
+  ],
+  "window_days": 7
+}

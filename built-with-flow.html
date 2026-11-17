@@ -1,0 +1,69 @@
+
+<style>
+.bwf .bwf-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0 28px}
+@media (max-width:640px){.bwf .bwf-stats{grid-template-columns:repeat(2,1fr)}}
+.bwf .bwf-stat{background:var(--bg-paper);border:1px solid var(--rule-soft);border-radius:var(--r-md);padding:14px 16px}
+.bwf .bwf-stat__n{display:block;font:600 28px/1.1 var(--font-mono);color:var(--fg)}
+.bwf .bwf-stat__l{display:block;margin-top:6px;font:13px/1.3 var(--font-sans);color:var(--fg-muted)}
+.bwf table{width:100%;border-collapse:collapse;font:13px/1.5 var(--font-mono);color:var(--fg-soft)}
+.bwf th{text-align:left;font-weight:500;color:var(--fg-muted);border-bottom:1px solid var(--rule);padding:6px 8px}
+.bwf td{border-bottom:1px solid var(--rule-soft);padding:6px 8px;vertical-align:top}
+.bwf .bwf-slug{color:var(--fg)}
+.bwf .bwf-child{color:var(--fg-dim)}
+.bwf .bwf-dead{color:var(--term-red)}
+.bwf .bwf-done{color:var(--term-green)}
+.bwf .bwf-run{color:var(--term-amber)}
+.bwf a{color:var(--grad-3);text-decoration:none}
+.bwf a:hover{text-decoration:underline}
+.bwf .bwf-foot{margin-top:18px;font:12px/1.5 var(--font-sans);color:var(--fg-dim)}
+.bwf ul.bwf-leaves{list-style:none;padding:0;margin:8px 0 0;font:13px/1.7 var(--font-mono);color:var(--fg-soft)}
+</style>
+
+<section id="built-with-flow" class="brief brief--alt bwf" aria-labelledby="bwf-heading">
+  <div class="brief__inner">
+    <h2 id="bwf-heading" class="brief__title">How flow is built, with flow</h2>
+    <p class="section__lede">The last 7 days of the <code>flow</code> project, read straight out of the flow database by a flow playbook. Slugs, statuses and counts only; no brief, note or message text ever reaches this page.</p>
+    <div class="bwf-stats">
+      <div class="bwf-stat"><span class="bwf-stat__n" data-count="tasks">93</span><span class="bwf-stat__l">tasks created</span></div>
+      <div class="bwf-stat"><span class="bwf-stat__n" data-count="children">88</span><span class="bwf-stat__l">spawned as children</span></div>
+      <div class="bwf-stat"><span class="bwf-stat__n" data-count="done">72</span><span class="bwf-stat__l">closed with flow done</span></div>
+      <div class="bwf-stat"><span class="bwf-stat__n" data-count="dead">7</span><span class="bwf-stat__l">children died</span></div>
+      <div class="bwf-stat"><span class="bwf-stat__n" data-count="messages_between_tasks">135</span><span class="bwf-stat__l">messages between tasks</span></div>
+      <div class="bwf-stat"><span class="bwf-stat__n" data-count="asks_to_human">1</span><span class="bwf-stat__l">asks to the human</span></div>
+      <div class="bwf-stat"><span class="bwf-stat__n" data-count="notes">103</span><span class="bwf-stat__l">progress notes left</span></div>
+    </div>
+    <table>
+      <thead><tr><th>task</th><th>status</th><th>headless run</th><th>notes</th><th>refs</th></tr></thead>
+      <tbody>
+        <tr><td><span class="bwf-slug">site-daily--2026-11-16-19-49</span></td><td><span class="bwf-done">done</span></td><td><span class="">completed</span></td><td>1</td><td><a href="https://github.com/Facets-cloud/flow/issues/138">#138</a> <a href="https://github.com/Facets-cloud/flow/issues/182">#182</a></td></tr>
+        <tr><td><span class="bwf-slug">pr132-remerge</span> <span class="bwf-child">child</span></td><td><span class="bwf-done">done</span></td><td><span class="">completed</span></td><td>1</td><td><a href="https://github.com/Facets-cloud/flow/issues/132">#132</a> <a href="https://github.com/Facets-cloud/flow/issues/170">#170</a> <a href="https://github.com/Facets-cloud/flow/issues/178">#178</a> <a href="https://github.com/Facets-cloud/flow/issues/179">#179</a> <a href="https://github.com/Facets-cloud/flow/issues/180">#180</a></td></tr>
+        <tr><td><span class="bwf-slug">bg-resume-review-followups</span> <span class="bwf-child">child</span></td><td><span class="bwf-done">done</span></td><td><span class="">completed</span></td><td>1</td><td><a href="https://github.com/Facets-cloud/flow/issues/170">#170</a> <a href="https://github.com/Facets-cloud/flow/issues/180">#180</a></td></tr>
+        <tr><td><span class="bwf-slug">skill-refresh-no-downgrade</span> <span class="bwf-child">child</span></td><td><span class="bwf-done">done</span></td><td><span class="bwf-dead">child died: exited without closing</span></td><td>1</td><td><a href="https://github.com/Facets-cloud/flow/issues/179">#179</a></td></tr>
+        <tr><td><span class="bwf-slug">mt-review-wake</span> <span class="bwf-child">child</span></td><td><span class="bwf-run">in progress</span></td><td><span class="bwf-dead">child died: no log written</span></td><td>0</td><td><span class="bwf-child">&mdash;</span></td></tr>
+        <tr><td><span class="bwf-slug">mt-review-small</span> <span class="bwf-child">child</span></td><td><span class="bwf-run">in progress</span></td><td><span class="bwf-dead">child died: no log written</span></td><td>0</td><td><span class="bwf-child">&mdash;</span></td></tr>
+        <tr><td><span class="bwf-slug">mt-review-175</span> <span class="bwf-child">child</span></td><td><span class="bwf-run">in progress</span></td><td><span class="bwf-dead">child died: no log written</span></td><td>0</td><td><span class="bwf-child">&mdash;</span></td></tr>
+        <tr><td><span class="bwf-slug">mt-stale-triage</span> <span class="bwf-child">child</span></td><td><span class="bwf-run">in progress</span></td><td><span class="bwf-dead">child died: no log written</span></td><td>0</td><td><span class="bwf-child">&mdash;</span></td></tr>
+        <tr><td><span class="bwf-slug">driver-first-ux</span> <span class="bwf-child">child</span></td><td><span class="bwf-run">in progress</span></td><td><span class="bwf-child">tab session</span></td><td>2</td><td><a href="https://github.com/Facets-cloud/flow/issues/165">#165</a> <a href="https://github.com/Facets-cloud/flow/issues/181">#181</a></td></tr>
+        <tr><td><span class="bwf-slug">bg-resume-wake</span> <span class="bwf-child">child</span></td><td><span class="bwf-done">done</span></td><td><span class="bwf-child">tab session</span></td><td>2</td><td><a href="https://github.com/Facets-cloud/flow/issues/132">#132</a> <a href="https://github.com/Facets-cloud/flow/issues/165">#165</a> <a href="https://github.com/Facets-cloud/flow/issues/170">#170</a> <a href="https://github.com/Facets-cloud/flow/issues/171">#171</a> <a href="https://github.com/Facets-cloud/flow/issues/172">#172</a> <a href="https://github.com/Facets-cloud/flow/issues/178">#178</a> <a href="https://github.com/Facets-cloud/flow/issues/179">#179</a> <a href="https://github.com/Facets-cloud/flow/issues/180">#180</a></td></tr>
+        <tr><td><span class="bwf-slug">harness-wake-build</span> <span class="bwf-child">child</span></td><td><span class="bwf-run">in progress</span></td><td><span class="bwf-dead">child died: no log written</span></td><td>0</td><td><span class="bwf-child">&mdash;</span></td></tr>
+        <tr><td><span class="bwf-slug">site-daily--2026-11-12-00-34</span></td><td><span class="bwf-done">done</span></td><td><span class="bwf-dead">child died: exited without closing</span></td><td>1</td><td><a href="https://github.com/Facets-cloud/flow/issues/138">#138</a></td></tr>
+      </tbody>
+    </table>
+    <p class="bwf-foot bwf-more" data-more="81">and 81 more tasks this week</p>
+    <p class="bwf-foot">Why children died: exited without closing &times;2, no log written &times;5.</p>
+    <h3 class="card__title">What a task leaves behind</h3>
+    <ul class="bwf-leaves">
+      <li>brief.md &times;93</li>
+      <li>updates/ &times;93 (103 inside)</li>
+      <li>auto-runs/ &times;77 (92 inside)</li>
+      <li>evidence/ &times;8 (96 inside)</li>
+      <li>other files &times;7 (21 inside)</li>
+      <li>workspace/ &times;6 (0 inside)</li>
+      <li>artifacts/ &times;1 (25 inside)</li>
+      <li>e2e/ &times;1 (11 inside)</li>
+      <li>scratch/ &times;1 (9 inside)</li>
+      <li>verify/ &times;1 (9 inside)</li>
+    </ul>
+    <p class="bwf-foot">Generated 2026-11-17 by the <code>site-daily</code> playbook. The queries are in <a href="https://github.com/Facets-cloud/flow/blob/main/site/daily/queries.sql">site/daily/queries.sql</a>; the renderer and its leak tests in <a href="https://github.com/Facets-cloud/flow/tree/main/site/daily">site/daily</a>.</p>
+  </div>
+</section>
