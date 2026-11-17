@@ -291,18 +291,24 @@ the goal is a section of its brief, never a separate thing. Say "driver
 task" to the user; keep slug, tag, priority and template jargon off the
 user path.
 
-**Recipe (at most one question):**
-1. **Goal.** Not stated yet → ask ONE question: "I'll create a driver
-   task for this — what goal do you want to achieve?" (AskUserQuestion
-   with free-text Other, else chat). Already stated → skip it.
-2. **Project.** A driver task ALWAYS belongs to a project. Match an
-   existing one (`flow list projects`; by repo/work_dir path, then by
-   name/goal) and use it; ask only if 2+ fit. No match → CREATE one
-   without asking: `flow add project "<name>" --work-dir <current repo,
-   else cwd>` (name from the repo dir or goal; `--mkdir` only if missing),
-   thin brief (What = the goal; Where = work_dir). The driver task is its
-   first task, so skip the first-task follow-up in
-   references/intake-project.md. Pass `--project <p>` in step 4.
+**Recipe (one interaction):**
+1. **Goal.** Not stated yet → ask: "I'll create a driver task for this —
+   what goal do you want to achieve?" (free-text Other). Already stated →
+   skip it.
+2. **Project.** A driver task ALWAYS belongs to a project (never
+   floating), and you always ask ONE project question; never auto-create
+   silently (wrong project or duplicates). Options: the best existing
+   match(es) from `flow list projects` (by repo/work_dir path first, then
+   by name/goal; max 3, best first, the top one marked "(Recommended)") +
+   "New project <proposed name>" (name from the repo dir or goal) +
+   free-text Other. If step 1 also asks, combine goal + project into ONE
+   AskUserQuestion call (two questions), so it stays one interaction.
+   AskUserQuestion if your harness has it, else chat; in a session with a
+   parent task ask via `flow message`, never AskUserQuestion. Only on the
+   user's pick: attach, or `flow add project "<name>" --work-dir <current
+   repo, else cwd>` (`--mkdir` only if missing) with a thin brief (What =
+   the goal; Where = work_dir); the driver task is its first task, so skip
+   the first-task follow-up in references/intake-project.md.
 3. **Route.** `flow list tasks --project <p> --tag driver`: if a
    live driver already owns this goal, route there (say so in one line; open it
    via §4.4, and `flow message <assignee>/<slug> "<ask>"` when the request
@@ -316,9 +322,9 @@ user path.
 5. **Bind + announce.** Unbound session → `flow do --here <slug>` and
    continue here (no ask). Already bound → `flow do <slug>` (new tab).
    The announcement is mandatory, verbatim shape: "Created driver task
-   <name>; continuing here." (with a new project: "Created project <p>
-   and driver task <name>; continuing here."; never "I've tracked this as
-   a task").
+   <name> in project <p>; continuing here." (picked "New project":
+   "Created project <p> and driver task <name>; continuing here."; never
+   "I've tracked this as a task").
 6. **The intake turn ENDS** after you restate the goal, propose Done when
    (concrete, checkable) and close with a numbered "Needs from you:" list.
    No building or implementation in that turn, even when the goal is
@@ -662,7 +668,7 @@ after session start.
    `flow list tasks --status backlog --priority high` for candidates.
 3. AskUserQuestion with three options:
    - **Start a driver (Recommended, the default)** → §4.2 Start a driver:
-     at most one question, then bind this session to it and continue
+     one interaction (goal + project), then bind this session and continue
      here (unbound) or open it in a new tab (bound). Work already
      started in this conversation, and binding keeps the transcript.
    - **Switch to an existing task** → list candidates; on selection spawn

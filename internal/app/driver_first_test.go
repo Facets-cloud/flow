@@ -23,6 +23,8 @@ func TestUnboundSessionStartHintIsDriverFirst(t *testing.T) {
 		"brainstorming",
 		"what goal do you want to achieve?",
 		"live driver",
+		"which project",
+		"never auto-create",
 	} {
 		if !strings.Contains(ctx, want) {
 			t.Errorf("unbound hint missing %q; got:\n%s", want, ctx)
@@ -361,7 +363,7 @@ func TestSkillStartADriverIntakeTurnStops(t *testing.T) {
 	flat := strings.Join(strings.Fields(s), " ")
 	for _, want := range []string{
 		"announcement is mandatory",
-		`"Created driver task <name>; continuing here."`,
+		`"Created driver task <name> in project <p>; continuing here."`,
 		`never "I've tracked this as a task"`,
 		"intake turn ENDS",
 		"propose Done when",
@@ -450,10 +452,18 @@ func TestSkillStartADriverAlwaysHasAProject(t *testing.T) {
 	flat := strings.Join(strings.Fields(s), " ")
 	for _, want := range []string{
 		"A driver task ALWAYS belongs to a project",
-		"by repo/work_dir path, then by name/goal",
-		"ask only if 2+ fit",
-		"CREATE one without asking",
+		"always ask ONE project question",
+		"in a session with a parent task ask via `flow message`, never AskUserQuestion",
+		"by repo/work_dir path first, then by name/goal",
+		"max 3, best first",
+		"(Recommended)",
+		`"New project <proposed name>"`,
+		"free-text Other",
+		"Only on the user's pick",
 		`flow add project "<name>"`,
+		"never auto-create silently",
+		"combine goal + project into ONE AskUserQuestion call (two questions)",
+		"one interaction",
 		"thin brief",
 		`"Created project <p> and driver task <name>; continuing here."`,
 		"skip the first-task follow-up in references/intake-project.md",
@@ -462,7 +472,9 @@ func TestSkillStartADriverAlwaysHasAProject(t *testing.T) {
 			t.Errorf("§4.2 missing %q", want)
 		}
 	}
-	if strings.Contains(s, "None (floating)") {
-		t.Error("§4.2 driver path must not offer None (floating)")
+	for _, banned := range []string{"None (floating)", "CREATE one without asking", "ask only if 2+ fit", "at most one question"} {
+		if strings.Contains(flat, banned) {
+			t.Errorf("§4.2 driver path must not say %q (HUD #194)", banned)
+		}
 	}
 }

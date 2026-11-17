@@ -284,8 +284,9 @@ func emitAmbientSkillHint() int {
 		"conversation. Driver first: when the user states work they want done in this " +
 		"session (a goal, feature, bug, investigation), BEFORE doing it and before any other process skill " +
 		"(brainstorming, planning, debugging), create a driver task for it via the skill's §4.2 \"Start a driver\": " +
-		"at most one question, \"what goal do you want to achieve?\" (AskUserQuestion if your harness has it, else ask in chat; " +
-		"skip it when the goal is already stated). If a live driver or an existing flow task already owns that work, " +
+		"one interaction asking the goal, \"what goal do you want to achieve?\" (skip it when already stated), and which project " +
+		"it belongs to (best existing matches or a new project; never auto-create one), in one AskUserQuestion call if your " +
+		"harness has it, else in chat. If a live driver or an existing flow task already owns that work, " +
 		"route it there instead of creating a new one. Then bind this session to the new driver and continue here; " +
 		"brainstorming and planning run inside the driver. The user's work belongs in flow, don't " +
 		"silently proceed in an unbound transcript. A one-off question needs no task. " +
