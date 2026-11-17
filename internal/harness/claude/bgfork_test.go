@@ -75,3 +75,47 @@ func TestBackgroundForkSourceFromProcess(t *testing.T) {
 		t.Error("absent pid reported a source")
 	}
 }
+
+// A live agent's job activity (waiting on the user, background work in
+// flight) lives only in ~/.claude/jobs/<short>/state.json. BackgroundAgents
+// surfaces it so flow can tell a provably idle session from one whose
+// "idle" status hides a pending ask or running background work.
+func TestBackgroundAgentsLiveCarriesJobActivity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	write := func(short, body string) {
+		dir := filepath.Join(home, ".claude", "jobs", short)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("aaaaaaaa", `{"state":"working","tempo":"idle","needs":null,"needsAsk":null,"inFlight":{"tasks":0,"queued":0,"drainableMonitors":0}}`)
+	write("bbbbbbbb", `{"state":"working","tempo":"idle","inFlight":{"tasks":2,"queued":1,"kinds":["local_bash"],"drainableMonitors":1}}`)
+	write("cccccccc", `{"state":"blocked","tempo":"blocked","needs":"Waiting on you","needsAsk":{"q":"?"},"inFlight":{"tasks":0}}`)
+	old := BGCommandRunner
+	BGCommandRunner = func(string, []string) ([]byte, error) {
+		return []byte(`[{"pid":1,"id":"aaaaaaaa","kind":"background","sessionId":"aaaaaaaa-0","status":"idle","state":"working"},
+		  {"pid":2,"id":"bbbbbbbb","kind":"background","sessionId":"bbbbbbbb-0","status":"idle","state":"working"},
+		  {"pid":3,"id":"cccccccc","kind":"background","sessionId":"cccccccc-0","status":"idle","state":"blocked"},
+		  {"pid":4,"id":"dddddddd","kind":"background","sessionId":"dddddddd-0","status":"idle","state":"working"}]`), nil
+	}
+	t.Cleanup(func() { BGCommandRunner = old })
+	agents, err := New().(harness.BackgroundLauncher).BackgroundAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []*harness.BackgroundActivity{
+		{InFlight: 0},
+		{InFlight: 4},
+		{NeedsInput: true},
+		nil, // no state.json: unknown
+	}
+	for i, w := range want {
+		if !reflect.DeepEqual(agents[i].Activity, w) {
+			t.Errorf("agent %s activity = %+v, want %+v", agents[i].ShortID, agents[i].Activity, w)
+		}
+	}
+}

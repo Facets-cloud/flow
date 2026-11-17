@@ -126,13 +126,15 @@ func TestCmdDoBackgroundIdleAliveDeliversMailNotice(t *testing.T) {
 	}
 }
 
-// Alive and idle with no push channel: stop it and resume the SAME id
-// (no flags), which delivers the kickoff without a copy.
+// Alive, provably idle (nothing pending or in flight per its job state)
+// and no push channel: stop it and resume the SAME id (no flags), which
+// delivers the kickoff without a copy.
 func TestCmdDoBackgroundIdleAliveNoPushStopsAndResumesSameID(t *testing.T) {
 	c, reg := spawnBound(t)
 	setConfirmTimeout(t, 0)
 	stubWaker(t, &fakeWaker{live: false})
 	*reg = "[" + bgAgentLive(bgFullSID, 4242, "idle", "done") + "]"
+	writeJobState(t, bgFullSID[:8], jobStateQuiet)
 	c.onStop = func() { *reg = bgAgentsJSONExited(bgFullSID, "stopped") }
 	c.onResume = func() { *reg = "[" + bgAgentLive(bgFullSID, 4343, "busy", "working") + "]" }
 	if rc := cmdDo([]string{"--with", "rebase on main", "bgt"}); rc != 0 {
@@ -221,6 +223,7 @@ func TestCmdDoBackgroundStopWaitsForExitBeforeResume(t *testing.T) {
 	stubWaker(t, &fakeWaker{live: false})
 	live := "[" + bgAgentLive(bgFullSID, 4242, "idle", "done") + "]"
 	*reg = live
+	writeJobState(t, bgFullSID[:8], jobStateQuiet)
 	stopped := false
 	polls := 0
 	c.onStop = func() { stopped = true }
