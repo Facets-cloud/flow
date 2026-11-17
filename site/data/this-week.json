@@ -1,12 +1,12 @@
 {
   "counts": {
     "asks_to_human": 1,
-    "children": 89,
+    "children": 88,
     "dead": 7,
     "done": 72,
-    "messages_between_tasks": 140,
-    "notes": 102,
-    "refs": 67,
+    "messages_between_tasks": 135,
+    "notes": 103,
+    "refs": 68,
     "running": 2,
     "tasks": 93
   },
@@ -14,7 +14,7 @@
     "exited without closing": 2,
     "no log written": 5
   },
-  "generated_at": "2026-11-17T01:21:00+05:30",
+  "generated_at": "2026-11-17T11:32:05+05:30",
   "leaves_behind": [
     {
       "items": 0,
@@ -22,12 +22,12 @@
       "tasks": 93
     },
     {
-      "items": 102,
+      "items": 103,
       "name": "updates/",
       "tasks": 93
     },
     {
-      "items": 91,
+      "items": 92,
       "name": "auto-runs/",
       "tasks": 77
     },
@@ -37,9 +37,9 @@
       "tasks": 8
     },
     {
-      "items": 22,
+      "items": 21,
       "name": "other files",
-      "tasks": 8
+      "tasks": 7
     },
     {
       "items": 0,
@@ -81,18 +81,31 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-16-19-49",
+      "slug": "site-daily--2026-11-17-06-00",
       "status": "in-progress"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        138,
+        182
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-16-19-49",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 0,
+      "notes": 1,
       "refs": [],
       "shown": false,
       "slug": "viral-research",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -111,14 +124,14 @@
       "status": "done"
     },
     {
-      "auto_run_status": "completed",
+      "auto_run_status": "running",
       "child": true,
       "dead_reason": null,
       "notes": 1,
       "refs": [],
       "shown": false,
       "slug": "driver-first-impl",
-      "status": "done"
+      "status": "in-progress"
     },
     {
       "auto_run_status": null,
@@ -207,7 +220,7 @@
         171,
         172
       ],
-      "shown": true,
+      "shown": false,
       "slug": "pr170-coderabbit",
       "status": "done"
     },
@@ -1169,16 +1182,6 @@
       "refs": [],
       "shown": false,
       "slug": "flow-p2p-desks",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "conn-notify",
       "status": "done"
     }
   ],
