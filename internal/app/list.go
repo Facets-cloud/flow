@@ -500,7 +500,8 @@ func autoCell(p listfmt.Painter, r taskListRow) string {
 }
 
 // autoRunColor maps an autonomous-run status to a display color:
-// running → cyan (in flight), completed → green, dead → red (needs eyes).
+// running → cyan (in flight), completed → green, dead → red (needs eyes),
+// revived → blue (a driver handled its children's mail and exited).
 func autoRunColor(status string) string {
 	switch status {
 	case "running":
@@ -509,6 +510,8 @@ func autoRunColor(status string) string {
 		return listfmt.Green
 	case "dead":
 		return listfmt.Red
+	case reviveStatus:
+		return listfmt.Blue
 	}
 	return ""
 }
