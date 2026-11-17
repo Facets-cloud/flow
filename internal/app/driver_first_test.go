@@ -364,7 +364,7 @@ func TestSkillStartADriverIntakeTurnStops(t *testing.T) {
 	for _, want := range []string{
 		"announcement is mandatory",
 		`"Created driver task <name> in project <p>; continuing here."`,
-		`never "I've tracked this as a task"`,
+		`never say "I've tracked this as a task"`,
 		"intake turn ENDS",
 		"propose Done when",
 		`"Needs from you:"`,
@@ -475,6 +475,23 @@ func TestSkillStartADriverAlwaysHasAProject(t *testing.T) {
 	for _, banned := range []string{"None (floating)", "CREATE one without asking", "ask only if 2+ fit", "at most one question"} {
 		if strings.Contains(flat, banned) {
 			t.Errorf("§4.2 driver path must not say %q (HUD #194)", banned)
+		}
+	}
+}
+
+// E2E on c6771c7: the project question was introduced as "I'll set this up
+// as a tracked task" and the announcement said "created ... a task".
+func TestSkillStartADriverWordingSaysDriverTask(t *testing.T) {
+	s := sectionOf(t, readSkill(t, "SKILL.md"), "### 4.2 Start a driver")
+	flat := strings.Join(strings.Fields(s), " ")
+	for _, want := range []string{
+		`"I'll create a driver task for this — which project does it belong in?"`,
+		`same AskUserQuestion: "what goal ..." + "which project ..."`,
+		"must name \"driver task\"",
+		`never say "I've tracked this as a task" or "tracked task"`,
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("§4.2 missing %q", want)
 		}
 	}
 }

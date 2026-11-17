@@ -301,8 +301,10 @@ user path.
    match(es) from `flow list projects` (by repo/work_dir path first, then
    by name/goal; max 3, best first, the top one marked "(Recommended)") +
    "New project <proposed name>" (name from the repo dir or goal) +
-   free-text Other. If step 1 also asks, combine goal + project into ONE
-   AskUserQuestion call (two questions), so it stays one interaction.
+   free-text Other. Open it with: "I'll create a driver task for this —
+   which project does it belong in?" If step 1 also asks, combine goal +
+   project into ONE AskUserQuestion call (two questions), so it stays one
+   interaction: same AskUserQuestion: "what goal ..." + "which project ...".
    AskUserQuestion if your harness has it, else chat; in a session with a
    parent task ask via `flow message`, never AskUserQuestion. Only on the
    user's pick: attach, or `flow add project "<name>" --work-dir <current
@@ -321,10 +323,11 @@ user path.
    `## Role: driver` section flow appended, last.
 5. **Bind + announce.** Unbound session → `flow do --here <slug>` and
    continue here (no ask). Already bound → `flow do <slug>` (new tab).
-   The announcement is mandatory, verbatim shape: "Created driver task
-   <name> in project <p>; continuing here." (picked "New project":
-   "Created project <p> and driver task <name>; continuing here."; never
-   "I've tracked this as a task").
+   The announcement is mandatory and must name "driver task", verbatim
+   shape: "Created driver task <name> in project <p>; continuing here."
+   (picked "New project": "Created project <p> and driver task <name>;
+   continuing here."); never say "I've tracked this as a task" or "tracked
+   task", here or in the step 2 question.
 6. **The intake turn ENDS** after you restate the goal, propose Done when
    (concrete, checkable) and close with a numbered "Needs from you:" list.
    No building or implementation in that turn, even when the goal is
