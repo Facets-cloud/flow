@@ -396,4 +396,9 @@ func TestAutoDriverEnv(t *testing.T) {
 	if got := autoDriverEnv(); len(got) != 1 || got[0] != autoDriverSessionEnvVar+"=drv-1" {
 		t.Fatalf("prx driver: %v", got)
 	}
+	// A prx driver with a stray Claude var still gets its id (no ambiguity check).
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "stray")
+	if got := autoDriverEnv(); len(got) != 1 || got[0] != autoDriverSessionEnvVar+"=drv-1" {
+		t.Fatalf("prx driver with extra harness var: %v", got)
+	}
 }

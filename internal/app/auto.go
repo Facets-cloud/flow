@@ -174,7 +174,10 @@ func autoChildEnv() []string {
 // Only a prx driver has one. It is added in launchAutoRun alone, never in
 // autoChildEnv, so an owner tick (also built on autoChildEnv) stays sessionless.
 func autoDriverEnv() []string {
-	if h := ambientHarness(); h != nil && h.Name() == harness.NamePrx {
+	for _, h := range allHarnesses() {
+		if h.Name() != harness.NamePrx {
+			continue
+		}
 		if id := os.Getenv(h.SessionIDEnvVar()); id != "" {
 			return []string{autoDriverSessionEnvVar + "=" + id}
 		}
