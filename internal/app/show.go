@@ -337,7 +337,15 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		line := t.AutoRunStatus.String
 		switch t.AutoRunStatus.String {
 		case "running":
-			if t.AutoRunPID.Valid {
+			switch {
+			case isTabAutoRun(t):
+				// No supervisor pid: the run is the harness in a tab.
+				line += " (tab"
+				if t.AutoRunStarted.Valid && t.AutoRunStarted.String != "" {
+					line += ", since " + t.AutoRunStarted.String
+				}
+				line += ")"
+			case t.AutoRunPID.Valid:
 				line += fmt.Sprintf(" (pid %d", t.AutoRunPID.Int64)
 				if t.AutoRunStarted.Valid && t.AutoRunStarted.String != "" {
 					line += ", since " + t.AutoRunStarted.String

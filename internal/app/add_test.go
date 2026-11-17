@@ -20,6 +20,7 @@ func setupFlowRoot(t *testing.T) string {
 	t.Setenv(autoRunEnvVar, "")
 	// Likewise a Codex shell's thread id would turn every session into a
 	// Codex one (no listener, pop --wait refused).
+	t.Setenv(autoTabEnvVar, "") // an exported $FLOW_AUTO_TAB must not flip --auto tests to tabs
 	t.Setenv("CODEX_THREAD_ID", "")
 	// Same for a prx shell, and prx's state dirs must resolve under the
 	// sandboxed $HOME, not a real override.

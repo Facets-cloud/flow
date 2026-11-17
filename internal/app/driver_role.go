@@ -103,13 +103,14 @@ func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 		return
 	}
 	parent := child.ParentSlug.String
+	evidence := deadRunEvidence(child)
 	body := fmt.Sprintf("auto child %s ended dead without closing itself; check `flow show task %s` "+
-		"and its auto-run log, then re-run or take it over", child.Slug, child.Slug)
+		"and %s, then re-run or take it over", child.Slug, child.Slug, evidence)
 	toSlug := parent
 	if p, err := flowdb.GetTask(db, parent); err != nil || p == nil || deliverableTask(p) != nil {
 		toSlug = ""
 		body = fmt.Sprintf("FYI: auto child %s of closed task %s ended dead without closing itself; "+
-			"check `flow show task %s` and its auto-run log", child.Slug, parent, child.Slug)
+			"check `flow show task %s` and %s", child.Slug, parent, child.Slug, evidence)
 	}
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",

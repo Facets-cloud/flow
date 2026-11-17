@@ -100,6 +100,13 @@ func interactive(sessionID string, opts harness.LaunchOpts) string {
 	if opts.SkipPermissions {
 		cmd += " -permission-mode " + bypass
 	}
+	// A flow-created work dir is trusted for this launch only (nothing is
+	// saved), mirroring codex's per-launch override: the TUI would
+	// otherwise stop at its trust prompt, which hangs a tab auto run.
+	// User repos (no TrustDir) keep the prompt for a human to answer.
+	if opts.TrustDir != "" {
+		cmd += " -trust-workspace"
+	}
 	return cmd
 }
 

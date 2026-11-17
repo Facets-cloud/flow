@@ -1,6 +1,7 @@
 package app
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -32,6 +33,7 @@ func cmdAuto(args []string) int {
 	workDir := fs.String("work-dir", "", "work directory (default: inherited like flow add task)")
 	mkdir := fs.Bool("mkdir", false, "same as flow add task --mkdir")
 	harnessName := fs.String("harness", "", "harness for the child session (one of: "+registeredHarnessNames()+")")
+	tab := fs.Bool("tab", false, "run the child as a visible interactive session in a terminal tab instead of headless (default from $"+autoTabEnvVar+")")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -102,8 +104,16 @@ func cmdAuto(args []string) int {
 	if *mkdir {
 		addArgs = append(addArgs, "--mkdir")
 	}
+	preExisting := *workDir == "" || dirExists(*workDir)
 	if rc := addTask(addArgs); rc != 0 {
 		return rc
+	}
+	if *mkdir && !preExisting {
+		abs, _ := filepath.Abs(*workDir)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			mkdirCreatedWorkDir = resolved
+			defer func() { mkdirCreatedWorkDir = "" }()
+		}
 	}
 
 	root, err := flowRoot()
@@ -118,6 +128,13 @@ func cmdAuto(args []string) int {
 	}
 
 	doArgs := []string{slug, "--auto"}
+	// Forward --tab only when given explicitly, so an unset flag still
+	// lets $FLOW_AUTO_TAB pick the default inside flow do.
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "tab" {
+			doArgs = append(doArgs, fmt.Sprintf("--tab=%t", *tab))
+		}
+	})
 	if *harnessName != "" {
 		doArgs = append(doArgs, "--harness", *harnessName)
 	}
@@ -137,4 +154,11 @@ func readAutoBrief(src string) (string, error) {
 	}
 	b, err := os.ReadFile(src)
 	return string(b), err
+}
+
+// dirExists reports whether path exists (as anything; addTask rejects a
+// non-directory).
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

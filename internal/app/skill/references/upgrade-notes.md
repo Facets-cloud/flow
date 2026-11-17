@@ -11,6 +11,21 @@
 
 ## Unreleased
 
+- **Auto children can run in a visible tab.** `flow auto … --tab` and
+  `flow do --auto <slug> --tab` (or `FLOW_AUTO_TAB=1` as the default) run
+  the child as an interactive claude/codex/prx session in a terminal tab
+  instead of headless. Same contract: it reports to `user/<parent>` and
+  self-closes with `flow done`. If you ARE such a tab child, a human may
+  type into your session — treat it as instructions. `flow show task`
+  reads `auto_run: running (tab, …)`; closing the tab before `flow done`
+  marks the run dead.
+- **Tabs run the flow that launched them.** Every flow-spawned tab gets
+  the launcher's binary first on `PATH` and as `$FLOW_BIN`, so another
+  `flow` on your login-shell PATH no longer handles your hooks or your
+  `flow done`. If `flow` in your shell still resolves elsewhere, call
+  `"$FLOW_BIN"`. A tab run marked dead still completes on its own
+  `flow done`, and `flow auto --mkdir` trusts the dir it just created.
+
 ## v0.1.0-alpha.38
 
 - **Mail reaches you automatically (harness wake).** flow now pushes a

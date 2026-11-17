@@ -115,6 +115,9 @@ judgment calls from the user mid-way:
    session auto-watches it), writes brief.md, and launches
    `flow do --auto`. Optional: `--priority`, `--work-dir`, `--mkdir`,
    `--harness`. It refuses with no brief, or a blank one.
+   `--tab` (or `FLOW_AUTO_TAB=1`) runs the child as a visible interactive
+   tab the user can watch and type into (claude/codex/prx; an explicit --tab
+   fails without a terminal); reports and close-out are unchanged.
 3. Tell the user in one line: `spawning auto child: <slug>`. Do not ask
    permission first, and keep working on the main thread.
 4. The child reports with `flow message user/<driver>`; harness wake

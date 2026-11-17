@@ -50,7 +50,10 @@ func notifyHumanOfDeadOrphan(db *sql.DB, t *flowdb.Task) {
 // deadOrphanBody is the human-facing notice for a dead parentless run.
 func deadOrphanBody(t *flowdb.Task) string {
 	logRef := "its auto-run log under tasks/" + t.Slug + "/auto-runs/"
-	if t.AutoRunLog.Valid && t.AutoRunLog.String != "" {
+	switch {
+	case isTabAutoRun(t):
+		logRef = deadRunEvidence(t)
+	case t.AutoRunLog.Valid && t.AutoRunLog.String != "":
 		logRef = t.AutoRunLog.String
 	}
 	body := fmt.Sprintf("auto run %q (%s) died without finishing", t.Name, t.Slug)
