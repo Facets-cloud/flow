@@ -49,6 +49,10 @@ func peerSendCmd(argv []string, timeout time.Duration) (*exec.Cmd, context.Cance
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stderr = &bytes.Buffer{}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Kill the whole session (pgid == pid under Setsid) so a descendant holding
+	// stderr can't keep Wait blocked past the timeout; WaitDelay bounds the pipe.
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
 	return cmd, cancel
 }
 
@@ -88,7 +92,7 @@ func peerWatching(sessionID string) bool {
 	if json.Unmarshal(raw, &rec) != nil || rec.SessionID == "" {
 		return false
 	}
-	return !strings.EqualFold(strings.TrimSpace(rec.Inbound), "refuse")
+	return strings.EqualFold(rec.SessionID, sessionID) && !strings.EqualFold(strings.TrimSpace(rec.Inbound), "refuse")
 }
 
 // Wake delivers req.Notice into the live session. A session that went away

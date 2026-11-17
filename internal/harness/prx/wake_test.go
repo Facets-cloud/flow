@@ -217,3 +217,17 @@ func TestWakeLivePeerInboundPolicy(t *testing.T) {
 		}
 	}
 }
+
+// A prx that hangs and leaves a child holding stderr must not block the send
+// past its timeout: the group is killed and WaitDelay bounds the pipe.
+func TestPeerSendTimeoutKillsDescendantHoldingStderr(t *testing.T) {
+	fakePrx(t, "sleep 30 &\nsleep 30\n")
+	start := time.Now()
+	_, err := runPeerSend([]string{"prx", "peer", "send"}, time.Second)
+	if err == nil {
+		t.Fatal("want timeout error")
+	}
+	if d := time.Since(start); d > 6*time.Second {
+		t.Fatalf("send blocked %v past its 1s timeout", d)
+	}
+}
