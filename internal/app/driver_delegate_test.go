@@ -88,6 +88,11 @@ func TestLaunchAutoRunMarksChildEnv(t *testing.T) {
 	}
 	t.Cleanup(func() { autoLauncher = old })
 	t.Setenv("FLOW_AUTO_RUN", "stale-parent")
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	t.Setenv("PRAXIS_SESSION_ID", "drv-9")
+	t.Setenv("FLOW_AUTO_DRIVER_SESSION", "stale")
 	if rc := cmdDo([]string{"envy", "--auto"}); rc != 0 {
 		t.Fatalf("do --auto rc=%d", rc)
 	}
@@ -102,6 +107,15 @@ func TestLaunchAutoRunMarksChildEnv(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("FLOW_AUTO_RUN entries = %d, want exactly 1", n)
+	}
+	var drv []string
+	for _, kv := range gotEnv {
+		if strings.HasPrefix(kv, "FLOW_AUTO_DRIVER_SESSION=") {
+			drv = append(drv, kv)
+		}
+	}
+	if len(drv) != 1 || drv[0] != "FLOW_AUTO_DRIVER_SESSION=drv-9" {
+		t.Errorf("driver env = %v, want exactly FLOW_AUTO_DRIVER_SESSION=drv-9", drv)
 	}
 }
 
