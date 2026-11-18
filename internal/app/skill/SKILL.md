@@ -793,7 +793,7 @@ retained; `flow inbox read <id>` shows/acks one; `flow inbox pop` consumes
 the oldest. Never touch the human's mail (pop skips it). **Mail reaches a
 bound session by itself** (harness wake): idle → flow pushes a notice
 (starts a turn); busy → a notice before your next tool call or at turn
-end (prx: no push, so only those). Arm NO listener (no Monitor, no background `pop --wait`). On a
+end (prx: the idle push needs a prx with `peer send` and peers on; without either, only those). Arm NO listener (no Monitor, no background `pop --wait`). On a
 flow-bus notice: one-shot `flow inbox pop` in the foreground, repeat until
 empty, act on each. Wake off (`FLOW_NO_WAKE=1`) → only a BOUND session
 (never unbound) arms the Monitor fallback in references/messaging.md. `flow watch <task|project|assignee>` subscribes
