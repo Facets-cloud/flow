@@ -95,7 +95,7 @@ func openConcurrentDB(path string) (*sql.DB, error) {
 // cmdDo flips a task to in-progress, bootstraps a Claude session if
 // needed (race-free via atomic UPDATE ... WHERE session_id IS ?), and
 // spawns an iTerm tab to resume it. See spec §6 for the full protocol.
-func cmdDo(args []string) int {
+func cmdDo(args []string) (rc int) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: do requires a task ref")
 		return 2
@@ -172,9 +172,15 @@ func cmdDo(args []string) int {
 		return rc
 	}
 	// Driver-always: a human opening a task interactively makes it a
-	// driver (lazy migration); --auto runs never do.
-	if !*auto {
-		openTagDriver(db, task)
+	// driver (lazy migration); --auto runs never do. The tag goes on
+	// before the spawn (the new session's SessionStart must see it) and
+	// comes off again if the open fails, so only a successful open tags.
+	if !*auto && openTagDriver(db, task) {
+		defer func() {
+			if rc != 0 {
+				_ = flowdb.RemoveTaskTag(db, task.Slug, driverTag)
+			}
+		}()
 	}
 
 	// Live-session guard: if this task's session_id is already running
@@ -1388,7 +1394,6 @@ func cmdDoHere(query string, force bool) int {
 	if rc != 0 {
 		return rc
 	}
-	openTagDriver(db, task) // driver-always: a human bind makes it a driver
 
 	if task.Status == "done" {
 		fmt.Fprintf(os.Stderr,
@@ -1434,7 +1439,9 @@ func cmdDoHere(query string, force bool) int {
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		if task.SessionID.String == sid {
-			// Already bound to this same session — idempotent no-op.
+			// Already bound to this same session — idempotent no-op
+			// (a pre-driver-always binding still gets the tag).
+			openTagDriver(db, task)
 			fmt.Printf("%s already bound to this session (%s)\n", task.Slug, sid)
 			return 0
 		}
@@ -1495,9 +1502,11 @@ func cmdDoHere(query string, force bool) int {
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	openTagDriver(db, task) // driver-always: only a successful human bind tags
 	// A session bound mid-flight missed SessionStart, so hand it the
 	// driver block now (plus the intake-turn line while Done when is open).
-	if blk := roleBlockFor(db, task); blk != "" {
+	// task was loaded before the bind: no session_started = first bind.
+	if blk := roleBlockFor(db, task, !task.SessionStarted.Valid); blk != "" {
 		fmt.Println(strings.TrimSpace(blk))
 	}
 	return 0

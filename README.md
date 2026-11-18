@@ -310,11 +310,14 @@ flow init
 Or open [INSTALL.md](INSTALL.md) in Claude Code or Codex and let the agent
 install it. `flow init` installs a skill and a session-start hook into your
 harness. That is how the agent knows what "pick up the billing migration"
-means. Those two commands are the last ones you need to type.
+means. Those two commands are the last ones you need to type. In Codex, the
+first run in a folder asks you to trust it and review flow's hooks: pick
+"Trust all", or none of flow's hooks run.
 
 1. In Claude Code, mid-way on something: "bind this session to a task called
    <name>". The conversation you already have is now a task. Starting fresh:
-   "add a task for <thing>". You get interviewed; it is annoying once.
+   just say the goal ("I want <thing>"). flow asks which project it belongs
+   in and agrees with you what "done" means before anything gets built.
 2. Close the tab. Tomorrow: "let's pick up <name>". A tab opens where you
    left off (or it runs headless if you have no supported terminal).
 3. Children, playbooks and the bus make sense after three or four tasks. Not

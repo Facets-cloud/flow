@@ -69,7 +69,7 @@ session will prompt you to fill in the deferred sections.*
 **Driver brief (Start a driver, SKILL.md §4.2):** the brief for work the
 user states (every human-added task is a driver; flow tags it). The goal
 is a section here, never a separate entity. Write it over the stub
-`flow add task` created (Read first). The driver rules are injected by
+`flow add task` created (it already has these sections; Read first). The driver rules are injected by
 flow at SessionStart, so the brief carries no rules section.
 
 ```markdown

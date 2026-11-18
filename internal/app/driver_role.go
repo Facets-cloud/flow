@@ -110,9 +110,17 @@ func childHarnessesLine() string {
 // driver block (plus the intake-turn line while Done when is still the
 // placeholder) for driver tasks, nothing otherwise. Auto children get
 // nothing, so delegation never recurses.
-func roleBlockFor(db *sql.DB, t *flowdb.Task) string {
+//
+// first marks the driver's first bind / first session start: the intake
+// line is printed then whatever the brief says (an agent may have written
+// its own Done when before binding), and afterwards only while the brief
+// still holds the placeholder.
+func roleBlockFor(db *sql.DB, t *flowdb.Task, first bool) string {
 	if isAutoRunSession(t) || !isDriverTask(db, t.Slug) {
 		return ""
+	}
+	if first {
+		return driverRoleBlock() + "\n" + intakeTurnLine
 	}
 	return driverRoleBlock() + intakeTurnBlock(t.Slug)
 }

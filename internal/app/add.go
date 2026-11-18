@@ -24,6 +24,23 @@ session. Sections to cover: What / Why / Where / Done when / Out of scope /
 Open questions.
 `
 
+// driverBriefStub is the stub a human-added (driver) task gets: the
+// driver brief template (skill references/templates.md). The Done-when
+// placeholder stays until the user agrees the criteria.
+const driverBriefStub = `# %s
+
+## Goal
+*The user's words, verbatim.*
+
+## Done when
+` + doneWhenPlaceholder + `
+
+## Context
+*Project, work_dir, what the user said that matters.*
+
+## Decisions
+`
+
 // cmdAdd dispatches `flow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
@@ -299,9 +316,17 @@ func createTask(args []string, hereNote bool) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	// Driver-always: a task a human adds is a driver. flow sets the tag
+	// itself; auto children (flow auto, hereNote=false), anything created
+	// inside an auto run or owner tick, and owner-managed tasks stay plain.
+	isDriverAdd := hereNote && !plainContext() && !hasOwnerTag(tags)
+	stub := taskBriefStub
+	if isDriverAdd {
+		stub = driverBriefStub // its Done-when placeholder drives the INTAKE TURN line
+	}
 	briefPath := filepath.Join(taskDir, "brief.md")
 	if _, err := os.Stat(briefPath); os.IsNotExist(err) {
-		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(taskBriefStub, name)), 0o644); err != nil {
+		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(stub, name)), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
@@ -318,10 +343,7 @@ func createTask(args []string, hereNote bool) int {
 			return 1
 		}
 	}
-	// Driver-always: a task a human adds is a driver. flow sets the tag
-	// itself; auto children (flow auto, hereNote=false), anything created
-	// inside an auto run or owner tick, and owner-managed tasks stay plain.
-	if hereNote && !plainContext() && !hasOwnerTag(tags) {
+	if isDriverAdd {
 		if err := flowdb.AddTaskTag(db, slug, driverTag); err != nil {
 			fmt.Fprintf(os.Stderr, "error: add tag %q: %v\n", driverTag, err)
 			return 1

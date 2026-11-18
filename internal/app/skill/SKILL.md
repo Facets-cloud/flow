@@ -297,8 +297,8 @@ binding and stop.
    "I'll create a driver task for this — which project does it belong
    in?" Options: the best existing match(es) from `flow list projects` (by
    repo/work_dir path first, then by name/goal; max 3, best first, the top
-   one "(Recommended)") + "New project <proposed name>" (from the repo dir
-   or goal) + free-text Other. If step 1 also asks, combine goal + project
+   one "(Recommended)"); always include "New project <proposed name>"
+   (from the repo dir or goal) + free-text Other. If step 1 also asks, combine goal + project
    into ONE AskUserQuestion call (two questions). AskUserQuestion if your
    harness has it, else chat; in a session with a parent task ask via
    `flow message`, never AskUserQuestion. Only on the user's pick: attach,
@@ -313,9 +313,9 @@ binding and stop.
    default priority, no confirm step); flow tags it `driver` itself. Read
    the stub, then Write the driver brief (references/templates.md):
    `## Goal` (the user's words, verbatim), `## Done when`, `## Context`,
-   `## Decisions`. Done when the user already stated goes into `## Done
-   when` now; the *Agree with the user on the first turn.* placeholder
-   only when agreement is still needed.
+   `## Decisions` (the stub already has them). Done when the user already
+   stated goes into `## Done when` now; otherwise keep the placeholder
+   until the user agrees (never write your own proposal into the brief).
 5. **Bind + announce** (mandatory, names "driver task"). Unbound →
    `flow do --here <slug>`: "Created driver task <name> in project <p>;
    continuing here." (new project: "Created project <p> and driver task

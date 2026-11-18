@@ -1,7 +1,9 @@
 package app
 
 import (
+	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/iterm"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -631,5 +633,140 @@ func TestOpenTagDriverSkipsOwnerTasks(t *testing.T) {
 	defer db.Close()
 	if openTagDriver(db, mustTask(t, "owned")) || isDriverTask(db, "owned") {
 		t.Error("an owner:* task must never be tagged driver on open")
+	}
+}
+
+// ---------- upgrade-test rerun fixes (#187) ----------
+
+// (1) A driver's FIRST bind prints INTAKE TURN whatever the brief says
+// (an agent may have written its own Done when before binding).
+func TestIntakeTurnOnFirstBindEvenWithDoneWhen(t *testing.T) {
+	setupFlowRoot(t)
+	stubClaudeStatOK(t)
+	t.Setenv(autoRunEnvVar, "")
+	seedTaskAtCwd(t, "fresh")
+	writeTaskBriefDA(t, "fresh", "# fresh\n\n## Goal\nx\n\n## Done when\n- agent wrote this itself\n")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "f00ba111-2222-4333-8444-555555555577")
+	out := captureStdout(t, func() {
+		if rc := cmdDo([]string{"fresh", "--here"}); rc != 0 {
+			t.Fatalf("rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, intakeTurnLine) {
+		t.Errorf("first bind must print the intake line even without the placeholder:\n%s", out)
+	}
+	if again := captureStdout(t, func() { cmdDo([]string{"fresh", "--here"}) }); strings.Contains(again, "INTAKE TURN") {
+		t.Errorf("re-bind (already bound) is not a first bind:\n%s", again)
+	}
+}
+
+func TestIntakeTurnOnFirstSessionStartEvenWithDoneWhen(t *testing.T) {
+	setupFlowRoot(t)
+	clearSessionEnv(t)
+	t.Setenv(autoRunEnvVar, "")
+	const sid = "dddddddd-2222-4333-8444-555555555555"
+	seedTask(t, "spawned")
+	db := openFlowDB(t)
+	db.Exec(`UPDATE tasks SET session_id=?, session_started=?, status='in-progress' WHERE slug='spawned'`, sid, flowdb.NowISO())
+	db.Close()
+	writeTaskBriefDA(t, "spawned", "# s\n\n## Goal\nx\n\n## Done when\n- written\n")
+	run := func(source string) string {
+		var out string
+		withHookStdin(t, `{"session_id":"`+sid+`","source":"`+source+`"}`, func() {
+			out = busHookContext(t, captureStdout(t, func() { cmdHookSessionStart(nil) }))
+		})
+		return out
+	}
+	if out := run("startup"); !strings.Contains(out, intakeTurnLine) {
+		t.Errorf("first startup of a never-resumed driver must print the intake line:\n%s", out)
+	}
+	if out := run("resume"); strings.Contains(out, "INTAKE TURN") {
+		t.Errorf("a resume with Done when written must not print it:\n%s", out)
+	}
+}
+
+// (2) The tag lands only when the bind/open succeeds.
+func TestRefusedBindOrFailedOpenDoesNotTag(t *testing.T) {
+	setupFlowRoot(t)
+	// No stubClaudeStatOK: the session transcript is missing, so --here refuses.
+	seedTask(t, "elsewhere")
+	untag(t, "elsewhere")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "f00ba111-2222-4333-8444-555555555588")
+	var rc int
+	captureStdout(t, func() { rc = cmdDo([]string{"elsewhere", "--here"}) })
+	if rc == 0 {
+		t.Fatal("expected the --here bind to be refused")
+	}
+	if isDriver(t, "elsewhere") {
+		t.Error("a refused bind must not tag the task")
+	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	stubITerm(t)
+	old := iterm.Runner
+	iterm.Runner = func([]string) error { return errors.New("spawn failed") }
+	t.Cleanup(func() { iterm.Runner = old })
+	seedTask(t, "nospawn")
+	untag(t, "nospawn")
+	captureStdout(t, func() { rc = cmdDo([]string{"nospawn"}) })
+	if rc == 0 {
+		t.Fatal("expected the open to fail")
+	}
+	if isDriver(t, "nospawn") {
+		t.Error("a failed open must not leave the tag")
+	}
+}
+
+// (3) A human CLI `flow add task` gets the driver stub, so INTAKE TURN
+// fires when it is opened; plain tasks keep the old stub.
+func TestAddTaskDriverStubIsDriverTemplate(t *testing.T) {
+	setupFlowRoot(t)
+	cmdAdd([]string{"task", "Spelling bee", "--slug", "sb", "--work-dir", t.TempDir()})
+	b := briefOfDA(t, "sb")
+	last := -1
+	for _, h := range []string{"# Spelling bee", "## Goal", "## Done when", doneWhenPlaceholder, "## Context", "## Decisions"} {
+		j := strings.Index(b, h)
+		if j < 0 || j < last {
+			t.Errorf("driver stub: %q missing or out of order:\n%s", h, b)
+		}
+		last = j
+	}
+	t.Setenv(autoRunEnvVar, "x")
+	cmdAdd([]string{"task", "Child", "--slug", "ch", "--work-dir", t.TempDir()})
+	if strings.Contains(briefOfDA(t, "ch"), doneWhenPlaceholder) {
+		t.Error("a plain (auto-run) task keeps the plain stub")
+	}
+}
+
+func briefOfDA(t *testing.T, slug string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(os.Getenv("FLOW_ROOT"), "tasks", slug, "brief.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// (4) §4.2 step 2 always offers "New project"; (1) keep the placeholder.
+func TestSkillStartADriverRerunWording(t *testing.T) {
+	s := flat(sectionOf(t, readSkill(t, "SKILL.md"), "### 4.2 Start a driver"))
+	for _, want := range []string{
+		`always include "New project <proposed name>"`,
+		"keep the placeholder until the user agrees",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("§4.2 missing %q", want)
+		}
+	}
+}
+
+// (6) Codex onboarding: pick "Trust all" so flow's hooks run.
+func TestReadmeCodexTrustAll(t *testing.T) {
+	b, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"Trust all"`) {
+		t.Error(`README must tell Codex users to pick "Trust all" so flow hooks run`)
 	}
 }

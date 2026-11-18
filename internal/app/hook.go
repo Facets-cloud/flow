@@ -141,7 +141,8 @@ func cmdHookSessionStart(args []string) int {
 	// Only a human-driven driver session gets the driver block (and the
 	// intake-turn stop while Done when is open). An auto child never sees
 	// it, so delegation cannot recurse.
-	pageCtx += roleBlockForSlug(bound)
+	// The first start of a spawned driver (never resumed) is its intake turn.
+	pageCtx += roleBlockForSlug(bound, payload.Source == "startup" && !bound.SessionLastResumed.Valid)
 	// Every bound session, tab or headless child, is told the PR trailer
 	// (an instruction, not an enforcement; FLOW_PR_TRAILER=off drops it).
 	pageCtx += prTrailerBlock()
@@ -179,7 +180,7 @@ func cmdHookSessionStart(args []string) int {
 }
 
 // roleBlockForSlug is roleBlockFor for the hook (opens its own DB).
-func roleBlockForSlug(t *flowdb.Task) string {
+func roleBlockForSlug(t *flowdb.Task, first bool) string {
 	path, err := flowDBPath()
 	if err != nil {
 		return ""
@@ -189,7 +190,7 @@ func roleBlockForSlug(t *flowdb.Task) string {
 		return ""
 	}
 	defer db.Close()
-	return roleBlockFor(db, t)
+	return roleBlockFor(db, t, first)
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
