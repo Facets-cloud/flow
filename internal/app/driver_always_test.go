@@ -620,3 +620,16 @@ func TestSkillTemplatesHaveDriverBriefWithoutRole(t *testing.T) {
 		last = j
 	}
 }
+
+// Driver review on #187: an owner-managed task (tag owner:<slug>) opened
+// interactively stays plain, like `flow add task --tag owner:x`.
+func TestOpenTagDriverSkipsOwnerTasks(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv(autoRunEnvVar, "")
+	cmdAdd([]string{"task", "Owned", "--slug", "owned", "--work-dir", t.TempDir(), "--tag", "owner:keeper"})
+	db := openFlowDB(t)
+	defer db.Close()
+	if openTagDriver(db, mustTask(t, "owned")) || isDriverTask(db, "owned") {
+		t.Error("an owner:* task must never be tagged driver on open")
+	}
+}

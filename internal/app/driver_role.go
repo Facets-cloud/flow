@@ -158,11 +158,15 @@ func plainContext() bool {
 
 // openTagDriver adds the driver tag to t when a human opens it
 // interactively (`flow do` / `flow do --here`): lazy migration of tasks
-// created before driver-always. Playbook runs, auto runs and owner ticks
-// stay plain. Reports whether the tag was added.
+// created before driver-always. Playbook runs, auto runs, owner ticks and
+// owner-managed (owner:<slug>) tasks stay plain. Reports whether the tag
+// was added.
 func openTagDriver(db *sql.DB, t *flowdb.Task) bool {
 	if t == nil || t.Kind == "playbook_run" || plainContext() || isAutoRunSession(t) || isDriverTask(db, t.Slug) {
 		return false
+	}
+	if tags, err := flowdb.GetTaskTags(db, t.Slug); err != nil || hasOwnerTag(tags) {
+		return false // owner-managed tasks stay plain (as on add)
 	}
 	return flowdb.AddTaskTag(db, t.Slug, driverTag) == nil
 }
