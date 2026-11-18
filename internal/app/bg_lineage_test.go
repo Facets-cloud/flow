@@ -103,7 +103,7 @@ func TestCmdDoBackgroundResumeFailedJobKeepsPriorID(t *testing.T) {
 	if task.SessionID.String != bgFullSID {
 		t.Errorf("session_id = %q, want prior %q kept", task.SessionID.String, bgFullSID)
 	}
-	if _, ok := flowdb.SessionSource(db, resumeSID); ok {
+	if _, ok, _ := flowdb.SessionSource(db, resumeSID); ok {
 		t.Error("lineage recorded for a failed resume")
 	}
 }
@@ -127,7 +127,7 @@ func TestCmdDoBackgroundResumeRecordsLineage(t *testing.T) {
 	if task.SessionID.String != resumeSID {
 		t.Fatalf("session_id = %q, want %q", task.SessionID.String, resumeSID)
 	}
-	if src, ok := flowdb.SessionSource(db, resumeSID); !ok || src != bgFullSID {
+	if src, ok, _ := flowdb.SessionSource(db, resumeSID); !ok || src != bgFullSID {
 		t.Errorf("lineage source = %q ok=%v, want %q", src, ok, bgFullSID)
 	}
 }
@@ -155,7 +155,7 @@ func TestCmdDoBackgroundTranscriptlessResumesFromAncestor(t *testing.T) {
 	if task.SessionID.String != resumeSID {
 		t.Errorf("session_id = %q, want %q", task.SessionID.String, resumeSID)
 	}
-	if src, _ := flowdb.SessionSource(db, resumeSID); src != bgFullSID {
+	if src, _, _ := flowdb.SessionSource(db, resumeSID); src != bgFullSID {
 		t.Errorf("lineage source = %q, want %q", src, bgFullSID)
 	}
 }

@@ -346,8 +346,19 @@ func cmdUpgrade(args []string) int {
 		return 1
 	}
 	fmt.Printf("flow %s → %s: upgraded %s\n", Version, rel.TagName, execPath)
-	fmt.Println("The next flow command refreshes the skill and the hooks.")
+	fmt.Println(refreshHint())
 	return 0
+}
+
+// refreshHint says how the skill and hooks catch up after an upgrade. The
+// automatic refresh is conditional (off under the kill switch, skipped for
+// a development-build install and by a few commands), so the default also
+// names the manual path.
+func refreshHint() string {
+	if os.Getenv(selfUpgradeEnv) != "" {
+		return "Run `flow skill update` to refresh the skill and the hooks."
+	}
+	return "The next flow command usually refreshes the skill and the hooks; if they stay old (e.g. a development-build install), run `flow skill update`."
 }
 
 // fetchLatestRelease reads the latest release from GitHub. It never

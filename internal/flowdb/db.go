@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -240,7 +241,20 @@ func NullIfEmpty(s string) any {
 // setup here and the loser gets SQLITE_BUSY immediately instead of
 // waiting — surfaces as a flaky `migrate: pragma table_info(...):
 // database is locked` on slow runners.
+//
+// Schema setup and migrations run under an exclusive flock on
+// <path>.lock: each migration checks for a column then ALTERs, and two
+// openers of a fresh or old DB would otherwise both see it missing and
+// the second ALTER fails with "duplicate column name".
 func OpenDB(path string) (*sql.DB, error) {
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open migration lock: %w", err)
+	}
+	defer lock.Close() // closing the fd releases the flock
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, fmt.Errorf("lock migrations: %w", err)
+	}
 	q := url.Values{}
 	q.Set("_pragma", "busy_timeout(30000)")
 	dsn := "file:" + path + "?" + q.Encode()

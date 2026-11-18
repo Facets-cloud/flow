@@ -2,6 +2,7 @@ package flowdb
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -38,12 +39,17 @@ func RecordSessionSource(db *sql.DB, sessionID, source, taskSlug string) error {
 	return err
 }
 
-// SessionSource returns the session sessionID was forked from, if known.
-func SessionSource(db *sql.DB, sessionID string) (string, bool) {
+// SessionSource returns the session sessionID was forked from. A missing
+// row is ("", false, nil); any other failure is returned.
+func SessionSource(db *sql.DB, sessionID string) (string, bool, error) {
 	var src string
-	if err := db.QueryRow(`SELECT source_session_id FROM session_lineage WHERE session_id=?`,
-		sessionID).Scan(&src); err != nil {
-		return "", false
+	err := db.QueryRow(`SELECT source_session_id FROM session_lineage WHERE session_id=?`,
+		sessionID).Scan(&src)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
-	return src, true
+	if err != nil {
+		return "", false, err
+	}
+	return src, true, nil
 }

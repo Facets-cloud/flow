@@ -101,7 +101,8 @@ func cmdInit(args []string) int {
 	// Install the skill + every hook idempotently for each present
 	// harness (or just --harness). An existing skill is never
 	// overwritten on init (use `flow skill update` for that); hooks are
-	// always (re)ensured — same set as `flow skill install`, so the
+	// (re)ensured too, except when the installed skill is newer than this
+	// binary — same set as `flow skill install`, so the
 	// auto-upgrade path never has to come back to add missing ones.
 	for _, h := range targets {
 		skillPath, err := h.SkillInstallPath()
@@ -125,7 +126,11 @@ func cmdInit(args []string) int {
 		if prev := readSkillVersion(h); installedIsNewer(prev, Version) {
 			// Never let an older binary rewrite a newer install's hooks
 			// implicitly; `flow skill update` is the deliberate path.
-			fmt.Fprintf(os.Stderr, "warning: %s: skill + hooks are from %s, newer than this flow %s — leaving them alone (run `flow skill update` to replace them)\n", h.Name(), prev, Version)
+			if _, ok := skillVersionKey(prev); !ok {
+				fmt.Fprintf(os.Stderr, "warning: %s: skill + hooks were installed by a development build (%s) — leaving them alone (run `flow skill update` to replace them)\n", h.Name(), prev)
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: %s: skill + hooks are from %s, newer than this flow %s — leaving them alone (run `flow skill update` to replace them)\n", h.Name(), prev, Version)
+			}
 			continue
 		}
 		installHooks(h, false)

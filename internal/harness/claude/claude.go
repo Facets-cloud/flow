@@ -146,9 +146,7 @@ func newUUID() (string, error) {
 // shared harness.InjectionMarker so the receiving session can
 // distinguish it from typed user input.
 func (c *claude) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) string {
-	if opts.Inject != "" {
-		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
+	prompt = harness.WithInjection(prompt, opts.Inject)
 	cmd := fmt.Sprintf("claude --session-id %s %s", sessionID, spawner.ShellQuote(prompt))
 	if opts.SkipPermissions {
 		cmd += " --dangerously-skip-permissions"
@@ -182,9 +180,7 @@ func (c *claude) SkipPermissionsRun(prompt string) error {
 // the run's own `flow done` sweep and `flow transcript` can find it.
 // opts.Inject is appended behind InjectionMarker, mirroring LaunchCmd.
 func (c *claude) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []string {
-	if opts.Inject != "" {
-		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
+	prompt = harness.WithInjection(prompt, opts.Inject)
 	idFlag := "--session-id"
 	if opts.Resume {
 		idFlag = "--resume"

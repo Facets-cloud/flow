@@ -79,9 +79,7 @@ func (p *prx) ValidateSession(workDir, sessionID string) error {
 }
 
 func (p *prx) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) string {
-	if opts.Inject != "" {
-		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
+	prompt = harness.WithInjection(prompt, opts.Inject)
 	return interactive(sessionID, opts) + " -prompt " + spawner.ShellQuote(prompt)
 }
 
@@ -123,9 +121,7 @@ func runSkipPermissions(prompt string) error {
 // stdout, which the supervisor captures in the run log, so
 // opts.LastMessagePath is ignored.
 func (p *prx) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []string {
-	if opts.Inject != "" {
-		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
+	prompt = harness.WithInjection(prompt, opts.Inject)
 	argv := []string{"prx", "run", "-session", sessionID, "-max-turns", maxTurns}
 	if opts.SkipPermissions {
 		argv = append(argv, "-permission-mode", bypass)
