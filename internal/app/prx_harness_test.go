@@ -122,16 +122,16 @@ func TestAutoSpawnParentReminderPrxSaysNoMonitor(t *testing.T) {
 	assertPrxWakeWording(t, "parent reminder", out)
 }
 
-// #167: an idle prx session is woken by a pushed notice when its prx has
-// `prx peer send`; an older prx still only sees mail at its next tool call or
-// prompt. Agent-facing prx text must say both.
+// #167: an idle prx session is woken by a pushed notice only when its prx has
+// `prx peer send` AND peers enabled (a live peer watcher); otherwise mail waits
+// for the next tool call or prompt. Agent-facing prx text must say all three.
 func TestPrxNoListenerRuleSaysIdleWake(t *testing.T) {
 	assertPrxWakeWording(t, "session rule", prxNoListenerRule)
 }
 
 func assertPrxWakeWording(t *testing.T, what, s string) {
 	t.Helper()
-	for _, want := range []string{"idle", "peer send", "next tool call"} {
+	for _, want := range []string{"idle", "peer send", "peers", "next tool call"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("prx %s missing %q: %s", what, want, s)
 		}

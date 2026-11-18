@@ -1571,7 +1571,7 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 func parentListenerReminder() string {
 	if sessionHarness(nil) == harness.NamePrx {
 		return "  prx parent: no inbox listener — the child's reports surface as flow-bus notices: pushed into " +
-			"your session when it is idle (needs a prx with `prx peer send`; wake on), otherwise at your next tool " +
+			"your session when it is idle (needs a prx with `prx peer send` and peers on; wake on), otherwise at your next tool " +
 			"call or prompt; then run a one-shot `flow inbox pop` in the foreground."
 	}
 	if sessionHarness(nil) == harness.NameCodex {
