@@ -75,9 +75,7 @@ func interactivePrefix(opts harness.LaunchOpts) string {
 }
 
 func (c *codex) LaunchCmd(sessionID, prompt string, opts harness.LaunchOpts) string {
-	if opts.Inject != "" {
-		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
+	prompt = harness.WithInjection(prompt, opts.Inject)
 	return interactivePrefix(opts) + trustShell(opts.TrustDir) + " resume " + sessionID + " " + spawner.ShellQuote(prompt)
 }
 
@@ -140,9 +138,7 @@ func runSkipPermissions(prompt string) error {
 }
 
 func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []string {
-	if opts.Inject != "" {
-		prompt += "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
+	prompt = harness.WithInjection(prompt, opts.Inject)
 	// The trust override sits before `resume` (exec accepts -c) so the
 	// `resume … <id>` tail LiveSessionIDs matches never contains a path.
 	argv := append([]string{"codex", "exec"}, trustArgv(opts.TrustDir)...)

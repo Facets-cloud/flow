@@ -56,7 +56,7 @@ func TestCmdDoBackgroundResumeRegisteredKeepsSameID(t *testing.T) {
 	if task.SessionID.String != bgFullSID {
 		t.Errorf("session_id = %q, want the same id %q", task.SessionID.String, bgFullSID)
 	}
-	if _, ok := flowdb.SessionSource(db, bgFullSID); ok {
+	if _, ok, _ := flowdb.SessionSource(db, bgFullSID); ok {
 		t.Error("lineage recorded for a same-id resume")
 	}
 }
@@ -190,6 +190,7 @@ func TestCmdDoBackgroundForkFallbackStopsOriginal(t *testing.T) {
 	c, reg := spawnBound(t)
 	setConfirmTimeout(t, 0)
 	*reg = bgAgentsJSONExited(bgFullSID, "stopped")
+	writeJobState(t, bgFullSID[:8], jobStateQuiet) // stop requires a provably idle source
 	c.resumeBanner = "note: session 48d287d9 is already running in the background, so this started a copy as 77665544.\n" +
 		"backgrounded · 77665544\n"
 	c.onResume = func() {
@@ -204,7 +205,7 @@ func TestCmdDoBackgroundForkFallbackStopsOriginal(t *testing.T) {
 	if task.SessionID.String != resumeSID {
 		t.Fatalf("session_id = %q, want the copy %q", task.SessionID.String, resumeSID)
 	}
-	if src, ok := flowdb.SessionSource(db, resumeSID); !ok || src != bgFullSID {
+	if src, ok, _ := flowdb.SessionSource(db, resumeSID); !ok || src != bgFullSID {
 		t.Errorf("lineage = %q,%v, want %q", src, ok, bgFullSID)
 	}
 	if c.stop != 1 || !containsArg(c.lastStop, bgFullSID[:8]) {

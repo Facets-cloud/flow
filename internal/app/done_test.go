@@ -155,7 +155,7 @@ func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
 		t.Fatalf("expected 1 sweep call, got %d", len(*calls))
 	}
 	got := (*calls)[0]
-	if !contains(got.prompt, "has-session") {
+	if !strings.Contains(got.prompt, "has-session") {
 		t.Errorf("call prompt missing task slug; got %q", got.prompt)
 	}
 	if got.prompt == "" {
@@ -165,7 +165,7 @@ func TestCmdDoneRunsSweepWhenSessionExists(t *testing.T) {
 	// buildCloseoutSweepPrompt that drops the skill load or the
 	// transcript step gets caught here.
 	for _, want := range []string{"flow skill", "flow transcript has-session", "kb/"} {
-		if !contains(got.prompt, want) {
+		if !strings.Contains(got.prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
 	}
@@ -209,7 +209,7 @@ func TestCmdDoneCloseoutSweepIncludesProjectStep(t *testing.T) {
 		// tempdir prefix appears here. Match the suffix only.
 		"/projects/sp/updates/",
 	} {
-		if !contains(got, want) {
+		if !strings.Contains(got, want) {
 			t.Errorf("prompt missing %q", want)
 		}
 	}
@@ -245,7 +245,7 @@ func TestCmdDoneCloseoutSweepSkipsProjectStepForFloating(t *testing.T) {
 		"Project update",
 		"/projects/",
 	} {
-		if contains(got, unwanted) {
+		if strings.Contains(got, unwanted) {
 			t.Errorf("floating-task prompt unexpectedly contains %q", unwanted)
 		}
 	}
@@ -281,15 +281,4 @@ func TestCmdDoneSweepFailureStillSucceeds(t *testing.T) {
 	if task.Status != "done" {
 		t.Errorf("status = %q, want done", task.Status)
 	}
-}
-
-// contains is a tiny strings.Contains shim so done_test.go doesn't need
-// a strings import just for this.
-func contains(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }

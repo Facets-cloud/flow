@@ -835,12 +835,19 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				if fs, ok := bg.(harness.BackgroundForkSourcer); ok {
 					forkSource, _ = fs.BackgroundForkSource(*a)
 				}
-				ancestorFrom, ancestorCwd, haveAncestor = transcriptAncestor(db, h, task, sid, forkSource)
+				var aerr error
+				ancestorFrom, ancestorCwd, haveAncestor, aerr = transcriptAncestor(db, h, task, sid, forkSource)
+				if aerr != nil {
+					fmt.Fprintf(os.Stderr, "error: read session lineage of %s's session %s: %v\n", task.Slug, sid, aerr)
+					return 1
+				}
 				// The process is the only record of a legacy fork's source,
 				// and it is about to be stopped: keep the source as lineage
 				// first, so a resume that then fails doesn't lose the history.
 				if haveAncestor && forkSource != "" {
-					if _, known := flowdb.SessionSource(db, sid); !known {
+					if _, known, err := flowdb.SessionSource(db, sid); err != nil {
+						lineageErr = err
+					} else if !known {
 						lineageErr = flowdb.RecordSessionSource(db, sid, forkSource, task.Slug)
 					}
 				}
@@ -865,8 +872,8 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				// The delivery attempt above can take a while; look again
 				// right before the stop so a session that started a turn
 				// meanwhile is left alone.
-				if fresh := bgAgentInRegistry(bg, sid); fresh != nil {
-					a = fresh
+				if cur := bgAgentInRegistry(bg, sid); cur != nil {
+					a = cur
 					quiet, notQuiet = a.ProvablyIdle()
 				} else {
 					quiet, notQuiet = false, "its state could not be re-read"
@@ -928,7 +935,12 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				return 1
 			}
 		} else if !onDisk {
-			ancestorFrom, ancestorCwd, haveAncestor = transcriptAncestor(db, h, task, sid, "")
+			var aerr error
+			ancestorFrom, ancestorCwd, haveAncestor, aerr = transcriptAncestor(db, h, task, sid, "")
+			if aerr != nil {
+				fmt.Fprintf(os.Stderr, "error: read session lineage of %s's session %s: %v\n", task.Slug, sid, aerr)
+				return 1
+			}
 		}
 		if !onDisk {
 			if haveAncestor {
@@ -997,7 +1009,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 			// Claude started a copy (last resort): keep the lineage, and
 			// stop the original if it is alive and idle so two sessions
 			// don't both act for this task.
-			_ = flowdb.RecordSessionSource(db, agent.SessionID, resumeFrom, task.Slug)
+			if err := flowdb.RecordSessionSource(db, agent.SessionID, resumeFrom, task.Slug); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: record session lineage: %v\n", err)
+			}
 			stopForkedOriginal(bg, task.Slug, resumeFrom)
 		}
 		bumpWorkdirUsed(db, task.WorkDir)
@@ -1072,8 +1086,18 @@ var (
 func waitBgStopped(bg harness.BackgroundLauncher, sessionID string) bool {
 	deadline := time.Now().Add(bgStopWaitTimeout)
 	for {
-		if a := bgAgentInRegistry(bg, sessionID); a == nil || a.PID <= 0 {
-			return true
+		// A failed query proves nothing: keep polling rather than
+		// resuming against a process that may still be alive.
+		if agents, err := bg.BackgroundAgents(); err == nil {
+			live := false
+			for _, a := range agents {
+				if strings.EqualFold(a.SessionID, sessionID) && a.PID > 0 {
+					live = true
+				}
+			}
+			if !live {
+				return true
+			}
 		}
 		if !time.Now().Before(deadline) {
 			return false
@@ -1134,9 +1158,13 @@ func stopForkedOriginal(bg harness.BackgroundLauncher, slug, sessionID string) {
 		return
 	}
 	stopper, ok := bg.(harness.BackgroundStopper)
-	if !ok || a.Status != "idle" {
+	quiet, why := a.ProvablyIdle()
+	if !ok || !quiet {
+		if why == "" {
+			why = bgStateLabel(a)
+		}
 		fmt.Fprintf(os.Stderr, "note: %s's original session %s is still running (%s); stop it with `claude stop %s` if it is no longer needed.\n",
-			slug, a.ShortID, bgStateLabel(a), a.ShortID)
+			slug, a.ShortID, why, a.ShortID)
 		return
 	}
 	if err := stopper.StopBackground(a.ShortID); err != nil {
@@ -1600,24 +1628,27 @@ const maxLineageHops = 16
 // has a transcript. The lineage comes from flow's session_lineage table;
 // for forks made before flow recorded it, firstSource (read from the live
 // process) stands in for the first hop.
-func transcriptAncestor(db *sql.DB, h harness.Harness, task *flowdb.Task, sid, firstSource string) (string, string, bool) {
+func transcriptAncestor(db *sql.DB, h harness.Harness, task *flowdb.Task, sid, firstSource string) (string, string, bool, error) {
 	seen := map[string]bool{sid: true}
 	cur := sid
 	for i := 0; i < maxLineageHops; i++ {
-		src, ok := flowdb.SessionSource(db, cur)
+		src, ok, err := flowdb.SessionSource(db, cur)
+		if err != nil {
+			return "", "", false, err
+		}
 		if !ok && i == 0 && firstSource != "" {
 			src, ok = firstSource, true
 		}
 		if !ok || seen[src] {
-			return "", "", false
+			return "", "", false, nil
 		}
 		seen[src] = true
 		if cwd, onDisk := resumeTarget(h, task, src); onDisk {
-			return src, cwd, true
+			return src, cwd, true, nil
 		}
 		cur = src
 	}
-	return "", "", false
+	return "", "", false, nil
 }
 
 // confirmBgResume watches a just-resumed background session until it has

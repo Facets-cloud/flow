@@ -21,6 +21,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Background resume no longer runs against a still-live process when the
+  `claude agents` registry query fails; it keeps waiting for a clean listing.
+- A session-lineage lookup error now fails the resume instead of silently
+  starting a fresh session.
+- Stopping the original of a forked background session now requires it to be
+  provably idle, like every other stop.
+- `flow upgrade` prints `flow skill update` as the refresh step when
+  `FLOW_NO_AUTO_UPGRADE` is set.
 - **The automatic skill refresh never downgrades.** On every command flow
   refreshed the skill and hooks whenever the installed version differed from
   the binary's, so an older binary (a `.bak` copy, a rollback, a repro of an

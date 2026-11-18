@@ -206,7 +206,7 @@ func TestCmdDoBackgroundLegacyForkSourcePersistedBeforeStop(t *testing.T) {
 	if task.SessionID.String != forkSID {
 		t.Fatalf("session_id = %q, want %q kept", task.SessionID.String, forkSID)
 	}
-	if src, ok := flowdb.SessionSource(db, forkSID); !ok || src != bgFullSID {
+	if src, ok, _ := flowdb.SessionSource(db, forkSID); !ok || src != bgFullSID {
 		t.Errorf("lineage for %s = %q,%v, want %q", forkSID, src, ok, bgFullSID)
 	}
 }
