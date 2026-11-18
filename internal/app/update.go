@@ -360,7 +360,7 @@ func announceDriverChange(db *sql.DB, task *flowdb.Task, wasDriver bool) {
 		return
 	}
 	if isDriver {
-		fmt.Println(strings.TrimSpace(driverRoleBlock()))
+		fmt.Println(strings.TrimSpace(roleBlockFor(task, false)))
 		return
 	}
 	fmt.Printf("%s is no longer a driver; back to regular delegation:\n", task.Slug)

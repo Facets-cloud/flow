@@ -19,6 +19,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   task in a detached prx host and needs prx v0.6.56 or later; resuming
   it keeps the session id.
 
+### Changed
+
+- **Just tell flow the goal.** Stating work starts a driver task in one
+  interaction: the goal (if unstated) and which project it belongs in
+  (best matches + "New project"; never none, never picked silently). The
+  task interview and the "driver or not?" question are gone.
+- **Every interactive task is a driver.** The driver rules now live in the
+  skill's `references/driver.md`; SessionStart and `flow do --here` print
+  one line pointing at it for any bound, human-driven session (no tag
+  needed; auto and playbook runs get nothing), and new briefs carry a
+  `Role: driver` line. While a brief's Done when is still the placeholder
+  (or on a task's first bind), flow prints an `INTAKE TURN` line so the
+  first turn ends at the proposal instead of building.
+
 ### Fixed
 
 - **The automatic skill refresh never downgrades.** On every command flow

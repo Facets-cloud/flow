@@ -66,6 +66,34 @@ work_dir: <path>
 session will prompt you to fill in the deferred sections.*
 ```
 
+**Driver brief (Start a driver, SKILL.md §4.2):** the brief for work the
+user states (every interactive task is a driver). The goal is a section
+here, never a separate entity. Write it over the stub `flow add task`
+created (Read first). The rules live in references/driver.md; the brief
+carries one line pointing there, not a rules section.
+
+```markdown
+# <name>
+
+Role: driver, follow flow skill references/driver.md
+
+## Goal
+<the user's words, verbatim>
+
+## Done when
+*Agree with the user on the first turn.*
+
+## Context
+project: <slug>; work_dir: <path>; <what the user said that matters>
+
+## Decisions
+- YYYY-MM-DD: <one line per user decision>
+```
+
+Write the user's own Done when instead of the placeholder only when they
+stated it; otherwise keep the placeholder until the user agrees. While it
+stands, flow prints an `INTAKE TURN` line. It is not a deferred section.
+
 A section is "deferred" if its body is the literal string
 `*Deferred — fill in at task start.*` or `*Deferred*`. The bootstrap
 session detects this and offers the user a deferred-section prompt

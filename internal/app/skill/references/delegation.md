@@ -16,9 +16,9 @@ user -> flow do <task>              (interactive, unchanged)
         `- live/prod change: child plans + gates, driver applies with the user
 ```
 
-The SessionStart hook prints a `flow driver delegation` block in bound,
-human-driven sessions only. Unbound sessions and auto children never get
-it.
+The SessionStart hook points every bound, human-driven session at
+references/driver.md (the driver rules). Unbound sessions, auto children
+and playbook runs never get it.
 
 ## Driver tasks (tag `driver`)
 
@@ -42,19 +42,6 @@ Flow marks it everywhere: `flow list` shows `◆driver` (json
 `"driver": true`), `flow show task` prints `role: driver`, the per-prompt
 anchor says `[driver]`, and SessionStart / `flow do --here` print the
 `flow DRIVER task` block. Auto children never get it, even if tagged.
-
-### Intake question (§4.2 step 5)
-
-After Priority, AskUserQuestion (header "Driver?"):
-
-> "How should this task run?"
-> - **Driver (owns it end to end)**: "I keep design and decisions with
->   you and hand self-contained work to background flow auto tasks."
-> - **Regular (just this session)**
-
-Mark **Driver (Recommended)** when the brief has several workstreams or
-the user describes a big goal; else Regular first. On Driver, add
-`--tag driver` to `flow add task`. Skip if the user already said.
 
 ### Mid-session switch
 
