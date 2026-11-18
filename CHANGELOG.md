@@ -18,6 +18,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   turn end) and pops it in the foreground. `FLOW_TERM=bg` runs a
   task in a detached prx host and needs prx v0.6.56 or later; resuming
   it keeps the session id.
+- **Fresh-install onboarding.** On a fresh install (no projects, no tasks,
+  empty KB) the SessionStart hint asks the agent to offer onboarding: a
+  KB interview (user, org, products, processes, business), then an optional
+  import of recent work. `flow onboard scan` lists past unbound Claude
+  Code/Codex/prx sessions grouped by directory, and `flow onboard digest
+  <harness:id>` prints one session's prompts and last reply. Both read the
+  transcripts locally and print bounded output (`--budget small|large`), so
+  importing costs a few thousand tokens.
 
 ### Fixed
 
