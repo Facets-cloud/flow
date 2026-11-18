@@ -1,35 +1,35 @@
 {
   "counts": {
-    "asks_to_human": 1,
-    "children": 88,
+    "asks_to_human": 0,
+    "children": 67,
     "dead": 7,
-    "done": 72,
-    "messages_between_tasks": 135,
-    "notes": 103,
-    "refs": 68,
-    "running": 2,
-    "tasks": 93
+    "done": 57,
+    "messages_between_tasks": 61,
+    "notes": 89,
+    "refs": 55,
+    "running": 1,
+    "tasks": 73
   },
   "dead_reasons": {
     "exited without closing": 2,
     "no log written": 5
   },
-  "generated_at": "2026-11-17T11:32:05+05:30",
+  "generated_at": "2026-11-18T11:30:21+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 93
+      "tasks": 73
     },
     {
-      "items": 103,
+      "items": 89,
       "name": "updates/",
-      "tasks": 93
+      "tasks": 73
     },
     {
-      "items": 92,
+      "items": 78,
       "name": "auto-runs/",
-      "tasks": 77
+      "tasks": 61
     },
     {
       "items": 96,
@@ -37,14 +37,14 @@
       "tasks": 8
     },
     {
-      "items": 21,
+      "items": 22,
       "name": "other files",
       "tasks": 7
     },
     {
       "items": 0,
       "name": "workspace/",
-      "tasks": 6
+      "tasks": 5
     },
     {
       "items": 25,
@@ -52,18 +52,13 @@
       "tasks": 1
     },
     {
-      "items": 11,
+      "items": 17,
       "name": "e2e/",
       "tasks": 1
     },
     {
       "items": 9,
       "name": "scratch/",
-      "tasks": 1
-    },
-    {
-      "items": 9,
-      "name": "verify/",
       "tasks": 1
     }
   ],
@@ -81,8 +76,20 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-17-06-00",
+      "slug": "site-daily--2026-11-18-06-00",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        182
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-17-06-00",
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -124,14 +131,14 @@
       "status": "done"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
       "notes": 1,
       "refs": [],
       "shown": false,
       "slug": "driver-first-impl",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "auto_run_status": null,
@@ -152,7 +159,7 @@
         170,
         180
       ],
-      "shown": true,
+      "shown": false,
       "slug": "bg-resume-review-followups",
       "status": "done"
     },
@@ -311,9 +318,14 @@
       "auto_run_status": null,
       "child": true,
       "dead_reason": null,
-      "notes": 2,
+      "notes": 4,
       "refs": [
+        82,
         165,
+        170,
+        171,
+        178,
+        180,
         181
       ],
       "shown": true,
@@ -425,9 +437,7 @@
       "child": true,
       "dead_reason": null,
       "notes": 1,
-      "refs": [
-        170
-      ],
+      "refs": [],
       "shown": false,
       "slug": "bg-resume-kickoff",
       "status": "done"
@@ -929,259 +939,6 @@
       ],
       "shown": false,
       "slug": "verify-pr135",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        132
-      ],
-      "shown": false,
-      "slug": "review-notes-132",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-pain-research",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-usage-playbooks",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        1,
-        4,
-        11,
-        17,
-        39,
-        62,
-        63,
-        65,
-        81,
-        83,
-        94,
-        99,
-        105,
-        119,
-        120,
-        123,
-        133
-      ],
-      "shown": false,
-      "slug": "flow-git-evolution",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        28,
-        35,
-        71,
-        87,
-        108
-      ],
-      "shown": false,
-      "slug": "flow-usage-skoop",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "since-today-tz",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        127,
-        131
-      ],
-      "shown": false,
-      "slug": "pr127-checkname",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        131,
-        132
-      ],
-      "shown": false,
-      "slug": "pr132-merge-main",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        131,
-        132
-      ],
-      "shown": false,
-      "slug": "pr132-rebase",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        130
-      ],
-      "shown": false,
-      "slug": "flow-schedule-fix",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        127
-      ],
-      "shown": false,
-      "slug": "flow-tmux-fix",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        131
-      ],
-      "shown": false,
-      "slug": "attach-prune-race",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "help-15",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "p2p-desk-resume",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "codex-driver-fixes",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "p2p-desk-project",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "help-14",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "help-13",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "spike-bg-desk",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        131
-      ],
-      "shown": false,
-      "slug": "flow-desk-primitives",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-p2p-desks",
       "status": "done"
     }
   ],
