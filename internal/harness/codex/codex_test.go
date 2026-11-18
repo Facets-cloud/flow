@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -276,5 +277,50 @@ func TestInstallSkillWritesFlowRules(t *testing.T) {
 	// Uninstall with no rules file present is fine.
 	if err := h.UninstallSkill(); err != nil {
 		t.Errorf("second UninstallSkill: %v", err)
+	}
+}
+
+// Codex re-runs SessionStart with source "compact" after compaction (its
+// PostCompact hook ignores stdout and cannot inject context), so flow's
+// SessionStart matcher must include compact. An existing install made with
+// the old "startup|resume" matcher is migrated in place on refresh: same
+// command, no duplicate entry.
+func TestSessionStartMatcherIncludesCompactAndMigrates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	const cmd = "flow hook session-start"
+	path := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"hooks":{"SessionStart":[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]}}`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := New().InstallSessionStartHook(cmd); err != nil || !changed {
+		t.Fatalf("refresh must migrate the old matcher: changed=%v err=%v", changed, err)
+	}
+	var got struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	raw, _ := os.ReadFile(path)
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	ss := got.Hooks["SessionStart"]
+	if len(ss) != 1 || len(ss[0].Hooks) != 1 || ss[0].Hooks[0].Command != cmd {
+		t.Fatalf("want exactly one SessionStart entry with the unchanged command, got %s", raw)
+	}
+	if ss[0].Matcher != "startup|resume|compact" {
+		t.Errorf("matcher = %q, want startup|resume|compact", ss[0].Matcher)
+	}
+	if changed, err := New().InstallSessionStartHook(cmd); err != nil || changed {
+		t.Errorf("second refresh must be a no-op: changed=%v err=%v", changed, err)
 	}
 }

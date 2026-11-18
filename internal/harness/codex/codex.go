@@ -349,7 +349,10 @@ func (c *codex) UninstallSkill() error {
 }
 
 func (c *codex) InstallSessionStartHook(command string) (bool, error) {
-	return installHook("SessionStart", "startup|resume", command)
+	// "compact": Codex re-runs SessionStart with source=compact after a
+	// compaction (its PostCompact hook ignores stdout), so the driver
+	// pointer and task reload survive compaction.
+	return installHook("SessionStart", "startup|resume|compact", command)
 }
 
 func (c *codex) UninstallSessionStartHook(command string) (bool, error) {

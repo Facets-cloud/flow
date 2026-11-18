@@ -44,5 +44,8 @@ and you have verified it, not when the work has been handed off.
   "Needs from you:" list answerable as "1 yes, 2 later".
 - **Intake turn:** while flow prints `INTAKE TURN`, restate the goal,
   propose Done when + "Needs from you:", then end the turn; build nothing.
+  Only an explicit yes to the proposed Done when ends intake; anything
+  else means revise and re-ask. Keep the brief's Done-when placeholder
+  verbatim until then.
 - **Close out:** when Done when is met and verified, offer to close the
   task out (`flow done`, after the user's explicit yes).

@@ -49,7 +49,14 @@ func installHook(event, matcher, command string) (bool, error) {
 		for _, h := range inner {
 			hm, _ := h.(map[string]any)
 			if cmd, _ := hm["command"].(string); cmd == command {
-				return false, nil
+				// Same command: migrate an older matcher in place (never a
+				// duplicate entry); otherwise nothing to do.
+				if old, _ := m["matcher"].(string); matcher == "" || old == matcher {
+					return false, nil
+				}
+				m["matcher"] = matcher
+				settings["hooks"] = hooks
+				return writeSettings(path, settings)
 			}
 		}
 	}

@@ -291,8 +291,8 @@ without binding and stop.
 1. **Goal.** Not stated → ask: "I'll create a driver task for this — what
    goal do you want to achieve?" (free-text Other). Stated → skip.
 2. **Project.** Every driver task has a project: always ask ONE project
-   question, never a "no project" or
-   "standalone" option, never auto-create silently: "I'll create a driver
+   question, even on an exact repo-path match (never skip it), never a "no
+   project" or "standalone" option, never auto-create silently: "I'll create a driver
    task for this — which project does it belong in?" Options: best
    existing match(es) from `flow list projects` (by repo/work_dir path
    first, then by name/goal; max 3, top one "(Recommended)"); always
@@ -309,14 +309,17 @@ without binding and stop.
    (references/templates.md): the line `Role: driver, follow flow skill
    references/driver.md`, then `## Goal` (verbatim), `## Done when`, `##
    Context`, `## Decisions`. Done when the user stated goes in now;
-   otherwise keep the placeholder until the user agrees.
+   otherwise keep the placeholder `*Agree with the user on the first
+   turn.*` verbatim until the user agrees.
 5. **Bind + announce** (mandatory). Unbound → `flow do --here <slug>`:
    "Created driver task <name> in project <p>; continuing here." Bound →
    `flow do <slug>`: "...; opened it in a new tab." (that tab runs step
    6). Never say "tracked task".
 6. **The intake turn ENDS** after you restate the goal, propose Done when
    and close with a numbered "Needs from you:" list; build nothing (flow
-   prints `INTAKE TURN` then). Next turn: write the agreed Done when, then
+   prints `INTAKE TURN` then). Only an explicit yes to the proposed Done
+   when ends intake; anything else (edits, questions, silence, "go ahead
+   and build") → revise and re-ask. Then write the agreed Done when and
    plan / delegate (§4.4a).
 
 ### 4.3 Add a project
