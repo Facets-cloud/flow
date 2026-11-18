@@ -70,6 +70,14 @@ func captureStdout(t *testing.T, f func()) string {
 		b, _ := io.ReadAll(rErr)
 		done <- string(b)
 	}()
+	// Restore on every exit path: f may end the test with t.Fatal, which
+	// unwinds through this frame and must not leave the streams redirected.
+	defer func() {
+		wOut.Close()
+		wErr.Close()
+		os.Stdout = oldOut
+		os.Stderr = oldErr
+	}()
 	f()
 	wOut.Close()
 	wErr.Close()

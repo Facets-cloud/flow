@@ -62,6 +62,11 @@ func captureStdoutOnly(t *testing.T, f func()) string {
 		b, _ := io.ReadAll(r)
 		done <- string(b)
 	}()
+	// Restore on every exit path, as captureStdout does: f may t.Fatal.
+	defer func() {
+		w.Close()
+		os.Stdout = old
+	}()
 	f()
 	w.Close()
 	os.Stdout = old
