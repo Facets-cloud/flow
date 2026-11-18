@@ -28,15 +28,21 @@ Open questions.
 const driverBriefStub = "# %s\n\nRole: driver, follow flow skill references/driver.md\n\n## Goal\n\n## Done when\n" +
 	doneWhenPlaceholder + "\n\n## Context\n\n## Decisions\n"
 
-// hasOwnerTag reports whether tags include an owner-managed `owner:<slug>` tag (non-empty slug).
+// hasOwnerTag reports whether tags include an owner-managed tag.
 func hasOwnerTag(tags []string) bool {
 	for _, t := range tags {
-		// Exactly the ledger's form: owner:<slug>, no space after the colon.
-		if slug, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(t)), "owner:"); ok && slug != "" && slug == strings.TrimSpace(slug) {
+		if isOwnerTag(strings.ToLower(strings.TrimSpace(t))) {
 			return true
 		}
 	}
 	return false
+}
+
+// isOwnerTag is the owner ledger's exact form: owner:<slug>, slug non-empty
+// with no surrounding space.
+func isOwnerTag(tag string) bool {
+	slug, ok := strings.CutPrefix(tag, "owner:")
+	return ok && slug != "" && slug == strings.TrimSpace(slug)
 }
 
 // cmdAdd dispatches `flow add project|task|playbook ...`.

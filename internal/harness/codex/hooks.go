@@ -45,8 +45,8 @@ func installHook(event, matcher, command string) (bool, error) {
 	entries, _ := hooks[event].([]any)
 	for _, entry := range entries {
 		m, _ := entry.(map[string]any)
-		if old, _ := m["matcher"].(string); old != matcher {
-			continue // one group per (matcher, command)
+		if old, _ := m["matcher"].(string); matcher != "" && old != matcher {
+			continue // matcher events: one group per (matcher, command)
 		}
 		inner, _ := m["hooks"].([]any)
 		for _, h := range inner {

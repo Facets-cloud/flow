@@ -332,7 +332,24 @@ func TestCompactSessionStartKeepsUpgradeNotice(t *testing.T) {
 	withHookStdin(t, `{"session_id":"`+sid+`","source":"compact"}`, func() {
 		captureStdout(t, func() { cmdHookSessionStart(nil) })
 	})
-	if out := hookUPS(t, sid); !strings.Contains(out, upgradeMarker) {
+	if out := hookUPS(t, sid); !strings.Contains(out, upgradeMarker) || !strings.Contains(out, "v0.1.0-alpha.40 → v0.1.0-alpha.41") {
 		t.Errorf("the next prompt after a compact must still get the upgrade notice:\n%s", out)
+	}
+}
+
+// add.go and the dead-run ping agree with the owner ledger: only the exact
+// `owner:<slug>` form is owner-managed.
+func TestOwnerManagedMatchesLedgerForm(t *testing.T) {
+	setupFlowRoot(t)
+	for tag, want := range map[string]bool{"owner:ci": true, "owner: ci": false, "owner:": false} {
+		seedTask(t, "o")
+		db := openFlowDB(t)
+		flowdb.AddTaskTag(db, "o", tag)
+		if got := isOwnerManaged(db, "o"); got != want {
+			t.Errorf("isOwnerManaged(%q) = %v, want %v", tag, got, want)
+		}
+		db.Exec(`DELETE FROM task_tags WHERE task_slug='o'`)
+		db.Exec(`DELETE FROM tasks WHERE slug='o'`)
+		db.Close()
 	}
 }

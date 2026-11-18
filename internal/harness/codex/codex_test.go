@@ -299,8 +299,9 @@ func TestSessionStartAddsCompactGroup(t *testing.T) {
 			t.Setenv("CODEX_HOME", "")
 			path := filepath.Join(home, ".codex", "hooks.json")
 			if before != "" {
-				os.MkdirAll(filepath.Dir(path), 0o755)
-				os.WriteFile(path, []byte(before), 0o644)
+				if err := errors.Join(os.MkdirAll(filepath.Dir(path), 0o755), os.WriteFile(path, []byte(before), 0o644)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			for i := 0; i < 3; i++ {
 				if _, err := New().InstallSessionStartHook(cmd); err != nil {
@@ -315,5 +316,19 @@ func TestSessionStartAddsCompactGroup(t *testing.T) {
 				t.Errorf("SessionStart =\n %s\nwant\n %s", norm, want)
 			}
 		})
+	}
+}
+
+// Events without a matcher keep one flow group, even when a hand-edited
+// group around flow's command carries a matcher such as "*".
+func TestNoMatcherEventKeepsOneFlowGroup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	path := filepath.Join(home, ".codex", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(`{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"c"}]}]}}`), 0o644)
+	if added, err := installHook("PreToolUse", "", "c"); err != nil || added {
+		t.Errorf("added=%v err=%v: an existing flow group must count", added, err)
 	}
 }
