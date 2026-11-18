@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"flow/internal/flowdb"
 	"flow/internal/harness"
@@ -38,7 +40,7 @@ func TestAutoExecFinalizesBlockedFromLogLine(t *testing.T) {
 		return errors.New("exit status 1")
 	})
 
-	if rc := cmdAutoExec([]string{"stuck"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "stuck")); rc != 0 {
 		t.Fatalf("rc=%d, want 0 for a blocked run", rc)
 	}
 	task := finalAutoRun(t, "stuck")
@@ -60,13 +62,16 @@ func TestAutoExecFinalizesBlockedFromLogLine(t *testing.T) {
 // that file is the authority: a BLOCKED line in the log alone is ignored.
 func TestAutoExecBlockedFromLastMessageFile(t *testing.T) {
 	root := setupFlowRoot(t)
-	seedDeadPingTask(t, root, "stuck")
-	lastMsg := filepath.Join(root, "last.txt")
+	logPath := seedDeadPingTask(t, root, "stuck")
+	lastMsg := autoRunLastMessagePath(logPath)
 	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		if err := os.MkdirAll(filepath.Dir(lastMsg), 0o755); err != nil {
+			return err
+		}
 		return os.WriteFile(lastMsg, []byte("did part A\n\nBLOCKED: waiting on the DB migration owner\n"), 0o644)
 	})
 
-	if rc := cmdAutoExec([]string{"stuck", "--last-message", lastMsg}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "stuck")); rc != 0 {
 		t.Fatalf("rc=%d, want 0", rc)
 	}
 	if got := finalAutoRun(t, "stuck").AutoRunStatus.String; got != "blocked" {
@@ -74,24 +79,51 @@ func TestAutoExecBlockedFromLastMessageFile(t *testing.T) {
 	}
 }
 
+// The last-message file has no BLOCKED line, so the run is dead even though
+// the log holds one: fixtures are written before the run, and any setup
+// failure stops the test rather than passing it vacuously.
 func TestAutoExecLastMessageFileIsAuthoritative(t *testing.T) {
 	root := setupFlowRoot(t)
 	logPath := seedDeadPingTask(t, root, "crashy")
-	lastMsg := filepath.Join(root, "last.txt")
+	lastMsg := autoRunLastMessagePath(logPath)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("BLOCKED: quoted from a tool result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lastMsg, []byte("crashed mid-way\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
-		// The final message has no BLOCKED line; the log's tool chatter does.
-		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(logPath, []byte("BLOCKED: quoted from a tool result\n"), 0o644); err != nil {
-			return err
-		}
-		return os.WriteFile(lastMsg, []byte("crashed mid-way\n"), 0o644)
+		return errors.New("exit status 1")
 	})
 
-	cmdAutoExec([]string{"crashy", "--last-message", lastMsg})
+	cmdAutoExec(autoExecArgv(t, "crashy"))
 	if got := finalAutoRun(t, "crashy").AutoRunStatus.String; got != "dead" {
 		t.Errorf("auto_run_status = %q, want dead (the last-message file has no BLOCKED line)", got)
+	}
+}
+
+// Only the LAST nonblank line of the final message decides: a BLOCKED: line
+// quoted earlier, followed by ordinary output, does not make the run blocked.
+func TestAutoExecBlockedOnlyFromLastNonblankLine(t *testing.T) {
+	root := setupFlowRoot(t)
+	logPath := seedDeadPingTask(t, root, "quoted")
+	lastMsg := autoRunLastMessagePath(logPath)
+	if err := os.MkdirAll(filepath.Dir(lastMsg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lastMsg, []byte("BLOCKED: staging access\naccess works, verification crashed\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		return errors.New("exit status 1")
+	})
+
+	cmdAutoExec(autoExecArgv(t, "quoted"))
+	if got := finalAutoRun(t, "quoted").AutoRunStatus.String; got != "dead" {
+		t.Errorf("auto_run_status = %q, want dead (BLOCKED: is not the last line)", got)
 	}
 }
 
@@ -99,21 +131,25 @@ func TestAutoExecLastMessageFileIsAuthoritative(t *testing.T) {
 func TestAutoExecBlockedMustStartALine(t *testing.T) {
 	root := setupFlowRoot(t)
 	logPath := seedDeadPingTask(t, root, "prose")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("note: BLOCKED: not a status line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
-		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(logPath, []byte("note: BLOCKED: not a status line\n"), 0o644)
+		return errors.New("exit status 1")
 	})
 
-	cmdAutoExec([]string{"prose"})
+	cmdAutoExec(autoExecArgv(t, "prose"))
 	if got := finalAutoRun(t, "prose").AutoRunStatus.String; got != "dead" {
 		t.Errorf("auto_run_status = %q, want dead", got)
 	}
 }
 
-// `flow update task --waiting` during the run is the other blocked signal.
-func TestAutoExecBlockedFromWaitingOn(t *testing.T) {
+// `flow update task --waiting` during the run is a human's note, not the
+// run's report: with no BLOCKED: line the run is dead.
+func TestAutoExecWaitingOnAloneIsNotBlocked(t *testing.T) {
 	root := setupFlowRoot(t)
 	seedDeadPingTask(t, root, "waits")
 	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
@@ -121,11 +157,11 @@ func TestAutoExecBlockedFromWaitingOn(t *testing.T) {
 		return err
 	})
 
-	if rc := cmdAutoExec([]string{"waits"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "waits")); rc != 0 {
 		t.Fatalf("rc=%d, want 0", rc)
 	}
-	if got := finalAutoRun(t, "waits").AutoRunStatus.String; got != "blocked" {
-		t.Errorf("auto_run_status = %q, want blocked", got)
+	if got := finalAutoRun(t, "waits").AutoRunStatus.String; got != "dead" {
+		t.Errorf("auto_run_status = %q, want dead", got)
 	}
 }
 
@@ -140,7 +176,7 @@ func TestAutoExecPreexistingWaitingOnIsNotBlocked(t *testing.T) {
 		return errors.New("harness exploded")
 	})
 
-	cmdAutoExec([]string{"old-wait"})
+	cmdAutoExec(autoExecArgv(t, "old-wait"))
 	if got := finalAutoRun(t, "old-wait").AutoRunStatus.String; got != "dead" {
 		t.Errorf("auto_run_status = %q, want dead", got)
 	}
@@ -161,9 +197,79 @@ func TestAutoExecDoneWinsOverBlocked(t *testing.T) {
 		return err
 	})
 
-	cmdAutoExec([]string{"finished"})
+	cmdAutoExec(autoExecArgv(t, "finished"))
 	if got := finalAutoRun(t, "finished").AutoRunStatus.String; got != "completed" {
 		t.Errorf("auto_run_status = %q, want completed", got)
+	}
+}
+
+// A blocked finalize whose write fails must not report "finished: blocked":
+// the run exits 1 and says the status could not be recorded.
+func TestAutoExecBlockedWriteFailureFailsRun(t *testing.T) {
+	root := setupFlowRoot(t)
+	logPath := seedDeadPingTask(t, root, "nowrite")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("BLOCKED: need access\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		_, err := openFlowDB(t).Exec(`CREATE TRIGGER fail_blocked BEFORE UPDATE ON tasks WHEN NEW.auto_run_status='blocked' BEGIN SELECT RAISE(ABORT,'boom'); END`)
+		if err != nil {
+			return err
+		}
+		return errors.New("exit status 1")
+	})
+
+	var rc int
+	out := captureStdout(t, func() { rc = cmdAutoExec(autoExecArgv(t, "nowrite")) })
+	if rc != 1 {
+		t.Errorf("rc=%d, want 1 when the blocked status cannot be recorded", rc)
+	}
+	if strings.Contains(out, "finished: blocked") {
+		t.Errorf("printed a finished: blocked line for an unrecorded run: %q", out)
+	}
+}
+
+// A retry (or late finalize) from launch A must not overwrite launch B's row:
+// the row records B's log, so A's finalize matches nothing.
+func TestAutoExecFinalizeIgnoresLaterLaunch(t *testing.T) {
+	root := setupFlowRoot(t)
+	seedDeadPingTask(t, root, "shared")
+	laterLog := filepath.Join(root, "tasks", "shared", "auto-runs", "later.log")
+	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		// Launch B takes the row while A is still running: B is blocked with no pid.
+		_, err := openFlowDB(t).Exec(`UPDATE tasks SET auto_run_log=?, auto_run_status='blocked', auto_run_pid=NULL WHERE slug='shared'`, laterLog)
+		if err != nil {
+			return err
+		}
+		return errors.New("exit status 1")
+	})
+
+	cmdAutoExec(autoExecArgv(t, "shared"))
+	task := finalAutoRun(t, "shared")
+	if task.AutoRunStatus.String != "blocked" || task.AutoRunLog.String != laterLog {
+		t.Errorf("launch A overwrote launch B: status=%q log=%q", task.AutoRunStatus.String, task.AutoRunLog.String)
+	}
+}
+
+// Each launch reserves a log no other launch uses, even within one second.
+func TestReserveAutoRunLogIsUniquePerLaunch(t *testing.T) {
+	dir := t.TempDir()
+	seen := map[string]bool{}
+	for i := 0; i < 5; i++ {
+		p, err := reserveAutoRunLog(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[p] {
+			t.Fatalf("launch %d reused log %s", i, p)
+		}
+		seen[p] = true
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("reserved log not created: %v", err)
+		}
 	}
 }
 
@@ -182,47 +288,65 @@ func TestBootstrapPromptAsksForBlockedLine(t *testing.T) {
 	}
 }
 
-// Transient SQLite errors are retried with backoff; anything else is not.
-func TestRetryTransientDBRetriesThenSucceeds(t *testing.T) {
-	old := dbRetryBackoff
-	dbRetryBackoff = 0
-	t.Cleanup(func() { dbRetryBackoff = old })
+// sqliteCodeErr is a stand-in for *sqlite.Error: an error carrying an SQLite
+// result code.
+type sqliteCodeErr int
 
-	calls := 0
-	err := retryTransientDB(func() error {
-		calls++
-		if calls < 3 {
-			return errors.New("unable to open database file (14)")
-		}
-		return nil
-	})
-	if err != nil || calls != 3 {
-		t.Errorf("err=%v calls=%d, want nil after 3 calls", err, calls)
+func (e sqliteCodeErr) Error() string { return "sqlite error code " + strconv.Itoa(int(e)) }
+func (e sqliteCodeErr) Code() int     { return int(e) }
+
+// Transient SQLite errors are retried until the shared budget runs out;
+// anything else returns on the first call.
+func TestRetryTransientDB(t *testing.T) {
+	oldBackoff, oldBudget := dbRetryBackoff, dbRetryBudget
+	dbRetryBackoff, dbRetryBudget = 0, 20*time.Millisecond
+	t.Cleanup(func() { dbRetryBackoff, dbRetryBudget = oldBackoff, oldBudget })
+
+	cases := []struct {
+		name      string
+		fail      func(call int) error // error for call number `call`; nil = success
+		wantErr   bool
+		wantCalls int // exact call count; -1 = retried within the budget (>= 2)
+	}{
+		{"CANTOPEN then success", func(c int) error {
+			if c < 3 {
+				return sqliteCodeErr(14)
+			}
+			return nil
+		}, false, 3},
+		{"LOCKED then success", func(c int) error {
+			if c < 2 {
+				return sqliteCodeErr(6)
+			}
+			return nil
+		}, false, 2},
+		{"extended BUSY code classified by primary code", func(c int) error {
+			if c < 2 {
+				return sqliteCodeErr(5 | 1<<8)
+			}
+			return nil
+		}, false, 2},
+		{"BUSY exhausts the budget", func(int) error { return sqliteCodeErr(5) }, true, -1},
+		{"CONSTRAINT is not retried", func(int) error { return sqliteCodeErr(19) }, true, 1},
+		{"message text alone is not retried", func(int) error { return errors.New("database is locked") }, true, 1},
 	}
-}
-
-func TestRetryTransientDBBusyAndGiveUp(t *testing.T) {
-	old := dbRetryBackoff
-	dbRetryBackoff = 0
-	t.Cleanup(func() { dbRetryBackoff = old })
-
-	calls := 0
-	err := retryTransientDB(func() error {
-		calls++
-		return errors.New("database is locked (SQLITE_BUSY)")
-	})
-	if err == nil || calls != dbRetryAttempts {
-		t.Errorf("err=%v calls=%d, want an error after %d attempts", err, calls, dbRetryAttempts)
-	}
-}
-
-func TestRetryTransientDBDoesNotRetryOtherErrors(t *testing.T) {
-	calls := 0
-	err := retryTransientDB(func() error {
-		calls++
-		return errors.New("no such column: nope")
-	})
-	if err == nil || calls != 1 {
-		t.Errorf("err=%v calls=%d, want one call and the error", err, calls)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			err := retryTransientDB(func() error {
+				calls++
+				return tc.fail(calls)
+			})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
+			}
+			if tc.wantCalls < 0 {
+				if calls < 2 {
+					t.Errorf("calls=%d, want retries within the budget", calls)
+				}
+			} else if calls != tc.wantCalls {
+				t.Errorf("calls=%d, want %d", calls, tc.wantCalls)
+			}
+		})
 	}
 }

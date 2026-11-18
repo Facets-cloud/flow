@@ -185,7 +185,7 @@ func TestDeadChildNotifiesParent(t *testing.T) {
 	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
 		return nil // exits cleanly but never marked itself done → dead
 	})
-	cmdAutoExec([]string{"child"})
+	cmdAutoExec(autoExecArgv(t, "child"))
 
 	msgs, err := pendingForIdentity(openFlowDB(t), busSender{Assignee: busUser, TaskSlug: "parent"})
 	if err != nil {
@@ -212,7 +212,7 @@ func TestCompletedChildSendsNoCrashNotice(t *testing.T) {
 		_, err := openFlowDB(t).Exec(`UPDATE tasks SET status='done' WHERE slug='child'`)
 		return err
 	})
-	cmdAutoExec([]string{"child"})
+	cmdAutoExec(autoExecArgv(t, "child"))
 	msgs, _ := pendingForIdentity(openFlowDB(t), busSender{Assignee: busUser, TaskSlug: "parent"})
 	if len(msgs) != 0 {
 		t.Errorf("completed child should not post a crash notice; got %d", len(msgs))
