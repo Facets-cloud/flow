@@ -67,7 +67,7 @@ func TestDeadParentlessAutoRunPingsHuman(t *testing.T) {
 	logPath := seedDeadPingTask(t, root, "orphan")
 	failingRunner(t)
 
-	if rc := cmdAutoExec([]string{"orphan"}); rc != 1 {
+	if rc := cmdAutoExec(autoExecArgv(t, "orphan")); rc != 1 {
 		t.Fatalf("rc=%d, want 1", rc)
 	}
 	rows := deadPingRows(t)
@@ -113,7 +113,7 @@ func TestDeadParentedAutoRunOnlyNotifiesParent(t *testing.T) {
 	}
 	failingRunner(t)
 
-	cmdAutoExec([]string{"kid"})
+	cmdAutoExec(autoExecArgv(t, "kid"))
 	rows := deadPingRows(t)
 	if len(rows) != 1 || rows[0].toS != "papa" {
 		t.Fatalf("want only the parent notice, got %+v", rows)
@@ -128,7 +128,7 @@ func TestCompletedParentlessAutoRunSendsNothing(t *testing.T) {
 		_, err := openFlowDB(t).Exec(`UPDATE tasks SET status='done' WHERE slug='orphan'`)
 		return err
 	})
-	if rc := cmdAutoExec([]string{"orphan"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "orphan")); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	if rows := deadPingRows(t); len(rows) != 0 {
@@ -146,7 +146,7 @@ func TestDeadOwnerManagedAutoRunDoesNotPing(t *testing.T) {
 		t.Fatal(err)
 	}
 	failingRunner(t)
-	cmdAutoExec([]string{"chore"})
+	cmdAutoExec(autoExecArgv(t, "chore"))
 	if rows := deadPingRows(t); len(rows) != 0 {
 		t.Errorf("owner-managed dead run pinged: %+v", rows)
 	}

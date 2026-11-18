@@ -196,7 +196,7 @@ func TestAutoExecResumesSessionNotKeyedUnderWorkDir(t *testing.T) {
 			ranIn, _ = os.Getwd()
 			return nil
 		})
-		if rc := cmdAutoExec([]string{"auto-moved"}); rc != 0 {
+		if rc := cmdAutoExec(autoExecArgv(t, "auto-moved")); rc != 0 {
 			t.Fatalf("cmdAutoExec rc=%d", rc)
 		}
 		if !got.Resume {
@@ -223,7 +223,7 @@ func TestAutoExecResumesSessionNotKeyedUnderWorkDir(t *testing.T) {
 			got = opts
 			return nil
 		})
-		if rc := cmdAutoExec([]string{"auto-linked"}); rc != 0 {
+		if rc := cmdAutoExec(autoExecArgv(t, "auto-linked")); rc != 0 {
 			t.Fatalf("cmdAutoExec rc=%d", rc)
 		}
 		if !got.Resume {
