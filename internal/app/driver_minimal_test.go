@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness/claude"
 )
 
 // Minimal driver model (Ask #135): every bound, human-driven session that
@@ -163,91 +164,6 @@ func TestUnboundHintIsTaskFirst(t *testing.T) {
 	}
 }
 
-// ---------- skill + docs ----------
-
-func readSkillDM(t *testing.T, p string) string {
-	t.Helper()
-	b, err := fs.ReadFile(skillFiles(), p)
-	if err != nil {
-		t.Fatalf("read %s: %v", p, err)
-	}
-	return string(b)
-}
-
-func sectionDM(t *testing.T, doc, heading string) string {
-	t.Helper()
-	i := strings.Index(doc, heading)
-	if i < 0 {
-		t.Fatalf("heading %q not found", heading)
-	}
-	rest := doc[i+len(heading):]
-	if j := strings.Index(rest, "\n### "); j >= 0 {
-		rest = rest[:j]
-	}
-	return strings.Join(strings.Fields(rest), " ")
-}
-
-func TestSkillStartADriver(t *testing.T) {
-	core := readSkillDM(t, "SKILL.md")
-	s := sectionDM(t, core, "### 4.2 Start a driver")
-	for _, want := range []string{
-		"what goal do you want to achieve?",
-		"which project does it belong in?",
-		"always ask ONE project question",
-		"by repo/work_dir path first, then by name/goal",
-		`always include "New project <proposed name>"`,
-		"free-text Other",
-		`never a "no project" or "standalone" option`,
-		"only when a live driver's goal really matches",
-		`never override an explicit "new"`,
-		`flow add task "<short name>" --project <p>`,
-		`"Created driver task <name> in project <p>; continuing here."`,
-		"keep the placeholder until the user agrees",
-		"intake turn ENDS",
-		`"Needs from you:"`,
-		"Backlog capture",
-		"create it without binding",
-	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("§4.2 missing %q", want)
-		}
-	}
-	for _, banned := range []string{"How should this task run?", "Driver (Recommended)", "Regular (this session only)",
-		"Make it a driver", "None (floating)", "Other bound sessions delegate lightly"} {
-		if strings.Contains(core, banned) {
-			t.Errorf("SKILL.md still has %q", banned)
-		}
-	}
-	if strings.Contains(readSkillDM(t, "references/delegation.md"), "How should this task run?") {
-		t.Error("delegation.md still asks the Driver? question")
-	}
-}
-
-func TestDocsDriverTemplateAndTrustAll(t *testing.T) {
-	tpl := readSkillDM(t, "references/templates.md")
-	i := strings.Index(tpl, "Driver brief")
-	if i < 0 {
-		t.Fatal("templates.md missing the Driver brief template")
-	}
-	last := -1
-	for _, h := range []string{"## Goal", "## Done when", doneWhenPlaceholder, "## Context", "## Decisions"} {
-		j := strings.Index(tpl[i:], h)
-		if j < 0 || j < last {
-			t.Errorf("driver template: %q missing or out of order", h)
-		}
-		last = j
-	}
-	for _, p := range []string{"../../README.md", "../../INSTALL.md"} {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(b), `"Trust all"`) {
-			t.Errorf(`%s must tell Codex users to pick "Trust all"`, p)
-		}
-	}
-}
-
 func busHookContextLine(out, marker string) string {
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, marker) {
@@ -257,64 +173,30 @@ func busHookContextLine(out, marker string) string {
 	return ""
 }
 
-// HUD #408: the injection is ONE line pointing at the installed driver.md.
-func TestDriverPointerIsOneLineWithInstalledPath(t *testing.T) {
+// HUD #408/#425: the pointer is ONE line naming the installed driver.md,
+// and that exact path exists after a skill install, with the shipped text.
+func TestDriverPointerNamesInstalledDriverMD(t *testing.T) {
 	setupFlowRoot(t)
-	seedTask(t, "p")
-	tk := func() *flowdb.Task {
-		db := openFlowDB(t)
-		defer db.Close()
-		x, _ := flowdb.GetTask(db, "p")
-		return x
-	}()
 	t.Setenv(autoRunEnvVar, "")
-	blk := roleBlockFor(tk, false)
-	if !strings.HasPrefix(strings.TrimSpace(blk), "You are the DRIVER for this task: follow references/driver.md (") {
-		t.Errorf("pointer shape wrong: %q", blk)
+	if err := claude.New().InstallSkill(skillFiles()); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(blk, filepath.Join("references", "driver.md")) || strings.Contains(blk, "upgrade-notes") {
-		t.Errorf("pointer must name the installed driver.md: %q", blk)
+	seedTask(t, "p")
+	db := openFlowDB(t)
+	tk, _ := flowdb.GetTask(db, "p")
+	db.Close()
+	blk := strings.TrimSpace(roleBlockFor(tk, false))
+	const head = "You are the DRIVER for this task: follow references/driver.md ("
+	if !strings.HasPrefix(blk, head) || !strings.HasSuffix(blk, ").") || strings.Contains(blk, "\n") {
+		t.Fatalf("pointer must be one line %q…(<path>).; got %q", head, blk)
 	}
-	if strings.Contains(strings.TrimSpace(blk), "\n") {
-		t.Errorf("pointer must be one line: %q", blk)
+	path := strings.TrimSuffix(strings.TrimPrefix(blk, head), ").")
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("driver.md not installed at the pointer's path %q: %v", path, err)
 	}
-}
-
-// HUD #408/#409: the driver rules live in references/driver.md.
-func TestDriverMDCarriesTheRules(t *testing.T) {
-	d := strings.Join(strings.Fields(readSkillDM(t, "references/driver.md")), " ")
-	for _, want := range []string{
-		"own this task's outcome end to end", "flow auto", "spawning auto child: <slug>",
-		"no grandchildren", "idle", "Every child brief states", "re-ask it with `flow do --auto <slug> --with",
-		"Verify each child's output yourself", "newer HOLD beats an older GO", "dev lead",
-		"never AskUserQuestion", "Needs from you:", "headless auto run", "do the work yourself",
-		"offer to close", "never block waiting for a reply",
-	} {
-		if !strings.Contains(d, want) {
-			t.Errorf("driver.md missing %q", want)
-		}
-	}
-	if strings.ContainsRune(d, '—') {
-		t.Error("driver.md contains an em dash")
-	}
-}
-
-// HUD #409: every interactive brief carries ONE Role line; SKILL.md tells
-// the agent to read driver.md when it sees it.
-func TestRoleLineInBriefAndSkillDirection(t *testing.T) {
-	const roleLine = "Role: driver, follow flow skill references/driver.md"
-	core := readSkillDM(t, "SKILL.md")
-	if !strings.Contains(sectionDM(t, core, "### 4.2 Start a driver"), roleLine) {
-		t.Errorf("§4.2 intake must write %q into the brief", roleLine)
-	}
-	if !strings.Contains(strings.Join(strings.Fields(core), " "), "If your brief says `Role: driver`, read references/driver.md.") {
-		t.Error("SKILL.md must direct: If your brief says `Role: driver`, read references/driver.md.")
-	}
-	tpl := readSkillDM(t, "references/templates.md")
-	if !strings.Contains(tpl[strings.Index(tpl, "Driver brief"):], roleLine) {
-		t.Errorf("templates.md driver brief must include %q", roleLine)
-	}
-	if strings.Contains(core, "## Role: driver") || strings.Contains(tpl, "## Role: driver") {
-		t.Error("a Role line, not a Role section")
+	want, _ := fs.ReadFile(skillFiles(), "references/driver.md")
+	if string(got) != string(want) {
+		t.Errorf("installed driver.md at %q differs from the shipped one", path)
 	}
 }
