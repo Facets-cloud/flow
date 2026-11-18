@@ -11,6 +11,7 @@
 
 ## Unreleased
 
+- Restart running Codex sessions after upgrading and re-approve flow hooks with Trust all.
 - **Every interactive task is a driver.** Rules: references/driver.md
   (flow's session line and a brief's `Role: driver` line point there).
   New work goes through §4.2 "Start a driver": goal + ONE project question

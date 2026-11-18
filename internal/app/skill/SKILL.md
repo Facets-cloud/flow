@@ -295,8 +295,9 @@ without binding and stop.
    project" or "standalone" option, never auto-create silently: "I'll create a driver
    task for this — which project does it belong in?" Options: best
    existing match(es) from `flow list projects` (by repo/work_dir path
-   first, then by name/goal; max 3, top one "(Recommended)"); always
-   include "New project <proposed name>"; free-text Other. If step 1 also
+   first, then by name/goal; max 3, top one "(Recommended)"); ALWAYS
+   include a "New project <name>" option, even when a match is obvious;
+   free-text Other. If step 1 also
    asks, put both in ONE AskUserQuestion call (else chat; with a parent
    task, ask via `flow message`). Only on the user's pick: attach, or `flow
    add project "<name>" --work-dir <repo, else cwd>` with a thin brief;

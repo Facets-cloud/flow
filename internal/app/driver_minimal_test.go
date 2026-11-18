@@ -182,6 +182,7 @@ func TestDriverPointerNamesInstalledDriverMD(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedTask(t, "p")
+	writeTaskBriefDM(t, "p", agreedBrief) // no placeholder: the pointer line alone
 	db := openFlowDB(t)
 	tk, _ := flowdb.GetTask(db, "p")
 	db.Close()
@@ -198,5 +199,30 @@ func TestDriverPointerNamesInstalledDriverMD(t *testing.T) {
 	want, _ := fs.ReadFile(skillFiles(), "references/driver.md")
 	if string(got) != string(want) {
 		t.Errorf("installed driver.md at %q differs from the shipped one", path)
+	}
+}
+
+// Ask #140: a human `flow add task` gets the driver brief stub (so INTAKE
+// TURN fires on open); auto-run and owner-managed adds keep the old stub.
+func TestAddTaskWritesDriverStub(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv(autoRunEnvVar, "")
+	brief := func(slug string) string {
+		b, _ := os.ReadFile(filepath.Join(os.Getenv("FLOW_ROOT"), "tasks", slug, "brief.md"))
+		return string(b)
+	}
+	cmdAdd([]string{"task", "Spelling bee", "--slug", "sb", "--work-dir", t.TempDir()})
+	want := "# Spelling bee\n\nRole: driver, follow flow skill references/driver.md\n\n## Goal\n\n## Done when\n" +
+		doneWhenPlaceholder + "\n\n## Context\n\n## Decisions\n"
+	if got := brief("sb"); got != want {
+		t.Errorf("driver stub:\n got %q\nwant %q", got, want)
+	}
+	cmdAdd([]string{"task", "Owned", "--slug", "ow", "--work-dir", t.TempDir(), "--tag", "owner:keeper"})
+	t.Setenv(autoRunEnvVar, "parent")
+	cmdAdd([]string{"task", "Child", "--slug", "ch", "--work-dir", t.TempDir()})
+	for _, s := range []string{"ow", "ch"} {
+		if strings.Contains(brief(s), doneWhenPlaceholder) {
+			t.Errorf("%s (owner-managed / auto run) must keep the plain stub", s)
+		}
 	}
 }

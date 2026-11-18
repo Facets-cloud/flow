@@ -24,6 +24,20 @@ session. Sections to cover: What / Why / Where / Done when / Out of scope /
 Open questions.
 `
 
+// driverBriefStub is the brief a human-added task starts with (skill §4.2).
+const driverBriefStub = "# %s\n\nRole: driver, follow flow skill references/driver.md\n\n## Goal\n\n## Done when\n" +
+	doneWhenPlaceholder + "\n\n## Context\n\n## Decisions\n"
+
+// hasOwnerTag reports whether tags include an owner-managed `owner:<slug>` tag.
+func hasOwnerTag(tags []string) bool {
+	for _, t := range tags {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(t)), "owner:") {
+			return true
+		}
+	}
+	return false
+}
+
 // cmdAdd dispatches `flow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
@@ -299,9 +313,13 @@ func createTask(args []string, hereNote bool) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	stub := taskBriefStub
+	if hereNote && !isAutoRunSession(nil) && !hasOwnerTag(tags) {
+		stub = driverBriefStub // a human add: its placeholder drives INTAKE TURN
+	}
 	briefPath := filepath.Join(taskDir, "brief.md")
 	if _, err := os.Stat(briefPath); os.IsNotExist(err) {
-		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(taskBriefStub, name)), 0o644); err != nil {
+		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(stub, name)), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
