@@ -10,9 +10,10 @@ import (
 	"flow/internal/flowdb"
 )
 
-// delegationMarker is the heading the SessionStart hook prints in a bound
-// driver session. Tests key on it so wording around it can evolve.
-const delegationMarker = "flow driver delegation"
+// delegationMarker is the heading of the ONE driver block the SessionStart
+// hook prints in a bound, human-driven driver session (driver-always: the
+// light delegation block is gone). Tests key on it so wording can evolve.
+const delegationMarker = "flow DRIVER task"
 
 func sessionStartOutput(t *testing.T) string {
 	t.Helper()
@@ -285,7 +286,6 @@ func TestNoEmDashInDelegationText(t *testing.T) {
 	ref, _ := fs.ReadFile(skillFiles(), "references/delegation.md")
 	texts := map[string]string{
 		"delegation.md": string(ref),
-		"hook block":    driverDelegationBlock(),
 		"driver block":  driverRoleBlock(),
 		"prompt":        buildAutoBootstrapPrompt("c", "regular", "", "p"),
 	}

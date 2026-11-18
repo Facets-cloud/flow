@@ -10,9 +10,8 @@ import (
 	"flow/internal/harness"
 )
 
-// driverRoleMarker is the heading of the stronger block a task tagged
-// `driver` gets. Regular bound tasks keep the light delegation block
-// (delegationMarker); tests key on the markers so wording can evolve.
+// driverRoleMarker is the heading of the driver block a task tagged
+// `driver` gets (driver-always: the only block); tests key on it.
 const driverRoleMarker = "flow DRIVER task"
 
 func tagTask(t *testing.T, slug, tag string) {
@@ -32,24 +31,10 @@ func TestSessionStartDriverTaskGetsDriverBlock(t *testing.T) {
 	if !strings.Contains(out, driverRoleMarker) {
 		t.Fatalf("driver task should get the driver block, got:\n%s", out)
 	}
-	for _, want := range []string{"end to end", "flow auto", "Needs from you", "Agent"} {
+	for _, want := range []string{"end to end", "flow auto", "Needs from you", "subagents"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("driver block missing %q", want)
 		}
-	}
-}
-
-func TestSessionStartRegularTaskKeepsLightBlock(t *testing.T) {
-	setupFlowRoot(t)
-	t.Setenv("FLOW_AUTO_RUN", "")
-	seedTask(t, "plain")
-	bindSession(t, "plain", "sid-plain")
-	out := sessionStartOutput(t)
-	if strings.Contains(out, driverRoleMarker) {
-		t.Errorf("regular task must not get the driver block:\n%s", out)
-	}
-	if !strings.Contains(out, delegationMarker) {
-		t.Errorf("regular task keeps the light delegation block:\n%s", out)
 	}
 }
 
@@ -70,14 +55,15 @@ func TestDoHerePrintsRoleBlock(t *testing.T) {
 		driver              bool
 	}{
 		{"driver", driverRoleMarker, "", true},
-		{"regular", delegationMarker, driverRoleMarker, false},
+		// driver-always: an untagged task bound by a human becomes a driver.
+		{"untagged", driverRoleMarker, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setupFlowRoot(t)
 			t.Setenv("FLOW_AUTO_RUN", "")
 			seedTaskAtCwd(t, "here-task")
-			if tc.driver {
-				tagTask(t, "here-task", "driver")
+			if !tc.driver {
+				untag(t, "here-task")
 			}
 			stubClaudeStatOK(t)
 			t.Setenv("CLAUDE_CODE_SESSION_ID", "f00ba111-2222-4333-8444-555555555555")
@@ -101,6 +87,7 @@ func TestUpdateTagDriverOnBoundTaskPrintsDriverBlock(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("FLOW_AUTO_RUN", "")
 	seedTask(t, "mid")
+	untag(t, "mid") // created before driver-always
 	bindSession(t, "mid", "sid-mid")
 	var rc int
 	out := captureStdout(t, func() { rc = cmdUpdate([]string{"task", "mid", "--tag", "driver"}) })
@@ -124,6 +111,7 @@ func TestUpdateTagDriverOnOtherTaskPrintsNoBlock(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("FLOW_AUTO_RUN", "")
 	seedTask(t, "other")
+	untag(t, "other")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CODEX_THREAD_ID", "")
 	out := captureStdout(t, func() { cmdUpdate([]string{"task", "other", "--tag", "driver"}) })
@@ -136,6 +124,7 @@ func TestPromptAnchorMarksDriver(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("FLOW_AUTO_RUN", "")
 	seedTask(t, "drv")
+	untag(t, "drv")
 	bindSession(t, "drv", "sid-drv")
 	anchor := func() string {
 		return captureStdout(t, func() { cmdHookUserPromptSubmit(nil) })
@@ -153,6 +142,7 @@ func TestListShowsDriver(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "drv")
 	seedTask(t, "plain")
+	untag(t, "plain") // e.g. an auto child
 	tagTask(t, "drv", "driver")
 
 	out := captureStdout(t, func() { listTasksCmd([]string{"--format", "json"}) })
@@ -261,7 +251,6 @@ func TestNoBlockWordingIsConsistent(t *testing.T) {
 	}
 	for where, s := range map[string]string{
 		"delegation.md": string(ref),
-		"light block":   driverDelegationBlock(),
 		"driver block":  driverRoleBlock(),
 	} {
 		if strings.Contains(s, "wait on its own inbox") || strings.Contains(s, "wait on your own inbox") {

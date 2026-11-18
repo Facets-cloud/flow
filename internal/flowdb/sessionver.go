@@ -74,3 +74,13 @@ func ClaimSessionVersion(db *sql.DB, sessionID, version string, now time.Time) (
 	n, _ := res.RowsAffected()
 	return old, true, n == 1, nil
 }
+
+// SessionVersion returns the version the session last saw; known is false
+// when it has no row.
+func SessionVersion(db *sql.DB, sessionID string) (version string, known bool, err error) {
+	err = db.QueryRow(`SELECT seen_version FROM session_versions WHERE session_id=?`, sessionID).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return version, err == nil, err
+}

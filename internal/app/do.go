@@ -171,6 +171,11 @@ func cmdDo(args []string) int {
 	if rc != 0 {
 		return rc
 	}
+	// Driver-always: a human opening a task interactively makes it a
+	// driver (lazy migration); --auto runs never do.
+	if !*auto {
+		openTagDriver(db, task)
+	}
 
 	// Live-session guard: if this task's session_id is already running
 	// in another claude process (e.g., the user has a tab open for it),
@@ -1383,6 +1388,7 @@ func cmdDoHere(query string, force bool) int {
 	if rc != 0 {
 		return rc
 	}
+	openTagDriver(db, task) // driver-always: a human bind makes it a driver
 
 	if task.Status == "done" {
 		fmt.Fprintf(os.Stderr,
@@ -1490,7 +1496,7 @@ func cmdDoHere(query string, force bool) int {
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
 	// A session bound mid-flight missed SessionStart, so hand it the
-	// role block now (driver or light delegation).
+	// driver block now (plus the intake-turn line while Done when is open).
 	if blk := roleBlockFor(db, task); blk != "" {
 		fmt.Println(strings.TrimSpace(blk))
 	}

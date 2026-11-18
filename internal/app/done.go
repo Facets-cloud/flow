@@ -108,6 +108,7 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
 	}
 	fmt.Printf("Marked %s as done\n", task.Slug)
+	warnOpenChildren(db, task.Slug)
 
 	if task.SessionID.Valid && task.SessionID.String != "" {
 		h, lookupErr := harnessForTask(task)

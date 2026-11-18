@@ -166,7 +166,7 @@ func ownerTickManual(args []string) int {
 			return 1
 		}
 		logPath := filepath.Join(ticksDir, now.UTC().Format("2006-01-02-150405")+".log")
-		pid, err := ownerTickLauncher(slug, o.WorkDir, logPath, autoChildEnv())
+		pid, err := ownerTickLauncher(slug, o.WorkDir, logPath, ownerTickEnv(slug))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -254,7 +254,7 @@ func ownerTickDue(args []string) int {
 			continue
 		}
 		logPath := filepath.Join(ticksDir, now.UTC().Format("2006-01-02-150405")+".log")
-		pid, err := ownerTickLauncher(o.Slug, o.WorkDir, logPath, autoChildEnv())
+		pid, err := ownerTickLauncher(o.Slug, o.WorkDir, logPath, ownerTickEnv(o.Slug))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: launch tick for %q: %v\n", o.Slug, err)
 			continue

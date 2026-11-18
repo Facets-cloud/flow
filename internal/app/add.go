@@ -318,8 +318,18 @@ func createTask(args []string, hereNote bool) int {
 			return 1
 		}
 	}
+	// Driver-always: a task a human adds is a driver. flow sets the tag
+	// itself; auto children (flow auto, hereNote=false), anything created
+	// inside an auto run or owner tick, and owner-managed tasks stay plain.
+	if hereNote && !plainContext() && !hasOwnerTag(tags) {
+		if err := flowdb.AddTaskTag(db, slug, driverTag); err != nil {
+			fmt.Fprintf(os.Stderr, "error: add tag %q: %v\n", driverTag, err)
+			return 1
+		}
+	}
 
 	if projectSlug == nil {
+		warnDriverWithoutProject(db, slug)
 		fmt.Printf("Created floating task %q at %s\n", slug, taskDir)
 	} else {
 		fmt.Printf("Created task %q in project %q\n", slug, *project)
@@ -431,4 +441,15 @@ func hereBindNote(slug, workDir string) string {
 		"  note: this session started in %s, so it can't bind to this task with `flow do --here %s`.\n"+
 			"        to continue the task in this session, use that directory as --work-dir; `flow do %s` in a new tab is unaffected.\n",
 		started, slug, slug)
+}
+
+// hasOwnerTag reports whether tags include an owner-managed tag
+// (`owner:<slug>`): such tasks are dispatched by an owner, never driven.
+func hasOwnerTag(tags []string) bool {
+	for _, t := range tags {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(t)), "owner:") {
+			return true
+		}
+	}
+	return false
 }

@@ -133,7 +133,7 @@ func TestInboxPopWaitRefusedInInteractiveCodex(t *testing.T) {
 // session cannot have.
 func TestDelegationBlocksDoNotPromiseListener(t *testing.T) {
 	for name, s := range map[string]string{
-		"driver": driverRoleBlock(), "delegation": driverDelegationBlock(),
+		"driver": driverRoleBlock(),
 	} {
 		if strings.Contains(s, "your inbox listener hears it") {
 			t.Errorf("%s block still promises an inbox listener: %s", name, s)

@@ -108,3 +108,26 @@ func upgradeNotesPath(bound *flowdb.Task) string {
 	}
 	return s
 }
+
+// resumeUpgradePointer is SessionStart's resume half: a session resumed
+// on a binary newer than the one it last saw gets one line pointing at
+// the upgrade notes (the [flow-upgrade] notice only reaches sessions that
+// stayed live across the upgrade). Read before recordSessionVersion
+// overwrites the seen version, so it never repeats on the same binary.
+func resumeUpgradePointer(source string) string {
+	sid := currentSessionID()
+	if source != "resume" || sid == "" || !versionTracked() {
+		return ""
+	}
+	db, err := openBusDB()
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	old, known, err := flowdb.SessionVersion(db, sid)
+	if err != nil || !known || !isNewerRelease(Version, old) {
+		return ""
+	}
+	return fmt.Sprintf(" %s this session last ran on flow %s; flow is now %s. Read %s (the entries newer than %s) "+
+		"for what changed for you.", upgradeNoticeMarker, old, Version, upgradeNotesPath(lookupBoundTask()), old)
+}

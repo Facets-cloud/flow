@@ -732,7 +732,9 @@ func TestListTagsEmpty(t *testing.T) {
 func TestListTagsAggregatesValues(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "lt-a")
+	untag(t, "lt-a") // plain: the driver tag would skew tag counts
 	seedTask(t, "lt-b")
+	untag(t, "lt-b") // plain: the driver tag would skew tag counts
 	cmdUpdate([]string{"task", "lt-a", "--tag", "alpha", "--tag", "beta"})
 	cmdUpdate([]string{"task", "lt-b", "--tag", "alpha"})
 

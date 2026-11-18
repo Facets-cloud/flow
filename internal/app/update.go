@@ -348,6 +348,9 @@ func cmdUpdateTask(args []string) int {
 		fmt.Printf("tag + %s\n", t)
 	}
 	announceDriverChange(db, task, wasDriver)
+	if len(addTags) > 0 {
+		warnDriverWithoutProject(db, task.Slug)
+	}
 	return 0
 }
 
@@ -360,11 +363,10 @@ func announceDriverChange(db *sql.DB, task *flowdb.Task, wasDriver bool) {
 		return
 	}
 	if isDriver {
-		fmt.Println(strings.TrimSpace(driverRoleBlock()))
+		fmt.Println(strings.TrimSpace(driverRoleBlock() + intakeTurnBlock(task.Slug)))
 		return
 	}
-	fmt.Printf("%s is no longer a driver; back to regular delegation:\n", task.Slug)
-	fmt.Println(strings.TrimSpace(driverDelegationBlock()))
+	fmt.Printf("%s is no longer a driver: stop following the driver block.\n", task.Slug)
 }
 
 // stringSliceFlag adapts a *[]string into a flag.Value so the same

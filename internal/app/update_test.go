@@ -398,6 +398,7 @@ func TestCmdUpdateTaskDueDate(t *testing.T) {
 func TestCmdUpdateTaskAddTags(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "ut-tag")
+	untag(t, "ut-tag") // plain: the driver tag would skew tag counts
 
 	if rc := cmdUpdate([]string{"task", "ut-tag", "--tag", "Frontend", "--tag", "URGENT"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
@@ -415,6 +416,7 @@ func TestCmdUpdateTaskAddTags(t *testing.T) {
 func TestCmdUpdateTaskTagIdempotent(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "ut-tag-idem")
+	untag(t, "ut-tag-idem") // plain: the driver tag would skew tag counts
 
 	if rc := cmdUpdate([]string{"task", "ut-tag-idem", "--tag", "alpha", "--tag", "ALPHA", "--tag", "alpha"}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
@@ -429,6 +431,7 @@ func TestCmdUpdateTaskTagIdempotent(t *testing.T) {
 func TestCmdUpdateTaskRemoveTag(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "ut-tag-rm")
+	untag(t, "ut-tag-rm") // plain: the driver tag would skew tag counts
 
 	if rc := cmdUpdate([]string{"task", "ut-tag-rm", "--tag", "a", "--tag", "b", "--tag", "c"}); rc != 0 {
 		t.Fatalf("setup rc=%d", rc)

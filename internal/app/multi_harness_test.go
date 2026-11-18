@@ -14,8 +14,7 @@ func TestDriverBlocksListHarnessesWhenBothPresent(t *testing.T) {
 	withHarnessEnv(t, "claude", "codex")
 	want := "harnesses available for children: claude, codex (flow auto … --harness <name>; follow the user's preference)"
 	for name, block := range map[string]string{
-		"driver block":     driverRoleBlock(),
-		"delegation block": driverDelegationBlock(),
+		"driver block": driverRoleBlock(),
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("%s missing harness line %q:\n%s", name, want, block)
@@ -29,8 +28,7 @@ func TestDriverBlocksOmitHarnessesWhenOnlyOnePresent(t *testing.T) {
 		t.Run(onPath, func(t *testing.T) {
 			withHarnessEnv(t, onPath)
 			for name, block := range map[string]string{
-				"driver block":     driverRoleBlock(),
-				"delegation block": driverDelegationBlock(),
+				"driver block": driverRoleBlock(),
 			} {
 				if strings.Contains(block, harnessesLinePrefix) {
 					t.Errorf("%s lists harnesses with only %s present:\n%s", name, onPath, block)

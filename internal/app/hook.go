@@ -69,6 +69,7 @@ var (
 // a hook's stdin that flow reads.
 type hookPayload struct {
 	SessionID      string `json:"session_id"`
+	Source         string `json:"source"`
 	StopHookActive bool   `json:"stop_hook_active"`
 	Prompt         string `json:"prompt"`
 }
@@ -115,10 +116,13 @@ func cmdHookSessionStart(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	readHookPayload()
+	payload, _ := readHookPayload()
 	// Claude socket push: only this hook process sees the session's
 	// socket token, so record it on every start/resume/compaction.
 	recordClaudeEndpoint(currentSessionID())
+	// A resumed session that last ran on an older flow gets one pointer at
+	// the upgrade notes (read before the record below overwrites it).
+	resumePtr := resumeUpgradePointer(payload.Source)
 	// The session (re)loads the current skill now: record its version
 	// silently so the prompt/tool hooks don't announce an upgrade.
 	recordSessionVersion()
@@ -130,19 +134,14 @@ func cmdHookSessionStart(args []string) int {
 	if bound == nil {
 		// Unbound sessions are where the human usually sits — surface
 		// their pending-mail count here too (inform-only).
-		return emitAmbientSkillHint()
+		return emitAmbientSkillHint(resumePtr)
 	}
 	slug := bound.Slug
-	pageCtx := busSessionStartContext()
-	// Only the human-driven driver session may delegate. An auto child
-	// never sees this block, so delegation cannot recurse.
-	if !isAutoRunSession(bound) {
-		if isDriverSlug(slug) {
-			pageCtx += driverRoleBlock()
-		} else {
-			pageCtx += driverDelegationBlock()
-		}
-	}
+	pageCtx := busSessionStartContext() + resumePtr
+	// Only a human-driven driver session gets the driver block (and the
+	// intake-turn stop while Done when is open). An auto child never sees
+	// it, so delegation cannot recurse.
+	pageCtx += roleBlockForSlug(bound)
 	// Every bound session, tab or headless child, is told the PR trailer
 	// (an instruction, not an enforcement; FLOW_PR_TRAILER=off drops it).
 	pageCtx += prTrailerBlock()
@@ -179,23 +178,18 @@ func cmdHookSessionStart(args []string) int {
 	return emitSessionStartContext(instructions + appendStaleVersionHint() + pageCtx)
 }
 
-// driverDelegationBlock is the SessionStart context that tells a bound,
-// human-driven session it may carve deterministic subtasks off to headless
-// auto children instead of waiting to be told "flow auto" each time.
-// Full recipe: skill references/delegation.md.
-func driverDelegationBlock() string {
-	return " flow driver delegation: you may carve smaller " +
-		"deterministic subtasks off to headless auto children instead of doing them inline: " +
-		"scans, audits, fact-finding, repro debugging, bulk/mechanical passes, fix + PR + test " +
-		"with the PR binary. Keep inline with the user: design, ASCII diagrams, decisions, quick " +
-		"answers. Live/prod changes: the child plans and gates only; you apply them with the user. " +
-		"How: write a brief (goal, where, Done when, gates, report via flow message, never block waiting " +
-		"for a reply (it reaches your inbox; pop it when a flow-bus notice surfaces it)) then `flow auto \"<name>\" --slug <s> --brief <file>` (or --brief - " +
-		"from stdin). Do not ask first: announce \"spawning auto child: <slug>\" and continue. " +
-		"Prefer this over the harness's built-in Agent/subagent tool for multi-step work. When " +
-		"the child messages you, verify its result (it names its update note) before reporting " +
-		"to the user. Children cannot spawn grandchildren. Recipe: flow skill references/delegation.md." +
-		childHarnessesLine()
+// roleBlockForSlug is roleBlockFor for the hook (opens its own DB).
+func roleBlockForSlug(t *flowdb.Task) string {
+	path, err := flowDBPath()
+	if err != nil {
+		return ""
+	}
+	db, err := flowdb.OpenDB(path)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	return roleBlockFor(db, t)
 }
 
 // appendStaleVersionHint returns a short suffix to add to SessionStart
@@ -263,7 +257,7 @@ func lookupBoundTaskSlug() string {
 // to load the skill; it deliberately does NOT ask Claude to pre-judge
 // whether the user's request is "substantive enough". That gate is
 // the skill's job, not the hook's.
-func emitAmbientSkillHint() int {
+func emitAmbientSkillHint(extra string) int {
 	// Substitute the real flow root so the hint points at the right
 	// paths under FLOW_ROOT (default ~/.flow). Falling back to literal
 	// "~/.flow" keeps the hint useful if home-dir lookup fails.
@@ -280,11 +274,15 @@ func emitAmbientSkillHint() int {
 		"days, and maintains a central knowledge base of durable facts about them, " +
 		"their org, and their work. Their tasks, projects, and KB already exist. " +
 		"Load the `flow` skill now — " + flowSkillHow() + " — and let it run alongside the " +
-		"conversation. When the user starts any work in this session, before doing it, " +
-		"confirm with them (AskUserQuestion if your harness has it, else ask in chat): is this part of an existing flow task, " +
-		"or should we create a new one? The user's work belongs in flow — don't " +
-		"silently proceed in an unbound transcript. The skill knows how to list " +
-		"candidates, run intake, and `flow do` the chosen task. " +
+		"conversation. Task first: when the user states work they want done in this " +
+		"session (a goal, feature, bug, investigation), start a task via flow FIRST, BEFORE doing it and " +
+		"before any other process skill (brainstorming, planning, debugging); those run INSIDE the task. " +
+		"Follow the skill's §4.2 \"Start a driver\": one interaction asking the goal, \"what goal do you want " +
+		"to achieve?\" (skip it when already stated), and which project it belongs to (best existing matches " +
+		"or a new project; never auto-create one, never no project), in one AskUserQuestion call if your harness " +
+		"has it, else in chat. Route to a live driver only when its goal really matches. flow tags the new task " +
+		"`driver` itself; bind this session to it and continue here. The user's work belongs in flow, don't " +
+		"silently proceed in an unbound transcript. A one-off question needs no task. " +
 		"\n\n" +
 		"If the user's message uses unfamiliar terminology — an internal codename, a " +
 		"person, a customer, a product line, a tool you don't recognize — consult " +
@@ -296,7 +294,7 @@ func emitAmbientSkillHint() int {
 		"done and archived tasks/projects (which need explicit `--status done` / " +
 		"`--include-archived` flags on the list commands). The skill's §4.10 governs " +
 		"how to lazy-load these without reading them eagerly every turn."
-	return emitSessionStartContext(hint + appendStaleVersionHint() + busHumanPendingNotice())
+	return emitSessionStartContext(hint + appendStaleVersionHint() + extra + busHumanPendingNotice())
 }
 
 // emitSessionStartContext is a thin wrapper around emitHookContext for
@@ -331,9 +329,10 @@ func emitHookContext(event, ctx string) int {
 // the current prompt — drift (§4.11 → offer a new task) and close-out
 // (§4.7 → offer to mark done) — so those passive disciplines don't
 // decay over a long session the way a SessionStart-only reminder does.
-// Unbound sessions are a pure no-op: the "go bind a task" nudge lives
-// in SessionStart, and repeating it per prompt was retired in
-// v0.1.0-alpha.7 for its token cost.
+// Unbound sessions get one line on their FIRST human prompt only
+// (firstPromptNudge: "create a task first"); every later prompt is a
+// no-op apart from bus/upgrade notices. Repeating the nudge per prompt
+// was retired in v0.1.0-alpha.7 for its token cost.
 //
 // The semantic judgment is Claude's — the hook only supplies which task
 // the session is bound to (a free, deterministic DB lookup); whether
@@ -350,8 +349,12 @@ func cmdHookUserPromptSubmit(args []string) int {
 	}
 	pageCtx := busPromptSubmitContext() + upgradeNoticeContext(t)
 	if t == nil {
-		// Unbound — page-bus context (an unbound session can still have
-		// paged the user) and the upgrade notice are the only payloads.
+		// Unbound — the once-per-session "create a task first" nudge,
+		// page-bus context (an unbound session can still have paged the
+		// user) and the upgrade notice are the only payloads.
+		if n := firstPromptNudge(nil); n != "" {
+			pageCtx = n + pageCtx
+		}
 		if pageCtx == "" {
 			return 0
 		}

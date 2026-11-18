@@ -112,8 +112,10 @@ func TestUpgradeNoticeNoRowSessionNotifiedOnce(t *testing.T) {
 	if !strings.Contains(out, upgradeMarker) || !strings.Contains(out, "an earlier version → v0.1.0-alpha.41") {
 		t.Fatalf("no-row session should be told once; got:\n%s", out)
 	}
-	if out := hookUPS(t, sid); out != "" {
-		t.Fatalf("unbound prompt after the notice must be silent; got:\n%s", out)
+	// The unbound first prompt may carry the one-time "create a task
+	// first" nudge, but never the upgrade notice again.
+	if out := hookUPS(t, sid); strings.Contains(out, upgradeMarker) {
+		t.Fatalf("unbound prompt after the notice must not repeat it; got:\n%s", out)
 	}
 }
 

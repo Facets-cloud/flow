@@ -40,8 +40,8 @@ func TestHookSessionStartUnboundEmitsAmbientHint(t *testing.T) {
 		"Skill tool",
 		"knowledge base",
 		"AskUserQuestion",
-		"existing flow task",
-		"create a new one",
+		"start a task via flow FIRST",
+		"live driver",
 		// Hint substitutes the actual flowRoot() so paths reflect
 		// $FLOW_ROOT (default ~/.flow). Match the suffix only.
 		"/kb/ holds durable facts",
@@ -177,12 +177,13 @@ func TestHookUserPromptSubmitBoundEmitsAnchor(t *testing.T) {
 
 // TestHookUserPromptSubmitUnboundIsNoOp pins the unbound contract: with
 // no task carrying $CLAUDE_CODE_SESSION_ID (var unset, or set but
-// unmatched), the hook exits 0 with no stdout. The "go bind a task"
-// nudge lives in SessionStart, not per prompt.
+// unmatched), the hook exits 0 with no stdout once the one-time
+// first-prompt nudge (driver_always_test.go) has been spent.
 func TestHookUserPromptSubmitUnboundIsNoOp(t *testing.T) {
 	setupFlowRoot(t)
 	for _, sid := range []string{"", "deadbeef-1234-4567-8abc-def012345678"} {
 		t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+		captureStdout(t, func() { cmdHookUserPromptSubmit(nil) }) // spend the one-time first-prompt nudge
 		out := captureStdout(t, func() {
 			if rc := cmdHookUserPromptSubmit(nil); rc != 0 {
 				t.Fatalf("CLAUDE_CODE_SESSION_ID=%q: rc=%d", sid, rc)
