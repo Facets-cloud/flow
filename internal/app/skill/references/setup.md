@@ -19,18 +19,33 @@ run `flow list tasks` or `flow list projects` as a probe:
 
 ### First-run coaching
 
-After `flow init` succeeds for a brand-new user, walk them through the
-basics in this order:
+Run this after `flow init` succeeds for a brand-new user, AND whenever
+the SessionStart hook emits a `flow-onboarding:` block (fresh install:
+no projects, no tasks, empty KB) — in Claude Code, Codex and prx alike.
+Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
+"Skip for now"); on Skip, do the user's request and keep scooping
+(§4.10). Walk them through the basics in this order:
 
 1. **Explain what just happened.** "`flow init` created `~/.flow/` with
    an empty database and 5 knowledge-base files."
 
-2. **Create their first project.** "Let's set up a project — what's the
+2. **Capture the knowledge base.** Interview one bucket at a time (one
+   question per turn, let them skip any):
+   - `user.md` — role, what they work on, working style, preferences.
+   - `org.md` — company, team, manager, key people they work with.
+   - `products.md` — what the org ships; which parts they own.
+   - `processes.md` — tools, rituals, review/deploy/on-call rules.
+   - `business.md` — customers, business model, key accounts.
+   Append every answer immediately per §4.10's entry format (one fact
+   per line, their words, no invention), then show a one-line summary
+   per file of what got recorded.
+
+3. **Create their first project.** "Let's set up a project — what's the
    main thing you're working on right now?" Then enter the §5.3
    add-project interview. This gets them a project and at least one task
    immediately.
 
-3. **Show how to start work.** After the first task exists, use
+4. **Show how to start work.** After the first task exists, use
    `AskUserQuestion` (header: "Open it now?", options:
    "Open it now" / "Later, just save") to ask whether to run
    `flow do <slug>`. Briefly explain in the question: a dedicated
@@ -38,12 +53,12 @@ basics in this order:
    automatically. If "Open it now", proceed to §4.4. If "Later",
    stop here.
 
-4. **Mention the knowledge base.** "As we work together, I'll
-   automatically note durable facts about you and your org in
+5. **Mention the knowledge base keeps growing.** "As we work together, I'll
+   keep noting durable facts about you and your org in
    `~/.flow/kb/`. These notes carry across sessions so future agent
    conversations have context without you repeating yourself."
 
-5. **Point to daily use.** "From any session, just say 'what should I
+6. **Point to daily use.** "From any session, just say 'what should I
    work on' or 'start my day' and I'll pull up your task list. Say
    'add a task' to capture new work."
 

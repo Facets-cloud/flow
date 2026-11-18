@@ -5,6 +5,7 @@ import (
 	"flow/internal/flowdb"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -271,6 +272,11 @@ func emitAmbientSkillHint() int {
 	if r, err := flowRoot(); err == nil {
 		root = r
 	}
+	onboard := onboardingHint(root)
+	existing := "Their tasks, projects, and KB already exist. "
+	if onboard != "" {
+		existing = ""
+	}
 	hint := "This session is not bound to a flow task — this hint IS the " +
 		"binding answer. Do NOT re-probe binding with `flow show task` (no arg) " +
 		"until you've actually bound this session via `flow do --here <slug>`; " +
@@ -278,7 +284,7 @@ func emitAmbientSkillHint() int {
 		"their work and knowledge in flow — a personal task and session manager that " +
 		"captures work as briefs, logs progress notes, resumes agent sessions across " +
 		"days, and maintains a central knowledge base of durable facts about them, " +
-		"their org, and their work. Their tasks, projects, and KB already exist. " +
+		"their org, and their work. " + existing +
 		"Load the `flow` skill now — " + flowSkillHow() + " — and let it run alongside the " +
 		"conversation. When the user starts any work in this session, before doing it, " +
 		"confirm with them (AskUserQuestion if your harness has it, else ask in chat): is this part of an existing flow task, " +
@@ -296,7 +302,67 @@ func emitAmbientSkillHint() int {
 		"done and archived tasks/projects (which need explicit `--status done` / " +
 		"`--include-archived` flags on the list commands). The skill's §4.10 governs " +
 		"how to lazy-load these without reading them eagerly every turn."
-	return emitSessionStartContext(hint + appendStaleVersionHint() + busHumanPendingNotice())
+	return emitSessionStartContext(hint + onboard + appendStaleVersionHint() + busHumanPendingNotice())
+}
+
+// onboardingHint returns the fresh-install block for the unbound
+// SessionStart hint, or "" once flow holds anything. Fresh = flow.db is
+// missing, or it has no projects and no tasks AND no kb file has an
+// entry yet. Either signal of use (a task, or one kb fact) ends the nudge,
+// so a user who declines onboarding is not re-asked every session.
+func onboardingHint(root string) string {
+	setup := ""
+	if _, err := flowDBPath(); err != nil {
+		setup = "flow is installed but not initialized: with the user's yes, run `flow init` first. "
+	} else if !flowIsEmpty(root) {
+		return ""
+	}
+	return "\n\nflow-onboarding: this is a FRESH flow install — no projects, no tasks, and " +
+		"the knowledge base under " + root + "/kb/ is empty. " + setup +
+		"Before (or alongside) the user's first request, offer onboarding " +
+		"(AskUserQuestion if your harness has it, else ask in chat) and, on yes, follow the flow " +
+		"skill's references/setup.md first-run onboarding: interview the user to capture who " +
+		"they are (role, working style), their org and team, the products they work on, how " +
+		"the org works (tools, rituals, review/deploy rules), and their customers/business — " +
+		"appending each answer to the matching kb file (user/org/products/processes/business) " +
+		"per §4.10 — then capture their first project and task. If they decline, proceed and " +
+		"keep scooping facts passively."
+}
+
+// flowIsEmpty reports whether flow.db has no projects and no tasks and no
+// kb file under root holds an entry ("- " line). Errors count as
+// non-empty: a hook must never nag on a guess.
+func flowIsEmpty(root string) bool {
+	dbPath, err := flowDBPath()
+	if err != nil {
+		return false
+	}
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT (SELECT COUNT(*) FROM projects) + (SELECT COUNT(*) FROM tasks)`).Scan(&n); err != nil || n > 0 {
+		return false
+	}
+	// Not kbFiles: it drops every stat failure, so an unreadable kb/ would
+	// look empty. Only a missing file is empty.
+	for _, kb := range kbSeeds() {
+		b, err := os.ReadFile(filepath.Join(root, "kb", kb.filename))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "- ") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // emitSessionStartContext is a thin wrapper around emitHookContext for
