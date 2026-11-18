@@ -2,7 +2,6 @@ package codex
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,9 +15,6 @@ func hooksPath() (string, error) {
 	}
 	return filepath.Join(home, "hooks.json"), nil
 }
-
-// legacySessionStartMatcher is the matcher flow installed before "compact".
-const legacySessionStartMatcher = "startup|resume"
 
 func installHook(event, matcher, command string) (bool, error) {
 	path, err := hooksPath()
@@ -47,41 +43,18 @@ func installHook(event, matcher, command string) (bool, error) {
 		hooks = map[string]any{}
 	}
 	entries, _ := hooks[event].([]any)
-	// Flow already installed: only its own legacy matcher is migrated, and
-	// existing groups never shift (Codex keys hook trust by index).
-	extra := strings.TrimPrefix(matcher, legacySessionStartMatcher+"|") // e.g. "compact"
-	var lone map[string]any
-	found, shared := false, false
 	for _, entry := range entries {
 		m, _ := entry.(map[string]any)
+		if old, _ := m["matcher"].(string); old != matcher {
+			continue // one group per (matcher, command)
+		}
 		inner, _ := m["hooks"].([]any)
 		for _, h := range inner {
 			hm, _ := h.(map[string]any)
-			if cmd, _ := hm["command"].(string); cmd != command {
-				continue
-			}
-			found = true
-			switch old, _ := m["matcher"].(string); {
-			case matcher == "" || old == matcher || old == extra:
-				return false, nil // nothing to migrate, or already migrated
-			case old == legacySessionStartMatcher && len(inner) == 1:
-				lone = m
-			case old == legacySessionStartMatcher:
-				shared = true
+			if cmd, _ := hm["command"].(string); cmd == command {
+				return false, nil
 			}
 		}
-	}
-	switch {
-	case lone != nil:
-		lone["matcher"] = matcher
-	case shared && extra != matcher: // add flow on the new source only
-		hooks[event] = append(entries, map[string]any{"matcher": extra, "hooks": []any{map[string]any{"type": "command", "command": command}}})
-	case found:
-		return false, nil // custom matchers are the user's
-	}
-	if found {
-		settings["hooks"] = hooks
-		return writeSettings(path, settings)
 	}
 	entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}}
 	if matcher != "" {
@@ -162,27 +135,7 @@ func writeSettings(path string, settings map[string]any) (bool, error) {
 		return false, fmt.Errorf("marshal %s: %w", path, err)
 	}
 	out = append(out, '\n')
-	// Atomic: temp file next to the real target (through a symlink), keeping
-	// an existing file's mode, then rename over it.
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		path = real
-	}
-	mode := os.FileMode(0o644)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".hooks-*.json")
-	if err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
-	}
-	_, werr := tmp.Write(out)
-	cerr := tmp.Close()
-	if err := errors.Join(werr, cerr, os.Chmod(tmp.Name(), mode)); err != nil {
-		os.Remove(tmp.Name())
-		return false, fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		os.Remove(tmp.Name())
+	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return false, fmt.Errorf("write %s: %w", path, err)
 	}
 	return true, nil

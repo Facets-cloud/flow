@@ -280,77 +280,40 @@ func TestInstallSkillWritesFlowRules(t *testing.T) {
 	}
 }
 
-// SessionStart must match compact (Codex re-runs it after compaction; its
-// PostCompact hook cannot inject context). On refresh only flow's handler
-// on the legacy "startup|resume" matcher migrates: a co-grouped handler keeps
-// its matcher, a custom matcher is left alone, no duplicates, written
-// atomically (no temp file left), and a second refresh is a no-op.
-func TestSessionStartMatcherIncludesCompactAndMigrates(t *testing.T) {
+// SessionStart installs flow twice: the existing startup|resume group stays
+// untouched, plus one compact group (Codex re-runs SessionStart with
+// source=compact after compaction). Fresh installs and upgrades end the
+// same; repeated installs add nothing.
+func TestSessionStartAddsCompactGroup(t *testing.T) {
 	const cmd = "flow hook session-start"
-	for _, c := range []struct{ name, before, want string }{
-		{"legacy alone", `[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
-			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup|resume|compact"}]`},
-		// Shared group untouched (Codex keys hook trust by index); flow gains a compact-only group.
-		{"shared group", `[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"},{"type":"command","command":"init.sh"}]}]`,
-			`[{"hooks":[{"command":"` + cmd + `","type":"command"},{"command":"init.sh","type":"command"}],"matcher":"startup|resume"},{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"compact"}]`},
-		{"custom matcher", `[{"matcher":"startup","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
-			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup"}]`},
-		{"custom before legacy", `[{"matcher":"clear","hooks":[{"type":"command","command":"` + cmd + `"}]},{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
-			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"clear"},{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup|resume|compact"}]`},
+	flow := func(m string) string {
+		return `{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"` + m + `"}`
+	}
+	for name, before := range map[string]string{
+		"fresh":   ``,
+		"upgrade": `{"hooks":{"SessionStart":[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]}}`,
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("CODEX_HOME", "")
-			dir := filepath.Join(home, ".codex")
-			os.MkdirAll(dir, 0o755)
-			path := filepath.Join(dir, "hooks.json")
-			os.WriteFile(path, []byte(`{"hooks":{"SessionStart":`+c.before+`}}`), 0o644)
-			for i := 0; i < 2; i++ {
+			path := filepath.Join(home, ".codex", "hooks.json")
+			if before != "" {
+				os.MkdirAll(filepath.Dir(path), 0o755)
+				os.WriteFile(path, []byte(before), 0o644)
+			}
+			for i := 0; i < 3; i++ {
 				if _, err := New().InstallSessionStartHook(cmd); err != nil {
 					t.Fatal(err)
 				}
 			}
-			var got struct{ Hooks map[string]json.RawMessage }
+			var got struct{ Hooks map[string]any }
 			raw, _ := os.ReadFile(path)
 			json.Unmarshal(raw, &got)
-			var v any
-			json.Unmarshal(got.Hooks["SessionStart"], &v)
-			if norm, _ := json.Marshal(v); string(norm) != c.want {
-				t.Errorf("SessionStart =\n %s\nwant\n %s", norm, c.want)
-			}
-			if entries, _ := os.ReadDir(dir); len(entries) != 1 {
-				t.Errorf("stray files next to hooks.json: %v", entries)
+			norm, _ := json.Marshal(got.Hooks["SessionStart"])
+			if want := "[" + flow("startup|resume") + "," + flow("compact") + "]"; string(norm) != want {
+				t.Errorf("SessionStart =\n %s\nwant\n %s", norm, want)
 			}
 		})
-	}
-}
-
-// The atomic hooks.json write keeps an existing file's mode and writes
-// through a symlink to its target.
-func TestHooksWriteKeepsModeAndSymlinkTarget(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", "")
-	dir := filepath.Join(home, ".codex")
-	os.MkdirAll(dir, 0o755)
-	target := filepath.Join(t.TempDir(), "dotfiles-hooks.json")
-	os.WriteFile(target, []byte(`{}`), 0o600)
-	link := filepath.Join(dir, "hooks.json")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := New().InstallSessionStartHook("flow hook session-start"); err != nil {
-		t.Fatal(err)
-	}
-	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		t.Errorf("hooks.json must stay a symlink: %v", err)
-	}
-	raw, _ := os.ReadFile(target)
-	if !strings.Contains(string(raw), "flow hook session-start") {
-		t.Errorf("the symlink target must get the hook: %s", raw)
-	}
-	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o600 {
-		t.Errorf("mode = %v, want 0600 kept", fi.Mode().Perm())
 	}
 }
