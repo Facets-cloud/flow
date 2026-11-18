@@ -11,6 +11,10 @@
 
 ## Unreleased
 
+- **A headless child that stops on a blocker is `blocked`, not `dead`.** Its
+  final message carries a line starting `BLOCKED:` (or it set `waiting_on`
+  during the run). `flow show task` and `flow list` report `blocked`, and
+  no dead-child alarm is sent. A stuck child should end with that line.
 - **`flow do --here` needs the directory the session STARTED in.** If you
   `cd` into a worktree, `$PWD` is not that directory. When the bind is
   refused, run the `flow update task … --work-dir` command only if it shows

@@ -229,34 +229,106 @@ func recordAutoRunLaunched(db *sql.DB, slug string, pid int, logPath string) err
 // are returned for the caller to log, but the run is over regardless.
 func finalizeAutoRun(db *sql.DB, slug, status string) (owned bool, err error) {
 	now := flowdb.NowISO()
-	res, err := db.Exec(
-		`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
-		 WHERE slug=? AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
-		status, now, now, slug, supervisorPID(),
-	)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+	err = retryTransientDB(func() error {
+		res, e := db.Exec(
+			`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
+			 WHERE slug=? AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
+			status, now, now, slug, supervisorPID(),
+		)
+		if e != nil {
+			return e
+		}
+		n, e := res.RowsAffected()
+		owned = n > 0
+		return e
+	})
+	return owned, err
 }
 
-// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, "dead") gated on
+// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, status) gated on
 // the task still not being done, in the same statement. owned=false means
 // either a newer run owns the row or a `flow done` landed first; the caller
 // re-reads the task to tell which.
-func finalizeAutoRunUnlessDone(db *sql.DB, slug string) (owned bool, err error) {
+func finalizeAutoRunUnlessDone(db *sql.DB, slug, status string) (owned bool, err error) {
 	now := flowdb.NowISO()
-	res, err := db.Exec(
-		`UPDATE tasks SET auto_run_status='dead', auto_run_finished=?, auto_run_pid=NULL, updated_at=?
-		 WHERE slug=? AND status != 'done' AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
-		now, now, slug, supervisorPID(),
-	)
-	if err != nil {
-		return false, err
+	err = retryTransientDB(func() error {
+		res, e := db.Exec(
+			`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
+			 WHERE slug=? AND status != 'done' AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
+			status, now, now, slug, supervisorPID(),
+		)
+		if e != nil {
+			return e
+		}
+		n, e := res.RowsAffected()
+		owned = n > 0
+		return e
+	})
+	return owned, err
+}
+
+// dbRetryAttempts and dbRetryBackoff bound retryTransientDB. A finalize that
+// hits a transient SQLite error (SQLITE_BUSY, "unable to open database file
+// (14)", seen when a supervisor races a concurrent flow process) is retried
+// with doubling backoff rather than leaving the row stuck in 'running'.
+var (
+	dbRetryAttempts = 5
+	dbRetryBackoff  = 200 * time.Millisecond
+)
+
+// retryTransientDB runs fn, retrying only transient SQLite errors. Any other
+// error returns immediately.
+func retryTransientDB(fn func() error) error {
+	backoff := dbRetryBackoff
+	var err error
+	for i := 0; i < dbRetryAttempts; i++ {
+		if err = fn(); err == nil || !isTransientDBErr(err) {
+			return err
+		}
+		if i < dbRetryAttempts-1 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+	return err
+}
+
+func isTransientDBErr(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") ||
+		strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "unable to open database file")
+}
+
+// autoRunBlocked reports whether a run that did not finish says it is stuck
+// rather than crashed. The signal is the run's final message: the file the
+// harness wrote for --last-message when it exists (codex -o), otherwise the
+// run log (claude -p prints only the final message to stdout). A line that
+// starts with BLOCKED: counts, and so does a waiting_on the run set while it
+// ran. A waiting_on that was already set before the run does not.
+func autoRunBlocked(before, final *flowdb.Task, lastMsg string) bool {
+	path := lastMsg
+	if path == "" || !statOK(path) {
+		path = before.AutoRunLog.String
+	}
+	if path != "" && finalMessageHasBlockedLine(path) {
+		return true
+	}
+	return final.WaitingOn.Valid && final.WaitingOn.String != "" &&
+		final.WaitingOn.String != before.WaitingOn.String
+}
+
+func finalMessageHasBlockedLine(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "BLOCKED:") {
+			return true
+		}
+	}
+	return false
 }
 
 // reconcileAutoRun settles a stale 'running' row whose supervisor pid is
@@ -388,11 +460,14 @@ func cmdAutoExec(args []string) int {
 	// the finalize came first (done then sees a finalized row and sweeps
 	// inline). No window where a done is neither swept nor counted.
 	status := "dead"
+	if !isDone && gerr == nil && autoRunBlocked(task, final, *lastMsg) {
+		status = "blocked"
+	}
 	var owned bool
 	var ferr error
 	finalized := false
 	if !isDone {
-		owned, ferr = finalizeAutoRunUnlessDone(db, slug)
+		owned, ferr = finalizeAutoRunUnlessDone(db, slug, status)
 		if ferr != nil || owned {
 			finalized = true
 		} else if late, lerr := flowdb.GetTask(db, slug); lerr == nil && late.Status == "done" {
@@ -439,7 +514,7 @@ func cmdAutoExec(args []string) int {
 		notifyHumanOfDeadOrphan(db, task)
 	}
 
-	if runErr != nil {
+	if runErr != nil && status != "blocked" {
 		fmt.Fprintf(os.Stderr, "auto run for %q failed: %v\n", slug, runErr)
 		return 1
 	}
@@ -499,7 +574,7 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone beyond the reporting rule below unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
 			parentRule+
 			"- Do NOT arm an inbox listener: no Monitor, no background flow inbox pop --wait loop, no flow watch (nobody reads a listener's output in a headless run, so it would ack and lose your mail; flow refuses pop --wait here). When a flow-bus notice says mail landed, and before each report and before flow done, run flow inbox pop in the foreground (one-shot, never --wait): it shows you one message; repeat until empty and act on what it says.\n"+
-			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
+			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried. End your final message with a line starting `BLOCKED:` naming what is blocking, and exit WITHOUT marking the task done. flow records a run that ends this way as blocked (not dead, and no dead-child alarm is sent).\n\n"+
 			"Closing out:\n"+
 			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
 		slug, slug,
