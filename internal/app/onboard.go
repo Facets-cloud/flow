@@ -306,8 +306,8 @@ func discoverSessions() []onboardSession {
 // session — neither is "past work" to import.
 func boundSessionIDs() map[string]bool {
 	skip := map[string]bool{}
-	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "PRAXIS_SESSION_ID"} {
-		if id := os.Getenv(v); id != "" {
+	for _, h := range allHarnesses() {
+		if id := os.Getenv(h.SessionIDEnvVar()); id != "" {
 			skip[id] = true
 		}
 	}
