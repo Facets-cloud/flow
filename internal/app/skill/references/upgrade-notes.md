@@ -11,6 +11,12 @@
 
 ## Unreleased
 
+- **New work starts a driver task.** §4.2 is now "Start a driver": goal +
+  one project question in a single interaction, `flow add task --tag
+  driver --project <p>`, announce "Created driver task …", and end the
+  intake turn at goal + proposed Done when + "Needs from you:". Never ask
+  "driver or regular?"; use references/intake-task.md only for an
+  explicit plain task.
 - **Driver role lives in your brief.** A driver task's `brief.md` now ends
   with a `## Role: driver` section (flow appends it on `--tag driver` if
   missing; never overwrites one). The hook only says "follow the ## Role

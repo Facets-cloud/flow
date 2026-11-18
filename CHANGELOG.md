@@ -19,6 +19,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   task in a detached prx host and needs prx v0.6.56 or later; resuming
   it keeps the session id.
 
+### Changed
+
+- **Driver-first intake.** When you state work, flow creates a driver task
+  (a task tagged `driver`) instead of running the task interview. It asks
+  at most the goal, plus one project question (best matches + "New
+  project"; never auto-created), binds the session, and the first turn
+  ends at a proposed "Done when". The old interview lives in
+  `references/intake-task.md` for plain tasks. `flow show project` lists
+  the project's `drivers:`. `flow done` on a driver warns about open
+  children. A one-time first-prompt nudge in unbound sessions points at
+  starting a driver. No new CLI commands, no schema change.
+- **Driver Role section in brief.md** (was #165): `## Role: driver` is
+  appended last on `--tag driver` and self-heals on `flow do` / `--here` /
+  SessionStart.
+
 ### Fixed
 
 - **The automatic skill refresh never downgrades.** On every command flow
