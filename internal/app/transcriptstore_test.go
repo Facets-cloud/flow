@@ -154,6 +154,7 @@ func TestCapturePartialLineDeferred(t *testing.T) {
 // captured incrementally. The pre-seed history is recoverable via backfill.
 func TestCaptureLargeSourceSeedsAtEOF(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	t.Setenv("FLOW_TRANSCRIPT_HOOK_EOF_BYTES", "200") // tiny threshold for the test
 	wd := t.TempDir()
 	task := transcriptTask("big", wd, "sid-big")
@@ -209,6 +210,7 @@ func TestCaptureLargeSourceSeedsAtEOF(t *testing.T) {
 // above the threshold: a small first source is still fully captured.
 func TestCaptureSmallSourceReadsFromZero(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	t.Setenv("FLOW_TRANSCRIPT_HOOK_EOF_BYTES", "100000000") // 100 MB — never hit here
 	wd := t.TempDir()
 	task := transcriptTask("small", wd, "sid-small")
