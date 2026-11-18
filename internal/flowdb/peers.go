@@ -58,7 +58,7 @@ func migratePeers(db *sql.DB) error {
 			return err
 		}
 		if !has {
-			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
+			if _, err := addColumn(db, `ALTER TABLE bus_messages ADD COLUMN `+col+` TEXT`); err != nil {
 				return fmt.Errorf("bus_messages.%s: %w", col, err)
 			}
 		}

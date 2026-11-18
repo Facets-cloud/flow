@@ -283,7 +283,7 @@ func OpenDB(path string) (*sql.DB, error) {
 	// bus_nudges.attempts arrived after the table shipped; backfill it
 	// on databases created in between.
 	if has, err := columnExists(db, "bus_nudges", "attempts"); err == nil && !has {
-		if _, err := db.Exec(`ALTER TABLE bus_nudges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE bus_nudges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("migrate bus_nudges.attempts: %w", err)
 		}
@@ -291,7 +291,7 @@ func OpenDB(path string) (*sql.DB, error) {
 	// bus_messages.reply_to arrived with `flow message --reply-to`; backfill
 	// it on databases created before the column shipped (nullable, no data).
 	if has, err := columnExists(db, "bus_messages", "reply_to"); err == nil && !has {
-		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN reply_to TEXT`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE bus_messages ADD COLUMN reply_to TEXT`); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("migrate bus_messages.reply_to: %w", err)
 		}
@@ -300,7 +300,7 @@ func OpenDB(path string) (*sql.DB, error) {
 	// row; nullable, no backfill (old consumers are unknowable).
 	for _, col := range []string{"consumed_by_identity", "consumed_by_session"} {
 		if has, err := columnExists(db, "bus_messages", col); err == nil && !has {
-			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
+			if _, err := addColumn(db, `ALTER TABLE bus_messages ADD COLUMN `+col+` TEXT`); err != nil {
 				db.Close()
 				return nil, fmt.Errorf("migrate bus_messages.%s: %w", col, err)
 			}
@@ -317,7 +317,7 @@ func OpenDB(path string) (*sql.DB, error) {
 		{"answered_at", "ALTER TABLE bus_messages ADD COLUMN answered_at TEXT"},
 	} {
 		if has, err := columnExists(db, "bus_messages", c.col); err == nil && !has {
-			if _, err := db.Exec(c.ddl); err != nil {
+			if _, err := addColumn(db, c.ddl); err != nil {
 				db.Close()
 				return nil, fmt.Errorf("migrate bus_messages.%s: %w", c.col, err)
 			}
@@ -328,14 +328,18 @@ func OpenDB(path string) (*sql.DB, error) {
 	// human row seen — the old mail is left behind rather than resurfaced
 	// as a backlog of stale asks and broadcasts.
 	if has, err := columnExists(db, "bus_messages", "seen_at"); err == nil && !has {
-		if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`); err != nil {
+		res, err := addColumn(db, `ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`)
+		if err != nil {
 			db.Close()
 			return nil, fmt.Errorf("migrate bus_messages.seen_at: %w", err)
 		}
-		if _, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE to_task_slug IS NULL AND to_assignee=?`,
-			NowISO(), BusUser); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("stamp legacy seen_at: %w", err)
+		// res is nil when a concurrent opener added the column; it stamps.
+		if res != nil {
+			if _, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE to_task_slug IS NULL AND to_assignee=?`,
+				NowISO(), BusUser); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("stamp legacy seen_at: %w", err)
+			}
 		}
 	}
 	if err := migratePeers(db); err != nil {
@@ -351,7 +355,7 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 	if !has {
-		if _, err := db.Exec(`ALTER TABLE workdirs ADD COLUMN description TEXT`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE workdirs ADD COLUMN description TEXT`); err != nil {
 			return fmt.Errorf("add workdirs.description: %w", err)
 		}
 	}
@@ -360,7 +364,7 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 	if !has {
-		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN due_date TEXT`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE tasks ADD COLUMN due_date TEXT`); err != nil {
 			return fmt.Errorf("add tasks.due_date: %w", err)
 		}
 	}
@@ -369,7 +373,7 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 	if !has {
-		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN status_changed_at TEXT`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE tasks ADD COLUMN status_changed_at TEXT`); err != nil {
 			return fmt.Errorf("add tasks.status_changed_at: %w", err)
 		}
 	}
@@ -382,7 +386,7 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 	if !has {
-		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'`); err != nil {
 			return fmt.Errorf("add tasks.kind: %w", err)
 		}
 		// Note: SQLite doesn't allow CHECK constraints on ADD COLUMN; the
@@ -395,7 +399,7 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 	if !has {
-		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN playbook_slug TEXT REFERENCES playbooks(slug)`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE tasks ADD COLUMN playbook_slug TEXT REFERENCES playbooks(slug)`); err != nil {
 			return fmt.Errorf("add tasks.playbook_slug: %w", err)
 		}
 	}
@@ -405,7 +409,7 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 	if !has {
-		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN assignee TEXT`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE tasks ADD COLUMN assignee TEXT`); err != nil {
 			return fmt.Errorf("add tasks.assignee: %w", err)
 		}
 	}
@@ -419,7 +423,7 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 	if !has {
-		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN harness TEXT`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE tasks ADD COLUMN harness TEXT`); err != nil {
 			return fmt.Errorf("add tasks.harness: %w", err)
 		}
 	}
@@ -453,7 +457,7 @@ func runMigrations(db *sql.DB) error {
 			return err
 		}
 		if !has {
-			if _, err := db.Exec(col.ddl); err != nil {
+			if _, err := addColumn(db, col.ddl); err != nil {
 				return fmt.Errorf("add tasks.%s: %w", col.name, err)
 			}
 		}
@@ -465,7 +469,7 @@ func runMigrations(db *sql.DB) error {
 	if has, err := columnExists(db, "projects", "terminal_group"); err != nil {
 		return err
 	} else if !has {
-		if _, err := db.Exec(`ALTER TABLE projects ADD COLUMN terminal_group TEXT`); err != nil {
+		if _, err := addColumn(db, `ALTER TABLE projects ADD COLUMN terminal_group TEXT`); err != nil {
 			return fmt.Errorf("add projects.terminal_group: %w", err)
 		}
 	}
@@ -482,7 +486,7 @@ func runMigrations(db *sql.DB) error {
 			return err
 		}
 		if !has {
-			if _, err := db.Exec(col.ddl); err != nil {
+			if _, err := addColumn(db, col.ddl); err != nil {
 				return fmt.Errorf("add owners.%s: %w", col.name, err)
 			}
 		}
@@ -759,6 +763,19 @@ func migrateTasksSessionInvariant(db *sql.DB) error {
 	}
 	committed = true
 	return nil
+}
+
+// addColumn runs an `ALTER TABLE ... ADD COLUMN` and treats SQLite's
+// "duplicate column name" as success. Every migration checks columnExists
+// first, but concurrent OpenDB calls on a fresh database race between that
+// check and the ALTER: the loser finds the column already added by the
+// winner. The column it wanted exists, so there is nothing left to do.
+func addColumn(db *sql.DB, ddl string) (sql.Result, error) {
+	res, err := db.Exec(ddl)
+	if err != nil && strings.Contains(err.Error(), "duplicate column name") {
+		return nil, nil
+	}
+	return res, err
 }
 
 func columnExists(db *sql.DB, table, column string) (bool, error) {

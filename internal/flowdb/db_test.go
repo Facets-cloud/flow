@@ -93,6 +93,24 @@ func TestOpenDBConcurrentDoesNotBusy(t *testing.T) {
 	}
 }
 
+// TestAddColumnToleratesDuplicate pins the fix for the race the
+// concurrent-open test can hit on slow runners: two openers both see a
+// column missing, and the second ALTER fails with "duplicate column name".
+// addColumn must treat that as done, and report it with a nil result.
+func TestAddColumnToleratesDuplicate(t *testing.T) {
+	db := openTempDB(t)
+	ddl := `ALTER TABLE workdirs ADD COLUMN race_probe TEXT`
+	if res, err := addColumn(db, ddl); err != nil || res == nil {
+		t.Fatalf("first add: res=%v err=%v", res, err)
+	}
+	if res, err := addColumn(db, ddl); err != nil || res != nil {
+		t.Fatalf("second add must be a no-op: res=%v err=%v", res, err)
+	}
+	if _, err := addColumn(db, `ALTER TABLE no_such_table ADD COLUMN x TEXT`); err == nil {
+		t.Fatal("other errors must still surface")
+	}
+}
+
 func TestProjectCRUD(t *testing.T) {
 	db := openTempDB(t)
 	insertProject(t, db, "alpha", "Alpha Project", "/tmp/alpha", "high")
