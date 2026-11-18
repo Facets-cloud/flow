@@ -36,6 +36,9 @@
   projects, no tasks and an empty KB, the hint carries a `flow-onboarding:`
   block (and no longer claims the KB already exists). Offer onboarding and
   run the KB-capture interview in references/setup.md (all harnesses).
+- **`flow onboard scan|digest`.** Imports past Claude/Codex/prx sessions as
+  task candidates with bounded output (`--budget small` ≈ $20 plan, `large`
+  ≈ $100–200). Use these instead of reading transcripts yourself.
 
 ## v0.1.0-alpha.38
 

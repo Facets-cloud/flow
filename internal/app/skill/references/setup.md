@@ -40,12 +40,35 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
    per line, their words, no invention), then show a one-line summary
    per file of what got recorded.
 
-3. **Create their first project.** "Let's set up a project — what's the
+3. **Import recent work (optional, token-bounded).** Offer it
+   (AskUserQuestion "Import past sessions?": "Yes — small ($20 plan,
+   Recommended)" / "Yes — large ($100–200 plan)" / "Skip"). Never read
+   transcript files yourself — that is what burns a small plan.
+   - Run `flow onboard scan --budget small|large` ONCE. Go reads every
+     past Claude/Codex/prx session locally and prints a bounded list
+     (~1.5k tokens): one block per directory with sample prompts and
+     `harness:id` refs. Bound sessions, flow's own runs and temp dirs are
+     excluded already.
+   - From it propose task candidates in ONE multi-select AskUserQuestion
+     (label = short task name, desc = dir + last-active). Merge sessions
+     about the same thing into one candidate; drop one-off questions.
+     Cap: 3 picks on small, 10 on large.
+   - Per pick: `flow onboard digest <ref> --budget <same>` (≤ ~1.5k
+     tokens; user prompts + last reply), then `flow add task` with
+     `--work-dir <dir from scan>`, a brief built ONLY from the digest
+     (thin template; unknowns as "Open question"), and one update note
+     `YYYY-MM-DD-imported-from-session.md` stating what was done and what
+     looked unfinished. Status stays backlog unless the digest shows it
+     finished — then ask "Mark done?" per §4.7.
+   - Durable facts seen in digests (people, products, tools) go to kb
+     per §4.10. Digest nothing the user didn't pick.
+
+4. **Create their first project.** "Let's set up a project — what's the
    main thing you're working on right now?" Then enter the §5.3
    add-project interview. This gets them a project and at least one task
    immediately.
 
-4. **Show how to start work.** After the first task exists, use
+5. **Show how to start work.** After the first task exists, use
    `AskUserQuestion` (header: "Open it now?", options:
    "Open it now" / "Later, just save") to ask whether to run
    `flow do <slug>`. Briefly explain in the question: a dedicated
@@ -53,12 +76,12 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
    automatically. If "Open it now", proceed to §4.4. If "Later",
    stop here.
 
-5. **Mention the knowledge base keeps growing.** "As we work together, I'll
+6. **Mention the knowledge base keeps growing.** "As we work together, I'll
    keep noting durable facts about you and your org in
    `~/.flow/kb/`. These notes carry across sessions so future agent
    conversations have context without you repeating yourself."
 
-6. **Point to daily use.** "From any session, just say 'what should I
+7. **Point to daily use.** "From any session, just say 'what should I
    work on' or 'start my day' and I'll pull up your task list. Say
    'add a task' to capture new work."
 

@@ -266,6 +266,12 @@ func (c *codex) SkillInstallPath() (string, error) {
 	return filepath.Join(home, "skills", "flow", "SKILL.md"), nil
 }
 
+// SessionsRoot is where Codex writes rollout JSONLs (<home>/sessions).
+func SessionsRoot() (string, error) {
+	h, err := codexHome()
+	return filepath.Join(h, "sessions"), err
+}
+
 // codexHome is Codex's state root: $CODEX_HOME when set, else ~/.codex.
 // Skills, hooks.json and session rollouts all live under it.
 func codexHome() (string, error) {

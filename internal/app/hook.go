@@ -327,7 +327,9 @@ func onboardingHint(root string) string {
 		"they are (role, working style), their org and team, the products they work on, how " +
 		"the org works (tools, rituals, review/deploy rules), and their customers/business — " +
 		"appending each answer to the matching kb file (user/org/products/processes/business) " +
-		"per §4.10 — then capture their first project and task. If they decline, proceed and " +
+		"per §4.10 — then offer to import recent work from past sessions via `flow onboard scan` " +
+		"(bounded output; never read transcript files directly), then capture their first project " +
+		"and task. If they decline, proceed and " +
 		"keep scooping facts passively."
 }
 

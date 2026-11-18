@@ -247,6 +247,9 @@ func agentDir() (string, error) {
 	return filepath.Join(home, ".praxis", "agent"), nil
 }
 
+// SessionDir exports sessionDir for cross-session scans (flow onboard).
+func SessionDir() (string, error) { return sessionDir() }
+
 // sessionDir is $PRAXIS_CODING_AGENT_SESSION_DIR, else <agentDir>/sessions.
 func sessionDir() (string, error) {
 	if d := os.Getenv("PRAXIS_CODING_AGENT_SESSION_DIR"); d != "" {

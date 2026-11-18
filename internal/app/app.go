@@ -92,6 +92,8 @@ func runCommand(cmd string, rest []string) int {
 		return cmdSkill(rest)
 	case "transcript":
 		return cmdTranscript(rest)
+	case "onboard":
+		return cmdOnboard(rest)
 	case "stats":
 		return cmdStats(rest)
 	case "hook":
@@ -150,6 +152,8 @@ Read:
   flow show task       [<ref>]
   flow show project    [<ref>]
   flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
+  flow onboard scan    [--budget small|large]        (past unbound sessions, grouped by dir; bounded output)
+  flow onboard digest  <harness:id> [--budget ...]   (one session's prompts + last reply, char-capped)
   flow stats           [--since all|<N>d] [--project <slug>] [--card] [--out <path>]
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
