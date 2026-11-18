@@ -156,12 +156,16 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	return append(argv, sessionID, prompt)
 }
 
+// ProbePrompt is the first user turn of every Codex thread flow mints; scans
+// of past sessions drop it as flow's own text.
+const ProbePrompt = "Reply exactly with OK. Do not make any changes."
+
 func runProbe(workDir string) ([]byte, error) {
 	// This probe intentionally persists its thread: the interactive `codex
 	// resume` started immediately afterwards must resume this exact id.
 	cmd := exec.Command(
 		"codex", "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
-		"Reply exactly with OK. Do not make any changes.",
+		ProbePrompt,
 	)
 	cmd.Dir = workDir // "" keeps the caller's cwd
 	return cmd.Output()
@@ -225,6 +229,12 @@ func (c *codex) SkillInstallPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, "skills", "flow", "SKILL.md"), nil
+}
+
+// SessionsRoot is where Codex writes rollout JSONLs (<home>/sessions).
+func SessionsRoot() (string, error) {
+	h, err := codexHome()
+	return filepath.Join(h, "sessions"), err
 }
 
 // codexHome is Codex's state root: $CODEX_HOME when set, else ~/.codex.

@@ -16,6 +16,13 @@
   refused, run the `flow update task … --work-dir` command only if it shows
   a real path. If it shows `<real-cwd>`, or says the task is still bound to
   another session, open the task in a new tab with `flow do <slug>`.
+- **Fresh-install onboarding.** On an unbound SessionStart where flow has no
+  projects, no tasks and an empty KB, the hint carries a `flow-onboarding:`
+  block (and no longer claims the KB already exists). Offer onboarding and
+  run the KB-capture interview in references/setup.md (all harnesses).
+- **`flow onboard scan|digest`.** Imports past Claude/Codex/prx sessions as
+  task candidates with bounded output (`--budget small` ≈ $20 plan, `large`
+  ≈ $100–200). Use these instead of reading transcripts yourself.
 
 ## v0.1.0-alpha.38
 

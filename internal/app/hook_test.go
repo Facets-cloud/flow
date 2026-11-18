@@ -3,6 +3,8 @@ package app
 import (
 	"encoding/json"
 	"flow/internal/flowdb"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -61,6 +63,45 @@ func TestHookSessionStartUnboundEmitsAmbientHint(t *testing.T) {
 	// no slug-bound reload).
 	if strings.Contains(ctx, "flow register-session") {
 		t.Errorf("ambient hint should not instruct register-session (no FLOW_TASK bound):\n%s", ctx)
+	}
+}
+
+// A fresh install (no projects/tasks, empty KB) gets the onboarding nudge
+// and no "already exist" claim; one task or one kb entry ends it.
+func TestHookSessionStartFreshInstallOnboarding(t *testing.T) {
+	root := setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	run := func() string {
+		return busHookContext(t, captureStdout(t, func() { cmdHookSessionStart(nil) }))
+	}
+	ctx := run()
+	if !strings.Contains(ctx, "flow-onboarding:") || !strings.Contains(ctx, "references/setup.md") {
+		t.Errorf("fresh install missing onboarding nudge:\n%s", ctx)
+	}
+	if strings.Contains(ctx, "already exist") {
+		t.Errorf("fresh install must not claim tasks/KB exist:\n%s", ctx)
+	}
+
+	// One kb fact ends it.
+	kb := filepath.Join(root, "kb", "user.md")
+	f, err := os.OpenFile(kb, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("- 2026-11-18 — I'm an SRE\n")
+	f.Close()
+	if ctx := run(); strings.Contains(ctx, "flow-onboarding:") || !strings.Contains(ctx, "already exist") {
+		t.Errorf("kb entry should end onboarding:\n%s", ctx)
+	}
+}
+
+func TestHookSessionStartTaskEndsOnboarding(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	seedTask(t, "first")
+	ctx := busHookContext(t, captureStdout(t, func() { cmdHookSessionStart(nil) }))
+	if strings.Contains(ctx, "flow-onboarding:") {
+		t.Errorf("a task should end onboarding:\n%s", ctx)
 	}
 }
 
