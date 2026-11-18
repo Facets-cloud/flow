@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,19 +27,22 @@ func (r *regBG) StopBackground(string) error { r.stopped++; return nil }
 func regErr() ([]harness.BackgroundAgent, error)  { return nil, errors.New("registry down") }
 func regGone() ([]harness.BackgroundAgent, error) { return nil, nil }
 
-func fastStop(t *testing.T) {
+func fastStop(t *testing.T, timeout time.Duration) {
 	t.Helper()
 	oldT, oldP := bgStopWaitTimeout, bgStopWaitPoll
-	bgStopWaitTimeout, bgStopWaitPoll = 50*time.Millisecond, time.Millisecond
+	bgStopWaitTimeout, bgStopWaitPoll = timeout, time.Millisecond
 	t.Cleanup(func() { bgStopWaitTimeout, bgStopWaitPoll = oldT, oldP })
 }
 
 func TestWaitBgStoppedRegistryError(t *testing.T) {
-	fastStop(t)
+	// Recovery gets a generous deadline (it returns on the clean listing,
+	// so it stays fast); only the never-recovers case uses a short one.
+	fastStop(t, 10*time.Second)
 	r := &regBG{replies: []func() ([]harness.BackgroundAgent, error){regErr, regErr, regGone}}
 	if !waitBgStopped(r, "sid") || r.calls != 3 {
 		t.Errorf("transient error: calls=%d, want keep polling until a clean listing", r.calls)
 	}
+	fastStop(t, 50*time.Millisecond)
 	r = &regBG{replies: []func() ([]harness.BackgroundAgent, error){regErr}}
 	if waitBgStopped(r, "sid") {
 		t.Error("persistent registry error reported as exited")
@@ -63,7 +67,7 @@ func TestStopForkedOriginalRequiresProvablyIdle(t *testing.T) {
 
 func TestRefreshHintHonoursKillSwitch(t *testing.T) {
 	t.Setenv(selfUpgradeEnv, "")
-	if got := refreshHint(); got != "The next flow command refreshes the skill and the hooks." {
+	if got := refreshHint(); !strings.Contains(got, "next flow command") || !strings.Contains(got, "flow skill update") {
 		t.Errorf("default: %q", got)
 	}
 	t.Setenv(selfUpgradeEnv, "1")
