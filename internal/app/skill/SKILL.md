@@ -119,7 +119,8 @@ The first `flow` command in a session doubles as an init probe; a brand-new
 user (missing DB) gets guided setup. The full recipe — the `flow list` probe,
 the "Set up flow?" AskUserQuestion, `flow init`, and the five-step first-run
 coaching — lives in **references/setup.md**. Read it when a flow command
-errors about a missing database, or when onboarding a fresh user.
+errors about a missing database, when onboarding a fresh user, or when
+SessionStart emits a `flow-onboarding:` block (offer KB capture first).
 ## 4. Command reference
 
 This is a terse cheat sheet. Use `flow <command> --help` for up-to-date
