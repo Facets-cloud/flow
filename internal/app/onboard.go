@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"flow/internal/flowdb"
 	"flow/internal/harness/claude"
@@ -151,7 +152,7 @@ func cmdOnboardScan(args []string) int {
 		}
 		sort.Strings(hs)
 		gone := ""
-		if _, err := os.Stat(c.cwd); err != nil {
+		if _, err := os.Stat(c.cwd); os.IsNotExist(err) {
 			gone = "  (dir no longer exists)"
 		}
 		fmt.Printf("\n%s  [%s]  last %s  turns %d%s\n", c.cwd, strings.Join(hs, " "), c.sessions[0].mod.Format(time.DateOnly), c.turns, gone)
@@ -210,23 +211,35 @@ func cmdOnboardDigest(args []string) int {
 }
 
 // writeDigest prints a session's user prompts within a char cap. When over
-// the cap it keeps the opening prompts (the intent) and the newest ones
-// (where it ended), dropping the middle.
+// the cap it keeps the newest prompt (where it ended), then up to 3 opening
+// prompts (the intent), then more newest ones, never exceeding the cap;
+// a prompt that does not fit is clipped to what is left.
 func writeDigest(w io.Writer, s *sessionSummary, capChars int) {
 	fmt.Fprintf(w, "session %s  cwd %s  last %s  user turns %d\n\nuser asked:\n",
 		s.ref(), s.cwd, s.mod.Format(time.DateOnly), len(s.prompts))
 	head, tail := s.prompts, []string(nil)
-	if size(s.prompts) > capChars {
+	if n := len(s.prompts); n > 0 && size(s.prompts) > capChars {
+		left := capChars
+		take := func(p string) string {
+			if len(p) > left { // clip in bytes on a rune boundary, "…" included
+				cut := max(left-len("…"), 0)
+				for cut > 0 && !utf8.RuneStart(p[cut]) {
+					cut--
+				}
+				p = p[:cut] + "…"
+			}
+			left -= len(p)
+			return p
+		}
+		newest := take(s.prompts[n-1])
 		head = nil
-		budget := capChars
-		for i := 0; i < len(s.prompts) && i < 3 && budget > 0; i++ {
-			head = append(head, s.prompts[i])
-			budget -= len(s.prompts[i])
+		for i := 0; i < n-1 && i < 3 && left > 0; i++ {
+			head = append(head, take(s.prompts[i]))
 		}
-		for i := len(s.prompts) - 1; i >= len(head) && budget-len(s.prompts[i]) > 0; i-- {
-			tail = append([]string{s.prompts[i]}, tail...)
-			budget -= len(s.prompts[i])
+		for i := n - 2; i >= len(head) && len(s.prompts[i]) <= left; i-- {
+			tail = append([]string{take(s.prompts[i])}, tail...)
 		}
+		tail = append(tail, newest)
 	}
 	for _, p := range head {
 		fmt.Fprintf(w, "- %s\n", p)
@@ -383,7 +396,9 @@ func summarizeSession(s onboardSession) (*sessionSummary, error) {
 // shapes leak into scans.
 func userPrompt(body string) string {
 	t := strings.TrimSpace(body)
-	for _, noise := range []string{"<", "[via flow", "[Request interrupted", "Caveat:", "flow session →", "Background job", "Monitor \"",
+	// Injected wrappers only: a real prompt may start with markup ("<div> …").
+	for _, noise := range []string{"<system-reminder", "<command-", "<local-command", "<user-prompt-submit-hook",
+		"<task-notification", "<environment_context", "<user_instructions", "[via flow", "[Request interrupted", "Caveat:", "flow session →", "Background job", "Monitor \"",
 		"# AGENTS.md instructions", "Previous conversation compacted", "Subagent task-", codex.ProbePrompt} {
 		if strings.HasPrefix(t, noise) {
 			return ""

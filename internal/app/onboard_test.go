@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // Scan reads claude + prx transcripts from disk, drops noise, flow's own
@@ -77,6 +78,36 @@ func TestOnboardScanAndDigest(t *testing.T) {
 	})
 	if !strings.Contains(out, "- add oauth login") || !strings.Contains(out, "done, PR opened") {
 		t.Errorf("digest:\n%s", out)
+	}
+}
+
+// Review regression: three 300-byte prompts under a 500-byte cap must stay
+// within the cap and still include the newest prompt.
+func TestWriteDigestNeverExceedsCap(t *testing.T) {
+	s := &sessionSummary{onboardSession: onboardSession{harness: "claude", id: "x"},
+		prompts: []string{strings.Repeat("a", 300), strings.Repeat("é", 150), strings.Repeat("c", 299) + "Z"}}
+	var b bytes.Buffer
+	writeDigest(&b, s, 500)
+	got := 0
+	for _, l := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(l, "- ") && !strings.HasPrefix(l, "- … ") {
+			got += len(l) - 2
+			if !utf8.ValidString(l) {
+				t.Errorf("clipped mid-rune: %q", l)
+			}
+		}
+	}
+	if got > 500 || !strings.Contains(b.String(), s.prompts[2]) {
+		t.Errorf("prompt bytes %d > 500 or newest missing:\n%s", got, b.String())
+	}
+}
+
+func TestUserPromptKeepsMarkupPrompts(t *testing.T) {
+	if userPrompt("<div>Login</div> renders wrong; fix the layout") == "" {
+		t.Error("a real prompt starting with markup was dropped")
+	}
+	if userPrompt("<system-reminder>x</system-reminder>") != "" {
+		t.Error("injected system-reminder kept")
 	}
 }
 

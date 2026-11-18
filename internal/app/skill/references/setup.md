@@ -49,19 +49,23 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
      (~1.5k tokens): one block per directory with sample prompts and
      `harness:id` refs. Bound sessions, flow's own runs and temp dirs are
      excluded already.
-   - From it propose task candidates in ONE multi-select AskUserQuestion
-     (label = short task name, desc = dir + last-active). Merge sessions
-     about the same thing into one candidate; drop one-off questions.
-     Cap: 3 picks on small, 10 on large.
-   - Per pick: `flow onboard digest <ref> --budget <same>` (≤ ~1.5k
-     tokens; user prompts + last reply), then `flow add task` with
+   - From it propose task candidates as multi-select AskUserQuestion
+     questions of at most 4 options each (split across questions when
+     there are more; label = short task name, desc = dir + last-active).
+     Merge sessions about the same thing into one candidate and keep all
+     its refs; drop one-off questions. Cap: 3 picks on small, 10 on
+     large; digests total at most 2× the pick cap.
+   - Per pick: `flow onboard digest <ref> --budget <same>` for EACH of its
+     refs (≤ ~1.5k tokens each; user prompts + last reply). If the digests
+     show the work finished, do NOT make a task (an imported task has no
+     session, so it can't be closed) — just record its durable facts per
+     §4.10. Otherwise `flow add task` with
      `--work-dir <dir from scan>` — if scan marked it `(dir no longer
      exists)`, never `--mkdir` it: ask (AskUserQuestion "Floating task" /
      "Other path"), default floating (omit `--work-dir`) — a brief built ONLY from the digest
      (thin template; unknowns as "Open question"), and one update note
      `YYYY-MM-DD-imported-from-session.md` stating what was done and what
-     looked unfinished. Status stays backlog unless the digest shows it
-     finished — then ask "Mark done?" per §4.7.
+     looked unfinished. Status stays backlog.
    - Durable facts seen in digests (people, products, tools) go to kb
      per §4.10. Digest nothing the user didn't pick.
 
