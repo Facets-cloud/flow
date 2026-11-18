@@ -222,7 +222,10 @@ func writeDigest(w io.Writer, s *sessionSummary, capChars int) {
 		left := capChars
 		take := func(p string) string {
 			if len(p) > left { // clip in bytes on a rune boundary, "…" included
-				cut := max(left-len("…"), 0)
+				if left < len("…") {
+					return ""
+				}
+				cut := left - len("…")
 				for cut > 0 && !utf8.RuneStart(p[cut]) {
 					cut--
 				}
@@ -233,13 +236,15 @@ func writeDigest(w io.Writer, s *sessionSummary, capChars int) {
 		}
 		newest := take(s.prompts[n-1])
 		head = nil
-		for i := 0; i < n-1 && i < 3 && left > 0; i++ {
+		for i := 0; i < n-1 && i < 3 && left >= len("…"); i++ {
 			head = append(head, take(s.prompts[i]))
 		}
 		for i := n - 2; i >= len(head) && len(s.prompts[i]) <= left; i-- {
 			tail = append([]string{take(s.prompts[i])}, tail...)
 		}
-		tail = append(tail, newest)
+		if newest != "" {
+			tail = append(tail, newest)
+		}
 	}
 	for _, p := range head {
 		fmt.Fprintf(w, "- %s\n", p)
