@@ -183,8 +183,10 @@ the work in the other harness (references/harness-transfer.md).
 
 ## Where
 <repo / work_dir, branch or worktree rules, files that matter>
-Work in your own git worktree on your own branch, never in another child's
-or the driver's checkout: shared worktrees caused cross-child edits.
+If the work is in a git repo, work in your own git worktree on your own
+branch, never in another child's or the driver's checkout: shared worktrees
+caused cross-child edits. A task with no git repo (a fresh `--mkdir`
+workspace) has no worktree to create: use your own workspace directory.
 
 ## Done when
 <checkable criteria: file written, tests green, PR open with URL>
