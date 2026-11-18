@@ -55,7 +55,9 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
      Cap: 3 picks on small, 10 on large.
    - Per pick: `flow onboard digest <ref> --budget <same>` (≤ ~1.5k
      tokens; user prompts + last reply), then `flow add task` with
-     `--work-dir <dir from scan>`, a brief built ONLY from the digest
+     `--work-dir <dir from scan>` — if scan marked it `(dir no longer
+     exists)`, never `--mkdir` it: ask (AskUserQuestion "Floating task" /
+     "Other path"), default floating (omit `--work-dir`) — a brief built ONLY from the digest
      (thin template; unknowns as "Open question"), and one update note
      `YYYY-MM-DD-imported-from-session.md` stating what was done and what
      looked unfinished. Status stays backlog unless the digest shows it

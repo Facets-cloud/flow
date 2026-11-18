@@ -189,13 +189,16 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	return append(argv, sessionID, prompt)
 }
 
+// ProbePrompt is the first user turn of every Codex thread flow mints; scans
+// of past sessions drop it as flow's own text.
+const ProbePrompt = "Reply exactly with OK. Do not make any changes."
+
 // probeArgv is the session-minting `codex exec` (args after "codex"). The
 // model/effort flags sit right after `exec` so the probe turn runs on the
 // session's model; with none set the argv is unchanged.
 func probeArgv(opts harness.LaunchOpts) []string {
 	argv := append([]string{"exec"}, modelArgv(opts)...)
-	return append(argv, "--json", "--sandbox", "read-only", "--skip-git-repo-check",
-		"Reply exactly with OK. Do not make any changes.")
+	return append(argv, "--json", "--sandbox", "read-only", "--skip-git-repo-check", ProbePrompt)
 }
 
 func runProbe(workDir string, opts harness.LaunchOpts) ([]byte, error) {

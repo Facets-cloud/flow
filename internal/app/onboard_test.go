@@ -38,6 +38,18 @@ func TestOnboardScanAndDigest(t *testing.T) {
 	write(filepath.Join(home, "prx-sessions", "old", "session.jsonl"),
 		`{"type":"session","id":"old","cwd":"/old"}`+"\n"+
 			`{"type":"message","message":{"role":"user","content":[{"type":"text","text":"ancient work"}]}}`+"\n")
+	// Regression: a session whose cwd IS the temp root, and a codex thread
+	// that is only flow's probe, are not candidates; real codex work is.
+	write(filepath.Join(proj, "tmproot.jsonl"),
+		`{"type":"user","cwd":"/private/tmp","message":{"role":"user","content":"scratch"}}`+"\n")
+	cx := filepath.Join(home, ".codex", "sessions", "2026", "11", "18")
+	codexUser := func(t string) string {
+		return `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"` + t + `"}]}}` + "\n"
+	}
+	write(filepath.Join(cx, "rollout-2026-11-18T10-00-00-11111111-1111-4111-8111-111111111111.jsonl"),
+		`{"type":"session_meta","payload":{"cwd":"/cx"}}`+"\n"+codexUser("Reply exactly with OK. Do not make any changes."))
+	write(filepath.Join(cx, "rollout-2026-11-18T11-00-00-22222222-2222-4222-8222-222222222222.jsonl"),
+		`{"type":"session_meta","payload":{"cwd":"/cx"}}`+"\n"+codexUser("migrate the db to postgres 16"))
 	past := time.Now().AddDate(0, 0, -30)
 	os.Chtimes(filepath.Join(home, "prx-sessions", "old", "session.jsonl"), past, past)
 
@@ -46,12 +58,13 @@ func TestOnboardScanAndDigest(t *testing.T) {
 			t.Fatalf("scan rc=%d", rc)
 		}
 	})
-	for _, want := range []string{"2 unbound sessions in 2 dirs", "/repo  [claude×1]", "add oauth login  (claude:c1)", "fix the flaky test  (prx:p1)"} {
+	for _, want := range []string{"3 unbound sessions in 3 dirs", "/repo  [claude×1]  last", "(dir no longer exists)", "add oauth login  (claude:c1)", "fix the flaky test  (prx:p1)",
+		"migrate the db to postgres 16  (codex:22222222-2222-4222-8222-222222222222)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("scan missing %q:\n%s", want, out)
 		}
 	}
-	for _, bad := range []string{"system-reminder", "close-out sweep", "ancient work"} {
+	for _, bad := range []string{"system-reminder", "close-out sweep", "ancient work", "/private/tmp", "Reply exactly"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("scan leaked %q:\n%s", bad, out)
 		}
