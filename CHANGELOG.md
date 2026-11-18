@@ -30,6 +30,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   install's hooks alone. `FLOW_NO_AUTO_UPGRADE=1` now stops this refresh as
   well as the binary self-upgrade. `flow skill update` still installs on
   request and warns when it replaces a newer install.
+- **`flow do --here` names the directory to use when it refuses a bind.**
+  If the session started outside the task's `work_dir`, the error now prints
+  the session's start directory as a ready `flow update task … --work-dir`
+  command. `flow add task` prints a note when the session that runs it
+  cannot bind to the new `work_dir`. A refused `flow done` ends with a
+  `not closed:` line (#173).
 
 ## [0.1.0-alpha.39] — 2026-11-13
 

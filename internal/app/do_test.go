@@ -1556,3 +1556,164 @@ func TestCmdDoNoTerminalFallbackReservedNeverStarted(t *testing.T) {
 		t.Errorf("never-started session must not be resumed; got:\n%s", out)
 	}
 }
+
+// TestCmdDoHereRefusalNamesSessionStartDir pins GH #173: when --here
+// refuses because the session was started outside work_dir, the error
+// gives the session's start directory as a ready command, and following
+// it makes the bind succeed. A `<real-cwd>` placeholder invites `$PWD`,
+// which is wrong once the session has cd'ed.
+func TestCmdDoHereRefusalNamesSessionStartDir(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const sid = "22222222-3333-4444-8555-666666666666"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+	if rc := cmdAdd([]string{"task", "started-elsewhere", "--work-dir", elsewhere}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+
+	stderr := captureStderr(t)
+	if rc := cmdDoHere("started-elsewhere", false); rc != 1 {
+		t.Fatalf("cmdDoHere rc=%d, want 1", rc)
+	}
+	got := stderr()
+	want := "flow update task started-elsewhere --work-dir " + spawner.ShellQuote(started)
+	if !strings.Contains(got, want) {
+		t.Errorf("stderr missing %q; got:\n%s", want, got)
+	}
+	if strings.Contains(got, "<real-cwd>") {
+		t.Errorf("stderr still carries the <real-cwd> placeholder:\n%s", got)
+	}
+
+	if rc := cmdUpdate([]string{"task", "started-elsewhere", "--work-dir", started}); rc != 0 {
+		t.Fatalf("update rc=%d", rc)
+	}
+	if rc := cmdDoHere("started-elsewhere", false); rc != 0 {
+		t.Errorf("cmdDoHere after following the hint rc=%d, want 0", rc)
+	}
+}
+
+// TestCmdAddTaskNotesHereBindMismatch pins the creation-time half of GH
+// #173: a harness session that adds a task at a work_dir it was not
+// started in is told so, with the directory that would bind. No note when
+// the session could bind.
+func TestCmdAddTaskNotesHereBindMismatch(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const sid = "33333333-4444-4555-8666-777777777777"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+
+	out := captureStdout(t, func() {
+		if rc := cmdAdd([]string{"task", "note-mismatch", "--work-dir", elsewhere}); rc != 0 {
+			t.Errorf("add rc=%d", rc)
+		}
+	})
+	if want := "note: this session started in " + started; !strings.Contains(out, want) {
+		t.Errorf("output missing %q; got:\n%s", want, out)
+	}
+
+	out = captureStdout(t, func() {
+		if rc := cmdAdd([]string{"task", "note-match", "--work-dir", started}); rc != 0 {
+			t.Errorf("add rc=%d", rc)
+		}
+	})
+	if strings.Contains(out, "note: this session started in") {
+		t.Errorf("bindable work_dir should print no note; got:\n%s", out)
+	}
+}
+
+// TestCmdAddTaskSkipsHereNoteWhenBindIsNotThePlan pins the cases where
+// the GH #173 note is noise: a new workspace (no session starts there), a
+// task created under a bound parent (--here refuses it anyway), and a
+// `flow auto` child (it gets its own session).
+func TestCmdAddTaskSkipsHereNoteWhenBindIsNotThePlan(t *testing.T) {
+	const note = "note: this session started in"
+	const sid = "44444444-5555-4666-8777-888888888888"
+	setup := func(t *testing.T) (started, elsewhere string) {
+		t.Helper()
+		setupFlowRoot(t)
+		t.Setenv("FLOW_AUTO_RUN", "")
+		started, elsewhere = realTempDir(t), realTempDir(t)
+		t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+		writeClaudeTranscript(t, started, sid)
+		return started, elsewhere
+	}
+
+	t.Run("new workspace", func(t *testing.T) {
+		setup(t)
+		out := captureStdout(t, func() {
+			if rc := cmdAdd([]string{"task", "floating-note"}); rc != 0 {
+				t.Errorf("add rc=%d", rc)
+			}
+		})
+		if strings.Contains(out, note) {
+			t.Errorf("new workspace should print no note; got:\n%s", out)
+		}
+	})
+
+	t.Run("bound parent", func(t *testing.T) {
+		started, elsewhere := setup(t)
+		if rc := cmdAdd([]string{"task", "parent-note", "--work-dir", started}); rc != 0 {
+			t.Fatalf("add parent rc=%d", rc)
+		}
+		bindSession(t, "parent-note", sid)
+		out := captureStdout(t, func() {
+			if rc := cmdAdd([]string{"task", "child-note", "--work-dir", elsewhere}); rc != 0 {
+				t.Errorf("add child rc=%d", rc)
+			}
+		})
+		if !strings.Contains(out, `(parent: "parent-note")`) {
+			t.Fatalf("child should record its parent; got:\n%s", out)
+		}
+		if strings.Contains(out, note) {
+			t.Errorf("child of a bound session should print no note; got:\n%s", out)
+		}
+	})
+
+	t.Run("flow auto child", func(t *testing.T) {
+		_, elsewhere := setup(t)
+		stubAutoLauncher(t, 1)
+		bp := writeBrief(t, "do it\n")
+		var rc int
+		out := captureStdout(t, func() {
+			rc = cmdAuto([]string{"Auto note", "--slug", "auto-note", "--work-dir", elsewhere, "--brief", bp})
+		})
+		if rc != 0 {
+			t.Fatalf("flow auto rc=%d; output:\n%s", rc, out)
+		}
+		if strings.Contains(out, note) {
+			t.Errorf("flow auto child should print no note; got:\n%s", out)
+		}
+	})
+}
+
+// TestCmdDoHereForceRefusalOmitsRepoint pins the --force case of GH #173:
+// the task is still bound to another session, so `flow update task
+// --work-dir <this session's dir>` would be refused. The hint must not
+// offer it, and must name the binding that blocks it.
+func TestCmdDoHereForceRefusalOmitsRepoint(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const other = "55555555-6666-4777-8888-999999999999"
+	const sid = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if rc := cmdAdd([]string{"task", "bound-elsewhere", "--work-dir", elsewhere}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+	bindSession(t, "bound-elsewhere", other)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+
+	stderr := captureStderr(t)
+	if rc := cmdDoHere("bound-elsewhere", true); rc != 1 {
+		t.Fatalf("cmdDoHere --force rc=%d, want 1", rc)
+	}
+	got := stderr()
+	if strings.Contains(got, "--work-dir "+spawner.ShellQuote(started)) {
+		t.Errorf("hint offers a repoint that update would refuse:\n%s", got)
+	}
+	if want := "still bound to session " + other; !strings.Contains(got, want) {
+		t.Errorf("stderr missing %q; got:\n%s", want, got)
+	}
+}
