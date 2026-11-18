@@ -19,6 +19,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   task in a detached prx host and needs prx v0.6.56 or later; resuming
   it keeps the session id.
 
+### Changed
+
+- **Just tell flow the goal.** When you state work ("I want a
+  spelling-bee app", "fix the flaky login test"), flow creates a driver
+  task for it in one interaction: the goal (if you didn't say it) and
+  which project it belongs in (best matches + "New project"; flow never
+  picks or creates one silently, and never leaves it without a project).
+  No task interview: no slug, priority, tags or "task or driver?"
+  questions. Nothing gets built before you agree what "done" means: while
+  the brief still holds the Done-when placeholder, flow tells the session
+  to end its first turn at the proposal.
+- **Every task you add or open is a driver.** flow sets the `driver` tag
+  itself on `flow add task`, `flow do` and `flow do --here`; existing
+  tasks get it the next time you open them. Auto children (`flow auto`,
+  `flow do --auto`), owner ticks and playbook runs stay plain and do the
+  work themselves. The driver rules are one block flow injects at session
+  start (no rules section in your brief.md); the lighter "may delegate"
+  block is gone.
+- **`flow show project` lists its `drivers:`** (status, what each waits
+  on, open children; `--all` adds done ones). `flow done` on a driver
+  warns about open children (no cascade). Adding a task without a project
+  prints a hint.
+- **Unbound sessions** get a one-time first-prompt nudge to create a task
+  first, and a resumed session that last ran on an older flow gets one
+  line pointing at the upgrade notes. No new CLI commands, no schema
+  change.
+
 ### Fixed
 
 - **The automatic skill refresh never downgrades.** On every command flow

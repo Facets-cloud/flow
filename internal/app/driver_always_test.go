@@ -550,7 +550,7 @@ func TestSkillStartADriverOnePath(t *testing.T) {
 		}
 	}
 	for _, banned := range []string{"How should this task run?", "Driver (Recommended)", "intake-task.md",
-		"None (floating)", "Plain task instead", "--tag driver", "## Role"} {
+		"None (floating)", "Plain task instead", `flow add task "<short name>" --tag driver`, "## Role"} {
 		if strings.Contains(s, banned) {
 			t.Errorf("§4.2 must not contain %q", banned)
 		}

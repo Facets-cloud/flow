@@ -16,53 +16,38 @@ user -> flow do <task>              (interactive, unchanged)
         `- live/prod change: child plans + gates, driver applies with the user
 ```
 
-The SessionStart hook prints a `flow driver delegation` block in bound,
-human-driven sessions only. Unbound sessions and auto children never get
-it.
+Every interactive task is a driver: flow tags it `driver` itself on a
+human `flow add task`, `flow do` or `flow do --here`, and SessionStart /
+`flow do --here` inject the ONE driver block (the rules live in flow, not
+in brief.md). Unbound sessions, auto runs (`flow auto`, `flow do
+--auto`), owner ticks and playbook runs never get it and stay plain: they
+do the work themselves.
 
 ## Driver tasks (tag `driver`)
 
-A **driver task** is the explicit, stronger form of the above. It owns its
-outcome end to end and is the single place the user talks to; ANY
-self-contained unit of work goes to a `flow auto` child, not just scans
-or "grunt work" (implementation, research, debugging, fix + PR + test
-all qualify). Never use the harness's built-in Agent/subagent tool for
-it: a flow child has its own task, brief, transcript and close-out sweep.
+A **driver task** owns its outcome end to end and is the single place the
+user talks to; self-contained units of work go to a `flow auto` child
+(implementation, research, debugging, fix + PR + test all qualify; small
+work may stay inline). Never use the harness's built-in Agent/subagent
+tool for it: a flow child has its own task, brief, transcript and
+close-out sweep.
 
 ```
- user ◀──▶ DRIVER (tag driver)            regular bound task
-           ├─ talk, design, decisions      ├─ same, plus light delegation
-           ├─ verify every child result    │  (scans, audits, fix+PR)
-           ├─ live/prod applies            └─ no "own it end to end" prompt
-           └─ everything else → flow auto children
+ user ◀──▶ DRIVER (tag driver, set by flow)
+           ├─ talk, design, decisions
+           ├─ verify every child result
+           ├─ live/prod applies
+           └─ self-contained work → flow auto children (plain, untagged)
                   child dead → driver inbox gets a crash notice
 ```
 
 Flow marks it everywhere: `flow list` shows `◆driver` (json
 `"driver": true`), `flow show task` prints `role: driver`, the per-prompt
-anchor says `[driver]`, and SessionStart / `flow do --here` print the
-`flow DRIVER task` block. Auto children never get it, even if tagged.
-
-### Intake question (§4.2 step 5)
-
-After Priority, AskUserQuestion (header "Driver?"):
-
-> "How should this task run?"
-> - **Driver (owns it end to end)**: "I keep design and decisions with
->   you and hand self-contained work to background flow auto tasks."
-> - **Regular (just this session)**
-
-Mark **Driver (Recommended)** when the brief has several workstreams or
-the user describes a big goal; else Regular first. On Driver, add
-`--tag driver` to `flow add task`. Skip if the user already said.
-
-### Mid-session switch
-
-"make this a driver", "drive this", "you own this end to end" → run
-`flow update task <bound-slug> --tag driver`. Its output prints the
-driver block: follow it from that turn on. To step back, `--remove-tag
-driver` (output says it is no longer a driver). Tell the user in one
-line; no confirmation needed when they asked.
+anchor says `[driver]`, `flow show project` lists its `drivers:`, and
+`flow done` on a driver warns about open children. Never ask the user
+"driver or not?". While the brief's Done when is still the
+*Agree with the user on the first turn.* placeholder, flow prints an
+`INTAKE TURN` line: end that turn at the proposal (SKILL.md §4.2 step 6).
 
 ### Driver habits
 
@@ -202,6 +187,37 @@ to prod", "may push a branch and open a PR, do NOT merge">
   If a decision truly needs the user, set waiting_on, message the driver, and exit.
 - When Done when is met: flow done <slug>, then exit.
 ```
+
+## Writing a child's brief: useful shapes
+
+These are shapes that have worked. They are optional, not types: no
+flags, tags or pipeline go with them. Mix them or ignore them; the
+parent decides.
+
+- **Understand first.** A read-only child maps a repo, system or
+  customer setup into a knowledge note. Keep it around: to ask it more
+  later, run `flow do --auto <slug> --with "<question>"`. That resumes
+  the same session (and reopens it if done) instead of a new child
+  re-reading from zero. Check for an existing one before spawning.
+- **Plan / draft.** Read-only. Ask for options, a recommendation and the
+  gates it would need. The parent gets approval before anyone builds.
+- **Implement.** Works from an approved plan. Ask for tests first (TDD),
+  a PR, and evidence (test output, PR URL).
+- **Review.** An independent read-only check of a plan or PR. Give it the
+  artifact, not your reasoning, so its read is not anchored on yours.
+- **Investigate.** Find the root cause with evidence before any fix.
+  Ask for the evidence, not just the conclusion.
+- **Watch.** Wait for one condition (CI, a deploy, a reply) and report
+  one event, then finish.
+
+Three tips that have paid off in real briefs:
+
+1. Name the exact output file the parent will read (the update note, a
+   plan file, a PR).
+2. Say what the child must NOT do: live applies, merges, outward
+   messages.
+3. Say where questions go: the parent (`user/<driver-slug>`) or the
+   human. Never AskUserQuestion; a headless tab has nobody to answer.
 
 ## Reporting rule (one rule)
 

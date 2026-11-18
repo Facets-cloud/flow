@@ -11,6 +11,21 @@
 
 ## Unreleased
 
+- **New work starts a driver task, the only intake.** §4.2 "Start a
+  driver": the goal (if unstated) + ONE project question (best matches by
+  repo path first + "New project <name>" + Other; never "no project")
+  in a single interaction, route only when a live driver's goal really
+  matches, `flow add task "<name>" --project <p>`, bind, announce "Created
+  driver task …". flow tags it `driver` itself: never ask "driver or
+  not?", never pass `--tag driver`. There is no plain-task interview any
+  more; backlog capture = create without binding.
+- **Driver rules are injected, not in brief.md.** SessionStart and `flow do
+  --here` print the driver block for driver tasks in non-auto sessions. An
+  old `## Role: driver` section in a brief is harmless leftover text.
+- **`INTAKE TURN` line.** While the brief's Done when is the
+  *Agree with the user on the first turn.* placeholder, flow prints it:
+  restate the goal, propose Done when + "Needs from you:", then END the
+  turn. Write the agreed Done when to the brief; the line then stops.
 - **`flow do --here` needs the directory the session STARTED in.** If you
   `cd` into a worktree, `$PWD` is not that directory. When the bind is
   refused, run the `flow update task … --work-dir` command only if it shows

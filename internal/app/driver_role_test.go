@@ -226,21 +226,6 @@ func TestCompletedChildSendsNoCrashNotice(t *testing.T) {
 	}
 }
 
-// The intake driver question must be spelled out in the resident core:
-// a pointer to a reference file alone gets skipped in practice.
-func TestSkillCoreIntakeAsksDriverQuestion(t *testing.T) {
-	core, err := fs.ReadFile(skillFiles(), "SKILL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(core)
-	for _, want := range []string{"How should this task run?", "--tag driver", "Driver (Recommended)"} {
-		if !strings.Contains(s, want) {
-			t.Errorf("SKILL.md intake missing %q", want)
-		}
-	}
-}
-
 // Children get a background inbox Monitor from the SessionStart hook, so
 // brief guidance must say "don't block", not "don't wait on your inbox":
 // the old phrasing read as "skip the Monitor".
