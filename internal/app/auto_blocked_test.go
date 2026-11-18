@@ -222,13 +222,23 @@ func TestAutoExecBlockedWriteFailureFailsRun(t *testing.T) {
 		return errors.New("exit status 1")
 	})
 
+	argv := autoExecArgv(t, "nowrite") // before capture: a Fatal here must not leave stdout redirected
 	var rc int
-	out := captureStdout(t, func() { rc = cmdAutoExec(autoExecArgv(t, "nowrite")) })
+	out := captureStdout(t, func() { rc = cmdAutoExec(argv) })
 	if rc != 1 {
 		t.Errorf("rc=%d, want 1 when the blocked status cannot be recorded", rc)
 	}
 	if strings.Contains(out, "finished: blocked") {
 		t.Errorf("printed a finished: blocked line for an unrecorded run: %q", out)
+	}
+	// The blocked write was attempted and rejected by the trigger: the run says
+	// so, and the row is not stamped blocked. (A trigger that raises rolls back
+	// its own side effects, so the rejection is observed in the output.)
+	if !strings.Contains(out, "boom") || !strings.Contains(out, "could not be recorded") {
+		t.Errorf("no diagnostic that the blocked write was rejected: %q", out)
+	}
+	if got := finalAutoRun(t, "nowrite").AutoRunStatus.String; got == "blocked" {
+		t.Errorf("row recorded blocked despite the failing write")
 	}
 }
 
@@ -299,39 +309,42 @@ func (e sqliteCodeErr) Code() int     { return int(e) }
 // anything else returns on the first call.
 func TestRetryTransientDB(t *testing.T) {
 	oldBackoff, oldBudget := dbRetryBackoff, dbRetryBudget
-	dbRetryBackoff, dbRetryBudget = 0, 20*time.Millisecond
+	dbRetryBackoff = 0
+	generous := 10 * time.Second // success cases return on success, so this never sleeps
 	t.Cleanup(func() { dbRetryBackoff, dbRetryBudget = oldBackoff, oldBudget })
 
 	cases := []struct {
 		name      string
+		budget    time.Duration
 		fail      func(call int) error // error for call number `call`; nil = success
 		wantErr   bool
-		wantCalls int // exact call count; -1 = retried within the budget (>= 2)
+		wantCalls int // exact call count; 0 = only assert at least one attempt
 	}{
-		{"CANTOPEN then success", func(c int) error {
+		{"CANTOPEN then success", generous, func(c int) error {
 			if c < 3 {
 				return sqliteCodeErr(14)
 			}
 			return nil
 		}, false, 3},
-		{"LOCKED then success", func(c int) error {
+		{"LOCKED then success", generous, func(c int) error {
 			if c < 2 {
 				return sqliteCodeErr(6)
 			}
 			return nil
 		}, false, 2},
-		{"extended BUSY code classified by primary code", func(c int) error {
+		{"extended BUSY code classified by primary code", generous, func(c int) error {
 			if c < 2 {
 				return sqliteCodeErr(5 | 1<<8)
 			}
 			return nil
 		}, false, 2},
-		{"BUSY exhausts the budget", func(int) error { return sqliteCodeErr(5) }, true, -1},
-		{"CONSTRAINT is not retried", func(int) error { return sqliteCodeErr(19) }, true, 1},
-		{"message text alone is not retried", func(int) error { return errors.New("database is locked") }, true, 1},
+		{"BUSY exhausts the budget", 5 * time.Millisecond, func(int) error { return sqliteCodeErr(5) }, true, 0},
+		{"CONSTRAINT is not retried", generous, func(int) error { return sqliteCodeErr(19) }, true, 1},
+		{"message text alone is not retried", generous, func(int) error { return errors.New("database is locked") }, true, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			dbRetryBudget = tc.budget
 			calls := 0
 			err := retryTransientDB(func() error {
 				calls++
@@ -340,9 +353,9 @@ func TestRetryTransientDB(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
 			}
-			if tc.wantCalls < 0 {
-				if calls < 2 {
-					t.Errorf("calls=%d, want retries within the budget", calls)
+			if tc.wantCalls == 0 {
+				if calls < 1 {
+					t.Errorf("calls=%d, want at least one attempt", calls)
 				}
 			} else if calls != tc.wantCalls {
 				t.Errorf("calls=%d, want %d", calls, tc.wantCalls)

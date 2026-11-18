@@ -213,8 +213,9 @@ func TestAutoExecHumanDoneMidRunSweepsOnce(t *testing.T) {
 		harnessExited = true
 		return nil
 	})
+	argv := autoExecArgv(t, "cx") // before capture: a Fatal here must not leave stdout redirected
 	captureStdout(t, func() {
-		if rc := cmdAutoExec(autoExecArgv(t, "cx")); rc != 0 {
+		if rc := cmdAutoExec(argv); rc != 0 {
 			t.Fatalf("cmdAutoExec rc=%d", rc)
 		}
 	})
