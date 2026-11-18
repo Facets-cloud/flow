@@ -97,7 +97,7 @@ func TestUpdateTagDriverAnnouncesNoRoleChange(t *testing.T) {
 				t.Fatalf("rc=%d", rc)
 			}
 		})
-		if strings.Contains(out, driverRoleMarker) || strings.Contains(out, "no longer a driver") {
+		if strings.Contains(out, driverRoleMarker) || strings.Contains(out, "flow DRIVER task") || strings.Contains(out, "no longer a driver") {
 			t.Errorf("%v must not announce a role change:\n%s", args, out)
 		}
 	}

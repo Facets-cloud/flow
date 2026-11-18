@@ -47,27 +47,41 @@ func installHook(event, matcher, command string) (bool, error) {
 		hooks = map[string]any{}
 	}
 	entries, _ := hooks[event].([]any)
+	// Flow already installed: only its own legacy matcher is migrated, and
+	// existing groups never shift (Codex keys hook trust by index).
+	extra := strings.TrimPrefix(matcher, legacySessionStartMatcher+"|") // e.g. "compact"
+	var lone map[string]any
+	found, shared := false, false
 	for _, entry := range entries {
 		m, _ := entry.(map[string]any)
 		inner, _ := m["hooks"].([]any)
-		for i, h := range inner {
+		for _, h := range inner {
 			hm, _ := h.(map[string]any)
 			if cmd, _ := hm["command"].(string); cmd != command {
 				continue
 			}
-			// Migrate only flow's own legacy matcher; custom ones are the user's.
-			if old, _ := m["matcher"].(string); matcher == "" || old != legacySessionStartMatcher {
-				return false, nil
+			found = true
+			switch old, _ := m["matcher"].(string); {
+			case matcher == "" || old == matcher || old == extra:
+				return false, nil // nothing to migrate, or already migrated
+			case old == legacySessionStartMatcher && len(inner) == 1:
+				lone = m
+			case old == legacySessionStartMatcher:
+				shared = true
 			}
-			if len(inner) == 1 {
-				m["matcher"] = matcher
-			} else { // shared group: move flow's handler out, leave the others' matcher alone
-				m["hooks"] = append(inner[:i:i], inner[i+1:]...)
-				hooks[event] = append(entries, map[string]any{"matcher": matcher, "hooks": []any{h}})
-			}
-			settings["hooks"] = hooks
-			return writeSettings(path, settings)
 		}
+	}
+	switch {
+	case lone != nil:
+		lone["matcher"] = matcher
+	case shared && extra != matcher: // add flow on the new source only
+		hooks[event] = append(entries, map[string]any{"matcher": extra, "hooks": []any{map[string]any{"type": "command", "command": command}}})
+	case found:
+		return false, nil // custom matchers are the user's
+	}
+	if found {
+		settings["hooks"] = hooks
+		return writeSettings(path, settings)
 	}
 	entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}}
 	if matcher != "" {
@@ -148,14 +162,22 @@ func writeSettings(path string, settings map[string]any) (bool, error) {
 		return false, fmt.Errorf("marshal %s: %w", path, err)
 	}
 	out = append(out, '\n')
-	// Atomic: write a temp file in the same dir, then rename over hooks.json.
+	// Atomic: temp file next to the real target (through a symlink), keeping
+	// an existing file's mode, then rename over it.
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".hooks-*.json")
 	if err != nil {
 		return false, fmt.Errorf("write %s: %w", path, err)
 	}
 	_, werr := tmp.Write(out)
 	cerr := tmp.Close()
-	if err := errors.Join(werr, cerr, os.Chmod(tmp.Name(), 0o644)); err != nil {
+	if err := errors.Join(werr, cerr, os.Chmod(tmp.Name(), mode)); err != nil {
 		os.Remove(tmp.Name())
 		return false, fmt.Errorf("write %s: %w", path, err)
 	}

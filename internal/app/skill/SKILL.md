@@ -315,8 +315,9 @@ routing or opening), then stop without binding.
 5. **Bind + announce** (mandatory, only after it succeeds). Unbound →
    `flow do --here <slug>`: "Created driver task <name> in project <p>;
    continuing here." Bound, or `--here` refused (e.g. another directory) →
-   `flow do <slug>`: "...; opened it in a new tab." (that tab runs step 6).
-   Never say "tracked task".
+   `flow do <slug>`: "...; opened it in a new tab." (that tab runs step 6;
+   if it prints a command instead of opening a tab, relay that command and
+   say intake continues there). Never say "tracked task".
 6. **The intake turn ENDS** after you restate the goal, propose Done when
    and close with a numbered "Needs from you:" list; build nothing (flow
    prints `INTAKE TURN` then). Only an explicit yes to the proposed Done

@@ -121,8 +121,11 @@ func cmdHookSessionStart(args []string) int {
 	// socket token, so record it on every start/resume/compaction.
 	recordClaudeEndpoint(currentSessionID())
 	// The session (re)loads the current skill now: record its version
-	// silently so the prompt/tool hooks don't announce an upgrade.
-	recordSessionVersion()
+	// silently so the prompt/tool hooks don't announce an upgrade. A
+	// compaction reloads nothing, so a pending notice must survive it.
+	if payload.Source != "compact" {
+		recordSessionVersion()
+	}
 
 	bound := lookupBoundTask()
 	// A compaction-triggered start can arrive mid-turn: never mark it idle.

@@ -31,7 +31,8 @@ const driverBriefStub = "# %s\n\nRole: driver, follow flow skill references/driv
 // hasOwnerTag reports whether tags include an owner-managed `owner:<slug>` tag (non-empty slug).
 func hasOwnerTag(tags []string) bool {
 	for _, t := range tags {
-		if slug, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(t)), "owner:"); ok && strings.TrimSpace(slug) != "" {
+		// Exactly the ledger's form: owner:<slug>, no space after the colon.
+		if slug, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(t)), "owner:"); ok && slug != "" && slug == strings.TrimSpace(slug) {
 			return true
 		}
 	}

@@ -290,10 +290,13 @@ func TestSessionStartMatcherIncludesCompactAndMigrates(t *testing.T) {
 	for _, c := range []struct{ name, before, want string }{
 		{"legacy alone", `[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
 			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup|resume|compact"}]`},
-		{"shared group", `[{"matcher":"startup|resume","hooks":[{"type":"command","command":"init.sh"},{"type":"command","command":"` + cmd + `"}]}]`,
-			`[{"hooks":[{"command":"init.sh","type":"command"}],"matcher":"startup|resume"},{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup|resume|compact"}]`},
+		// Shared group untouched (Codex keys hook trust by index); flow gains a compact-only group.
+		{"shared group", `[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"},{"type":"command","command":"init.sh"}]}]`,
+			`[{"hooks":[{"command":"` + cmd + `","type":"command"},{"command":"init.sh","type":"command"}],"matcher":"startup|resume"},{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"compact"}]`},
 		{"custom matcher", `[{"matcher":"startup","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
 			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup"}]`},
+		{"custom before legacy", `[{"matcher":"clear","hooks":[{"type":"command","command":"` + cmd + `"}]},{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
+			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"clear"},{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup|resume|compact"}]`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -320,5 +323,34 @@ func TestSessionStartMatcherIncludesCompactAndMigrates(t *testing.T) {
 				t.Errorf("stray files next to hooks.json: %v", entries)
 			}
 		})
+	}
+}
+
+// The atomic hooks.json write keeps an existing file's mode and writes
+// through a symlink to its target.
+func TestHooksWriteKeepsModeAndSymlinkTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	dir := filepath.Join(home, ".codex")
+	os.MkdirAll(dir, 0o755)
+	target := filepath.Join(t.TempDir(), "dotfiles-hooks.json")
+	os.WriteFile(target, []byte(`{}`), 0o600)
+	link := filepath.Join(dir, "hooks.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New().InstallSessionStartHook("flow hook session-start"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("hooks.json must stay a symlink: %v", err)
+	}
+	raw, _ := os.ReadFile(target)
+	if !strings.Contains(string(raw), "flow hook session-start") {
+		t.Errorf("the symlink target must get the hook: %s", raw)
+	}
+	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600 kept", fi.Mode().Perm())
 	}
 }

@@ -242,6 +242,9 @@ func TestAddTaskWritesDriverStub(t *testing.T) {
 	if got := add("emptyowner", "--tag", "owner:"); got != driver("emptyowner") {
 		t.Errorf("`owner:` with no slug names no owner: want the driver stub, got %q", got)
 	}
+	if got := add("spaced", "--tag", "owner: ci"); got != driver("spaced") {
+		t.Errorf("`owner: ci` is not the ledger's owner:ci tag: want the driver stub, got %q", got)
+	}
 	if got := add("ow", "--tag", "owner:keeper"); got != plain("ow") {
 		t.Errorf("owner-managed add: got %q", got)
 	}
@@ -287,7 +290,9 @@ func TestSessionStartCompactKeepsBusy(t *testing.T) {
 	db := openFlowDB(t)
 	flowdb.SetSessionState(db, "c", flowdb.SessionBusy, time.Now())
 	db.Close()
-	sessionStartWith(t, sid, "compact")
+	if out := sessionStartWith(t, sid, "compact"); !strings.Contains(out, driverRoleMarker) {
+		t.Fatalf("compact must reach the bound driver path:\n%s", out)
+	}
 	db = openFlowDB(t)
 	defer db.Close()
 	if st, _ := flowdb.GetSessionState(db, "c"); st.State != flowdb.SessionBusy {
@@ -312,5 +317,22 @@ func TestDoHereForceSwitchPointsAtNewHarness(t *testing.T) {
 	want := filepath.Join(filepath.Dir(env.claudeSkill()), "references", "driver.md")
 	if !strings.Contains(out, "("+want+").") {
 		t.Errorf("pointer must name the Claude install %q:\n%s", want, out)
+	}
+}
+
+// A compaction-triggered SessionStart must not swallow a pending upgrade
+// notice: the session did not reload the skill.
+func TestCompactSessionStartKeepsUpgradeNotice(t *testing.T) {
+	setupFlowRoot(t)
+	clearSessionEnv(t)
+	const sid = "efefefef-1111-4111-8111-111111111111"
+	setVersion(t, "v0.1.0-alpha.40")
+	hookStart(t, sid) // records alpha.40
+	setVersion(t, "v0.1.0-alpha.41")
+	withHookStdin(t, `{"session_id":"`+sid+`","source":"compact"}`, func() {
+		captureStdout(t, func() { cmdHookSessionStart(nil) })
+	})
+	if out := hookUPS(t, sid); !strings.Contains(out, upgradeMarker) {
+		t.Errorf("the next prompt after a compact must still get the upgrade notice:\n%s", out)
 	}
 }
