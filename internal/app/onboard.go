@@ -57,8 +57,8 @@ var flowMachinery = []string{
 }
 
 func scratchDir(cwd string) bool {
-	for _, p := range []string{"/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"} {
-		if strings.HasPrefix(cwd, p) {
+	for _, p := range []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"} {
+		if cwd == p || strings.HasPrefix(cwd, p+"/") {
 			return true
 		}
 	}
@@ -150,7 +150,11 @@ func cmdOnboardScan(args []string) int {
 			hs = append(hs, fmt.Sprintf("%s×%d", h, n))
 		}
 		sort.Strings(hs)
-		fmt.Printf("\n%s  [%s]  last %s  turns %d\n", c.cwd, strings.Join(hs, " "), c.sessions[0].mod.Format(time.DateOnly), c.turns)
+		gone := ""
+		if _, err := os.Stat(c.cwd); err != nil {
+			gone = "  (dir no longer exists)"
+		}
+		fmt.Printf("\n%s  [%s]  last %s  turns %d%s\n", c.cwd, strings.Join(hs, " "), c.sessions[0].mod.Format(time.DateOnly), c.turns, gone)
 		for _, s := range c.sessions[:min(len(c.sessions), b.perCluster)] {
 			fmt.Printf("  · %s  (%s)\n", oneLine(s.prompts[0], 110), s.ref())
 		}
@@ -380,7 +384,7 @@ func summarizeSession(s onboardSession) (*sessionSummary, error) {
 func userPrompt(body string) string {
 	t := strings.TrimSpace(body)
 	for _, noise := range []string{"<", "[via flow", "[Request interrupted", "Caveat:", "flow session →", "Background job", "Monitor \"",
-		"# AGENTS.md instructions", "Previous conversation compacted", "Subagent task-"} {
+		"# AGENTS.md instructions", "Previous conversation compacted", "Subagent task-", codex.ProbePrompt} {
 		if strings.HasPrefix(t, noise) {
 			return ""
 		}

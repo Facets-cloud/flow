@@ -156,12 +156,16 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 	return append(argv, sessionID, prompt)
 }
 
+// ProbePrompt is the first user turn of every Codex thread flow mints; scans
+// of past sessions drop it as flow's own text.
+const ProbePrompt = "Reply exactly with OK. Do not make any changes."
+
 func runProbe(workDir string) ([]byte, error) {
 	// This probe intentionally persists its thread: the interactive `codex
 	// resume` started immediately afterwards must resume this exact id.
 	cmd := exec.Command(
 		"codex", "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
-		"Reply exactly with OK. Do not make any changes.",
+		ProbePrompt,
 	)
 	cmd.Dir = workDir // "" keeps the caller's cwd
 	return cmd.Output()
