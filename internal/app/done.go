@@ -67,8 +67,9 @@ func cmdDone(args []string) int {
 				"    - if you've been working on this task in the current Claude session, bind it now and retry close-out:\n"+
 				"        flow do --here %s   (then re-run: flow done %s)\n"+
 				"    - if it was never worked on and isn't relevant, archive it instead:\n"+
-				"        flow archive %s\n",
-			task.Slug, task.Slug, task.Slug, task.Slug)
+				"        flow archive %s\n"+
+				"not closed: task %q is still %s.\n",
+			task.Slug, task.Slug, task.Slug, task.Slug, task.Slug, task.Status)
 		return 1
 	}
 

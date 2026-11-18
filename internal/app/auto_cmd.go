@@ -92,7 +92,7 @@ func cmdAuto(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: task %q already exists; pick another --slug\n", slug)
 		return 1
 	}
-	// addTask and cmdDo open their own handles.
+	// createTask and cmdDo open their own handles.
 	db.Close()
 
 	addArgs := []string{name, "--slug", slug, "--priority", *priority}
@@ -102,7 +102,7 @@ func cmdAuto(args []string) int {
 	if *mkdir {
 		addArgs = append(addArgs, "--mkdir")
 	}
-	if rc := addTask(addArgs); rc != 0 {
+	if rc := createTask(addArgs, false); rc != 0 {
 		return rc
 	}
 
