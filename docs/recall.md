@@ -244,9 +244,27 @@ paper and lossy in practice.
 
 ## Evaluating and tuning
 
-- `flow recall eval [--seed N] [--boot N] [--exclude <globs>]` runs the
-  held-out lookback evaluation and prints MRR / recall@k with CIs. It is
-  dev-only (out of the main usage) and is what `--calibrate` fits against.
+- **The eval harness is behind a build tag.** The held-out benchmark and its
+  report are **not** compiled into the shipped `flow` binary — only the recall
+  path (and `flow recall train --calibrate`, which needs the calibration fit,
+  not the report) ships by default. Build the eval binary with the
+  `recalleval` tag to run it:
+
+  ```bash
+  go build -tags recalleval -o flow-eval .
+  ./flow-eval recall eval [--seed N] [--boot N] [--exclude <globs>]
+  # also: go test -tags recalleval ./internal/match/   # eval-only tests
+  ```
+
+  In a default build, `flow recall eval` prints a short "not built; rebuild
+  with -tags recalleval" note and exits non-zero. The eval machinery lives in
+  `internal/match/lookback*.go` + `confidence_report.go` (all tagged
+  `//go:build recalleval`); the shared query/ranking primitives it and the
+  shipped path both use are in `internal/match/lookback_shared.go` (untagged).
+
+- `flow recall eval [--seed N] [--boot N] [--exclude <globs>]` (eval build)
+  runs the held-out lookback evaluation and prints MRR / recall@k with CIs. It
+  is dev-only and is what `--calibrate` fits against.
 - Tuning knobs live in `internal/match`: the LSA weight (`LSAFusion` Lambda,
   shipped 0.25), the identity-card depth (`RelatedCardK`, 30), the confidence
   threshold/cap (`RelatedMinP` 0.20, `RelatedCap` 2), and the LSA parameters

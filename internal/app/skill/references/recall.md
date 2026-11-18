@@ -29,11 +29,15 @@ real risk:
   approach or a piece of work — set up CI caching, rotate the API keys, write
   the quarterly report — before you write a plan or code, recall past work on
   the same thing. If a strong match exists, read it first.
-- **On task intake (catching duplicates).** During §4.2 intake, after you have
-  the one-line "what", recall it as free text: `flow recall "<the what>"`. A
-  strong match means the user may already have a task for this — surface it via
-  AskUserQuestion ("this looks related to `<slug>` — same work, or new?")
-  before creating a duplicate.
+- **On task intake (catching duplicates).** During §4.2 intake, once you have
+  the one-line "what", recall it as free text: `flow recall "<the what>"`.
+  Don't raise a separate question for the result — **feed it into the intake
+  routing you're already running**: a strong match is a candidate for the
+  "new task vs. an existing task/driver" decision intake already makes (§4.2
+  project/existing-task routing; §4.14 "switch to an existing task"). Fold the
+  matched slug in as that option — "this looks like the existing `<slug>`" —
+  rather than asking an extra same-work-or-new prompt on top of intake. No
+  match, or only a weak one: carry on creating the task as usual.
 - **Mid-session, on a concrete prompt.** When the user asks something specific
   and self-contained ("have we set up CI caching before?"), use the prompt
   form so the ranker weighs what they just said plus the task's brief as

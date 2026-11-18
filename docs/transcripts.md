@@ -7,6 +7,12 @@ recall — which learns from your own past prompts — otherwise loses most of
 its history over time. The flow copy makes `flow transcript` and recall
 independent of harness retention.
 
+> **Copying is OFF by default — it is opt-in.** A second copy of every
+> session is sensitive, so flow keeps none until you turn it on with
+> `flow config set transcripts.copy true` (see [Enabling](#enabling-opt-in)).
+> When enabled, copies are private (0600 files in 0700 dirs), cap oversized
+> tool output, and can be auto-pruned by age.
+
 ## Where copies live
 
 ```
@@ -34,11 +40,18 @@ Each line of the `.jsonl` copy is one record:
 }
 ```
 
-`injected` records (wake pushes, `flow do --with` injections, system
-reminders, hook context) are **flagged, never dropped** — readers that want
-only genuine conversation (recall) skip them, while the full audit trail is
-preserved. `turn` increments on each genuine (non-injected) user prompt;
-every record that follows shares that turn number.
+`injected` records are **flagged, never dropped** — readers that want only
+genuine conversation (recall) skip them, while the full audit trail is
+preserved. A record is injected when it is a flow wake push or
+`flow do --with` injection, a harness bookkeeping or sub-agent record
+(Claude's `isMeta` / `isSidechain`), or a user turn that is really a
+hook-context block, a skill body, a `<task-notification>` or another
+injected payload. That last set is decided by the **same** boilerplate
+rules recall uses to clean prompts (match's `dropPrefixes`), so the copy and
+recall agree on what a real user turn is — a single source of truth. `turn`
+increments on each genuine (non-injected) user prompt; every record that
+follows shares that turn number, so injected noise never skews turn numbers
+or the note nudge.
 
 ## How capture works
 
@@ -79,17 +92,23 @@ still on disk (it is authoritative and may hold the current, not-yet-
 captured turn) and falls back to the flow copy when the harness transcript
 is gone — the gap this store exists to close.
 
-## Opt out
+## Enabling (opt-in)
 
-Capture is **on by default** (you keep the full transcript). Turn it off
-globally or per task; nothing is captured and backfill becomes a no-op
-while it is off:
+Capture is **off by default**. Turn it on globally or per task:
 
 ```bash
-flow config set transcripts.copy off                 # global
-flow config set transcripts.tasks.<slug>.copy off    # one task
-flow config set transcripts.tasks.<slug>.copy on     # re-enable one task when global is off
+flow config set transcripts.copy true                # global
+flow config set transcripts.tasks.<slug>.copy true   # one task only
+flow config set transcripts.tasks.<slug>.copy false  # disable one task when global is on
 ```
+
+The first time you enable it, flow prints a one-line notice of what it now
+stores and how to remove it. A per-task override wins over the global
+setting.
+
+Keys are validated: an unknown key is refused with a "did you mean" hint
+(e.g. `transcript.copy` → `transcripts.copy`), and a value of the wrong type
+is rejected.
 
 Delete copies already written:
 
@@ -101,15 +120,43 @@ flow transcript purge --all    # every task
 Purge only removes flow's copies; the harness's own transcripts are never
 touched.
 
-## Size
+## Permissions
 
-The copy is the **full** transcript by default — no truncation. If a
-pathological tool result bloats a copy, cap per-record tool-result text
-(the default `0` means unlimited):
+Copies can hold a full session, so they are kept private: the `.jsonl`
+copies and their sidecars are written `0600` inside `0700` directories. A
+copy written world-readable by an older flow is tightened to `0600` on its
+next write (or on `flow transcript backfill`).
+
+## Tool-result cap
+
+To keep a pathological tool dump (a multi-MB log, a huge file read) from
+bloating a copy, tool-result text is capped per record. The default is
+**16 KiB** (`16384`); the overflow is replaced with `…[truncated]`. Raise,
+lower, or disable it (`0` = unlimited):
 
 ```bash
-flow config set transcripts.max_tool_result_bytes 65536
+flow config set transcripts.max_tool_result_bytes 65536   # 64 KiB
+flow config set transcripts.max_tool_result_bytes 0       # unlimited (full output)
 ```
+
+## Retention
+
+By default copies are kept forever. Set an age limit to have `flow
+transcript backfill` and `flow transcript purge` prune copies older than N
+days (by the copy's modification time):
+
+```bash
+flow config set transcripts.retention_days 30   # drop copies older than 30 days
+flow config set transcripts.retention_days 0    # keep forever (default)
+```
+
+## Fail-closed
+
+Capture is privacy-sensitive, so it **fails closed**. If `settings.json` is
+unreadable or not valid JSON, copying is treated as OFF (and the reason is
+logged to `~/.flow/transcripts.log`) rather than falling back to a
+permissive default. For the same reason `flow config set` **refuses** to
+write over a malformed `settings.json` — fix or delete the file first.
 
 ## Privacy
 

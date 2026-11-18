@@ -22,16 +22,21 @@
   `base_turns`, `step`, per-task override) and `flow config get/list` now
   showing documented keys with their defaults: `docs/settings.md`.
 
-- **Flow keeps its own transcript copy.** Flow now captures a normalized
-  copy of each task's session transcript (one schema for every harness) via
-  the existing Stop/UserPromptSubmit hooks, under
+- **Flow can keep its own transcript copy (opt-in).** Flow can capture a
+  normalized copy of each task's session transcript (one schema for every
+  harness) via the existing Stop/UserPromptSubmit hooks, under
   `~/.flow/tasks/<slug>/transcripts/`, so recall and `flow transcript` no
-  longer depend on harness retention. It is **on by default** (the full
-  transcript). The user opts out with `flow config set transcripts.copy off`
-  (global) or `transcripts.tasks.<slug>.copy off` (per task), seeds older
-  history with `flow transcript backfill`, and deletes copies with `flow
-  transcript purge`. When surfacing the privacy note (KB §4.10 guardrail 6),
-  include `tasks/*/transcripts/` alongside `kb/`. Details: `docs/transcripts.md`.
+  longer depend on harness retention. It is **off by default** — the user
+  turns it on with `flow config set transcripts.copy true` (global) or
+  `transcripts.tasks.<slug>.copy true` (per task); enabling it prints a
+  one-time notice. When on, copies are private (`0600`/`0700`), oversized
+  tool output is capped (`transcripts.max_tool_result_bytes`, 16 KiB
+  default), old copies can be pruned (`transcripts.retention_days`), and a
+  malformed `settings.json` fails closed (copy off; `flow config set` refuses
+  to overwrite it). Seed older history with `flow transcript backfill`,
+  delete copies with `flow transcript purge`. When surfacing the privacy note
+  (KB §4.10 guardrail 6), include `tasks/*/transcripts/` alongside `kb/`.
+  Details: `docs/transcripts.md`.
 
 - **`flow recall` — surface the user's relevant past work.** The lookback
   ranker is now a first-class command: `flow recall` (bound task), `flow

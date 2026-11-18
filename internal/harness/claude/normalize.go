@@ -19,13 +19,26 @@ func (c *claude) NormalizeLine(line []byte) ([]harness.NormalizedRecord, error) 
 	if err := json.Unmarshal(line, &rec); err != nil {
 		return nil, nil // skip malformed lines, never abort a capture
 	}
+	var recs []harness.NormalizedRecord
 	switch rec.Type {
 	case "user":
-		return normalizeUser(rec.Message, rec.Timestamp), nil
+		recs = normalizeUser(rec.Message, rec.Timestamp)
 	case "assistant":
-		return normalizeAssistant(rec.Message, rec.Timestamp), nil
+		recs = normalizeAssistant(rec.Message, rec.Timestamp)
+	default:
+		return nil, nil
 	}
-	return nil, nil
+	// isMeta / isSidechain records are harness bookkeeping or sub-agent
+	// (Task tool) turns, never the human typing — flag them injected so the
+	// capture layer does not count them as user turns (which would skew turn
+	// numbers and the note nudge). Flagged, not dropped, so the full copy
+	// keeps the audit trail.
+	if rec.IsMeta || rec.IsSidechain {
+		for i := range recs {
+			recs[i].Injected = true
+		}
+	}
+	return recs, nil
 }
 
 // NormalizeStream scans a whole Claude jsonl byte-stream (used for backfill

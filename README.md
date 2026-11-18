@@ -376,11 +376,15 @@ evaluate and tune it — is in [`docs/recall.md`](docs/recall.md) and the packag
 doc [`internal/match/doc.go`](internal/match/doc.go).
 
 Recall learns from your past prompts, but harnesses delete old session
-transcripts. So flow keeps its own normalized copy of each task's
+transcripts. So flow can keep its own normalized copy of each task's
 transcript (one schema for every harness), captured through the existing
-hooks — on by default, opt out with `flow config set transcripts.copy off`,
-seed older history with `flow transcript backfill`. Details, schema, and
-privacy are in [`docs/transcripts.md`](docs/transcripts.md).
+hooks. It is **opt-in** — turn it on with `flow config set transcripts.copy
+true` — and when on it is privacy-minded: copies are `0600` files in `0700`
+dirs, oversized tool output is capped (16 KiB by default), an optional
+`transcripts.retention_days` prunes old copies, and a malformed settings file
+fails closed (copy off). Seed older history with `flow transcript backfill`;
+remove copies with `flow transcript purge`. Details, schema, and privacy are
+in [`docs/transcripts.md`](docs/transcripts.md).
 
 ### Human connectors
 

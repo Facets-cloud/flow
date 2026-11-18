@@ -42,4 +42,35 @@ func TestClaudeNormalizeStream(t *testing.T) {
 	if recs[0].TS != "2026-11-17T10:00:00Z" {
 		t.Errorf("TS not carried through: %q", recs[0].TS)
 	}
+	for i, r := range recs {
+		if r.Injected {
+			t.Errorf("rec %d unexpectedly flagged injected: %+v", i, r)
+		}
+	}
+}
+
+// TestClaudeNormalizeFlagsMetaAndSidechain pins #5: isMeta and isSidechain
+// records are flagged injected (not a genuine human turn) so the capture
+// layer does not count them as user turns.
+func TestClaudeNormalizeFlagsMetaAndSidechain(t *testing.T) {
+	c := New().(*claude)
+	const fixture = `{"type":"user","isMeta":true,"timestamp":"2026-11-17T10:00:00Z","message":{"role":"user","content":"<local-command-stdout>noise</local-command-stdout>"}}
+{"type":"user","isSidechain":true,"timestamp":"2026-11-17T10:00:01Z","message":{"role":"user","content":"sub-agent task prompt"}}
+{"type":"assistant","isSidechain":true,"timestamp":"2026-11-17T10:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"sub-agent reply"}]}}
+{"type":"user","timestamp":"2026-11-17T10:00:03Z","message":{"role":"user","content":"a real prompt"}}`
+	recs, err := c.NormalizeStream(strings.NewReader(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 4 {
+		t.Fatalf("got %d records, want 4: %+v", len(recs), recs)
+	}
+	for i := 0; i < 3; i++ {
+		if !recs[i].Injected {
+			t.Errorf("meta/sidechain rec %d should be injected: %+v", i, recs[i])
+		}
+	}
+	if recs[3].Injected {
+		t.Errorf("the genuine user turn must NOT be injected: %+v", recs[3])
+	}
 }

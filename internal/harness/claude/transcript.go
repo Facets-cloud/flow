@@ -133,6 +133,12 @@ type jsonlRecord struct {
 	Type      string          `json:"type"`
 	Message   json.RawMessage `json:"message"`
 	Timestamp string          `json:"timestamp"`
+	// IsMeta marks bookkeeping/system records Claude injects as "user"
+	// lines (e.g. local-command echoes, caveats); IsSidechain marks records
+	// belonging to a spawned sub-agent conversation, not the main thread.
+	// Neither is a genuine human turn, so normalization flags them injected.
+	IsMeta      bool `json:"isMeta"`
+	IsSidechain bool `json:"isSidechain"`
 }
 
 // jsonlMessage is the message body inside user/assistant records.

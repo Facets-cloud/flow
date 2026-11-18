@@ -374,7 +374,8 @@ func TestCountUserTurnsFromIncremental(t *testing.T) {
 // ---------- primary (transcript copy) path end to end ----------
 
 func TestNoteNudgePrimaryCopyPath(t *testing.T) {
-	setupFlowRoot(t) // copy enabled by default
+	setupFlowRoot(t)
+	enableTranscriptCopy(t) // copy is opt-in; this test exercises the copy path
 	const sid = "99999999-9999-4999-8999-999999999999"
 	bindNudgeTask(t, "nudge-copy", sid, past(time.Hour))
 

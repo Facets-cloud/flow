@@ -35,6 +35,20 @@ func removeClaudeTranscript(t *testing.T, workDir, sid string) {
 	}
 }
 
+// enableTranscriptCopy opts the test into transcript copying (now OFF by
+// default). Call it right after initTempFlowRoot in any test that exercises
+// the capture path.
+func enableTranscriptCopy(t *testing.T) {
+	t.Helper()
+	m := loadSettings()
+	if err := settingSet(m, "transcripts.copy", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSettings(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func transcriptTask(slug, workDir, sid string) *flowdb.Task {
 	return &flowdb.Task{
 		Slug:      slug,
@@ -73,6 +87,7 @@ const line3 = `{"type":"user","timestamp":"2026-11-17T10:00:02Z","message":{"rol
 
 func TestCaptureIncrementalOffsets(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("inc", wd, "sid-inc")
 
@@ -115,6 +130,7 @@ func TestCaptureIncrementalOffsets(t *testing.T) {
 
 func TestCapturePartialLineDeferred(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("partial", wd, "sid-p")
 
@@ -208,6 +224,7 @@ func TestCaptureSmallSourceReadsFromZero(t *testing.T) {
 
 func TestCaptureTruncationRebuilds(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("trunc", wd, "sid-t")
 
@@ -228,6 +245,7 @@ func TestCaptureTruncationRebuilds(t *testing.T) {
 
 func TestCaptureRotationRebuilds(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("rot", wd, "sid-r")
 
@@ -249,6 +267,7 @@ func TestCaptureRotationRebuilds(t *testing.T) {
 
 func TestDedupePromptVsStopCapture(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("dedupe", wd, "sid-d")
 
@@ -357,6 +376,7 @@ func TestBackfillDryRunWritesNothing(t *testing.T) {
 
 func TestPurgeRemovesCopies(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("purge-me", wd, "sid-pm")
 	writeClaudeJSONL(t, wd, "sid-pm", line1)
@@ -380,6 +400,7 @@ func TestPurgeRemovesCopies(t *testing.T) {
 
 func TestReaderFallbackToFlowCopy(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("fallback", wd, "sid-fb")
 	writeClaudeJSONL(t, wd, "sid-fb", line1+line2)
@@ -417,8 +438,55 @@ func TestCaptureSafeNeverErrorsOnMissingTranscript(t *testing.T) {
 	}
 }
 
+// TestInjectedUserTurnsFlaggedAndNotCounted pins #5 at the capture layer: a
+// <task-notification> and a skill body that arrive as "user" records are
+// flagged injected (via match's dropPrefixes, the shared source of truth) and
+// therefore do NOT advance the turn counter — genuine prompts keep clean,
+// monotonic turn numbers.
+func TestInjectedUserTurnsFlaggedAndNotCounted(t *testing.T) {
+	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
+	wd := t.TempDir()
+	task := transcriptTask("inj2", wd, "sid-inj2")
+
+	real1 := `{"type":"user","timestamp":"2026-11-17T10:00:00Z","message":{"role":"user","content":"real one"}}` + "\n"
+	ans := `{"type":"assistant","timestamp":"2026-11-17T10:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}` + "\n"
+	taskNote := `{"type":"user","timestamp":"2026-11-17T10:00:02Z","message":{"role":"user","content":"<task-notification>mail landed</task-notification>"}}` + "\n"
+	skillBody := `{"type":"user","timestamp":"2026-11-17T10:00:03Z","message":{"role":"user","content":"Base directory for this skill: /x\nstuff"}}` + "\n"
+	real2 := `{"type":"user","timestamp":"2026-11-17T10:00:04Z","message":{"role":"user","content":"real two"}}` + "\n"
+
+	writeClaudeJSONL(t, wd, "sid-inj2", real1+ans+taskNote+skillBody+real2)
+	if _, _, err := captureTranscript(task); err != nil {
+		t.Fatal(err)
+	}
+	recs := copyRecords(t, "inj2", "sid-inj2")
+
+	turnOf := map[string]int{}
+	for _, r := range recs {
+		if r.Role != harness.RoleUser {
+			continue
+		}
+		switch {
+		case r.Text == "real one" || r.Text == "real two":
+			if r.Injected {
+				t.Errorf("genuine prompt wrongly flagged injected: %q", r.Text)
+			}
+			turnOf[r.Text] = r.Turn
+		default:
+			if !r.Injected {
+				t.Errorf("injected user turn not flagged: %q", r.Text)
+			}
+		}
+	}
+	if turnOf["real one"] != 1 || turnOf["real two"] != 2 {
+		t.Fatalf("turn numbering skewed by injected turns: real one=%d real two=%d (want 1,2)",
+			turnOf["real one"], turnOf["real two"])
+	}
+}
+
 func TestInjectedPromptNotWrittenByUPS(t *testing.T) {
 	initTempFlowRoot(t)
+	enableTranscriptCopy(t)
 	wd := t.TempDir()
 	task := transcriptTask("inj", wd, "sid-inj")
 	// A wake push arriving as a prompt must not be recorded as a user turn.

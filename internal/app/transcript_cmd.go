@@ -96,6 +96,11 @@ func cmdTranscriptBackfill(args []string) int {
 		fmt.Printf(" (%d skipped — copy disabled)", skipped)
 	}
 	fmt.Println()
+	if !*dryRun {
+		if pruned, rerr := enforceTranscriptRetention(); rerr == nil && pruned > 0 {
+			fmt.Printf("retention: pruned %d file(s) older than %d day(s)\n", pruned, transcriptsRetentionDays())
+		}
+	}
 	return 0
 }
 
@@ -148,7 +153,7 @@ func backfillOne(t *flowdb.Task, dryRun bool) (records int, bytes int64, status 
 	if err != nil {
 		return 0, 0, "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(copyPath), 0o755); err != nil {
+	if err := secureMkdirAll(filepath.Dir(copyPath)); err != nil {
 		return 0, 0, "", err
 	}
 	n, err := rebuildFlowCopy(norm, hName, sid, sourcePath, copyPath, statePath, size, inode)
@@ -200,6 +205,7 @@ func cmdTranscriptPurge(args []string) int {
 			return 1
 		}
 		fmt.Printf("purged %d file(s) for %s\n", n, t.Slug)
+		reportRetentionSweep()
 		return 0
 	}
 
@@ -230,7 +236,16 @@ func cmdTranscriptPurge(args []string) int {
 		}
 	}
 	fmt.Printf("purged %d file(s) across %d task(s)\n", total, dirs)
+	reportRetentionSweep()
 	return 0
+}
+
+// reportRetentionSweep runs the age-based retention sweep and notes what it
+// removed. No-op (and silent) when transcripts.retention_days is 0.
+func reportRetentionSweep() {
+	if pruned, err := enforceTranscriptRetention(); err == nil && pruned > 0 {
+		fmt.Printf("retention: pruned %d file(s) older than %d day(s)\n", pruned, transcriptsRetentionDays())
+	}
 }
 
 // purgeTranscriptsFor removes a task's transcripts/ directory and returns

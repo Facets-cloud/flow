@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,21 +32,38 @@ func settingsPath() (string, error) {
 	return filepath.Join(root, "settings.json"), nil
 }
 
-// loadSettings reads settings.json into a generic map. A missing file is
-// not an error — it yields an empty map (all defaults). A malformed file
-// is also treated as empty so a hand-edit typo can never wedge capture or
-// the hooks (which must never fail loud); callers get defaults.
-func loadSettings() map[string]any {
+// readSettingsFile reads settings.json into a generic map and reports whether
+// the file was present-but-unusable. A missing file is NOT an error — it
+// yields an empty map (all defaults) with bad=false. A present file that is
+// unreadable or not valid JSON yields (nil, true): callers decide what a
+// broken settings file means. The privacy-sensitive readers FAIL CLOSED on
+// bad=true (transcript copy OFF); `flow config set` REFUSES to overwrite it.
+func readSettingsFile() (m map[string]any, bad bool) {
 	p, err := settingsPath()
 	if err != nil {
-		return map[string]any{}
+		return map[string]any{}, false
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return map[string]any{}
+		if os.IsNotExist(err) {
+			return map[string]any{}, false
+		}
+		return nil, true // present but unreadable — treat as broken
 	}
-	var m map[string]any
-	if json.Unmarshal(b, &m) != nil || m == nil {
+	var mm map[string]any
+	if json.Unmarshal(b, &mm) != nil || mm == nil {
+		return nil, true // present but not valid JSON object
+	}
+	return mm, false
+}
+
+// loadSettings reads settings.json into a generic map. A missing OR malformed
+// file yields an empty map (all defaults) so read-only display paths
+// (`config get`/`list`) never fail loud. Mutation and privacy-sensitive paths
+// use readSettingsFile directly so they can tell a broken file apart.
+func loadSettings() map[string]any {
+	m, bad := readSettingsFile()
+	if bad {
 		return map[string]any{}
 	}
 	return m
@@ -206,23 +224,54 @@ func settingFloat(m map[string]any, key string, def float64) float64 {
 
 // ----- transcript-copy settings (typed, with documented defaults) -----
 
+// transcriptCopyDefault is the shipped default for transcripts.copy: OFF.
+// Keeping a second copy of every session transcript is opt-in — the user
+// turns it on with `flow config set transcripts.copy true` (or per task).
+const transcriptCopyDefault = false
+
+// transcriptMaxToolResultDefault caps tool-result text per record in the
+// flow copy by default (16 KiB). A pathological tool dump can be many MB;
+// recall never needs the full blob. 0 means unlimited.
+const transcriptMaxToolResultDefault = 16 << 10
+
 // transcriptsCopyEnabled reports whether flow should keep its own copy of
 // the given task's transcript. Precedence: a per-task override
 // (transcripts.tasks.<slug>.copy) wins; else the global transcripts.copy;
-// else the default (true — opt-OUT, per the user's choice).
+// else the default (OFF — opt-IN). It FAILS CLOSED: a malformed or
+// unreadable settings.json disables copying (and is logged) rather than
+// silently falling back to a permissive default.
 func transcriptsCopyEnabled(slug string) bool {
-	m := loadSettings()
-	if v, ok := settingGet(m, "transcripts.tasks."+slug+".copy"); ok {
-		return boolish(v, true)
+	m, bad := readSettingsFile()
+	if bad {
+		logTranscriptErr("settings.json unreadable/malformed — transcript copy disabled (fail-closed)")
+		return false
 	}
-	return settingBool(m, "transcripts.copy", true)
+	global := settingBool(m, "transcripts.copy", transcriptCopyDefault)
+	if v, ok := settingGet(m, "transcripts.tasks."+slug+".copy"); ok {
+		return boolish(v, global)
+	}
+	return global
 }
 
-// transcriptsMaxToolResultBytes is the per-record cap on tool-result text
-// in the flow copy. 0 (the default) means unlimited — the user chose the
-// full transcript; this is only an escape hatch for pathological outputs.
+// transcriptsMaxToolResultBytes is the per-record cap on tool-result text in
+// the flow copy. Defaults to transcriptMaxToolResultDefault; 0 means
+// unlimited. Fails closed to the default on a broken settings file.
 func transcriptsMaxToolResultBytes() int {
-	return settingInt(loadSettings(), "transcripts.max_tool_result_bytes", 0)
+	m, bad := readSettingsFile()
+	if bad {
+		return transcriptMaxToolResultDefault
+	}
+	return settingInt(m, "transcripts.max_tool_result_bytes", transcriptMaxToolResultDefault)
+}
+
+// transcriptsRetentionDays is the age (in days) past which flow copies are
+// pruned by backfill and purge. 0 (the default) keeps copies forever.
+func transcriptsRetentionDays() int {
+	m, bad := readSettingsFile()
+	if bad {
+		return 0
+	}
+	return settingInt(m, "transcripts.retention_days", 0)
 }
 
 func boolish(v any, def bool) bool {
@@ -237,23 +286,51 @@ func boolish(v any, def bool) bool {
 	return def
 }
 
-// knownSetting is a documented GLOBAL setting with its default value, so
-// `flow config get`/`list` can surface a key and its default before it has
-// ever been written. Per-task override keys (…tasks.<slug>.…) are dynamic
-// and not listed; they fall back to the matching global default.
-type knownSetting struct {
-	Key string
-	Def any
+// settingKind is the value type a setting accepts, used to type-check
+// `config set` input and reject e.g. a string for a bool knob.
+type settingKind int
+
+const (
+	kindBool settingKind = iota
+	kindInt
+	kindFloat
+	kindString
+)
+
+func (k settingKind) String() string {
+	switch k {
+	case kindBool:
+		return "boolean (true/false, on/off, yes/no)"
+	case kindInt:
+		return "integer"
+	case kindFloat:
+		return "number"
+	default:
+		return "string"
+	}
 }
 
-// knownSettings is the registry behind get/list default display. Keep it in
-// sync with the typed readers above and docs/settings.md.
+// knownSetting is a documented GLOBAL setting with its default value and type,
+// so `flow config get`/`list` can surface a key and its default before it has
+// ever been written, and `config set` can validate the key and value. Per-task
+// override keys (…tasks.<slug>.…) are dynamic and validated by pattern (see
+// validateSettingKey); they fall back to the matching global default.
+type knownSetting struct {
+	Key  string
+	Def  any
+	Kind settingKind
+}
+
+// knownSettings is the registry behind get/list default display and set
+// validation. Keep it in sync with the typed readers above and
+// docs/settings.md.
 var knownSettings = []knownSetting{
-	{"transcripts.copy", true},
-	{"transcripts.max_tool_result_bytes", int64(0)},
-	{"nudge.notes.enabled", true},
-	{"nudge.notes.base_turns", int64(15)},
-	{"nudge.notes.step", 0.2},
+	{"transcripts.copy", transcriptCopyDefault, kindBool},
+	{"transcripts.max_tool_result_bytes", int64(transcriptMaxToolResultDefault), kindInt},
+	{"transcripts.retention_days", int64(0), kindInt},
+	{"nudge.notes.enabled", true, kindBool},
+	{"nudge.notes.base_turns", int64(15), kindInt},
+	{"nudge.notes.step", 0.2, kindFloat},
 }
 
 // knownSettingDefault returns the documented default for a known global key.
@@ -322,6 +399,129 @@ func flattenSettings(m map[string]any) []flatSetting {
 	return out
 }
 
+// rePerTask matches a per-task override key: a documented global key with a
+// `.tasks.<slug>.` segment spliced in (e.g. transcripts.tasks.foo.copy from
+// transcripts.copy, nudge.notes.tasks.foo.enabled from nudge.notes.enabled).
+var rePerTask = regexp.MustCompile(`^(.+)\.tasks\.[^.]+\.(.+)$`)
+
+// rePerTaskCopy matches a per-task transcript-copy override key (used by the
+// first-enable notice).
+var rePerTaskCopy = regexp.MustCompile(`^transcripts\.tasks\.[^.]+\.copy$`)
+
+// perTaskGlobal returns the global key a per-task override maps to, and
+// whether key is in per-task form at all.
+func perTaskGlobal(key string) (string, bool) {
+	if m := rePerTask.FindStringSubmatch(key); m != nil {
+		return m[1] + "." + m[2], true
+	}
+	return "", false
+}
+
+// validateSettingKey reports whether key is a settable setting and, when it is
+// not, the closest known key as a "did you mean" suggestion (empty if nothing
+// is close). It returns the value-kind to type-check against for a valid key.
+// A per-task override (X.tasks.<slug>.Y) is valid iff its global X.Y is known.
+func validateSettingKey(key string) (ok bool, kind settingKind, suggestion string) {
+	if d, known := knownSettingDefault(key); known {
+		return true, kindOf(d), ""
+	}
+	if global, isPerTask := perTaskGlobal(key); isPerTask {
+		if d, known := knownSettingDefault(global); known {
+			return true, kindOf(d), ""
+		}
+	}
+	// Unknown key: suggest the nearest documented key (or its per-task
+	// template) within a small edit distance so a typo like transcript.copy
+	// points at transcripts.copy. Compare a per-task key against per-task
+	// templates so the slug segment doesn't swamp the distance.
+	cmp := key
+	if global, isPerTask := perTaskGlobal(key); isPerTask {
+		cmp = global
+	}
+	best, bestDist := "", 1<<30
+	for _, s := range knownSettings {
+		if d := levenshtein(cmp, s.Key); d < bestDist {
+			best, bestDist = s.Key, d
+		}
+	}
+	limit := len(cmp) / 3
+	if limit < 3 {
+		limit = 3
+	}
+	if bestDist <= limit {
+		return false, kindString, best
+	}
+	return false, kindString, ""
+}
+
+// kindOf infers a settingKind from a registry default value.
+func kindOf(def any) settingKind {
+	switch def.(type) {
+	case bool:
+		return kindBool
+	case int, int64:
+		return kindInt
+	case float64:
+		return kindFloat
+	default:
+		return kindString
+	}
+}
+
+// valueMatchesKind reports whether a parsed CLI value is the right type for a
+// setting. An int is accepted where a float is wanted (3 is a valid number).
+func valueMatchesKind(v any, kind settingKind) bool {
+	switch kind {
+	case kindBool:
+		_, ok := v.(bool)
+		return ok
+	case kindInt:
+		_, ok := v.(int64)
+		return ok
+	case kindFloat:
+		switch v.(type) {
+		case int64, float64:
+			return true
+		}
+		return false
+	default:
+		return true
+	}
+}
+
+// levenshtein is the edit distance between two short strings (settings keys),
+// used only for the "did you mean" hint.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
+}
+
+func min3(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
+}
+
 // cmdConfig implements `flow config get|set|list`.
 func cmdConfig(args []string) int {
 	if len(args) == 0 {
@@ -352,8 +552,37 @@ func cmdConfig(args []string) int {
 			fmt.Fprintln(os.Stderr, "usage: flow config set <key> <value>")
 			return 2
 		}
-		m := loadSettings()
-		if err := settingSet(m, rest[0], parseSettingValue(rest[1])); err != nil {
+		key, rawVal := rest[0], rest[1]
+		// Validate the key BEFORE touching the file: an unknown key is almost
+		// always a typo (e.g. transcript.copy for transcripts.copy). Refuse it
+		// with a "did you mean" hint rather than silently storing a dead key
+		// while the real setting keeps its default.
+		ok, kind, suggestion := validateSettingKey(key)
+		if !ok {
+			if suggestion != "" {
+				fmt.Fprintf(os.Stderr, "error: unknown setting %q — did you mean %q?\n", key, suggestion)
+			} else {
+				fmt.Fprintf(os.Stderr, "error: unknown setting %q (see `flow config list` for valid keys)\n", key)
+			}
+			return 1
+		}
+		val := parseSettingValue(rawVal)
+		if !valueMatchesKind(val, kind) {
+			fmt.Fprintf(os.Stderr, "error: %q expects a %s; got %q\n", key, kind, rawVal)
+			return 1
+		}
+		// FAIL CLOSED on a broken settings file: refuse to overwrite it (which
+		// would silently drop every other key) — explain how to recover.
+		m, bad := readSettingsFile()
+		if bad {
+			p, _ := settingsPath()
+			fmt.Fprintf(os.Stderr, "error: %s is not valid JSON; flow refuses to overwrite it.\n", p)
+			fmt.Fprintln(os.Stderr, "fix the file by hand (or delete it to reset to defaults), then retry.")
+			return 1
+		}
+		// Was transcript copy already on? (for the first-enable notice.)
+		wasCopyOn := transcriptsCopyEnabled("")
+		if err := settingSet(m, key, val); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
@@ -361,7 +590,12 @@ func cmdConfig(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: write settings: %v\n", err)
 			return 1
 		}
-		fmt.Printf("%s = %s\n", rest[0], rest[1])
+		fmt.Printf("%s = %s\n", key, rawVal)
+		// One-time notice the first time transcript copying is switched on, so
+		// the user knows what flow now stores and how to remove it.
+		if b, isBool := val.(bool); isBool && b && !wasCopyOn && (key == "transcripts.copy" || rePerTaskCopy.MatchString(key)) {
+			printFirstEnableNotice()
+		}
 		return 0
 	case "list":
 		m := loadSettings()
@@ -385,6 +619,13 @@ func cmdConfig(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: unknown config subcommand %q (get|set|list)\n", sub)
 		return 2
 	}
+}
+
+// printFirstEnableNotice tells the user, the first time transcript copying is
+// switched on, what flow now keeps and how to remove it.
+func printFirstEnableNotice() {
+	fmt.Println("notice: flow will now keep its own copy of this task's session transcript under " +
+		"$FLOW_ROOT/tasks/<slug>/transcripts/ (0600, tool output capped). Remove copies anytime with `flow transcript purge`.")
 }
 
 func printSettingValue(v any) {
