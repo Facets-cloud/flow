@@ -53,10 +53,13 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
      questions of at most 4 options each (split across questions when
      there are more; label = short task name, desc = dir + last-active).
      Merge sessions about the same thing into one candidate and keep all
-     its refs; drop one-off questions. Cap: 3 picks on small, 10 on
-     large; digests total at most 2× the pick cap.
+     its refs; drop one-off questions. Caps — picks: 3 small / 10 large;
+     digests in total: 6 small / 20 large. If the picked candidates'
+     refs exceed the digest cap, digest each candidate's newest refs
+     first, round-robin, until the cap; say which refs were skipped.
    - Per pick: `flow onboard digest <ref> --budget <same>` for EACH of its
-     refs (≤ ~1.5k tokens each; user prompts + last reply). If the digests
+     refs (≈ 1.5k tokens each on small, ≈ 3.5k on large; user prompts +
+     last reply). If the digests
      show the work finished, do NOT make a task (an imported task has no
      session, so it can't be closed) — just record its durable facts per
      §4.10. Otherwise `flow add task` with
