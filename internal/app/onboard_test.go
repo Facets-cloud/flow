@@ -102,6 +102,28 @@ func TestWriteDigestNeverExceedsCap(t *testing.T) {
 	}
 }
 
+// Cap leaving 1–2 bytes: no ellipsis overshoot, no blank "- " lines.
+func TestWriteDigestTinyRemainder(t *testing.T) {
+	for cap := 1; cap <= 12; cap++ {
+		s := &sessionSummary{onboardSession: onboardSession{harness: "claude", id: "x"},
+			prompts: []string{"aaaaaaaaaa", "bbbbbbbbbb", "ccccccccc"}}
+		var b bytes.Buffer
+		writeDigest(&b, s, cap)
+		got := 0
+		for _, l := range strings.Split(b.String(), "\n") {
+			if l == "- " {
+				t.Errorf("cap %d: blank prompt line:\n%s", cap, b.String())
+			}
+			if strings.HasPrefix(l, "- ") && !strings.HasPrefix(l, "- … ") {
+				got += len(l) - 2
+			}
+		}
+		if got > cap {
+			t.Errorf("cap %d: %d prompt bytes:\n%s", cap, got, b.String())
+		}
+	}
+}
+
 func TestUserPromptKeepsMarkupPrompts(t *testing.T) {
 	if userPrompt("<div>Login</div> renders wrong; fix the layout") == "" {
 		t.Error("a real prompt starting with markup was dropped")
