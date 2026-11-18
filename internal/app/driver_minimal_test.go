@@ -1,14 +1,18 @@
 package app
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/codex"
 )
 
 // Minimal driver model (Ask #135): every bound, human-driven session that
@@ -173,56 +177,140 @@ func busHookContextLine(out, marker string) string {
 	return ""
 }
 
-// HUD #408/#425: the pointer is ONE line naming the installed driver.md,
-// and that exact path exists after a skill install, with the shipped text.
+// The pointer names ONE installed driver.md, for the session's own harness,
+// even with both harnesses installed; the file exists there as shipped.
 func TestDriverPointerNamesInstalledDriverMD(t *testing.T) {
 	setupFlowRoot(t)
+	env := withHarnessEnv(t, "claude", "codex") // isolates PATH discovery
 	t.Setenv(autoRunEnvVar, "")
-	if err := claude.New().InstallSkill(skillFiles()); err != nil {
-		t.Fatal(err)
-	}
-	seedTask(t, "p")
-	writeTaskBriefDM(t, "p", agreedBrief) // no placeholder: the pointer line alone
-	db := openFlowDB(t)
-	tk, _ := flowdb.GetTask(db, "p")
-	db.Close()
-	blk := strings.TrimSpace(roleBlockFor(tk, false))
-	const head = "You are the DRIVER for this task: follow references/driver.md ("
-	if !strings.HasPrefix(blk, head) || !strings.HasSuffix(blk, ").") || strings.Contains(blk, "\n") {
-		t.Fatalf("pointer must be one line %q…(<path>).; got %q", head, blk)
-	}
-	path := strings.TrimSuffix(strings.TrimPrefix(blk, head), ").")
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("driver.md not installed at the pointer's path %q: %v", path, err)
+	for _, h := range []harness.Harness{claude.New(), codex.New()} {
+		if err := h.InstallSkill(skillFiles()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	want, _ := fs.ReadFile(skillFiles(), "references/driver.md")
-	if string(got) != string(want) {
-		t.Errorf("installed driver.md at %q differs from the shipped one", path)
+	for name, skillMD := range map[string]string{"claude": env.claudeSkill(), "codex": env.codexSkill()} {
+		seedTask(t, "p-"+name)
+		writeTaskBriefDM(t, "p-"+name, agreedBrief)
+		db := openFlowDB(t)
+		db.Exec(`UPDATE tasks SET harness=? WHERE slug=?`, name, "p-"+name)
+		tk, _ := flowdb.GetTask(db, "p-"+name)
+		db.Close()
+		blk := strings.TrimSpace(roleBlockFor(tk, false))
+		const head = "You are the DRIVER for this task: follow references/driver.md ("
+		end := strings.Index(blk, ").")
+		if !strings.HasPrefix(blk, head) || end < 0 || strings.Contains(blk, "\n") {
+			t.Fatalf("%s: pointer must be one line %q<path>).; got %q", name, head, blk)
+		}
+		path := blk[len(head):end]
+		if wantPath := filepath.Join(filepath.Dir(skillMD), "references", "driver.md"); path != wantPath {
+			t.Errorf("%s: pointer path %q, want the %s install %q", name, path, name, wantPath)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != string(want) {
+			t.Errorf("%s: driver.md not installed at %q: %v", name, path, err)
+		}
 	}
 }
 
-// Ask #140: a human `flow add task` gets the driver brief stub (so INTAKE
-// TURN fires on open); auto-run and owner-managed adds keep the old stub.
+// A human `flow add task` gets the driver brief stub (INTAKE TURN fires on
+// open); adds from an auto run (env or a bound running auto task) and
+// owner-managed adds (owner:<slug>) keep the plain stub.
 func TestAddTaskWritesDriverStub(t *testing.T) {
 	setupFlowRoot(t)
+	clearSessionEnv(t)
 	t.Setenv(autoRunEnvVar, "")
-	brief := func(slug string) string {
-		b, _ := os.ReadFile(filepath.Join(os.Getenv("FLOW_ROOT"), "tasks", slug, "brief.md"))
+	add := func(slug string, extra ...string) string {
+		t.Helper()
+		args := append([]string{"task", "T " + slug, "--slug", slug, "--work-dir", t.TempDir()}, extra...)
+		if rc := cmdAdd(args); rc != 0 {
+			t.Fatalf("add %s rc=%d", slug, rc)
+		}
+		b, err := os.ReadFile(filepath.Join(os.Getenv("FLOW_ROOT"), "tasks", slug, "brief.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		return string(b)
 	}
-	cmdAdd([]string{"task", "Spelling bee", "--slug", "sb", "--work-dir", t.TempDir()})
-	want := "# Spelling bee\n\nRole: driver, follow flow skill references/driver.md\n\n## Goal\n\n## Done when\n" +
-		doneWhenPlaceholder + "\n\n## Context\n\n## Decisions\n"
-	if got := brief("sb"); got != want {
-		t.Errorf("driver stub:\n got %q\nwant %q", got, want)
+	driver := func(slug string) string {
+		return "# T " + slug + "\n\nRole: driver, follow flow skill references/driver.md\n\n## Goal\n\n## Done when\n" +
+			doneWhenPlaceholder + "\n\n## Context\n\n## Decisions\n"
 	}
-	cmdAdd([]string{"task", "Owned", "--slug", "ow", "--work-dir", t.TempDir(), "--tag", "owner:keeper"})
+	plain := func(slug string) string { return fmt.Sprintf(taskBriefStub, "T "+slug) }
+	if got := add("sb"); got != driver("sb") {
+		t.Errorf("human add: got %q", got)
+	}
+	if got := add("emptyowner", "--tag", "owner:"); got != driver("emptyowner") {
+		t.Errorf("`owner:` with no slug names no owner: want the driver stub, got %q", got)
+	}
+	if got := add("ow", "--tag", "owner:keeper"); got != plain("ow") {
+		t.Errorf("owner-managed add: got %q", got)
+	}
+	// A legacy auto run: no env marker, but the bound task's run is running.
+	db := openFlowDB(t)
+	db.Exec(`UPDATE tasks SET session_id='sid-run', session_started=?, status='in-progress', auto_run_status='running' WHERE slug='sb'`, flowdb.NowISO())
+	db.Close()
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-run")
+	if got := add("legacykid"); got != plain("legacykid") {
+		t.Errorf("add from a running auto task: got %q", got)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv(autoRunEnvVar, "parent")
-	cmdAdd([]string{"task", "Child", "--slug", "ch", "--work-dir", t.TempDir()})
-	for _, s := range []string{"ow", "ch"} {
-		if strings.Contains(brief(s), doneWhenPlaceholder) {
-			t.Errorf("%s (owner-managed / auto run) must keep the plain stub", s)
-		}
+	if got := add("ch"); got != plain("ch") {
+		t.Errorf("add inside an auto run: got %q", got)
+	}
+}
+
+// INTAKE TURN checks the Done-when section only: a placeholder quoted under
+// Decisions is history, not an open intake.
+func TestIntakeTurnChecksDoneWhenSectionOnly(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "q")
+	writeTaskBriefDM(t, "q", "## Done when\n- tests green\n\n## Decisions\n- replaced "+doneWhenPlaceholder+"\n")
+	if strings.Contains(intakeTurnBlock("q"), "INTAKE TURN") {
+		t.Error("placeholder outside ## Done when must not reopen intake")
+	}
+	writeTaskBriefDM(t, "q", "## Done when\n"+doneWhenPlaceholder+"\n\n## Context\n")
+	if !strings.Contains(intakeTurnBlock("q"), "INTAKE TURN") {
+		t.Error("placeholder in ## Done when must print the intake line")
+	}
+}
+
+// A compaction-triggered SessionStart (Codex source=compact) arrives
+// mid-turn: it must not mark a busy session idle.
+func TestSessionStartCompactKeepsBusy(t *testing.T) {
+	setupFlowRoot(t)
+	clearSessionEnv(t)
+	t.Setenv(autoRunEnvVar, "")
+	const sid = "abababab-1111-4111-8111-111111111111"
+	seedTask(t, "c")
+	bindDM(t, "c", sid, true)
+	db := openFlowDB(t)
+	flowdb.SetSessionState(db, "c", flowdb.SessionBusy, time.Now())
+	db.Close()
+	sessionStartWith(t, sid, "compact")
+	db = openFlowDB(t)
+	defer db.Close()
+	if st, _ := flowdb.GetSessionState(db, "c"); st.State != flowdb.SessionBusy {
+		t.Errorf("compact SessionStart changed state to %q", st.State)
+	}
+}
+
+// `do --here --force` switching a Codex task to this Claude session points
+// at the Claude install, not the stale pre-bind harness.
+func TestDoHereForceSwitchPointsAtNewHarness(t *testing.T) {
+	setupFlowRoot(t)
+	env := withHarnessEnv(t, "claude", "codex")
+	stubClaudeStatOK(t)
+	t.Setenv(autoRunEnvVar, "")
+	seedTaskAtCwd(t, "sw")
+	writeTaskBriefDM(t, "sw", agreedBrief)
+	db := openFlowDB(t)
+	db.Exec(`UPDATE tasks SET harness='codex' WHERE slug='sw'`)
+	db.Close()
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "cdcdcdcd-1111-4111-8111-111111111111")
+	out := captureStdout(t, func() { cmdDo([]string{"sw", "--here", "--force"}) })
+	want := filepath.Join(filepath.Dir(env.claudeSkill()), "references", "driver.md")
+	if !strings.Contains(out, "("+want+").") {
+		t.Errorf("pointer must name the Claude install %q:\n%s", want, out)
 	}
 }

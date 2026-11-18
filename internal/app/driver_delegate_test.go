@@ -36,8 +36,9 @@ func TestSessionStartBoundDriverGetsDelegationBlock(t *testing.T) {
 	if !strings.Contains(out, delegationMarker) {
 		t.Fatalf("bound driver session should get the delegation block, got:\n%s", out)
 	}
-	if strings.Count(strings.TrimSpace(busHookContextLine(out, delegationMarker)), "\n") != 0 {
-		t.Errorf("the driver pointer must be one line:\n%s", out)
+	// The marker and the full parenthesized driver.md path share one line.
+	if line := busHookContextLine(busHookContext(t, out), delegationMarker); !strings.Contains(line, "driver.md).") {
+		t.Errorf("the driver pointer and its path must be one line, got %q", line)
 	}
 }
 

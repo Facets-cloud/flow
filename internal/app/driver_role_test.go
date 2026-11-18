@@ -84,26 +84,22 @@ func TestDoHerePrintsRoleBlock(t *testing.T) {
 	}
 }
 
-func TestUpdateTagDriverOnBoundTaskPrintsDriverBlock(t *testing.T) {
+// Every interactive session is a driver whatever its tags, so tagging or
+// untagging `driver` announces no role change.
+func TestUpdateTagDriverAnnouncesNoRoleChange(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("FLOW_AUTO_RUN", "")
 	seedTask(t, "mid")
 	bindSession(t, "mid", "sid-mid")
-	var rc int
-	out := captureStdout(t, func() { rc = cmdUpdate([]string{"task", "mid", "--tag", "driver"}) })
-	if rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	if !strings.Contains(out, driverRoleMarker) {
-		t.Errorf("tagging the bound task driver should switch this session now:\n%s", out)
-	}
-
-	out = captureStdout(t, func() { rc = cmdUpdate([]string{"task", "mid", "--remove-tag", "driver"}) })
-	if rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	if !strings.Contains(out, "no longer a driver") {
-		t.Errorf("removing the driver tag should say so:\n%s", out)
+	for _, args := range [][]string{{"--tag", "driver"}, {"--remove-tag", "driver"}} {
+		out := captureStdout(t, func() {
+			if rc := cmdUpdate(append([]string{"task", "mid"}, args...)); rc != 0 {
+				t.Fatalf("rc=%d", rc)
+			}
+		})
+		if strings.Contains(out, driverRoleMarker) || strings.Contains(out, "no longer a driver") {
+			t.Errorf("%v must not announce a role change:\n%s", args, out)
+		}
 	}
 }
 

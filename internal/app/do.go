@@ -1492,7 +1492,9 @@ func cmdDoHere(query string, force bool) int {
 	// A session bound mid-flight missed SessionStart, so hand it the
 	// driver block now. task was loaded before the bind: no
 	// session_started = first bind = intake turn.
-	if blk := roleBlockFor(task, !task.SessionStarted.Valid); blk != "" {
+	first := !task.SessionStarted.Valid
+	task.Harness = sql.NullString{String: string(h.Name()), Valid: true} // post-bind harness (--force may switch it)
+	if blk := roleBlockFor(task, first); blk != "" {
 		fmt.Println(strings.TrimSpace(blk))
 	}
 	return 0

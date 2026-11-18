@@ -28,10 +28,10 @@ Open questions.
 const driverBriefStub = "# %s\n\nRole: driver, follow flow skill references/driver.md\n\n## Goal\n\n## Done when\n" +
 	doneWhenPlaceholder + "\n\n## Context\n\n## Decisions\n"
 
-// hasOwnerTag reports whether tags include an owner-managed `owner:<slug>` tag.
+// hasOwnerTag reports whether tags include an owner-managed `owner:<slug>` tag (non-empty slug).
 func hasOwnerTag(tags []string) bool {
 	for _, t := range tags {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(t)), "owner:") {
+		if slug, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(t)), "owner:"); ok && strings.TrimSpace(slug) != "" {
 			return true
 		}
 	}
@@ -314,7 +314,7 @@ func createTask(args []string, hereNote bool) int {
 		return 1
 	}
 	stub := taskBriefStub
-	if hereNote && !isAutoRunSession(nil) && !hasOwnerTag(tags) {
+	if hereNote && !isAutoRunSession(parent) && !hasOwnerTag(tags) {
 		stub = driverBriefStub // a human add: its placeholder drives INTAKE TURN
 	}
 	briefPath := filepath.Join(taskDir, "brief.md")

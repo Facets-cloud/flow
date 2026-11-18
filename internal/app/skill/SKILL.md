@@ -284,8 +284,8 @@ path for new work, before any other process skill (brainstorming,
 planning, debugging): those run inside the task. Every interactive task is
 a driver (rules: references/driver.md), so never ask "driver or not?". Say
 "driver task" to the user; keep slug, tag and template jargon off the user
-path. **Backlog capture** ("remind me later"): steps 1–4, then create it
-without binding and stop.
+path. **Backlog capture** ("remind me later"): steps 1, 2 and 4 (no
+routing or opening), then stop without binding.
 
 **Recipe (one interaction):**
 1. **Goal.** Not stated → ask: "I'll create a driver task for this — what
@@ -297,9 +297,9 @@ without binding and stop.
    existing match(es) from `flow list projects` (by repo/work_dir path
    first, then by name/goal; max 3, top one "(Recommended)"); ALWAYS
    include a "New project <name>" option, even when a match is obvious;
-   free-text Other. If step 1 also
-   asks, put both in ONE AskUserQuestion call (else chat; with a parent
-   task, ask via `flow message`). Only on the user's pick: attach, or `flow
+   free-text Other. Ask it with AskUserQuestion (both questions in ONE call
+   when step 1 also asks); chat only if the tool is unavailable; with a
+   parent task, ask via `flow message`. Only on the user's pick: attach, or `flow
    add project "<name>" --work-dir <repo, else cwd>` with a thin brief;
    skip references/intake-project.md's first-task follow-up.
 3. **Route.** `flow list tasks --project <p>`: route there only when a live
@@ -312,10 +312,11 @@ without binding and stop.
    Context`, `## Decisions`. Done when the user stated goes in now;
    otherwise keep the placeholder `*Agree with the user on the first
    turn.*` verbatim until the user agrees.
-5. **Bind + announce** (mandatory). Unbound → `flow do --here <slug>`:
-   "Created driver task <name> in project <p>; continuing here." Bound →
-   `flow do <slug>`: "...; opened it in a new tab." (that tab runs step
-   6). Never say "tracked task".
+5. **Bind + announce** (mandatory, only after it succeeds). Unbound →
+   `flow do --here <slug>`: "Created driver task <name> in project <p>;
+   continuing here." Bound, or `--here` refused (e.g. another directory) →
+   `flow do <slug>`: "...; opened it in a new tab." (that tab runs step 6).
+   Never say "tracked task".
 6. **The intake turn ENDS** after you restate the goal, propose Done when
    and close with a numbered "Needs from you:" list; build nothing (flow
    prints `INTAKE TURN` then). Only an explicit yes to the proposed Done

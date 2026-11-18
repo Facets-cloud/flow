@@ -125,7 +125,8 @@ func cmdHookSessionStart(args []string) int {
 	recordSessionVersion()
 
 	bound := lookupBoundTask()
-	if bound != nil && !isAutoRunSession(bound) {
+	// A compaction-triggered start can arrive mid-turn: never mark it idle.
+	if bound != nil && !isAutoRunSession(bound) && payload.Source != "compact" {
 		markSessionState(bound.Slug, flowdb.SessionIdle)
 	}
 	if bound == nil {

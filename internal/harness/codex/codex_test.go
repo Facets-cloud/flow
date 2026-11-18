@@ -280,47 +280,45 @@ func TestInstallSkillWritesFlowRules(t *testing.T) {
 	}
 }
 
-// Codex re-runs SessionStart with source "compact" after compaction (its
-// PostCompact hook ignores stdout and cannot inject context), so flow's
-// SessionStart matcher must include compact. An existing install made with
-// the old "startup|resume" matcher is migrated in place on refresh: same
-// command, no duplicate entry.
+// SessionStart must match compact (Codex re-runs it after compaction; its
+// PostCompact hook cannot inject context). On refresh only flow's handler
+// on the legacy "startup|resume" matcher migrates: a co-grouped handler keeps
+// its matcher, a custom matcher is left alone, no duplicates, written
+// atomically (no temp file left), and a second refresh is a no-op.
 func TestSessionStartMatcherIncludesCompactAndMigrates(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", "")
 	const cmd = "flow hook session-start"
-	path := filepath.Join(home, ".codex", "hooks.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	old := `{"hooks":{"SessionStart":[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]}}`
-	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if changed, err := New().InstallSessionStartHook(cmd); err != nil || !changed {
-		t.Fatalf("refresh must migrate the old matcher: changed=%v err=%v", changed, err)
-	}
-	var got struct {
-		Hooks map[string][]struct {
-			Matcher string `json:"matcher"`
-			Hooks   []struct {
-				Command string `json:"command"`
-			} `json:"hooks"`
-		} `json:"hooks"`
-	}
-	raw, _ := os.ReadFile(path)
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatal(err)
-	}
-	ss := got.Hooks["SessionStart"]
-	if len(ss) != 1 || len(ss[0].Hooks) != 1 || ss[0].Hooks[0].Command != cmd {
-		t.Fatalf("want exactly one SessionStart entry with the unchanged command, got %s", raw)
-	}
-	if ss[0].Matcher != "startup|resume|compact" {
-		t.Errorf("matcher = %q, want startup|resume|compact", ss[0].Matcher)
-	}
-	if changed, err := New().InstallSessionStartHook(cmd); err != nil || changed {
-		t.Errorf("second refresh must be a no-op: changed=%v err=%v", changed, err)
+	for _, c := range []struct{ name, before, want string }{
+		{"legacy alone", `[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
+			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup|resume|compact"}]`},
+		{"shared group", `[{"matcher":"startup|resume","hooks":[{"type":"command","command":"init.sh"},{"type":"command","command":"` + cmd + `"}]}]`,
+			`[{"hooks":[{"command":"init.sh","type":"command"}],"matcher":"startup|resume"},{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup|resume|compact"}]`},
+		{"custom matcher", `[{"matcher":"startup","hooks":[{"type":"command","command":"` + cmd + `"}]}]`,
+			`[{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"startup"}]`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", "")
+			dir := filepath.Join(home, ".codex")
+			os.MkdirAll(dir, 0o755)
+			path := filepath.Join(dir, "hooks.json")
+			os.WriteFile(path, []byte(`{"hooks":{"SessionStart":`+c.before+`}}`), 0o644)
+			for i := 0; i < 2; i++ {
+				if _, err := New().InstallSessionStartHook(cmd); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var got struct{ Hooks map[string]json.RawMessage }
+			raw, _ := os.ReadFile(path)
+			json.Unmarshal(raw, &got)
+			var v any
+			json.Unmarshal(got.Hooks["SessionStart"], &v)
+			if norm, _ := json.Marshal(v); string(norm) != c.want {
+				t.Errorf("SessionStart =\n %s\nwant\n %s", norm, c.want)
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+				t.Errorf("stray files next to hooks.json: %v", entries)
+			}
+		})
 	}
 }

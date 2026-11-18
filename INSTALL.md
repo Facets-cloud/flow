@@ -61,9 +61,10 @@ flow init
 Creates `~/.flow` (SQLite db, `kb/` files) and installs the flow skill and
 hooks for every harness it detects (`~/.claude`, `~/.codex`). Safe to
 re-run. It prints which harnesses got the skill — keep that for the report.
-If Codex got it, tell the user: the first Codex run in a folder asks to
-trust it and review flow's hooks; pick "Trust all", or none of flow's hooks
-run.
+If Codex got it, tell the user: Codex asks to review hooks on the first run
+in a folder, and again after an upgrade changes a flow hook. Open the
+pending hook list (`/hooks`), check each command, and trust flow's hooks
+(`flow hook …`); without that, none of flow's hooks run.
 
 ## 5. Verify
 

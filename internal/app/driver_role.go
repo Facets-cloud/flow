@@ -91,9 +91,12 @@ func roleBlockFor(t *flowdb.Task, first bool) string {
 	if isAutoRunSession(t) || t.Kind == "playbook_run" {
 		return ""
 	}
-	// The installed driver.md sits next to upgrade-notes.md for the
-	// session's harness.
-	path := strings.ReplaceAll(upgradeNotesPath(t), "upgrade-notes.md", "driver.md")
+	path := "references/driver.md in the flow skill"
+	if h, err := harnessByName(string(sessionHarness(t))); err == nil {
+		if skillMD, err := h.SkillInstallPath(); err == nil {
+			path = filepath.Join(filepath.Dir(skillMD), "references", "driver.md") // the session's own install
+		}
+	}
 	blk := " You are the DRIVER for this task: follow references/driver.md (" + path + ")." + childHarnessesLine()
 	if first {
 		return blk + "\n" + intakeTurnLine
@@ -110,14 +113,22 @@ const doneWhenPlaceholder = "*Agree with the user on the first turn.*"
 const intakeTurnLine = "INTAKE TURN: restate the goal, propose Done when + 'Needs from you:', then END the turn. Do not build or close anything."
 
 // intakeTurnBlock returns intakeTurnLine (on its own line) while slug's
-// brief still carries the placeholder, else "".
+// brief's ## Done when still holds the placeholder, else "".
 func intakeTurnBlock(slug string) string {
 	root, err := flowRoot()
 	if err != nil {
 		return ""
 	}
 	b, err := os.ReadFile(filepath.Join(root, "tasks", slug, "brief.md"))
-	if err != nil || !strings.Contains(string(b), doneWhenPlaceholder) {
+	if err != nil {
+		return ""
+	}
+	// Only the ## Done when section counts (a quote under Decisions is history).
+	_, done, _ := strings.Cut(string(b), "## Done when")
+	if i := strings.Index(done, "\n## "); i >= 0 {
+		done = done[:i]
+	}
+	if !strings.Contains(done, doneWhenPlaceholder) {
 		return ""
 	}
 	return "\n" + intakeTurnLine

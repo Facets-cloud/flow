@@ -310,9 +310,10 @@ flow init
 Or open [INSTALL.md](INSTALL.md) in Claude Code or Codex and let the agent
 install it. `flow init` installs a skill and a session-start hook into your
 harness. That is how the agent knows what "pick up the billing migration"
-means. Those two commands are the last ones you need to type. In Codex, the
-first run in a folder asks you to trust it and review flow's hooks: pick
-"Trust all", or none of flow's hooks run.
+means. Those two commands are the last ones you need to type. In Codex,
+review the pending hooks when asked (first run in a folder, and after an
+upgrade changes a flow hook): check each command and trust flow's hooks,
+or none of them run.
 
 1. In Claude Code, mid-way on something: "bind this session to a task called
    <name>". The conversation you already have is now a task. Starting fresh:
