@@ -730,3 +730,29 @@ func TestSeenAtMigrationStampsOnlyLegacyRows(t *testing.T) {
 		t.Errorf("%d asks inserted after OpenDB returned were stamped seen by the backfill", hidden)
 	}
 }
+
+// A DB from the pre-versioning #175 build already has model/effort (added by
+// its per-open probes) at user_version 0: v1 then v2 run over it, the values
+// survive, and it ends at the latest version.
+func TestModelEffortColumnsFromPreVersioningBuild(t *testing.T) {
+	path := loadFixture(t, filepath.Join("testdata", "schemas", "drift-model-effort-175.sql"))
+	var ran [][2]int
+	afterMigrate = func(from, to int) { ran = append(ran, [2]int{from, to}) }
+	defer func() { afterMigrate = nil }()
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if len(ran) != 1 || ran[0] != [2]int{0, latestVersion()} {
+		t.Errorf("migrations ran %v, want one pass 0→%d", ran, latestVersion())
+	}
+	tk, err := GetTask(db, "t1")
+	if err != nil || tk.Model.String != "haiku" || tk.Effort.String != "low" {
+		t.Errorf("task model/effort = %+v %+v (%v)", tk.Model, tk.Effort, err)
+	}
+	ow, err := GetOwner(db, "keeper")
+	if err != nil || ow.Model.String != "opus" || ow.Effort.String != "high" {
+		t.Errorf("owner model/effort = %+v %+v (%v)", ow.Model, ow.Effort, err)
+	}
+}
