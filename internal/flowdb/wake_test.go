@@ -223,6 +223,7 @@ func TestUpgradeFromSharedClaimFreesPendingRows(t *testing.T) {
 	if _, err := db.Exec(`DROP TABLE bus_wake_nudged`); err != nil {
 		t.Fatal(err)
 	}
+	resetSchemaVersion(t, db) // the hand-rolled old shape is pre-versioning
 	db.Close()
 
 	db, err = OpenDB(path)

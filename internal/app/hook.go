@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flow/internal/flowdb"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ import (
 //     in time); inform-only, announced once per message. Everything else
 //     (unbound, nothing new) is a no-op.
 func cmdHook(args []string) int {
+	// Hook output lands in the harness: keep migrator notices out of it.
+	flowdb.Warnings = io.Discard
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "error: hook requires a subcommand (session-start|user-prompt-submit|pre-tool-use|stop)")
 		return 2

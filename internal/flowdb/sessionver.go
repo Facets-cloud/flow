@@ -13,12 +13,6 @@ import (
 // hooks compare-and-set it, and only the hook call whose CAS changed the
 // row tells the session that flow was upgraded under it — once per change.
 // Keyed by session, not task: unbound sessions load the skill too.
-const sessionVersionDDL = `
-CREATE TABLE IF NOT EXISTS session_versions (
-    session_id    TEXT PRIMARY KEY,
-    seen_version  TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
-);`
 
 // SessionVersionTTL bounds the table: a row nobody touched for this long
 // is pruned. A session silent that long that wakes up again is told about
