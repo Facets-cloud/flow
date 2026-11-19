@@ -648,3 +648,85 @@ func TestBaselineBusSelfRewriteAndSeenStamp(t *testing.T) {
 		t.Errorf("human rows = %d, unseen = %d; want 2 rows, all stamped seen", human, unseen)
 	}
 }
+
+// TestSeenAtMigrationStampsOnlyLegacyRows (ported from #192, adapted to the
+// migrator): eight concurrent first opens of a DB without bus_messages.seen_at,
+// each inserting a human ask the moment OpenDB returns. Only the legacy row
+// may be stamped seen; a fresh ask must stay unread. The migrator gives this
+// structurally — the column add and the stamp share the baseline's one
+// BEGIN IMMEDIATE transaction, and losers re-read user_version under the lock,
+// so no opener returns before the stamp commits and none re-runs it. The
+// same lock is why #192's duplicate-column tolerance has no gap to cover
+// here: every column probe runs under the write lock, so no ALTER can lose a
+// race, and the opens must all succeed with the migration committed once.
+func TestSeenAtMigrationStampsOnlyLegacyRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flow.db")
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &BusMessage{ID: "legacy01", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: BusUser, FromTaskSlug: "t", ToAssignee: BusUser, Body: "old ask"}
+	if err := insertBusMessage(db, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE bus_messages DROP COLUMN seen_at`); err != nil {
+		t.Fatal(err)
+	}
+	resetSchemaVersion(t, db) // a pre-seen_at DB is pre-versioning
+	db.Close()
+
+	var runs atomic.Int32
+	afterMigrate = func(int, int) { runs.Add(1) }
+	defer func() { afterMigrate = nil }()
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	wg.Add(n)
+	for i := range n {
+		go func() {
+			defer wg.Done()
+			d, err := OpenDB(path)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer d.Close()
+			errs[i] = insertBusMessage(d, &BusMessage{ID: fmt.Sprintf("new%05d", i), CreatedAt: NowISO(),
+				Kind: "message", FromAssignee: BusUser, FromTaskSlug: "t", ToAssignee: BusUser, Body: "new ask"})
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+	}
+	if got := runs.Load(); got != 1 {
+		t.Errorf("migration committed %d times, want 1", got)
+	}
+
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var legacySeen sql.NullString
+	if err := db.QueryRow(`SELECT seen_at FROM bus_messages WHERE id='legacy01'`).Scan(&legacySeen); err != nil {
+		t.Fatal(err)
+	}
+	if !legacySeen.Valid {
+		t.Error("legacy human row was not stamped seen")
+	}
+	var total, hidden int
+	if err := db.QueryRow(`SELECT count(*), count(seen_at) FROM bus_messages WHERE id<>'legacy01'`).Scan(&total, &hidden); err != nil {
+		t.Fatal(err)
+	}
+	if total != n {
+		t.Errorf("new asks = %d, want %d", total, n)
+	}
+	if hidden != 0 {
+		t.Errorf("%d asks inserted after OpenDB returned were stamped seen by the backfill", hidden)
+	}
+}
