@@ -55,7 +55,10 @@ flow/
 │   │   ├── skill/references/*.md     # on-demand workflow references (embedded)
 │   │   └── *_test.go
 │   ├── flowdb/                      # SQLite data layer
-│   │   ├── db.go                    # schema, models, CRUD queries
+│   │   ├── db.go                    # models, CRUD queries
+│   │   ├── migrate.go               # versioned migrator (user_version), OpenDB
+│   │   ├── baseline.go              # migration v1: every pre-versioning schema step
+│   │   ├── testdata/schemas/*.sql   # historical flow.db fixtures (scripts/gen-schema-fixtures.sh)
 │   │   └── db_test.go
 │   ├── iterm/                       # iTerm2 tab spawning
 │   │   └── iterm.go
@@ -78,7 +81,7 @@ flow/
 ## Package responsibilities
 
 - **`internal/app`** — all CLI command handlers, dispatch, shared helpers. One file per subcommand. Imports `flowdb` and `spawner`.
-- **`internal/flowdb`** — schema DDL, model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, migrations. All DB access via `database/sql` + `modernc.org/sqlite`.
+- **`internal/flowdb`** — model structs (`Project`, `Task`, `Workdir`), scan helpers, CRUD queries, and the versioned schema migrator (`migrate.go` + `baseline.go`). All DB access via `database/sql` + `modernc.org/sqlite`.
 - **`internal/spawner`** — picks a terminal backend at runtime (`$ZELLIJ` > `$FLOW_TERM` > `$TERM_PROGRAM` > historical iTerm default) and forwards `SpawnTab` to it. Exposes `Override` for test pinning.
 - **`internal/iterm`** — osascript-based iTerm2 tab spawning. Exposes `iterm.Runner` for test mocking.
 - **`internal/terminal`** — osascript-based macOS Terminal.app tab spawning. Requires Accessibility for the cmd-T keystroke via System Events.
@@ -113,5 +116,18 @@ flow/
 ## Things to watch out for
 
 - `hookCommand` (SessionStart) and `userPromptSubmitHookCommand` (UserPromptSubmit) in `internal/app/skill.go` are the exact strings matched in `~/.claude/settings.json`. Changing either orphans existing installations.
-- `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
+- `do.go` uses `openConcurrentDB` (`flowdb.OpenDBImmediate`: `_txlock=immediate`) for safe concurrent access. Every open gets `busy_timeout(30000)` and `foreign_keys(1)` via the DSN.
+
+## Schema migrations
+
+flow.db's schema version is `PRAGMA user_version`. `OpenDB` reads it; at the latest version the open is one read with no write lock. Otherwise the pending migrations in `internal/flowdb/migrate.go` run once, after a `VACUUM INTO` backup to `$FLOW_ROOT/backups/` (newest 3 kept), inside one `BEGIN IMMEDIATE` transaction with foreign keys off, followed by a `foreign_key_check`. v1 (`baseline.go`) is every schema check the pre-versioning OpenDB ran on each open, and it accepts every historical shape.
+
+Rules for a schema change:
+
+- **Append a `Migration` to `migrations`.** Never edit, reorder or remove a shipped one, including the baseline.
+- **Additive is non-breaking.** New tables, nullable or defaulted columns, and indexes keep older binaries working, because queries name their columns explicitly. Set `Breaking: true` only when an older binary would misread or corrupt the new shape. That raises `schema_meta.min_binary_schema`, and older binaries then refuse the DB with "run `flow upgrade`". Hooks treat that as unbound.
+- **Rebuild tables dynamically.** A rebuild (CREATE new, copy, DROP, RENAME) takes its copy list from `pragma_table_info`, never a hard-coded list, so unknown or legacy columns (`tasks.deleted_at`) survive.
+- **Data fixes go in the same migration as their schema change.**
+- **No DDL anywhere else.** `ALTER/CREATE/DROP TABLE|INDEX`, `PRAGMA user_version`/`foreign_keys` and `columnExists(` outside `migrate.go`/`baseline.go` fail `TestNoSchemaWritesOutsideMigrations`.
+- **Fixtures:** `TestUpgradeFromEveryFixture` migrates every `internal/flowdb/testdata/schemas/*.sql` (one per distinct released schema, plus `drift-*` hand-made shapes) and requires the fresh-DB schema with all rows kept. After a release that changes the schema, run `scripts/gen-schema-fixtures.sh` (it builds every tag in Docker, which is slow) and commit the new fixture. Add drift shapes under `scripts/schema-drift/`.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.
