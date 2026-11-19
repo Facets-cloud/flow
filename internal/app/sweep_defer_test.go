@@ -15,7 +15,7 @@ func stubCodexSweep(t *testing.T, onCall func()) *[]string {
 	t.Helper()
 	old := codex.SkipPermissionsRunner
 	calls := &[]string{}
-	codex.SkipPermissionsRunner = func(prompt string) error {
+	codex.SkipPermissionsRunner = func(prompt string, _ harness.LaunchOpts) error {
 		*calls = append(*calls, prompt)
 		if onCall != nil {
 			onCall()

@@ -40,6 +40,7 @@ func cmdRunPlaybook(args []string) int {
 	auto := fs.Bool("auto", false, "run the playbook headlessly in the background (no tab, no human); the run self-completes via `flow done`")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the run session's first user message (forwarded to flow do)")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (forwarded to flow do)")
+	model, effort := modelFlags(fs)
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -55,6 +56,12 @@ func cmdRunPlaybook(args []string) int {
 	if *auto && *here {
 		fmt.Fprintln(os.Stderr, "error: --auto cannot be used with --here (--auto launches its own detached session)")
 		return 2
+	}
+	if *here && rejectModelWithHere(*model, *effort) {
+		return 2
+	}
+	if rc := checkModelForNewTask("", *model, *effort); rc != 0 {
+		return rc
 	}
 	// --auto + --with/--with-file IS allowed: the instruction rides along to
 	// the detached run (e.g. a scheduled playbook that today should also
@@ -197,6 +204,7 @@ func cmdRunPlaybook(args []string) int {
 	if *withFile != "" {
 		doArgs = append(doArgs, "--with-file", *withFile)
 	}
+	doArgs = append(doArgs, modelFlagArgs(*model, *effort)...)
 	return cmdDo(doArgs)
 }
 

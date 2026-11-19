@@ -11,6 +11,15 @@
 
 ## Unreleased
 
+- **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
+  `flow run playbook` take `--model <m>` and `--effort <e>`, passed to the
+  harness as given. The task keeps them, so resumes reuse them; `flow show
+  task` prints `model:`/`effort:` when set. `--here` refuses both (exit 2).
+  Drivers: see "Choosing the child's model" in references/delegation.md
+  before putting a routine child on a cheaper model. The task's close-out
+  sweep runs on its stored model too. Owners take the same flags on `flow
+  add owner` and `flow owner start`; every tick runs on them, and the tasks
+  an owner dispatches keep their own (references/owners.md).
 - Restart running Codex sessions after upgrading, then review the pending hooks (`/hooks`) and trust flow's hooks.
 - **Every interactive task is a driver.** Rules: references/driver.md
   (flow's session line and a brief's `Role: driver` line point there).

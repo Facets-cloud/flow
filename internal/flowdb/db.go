@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     auto_run_finished     TEXT,
     auto_run_log          TEXT,
     parent_slug           TEXT REFERENCES tasks(slug),
+    model                 TEXT,
+    effort                TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
     archived_at           TEXT,
@@ -100,6 +102,8 @@ CREATE TABLE IF NOT EXISTS owners (
     tick_pid          INTEGER,
     tick_started      TEXT,
     harness           TEXT,
+    model             TEXT,
+    effort            TEXT,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     archived_at       TEXT
@@ -181,6 +185,11 @@ type Task struct {
 	// ParentSlug is the task whose bound session ran `flow add task` to
 	// create this one. NULL for tasks created from an unbound session.
 	ParentSlug sql.NullString
+	// Model and Effort are the harness model and effort level picked with
+	// `--model` / `--effort` on a spawn or resume. Later launches with no
+	// flag reuse them. NULL means the harness default.
+	Model      sql.NullString
+	Effort     sql.NullString
 	CreatedAt  string
 	UpdatedAt  string
 	ArchivedAt sql.NullString
@@ -447,6 +456,10 @@ func runMigrations(db *sql.DB) error {
 		// unused parent_slug column with this exact shape, hence the
 		// exists-check rather than a blind ALTER.
 		{"parent_slug", "ALTER TABLE tasks ADD COLUMN parent_slug TEXT REFERENCES tasks(slug)"},
+		// model / effort: the harness model and effort level chosen with
+		// `flow do --model/--effort`. NULL = harness default.
+		{"model", "ALTER TABLE tasks ADD COLUMN model TEXT"},
+		{"effort", "ALTER TABLE tasks ADD COLUMN effort TEXT"},
 	} {
 		has, err := columnExists(db, "tasks", col.name)
 		if err != nil {
@@ -476,6 +489,11 @@ func runMigrations(db *sql.DB) error {
 	for _, col := range []struct{ name, ddl string }{
 		{"tick_pid", "ALTER TABLE owners ADD COLUMN tick_pid INTEGER"},
 		{"tick_started", "ALTER TABLE owners ADD COLUMN tick_started TEXT"},
+		// model / effort: the harness model and effort level every tick
+		// runs on (`flow add owner` / `flow owner start` --model/--effort).
+		// NULL = harness default.
+		{"model", "ALTER TABLE owners ADD COLUMN model TEXT"},
+		{"effort", "ALTER TABLE owners ADD COLUMN effort TEXT"},
 	} {
 		has, err := columnExists(db, "owners", col.name)
 		if err != nil {
@@ -833,7 +851,7 @@ func ListProjects(db *sql.DB, filter ProjectFilter) ([]*Project, error) {
 
 // ---------- task queries ----------
 
-const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, parent_slug, created_at, updated_at, archived_at"
+const TaskCols = "slug, name, project_slug, status, kind, playbook_slug, priority, work_dir, waiting_on, due_date, assignee, status_changed_at, session_id, session_started, session_last_resumed, harness, auto_run_status, auto_run_pid, auto_run_started, auto_run_finished, auto_run_log, parent_slug, model, effort, created_at, updated_at, archived_at"
 
 func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 	var t Task
@@ -843,7 +861,7 @@ func ScanTask(row interface{ Scan(dest ...any) error }) (*Task, error) {
 		&t.WaitingOn, &t.DueDate, &t.Assignee, &t.StatusChangedAt, &t.SessionID,
 		&t.SessionStarted, &t.SessionLastResumed, &t.Harness,
 		&t.AutoRunStatus, &t.AutoRunPID, &t.AutoRunStarted, &t.AutoRunFinished, &t.AutoRunLog,
-		&t.ParentSlug,
+		&t.ParentSlug, &t.Model, &t.Effort,
 		&t.CreatedAt, &t.UpdatedAt, &t.ArchivedAt,
 	)
 	if err != nil {
