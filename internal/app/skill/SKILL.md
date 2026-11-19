@@ -300,24 +300,26 @@ routing or opening), then stop without binding.
    free-text Other. Ask it with AskUserQuestion (both questions in ONE call
    when step 1 also asks); chat only if the tool is unavailable; with a
    parent task, ask via `flow message`. Only on the user's pick: attach, or `flow
-   add project "<name>" --work-dir <repo, else cwd>` with a thin brief;
+   add project "<name>" --work-dir <repo, else this session's start dir>`
+   (never invent a folder) with a thin brief;
    skip references/intake-project.md's first-task follow-up.
 3. **Route.** `flow list tasks --project <p>`: route there only when a live
-   driver's goal really matches (say so, open it via §4.4); never override
+   driver's goal really matches (say so, offer to open it via §4.4); never override
    an explicit "new" from the user.
-4. **Create.** `flow add task "<short name>" --project <p>` (no confirm
-   step). Read the stub, then Write the driver brief
+4. **Create.** `flow add task "<short name>" --project <p> --work-dir
+   <this session's start dir>` when unbound (no confirm step). Read the stub, then Write the driver brief
    (references/templates.md): the line `Role: driver, follow flow skill
    references/driver.md`, then `## Goal` (verbatim), `## Done when`, `##
    Context`, `## Decisions`. Done when the user stated goes in now;
    otherwise keep the placeholder `*Agree with the user on the first
    turn.*` verbatim until the user agrees.
 5. **Bind + announce** (mandatory, only after it succeeds). Unbound →
-   `flow do --here <slug>`: "Created driver task <name> in project <p>;
-   continuing here." Bound, or `--here` refused (e.g. another directory) →
-   `flow do <slug>`: "...; opened it in a new tab." (that tab runs step 6;
-   if it prints a command instead of opening a tab, relay that command and
-   say intake continues there). Never say "tracked task".
+   ALWAYS run `flow do --here <slug>` first (never predict a refusal; a new
+   task adopts this session's folder): "Created driver task <name> in
+   project <p>; continuing here." (name the folder if flow printed
+   `work_dir →`). If it can't bind (e.g. this session is bound to another
+   task), ASK: "Open it in a new tab?" / "Keep working here without a
+   task"; a new tab is only ever the user's call. Never say "tracked task".
 6. **The intake turn ENDS** after you restate the goal, propose Done when
    and close with a numbered "Needs from you:" list; build nothing (flow
    prints `INTAKE TURN` then). Only an explicit yes to the proposed Done
@@ -605,7 +607,7 @@ nearby infra the brief reasonably implies; the very first turn.
 **Recipe:** pause and AskUserQuestion (header "New task?", question names
 the `<current-slug>` and the one-line drift):
 - **Yes, new task** — run §4.2 for the goal you observed (bound session
-  → it opens in a new tab), so the follow-on gets its own transcript.
+  → offer a new tab), so the follow-on gets its own transcript.
 - **No, stay here** — accept it, update your model of the task's scope,
   don't re-ask on the same thread.
 - **Later** — offer a drift note (AskUserQuestion "Yes, save a drift
@@ -651,7 +653,7 @@ after session start.
    `flow list tasks --status backlog --priority high` for candidates.
 3. AskUserQuestion with three options:
    - **Start a driver (Recommended)** → §4.2: goal + project, then bind
-     this session (unbound) or open a new tab (bound).
+     this session (unbound) or offer a new tab (bound; the user decides).
    - **Switch to an existing task** → list candidates; on selection spawn
      `flow do <slug>` (new tab). If THIS session is already bound, never
      offer `flow do --here <existing-slug>`: the binary refuses
