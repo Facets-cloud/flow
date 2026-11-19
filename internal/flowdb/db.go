@@ -2,6 +2,7 @@
 package flowdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -328,18 +329,9 @@ func OpenDB(path string) (*sql.DB, error) {
 	// human row seen — the old mail is left behind rather than resurfaced
 	// as a backlog of stale asks and broadcasts.
 	if has, err := columnExists(db, "bus_messages", "seen_at"); err == nil && !has {
-		res, err := addColumn(db, `ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`)
-		if err != nil {
+		if err := migrateSeenAt(db); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("migrate bus_messages.seen_at: %w", err)
-		}
-		// res is nil when a concurrent opener added the column; it stamps.
-		if res != nil {
-			if _, err := db.Exec(`UPDATE bus_messages SET seen_at=? WHERE to_task_slug IS NULL AND to_assignee=?`,
-				NowISO(), BusUser); err != nil {
-				db.Close()
-				return nil, fmt.Errorf("stamp legacy seen_at: %w", err)
-			}
 		}
 	}
 	if err := migratePeers(db); err != nil {
@@ -776,6 +768,49 @@ func addColumn(db *sql.DB, ddl string) (sql.Result, error) {
 		return nil, nil
 	}
 	return res, err
+}
+
+// migrateSeenAt adds bus_messages.seen_at and stamps the legacy human rows
+// seen in one IMMEDIATE transaction on one connection. Concurrent openers
+// serialize on the write lock, so none returns from OpenDB before the
+// backfill commits, and no row can be inserted between the ALTER and the
+// UPDATE: only rows that predate the column are stamped. The column is
+// re-checked inside the lock; a waiter finds it present and does nothing.
+func migrateSeenAt(db *sql.DB) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	commit := false
+	defer func() {
+		if !commit {
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+	var n int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT count(*) FROM pragma_table_info('bus_messages') WHERE name='seen_at'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := conn.ExecContext(ctx, `ALTER TABLE bus_messages ADD COLUMN seen_at TEXT`); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, `UPDATE bus_messages SET seen_at=? WHERE to_task_slug IS NULL AND to_assignee=?`,
+			NowISO(), BusUser); err != nil {
+			return fmt.Errorf("stamp legacy seen_at: %w", err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	commit = true
+	return nil
 }
 
 func columnExists(db *sql.DB, table, column string) (bool, error) {

@@ -2,6 +2,7 @@ package flowdb
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -108,6 +109,73 @@ func TestAddColumnToleratesDuplicate(t *testing.T) {
 	}
 	if _, err := addColumn(db, `ALTER TABLE no_such_table ADD COLUMN x TEXT`); err == nil {
 		t.Fatal("other errors must still surface")
+	}
+}
+
+// TestSeenAtMigrationStampsOnlyLegacyRows pins the seen_at migration under
+// concurrent opens of a pre-seen_at database: the legacy human row is
+// stamped seen, and a human ask inserted right after any OpenDB returns stays
+// unread. Without the IMMEDIATE transaction, a losing opener could return and
+// insert before the winner's backfill ran, and the backfill would hide that
+// new ask.
+func TestSeenAtMigrationStampsOnlyLegacyRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flow.db")
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := &BusMessage{ID: "legacy01", CreatedAt: NowISO(), Kind: "message",
+		FromAssignee: BusUser, FromTaskSlug: "t", ToAssignee: BusUser, Body: "old ask"}
+	if err := insertBusMessage(db, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE bus_messages DROP COLUMN seen_at`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	wg.Add(n)
+	for i := range n {
+		go func() {
+			defer wg.Done()
+			d, err := OpenDB(path)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer d.Close()
+			errs[i] = insertBusMessage(d, &BusMessage{ID: fmt.Sprintf("new%05d", i), CreatedAt: NowISO(),
+				Kind: "message", FromAssignee: BusUser, FromTaskSlug: "t", ToAssignee: BusUser, Body: "new ask"})
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+	}
+
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var legacySeen sql.NullString
+	if err := db.QueryRow(`SELECT seen_at FROM bus_messages WHERE id='legacy01'`).Scan(&legacySeen); err != nil {
+		t.Fatal(err)
+	}
+	if !legacySeen.Valid {
+		t.Error("legacy human row was not stamped seen")
+	}
+	var hidden int
+	if err := db.QueryRow(`SELECT count(*) FROM bus_messages WHERE id<>'legacy01' AND seen_at IS NOT NULL`).Scan(&hidden); err != nil {
+		t.Fatal(err)
+	}
+	if hidden != 0 {
+		t.Errorf("%d asks inserted after OpenDB returned were stamped seen by the backfill", hidden)
 	}
 }
 
