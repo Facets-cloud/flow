@@ -362,6 +362,7 @@ func cmdAutoExec(args []string) int {
 	}
 	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
 	applyTaskModel(task, &opts)
+	applyAutoModelEnv(h, &opts)
 	// A re-run on a session that already ran must resume it, from the
 	// directory it lives in. This process was launched in work_dir and the
 	// harness inherits its cwd, so move there first when they differ.
@@ -505,4 +506,32 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
 		slug, slug,
 	)
+}
+
+// applyAutoModelEnv gives an auto child with no model of its own (no
+// --model on this or an earlier launch) the default from
+// $FLOW_AUTO_MODEL_<HARNESS>, else $FLOW_AUTO_MODEL. It is a default, not a
+// demand: a value the harness can't take is skipped with a warning.
+func applyAutoModelEnv(h harness.Harness, opts *harness.LaunchOpts) {
+	if opts.Model != "" {
+		return
+	}
+	m := autoModelDefault(h)
+	if m == "" {
+		return
+	}
+	if err := harness.CheckModelOpts(h, m, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: ignoring $FLOW_AUTO_MODEL default: %v\n", err)
+		return
+	}
+	opts.Model = m
+}
+
+// autoModelDefault is $FLOW_AUTO_MODEL_<HARNESS> (e.g. FLOW_AUTO_MODEL_CODEX),
+// else $FLOW_AUTO_MODEL; "" when neither is set.
+func autoModelDefault(h harness.Harness) string {
+	if m := strings.TrimSpace(os.Getenv("FLOW_AUTO_MODEL_" + strings.ToUpper(string(h.Name())))); m != "" {
+		return m
+	}
+	return strings.TrimSpace(os.Getenv("FLOW_AUTO_MODEL"))
 }

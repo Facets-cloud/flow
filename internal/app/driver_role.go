@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 )
 
 // driverTag is the reserved tag that makes a task a DRIVER: it owns its
@@ -70,15 +71,24 @@ func driverRoleBlock() string {
 // one harness present: the block is then unchanged.
 func childHarnessesLine() string {
 	hs := presentHarnesses()
-	if len(hs) < 2 {
-		return ""
-	}
 	names := make([]string, len(hs))
+	anyModel := false
 	for i, h := range hs {
 		names[i] = string(h.Name())
+		if m := autoModelDefault(h); m != "" && harness.CheckModelOpts(h, m, "") == nil {
+			names[i] += " → " + m // the model its auto children default to
+			anyModel = true
+		}
+	}
+	if len(hs) < 2 && !anyModel {
+		return ""
+	}
+	tail := "; follow the user's preference)"
+	if anyModel {
+		tail = "; follow the user's preference; default models from $FLOW_AUTO_MODEL[_<HARNESS>], --model overrides)"
 	}
 	return " harnesses available for children: " + strings.Join(names, ", ") +
-		" (flow auto … --harness <name>; follow the user's preference)"
+		" (flow auto … --harness <name>" + tail
 }
 
 // roleBlockFor is what a bound session gets: every human-driven session

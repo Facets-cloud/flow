@@ -152,8 +152,13 @@ the work in the other harness (references/harness-transfer.md).
 `flow auto` takes `--model <m>` and `--effort <e>` and passes them to the
 child's harness as given (claude `--model`/`--effort`, codex `-m` and
 `model_reasoning_effort`, prx `-model`/`-thinking`). The task keeps them,
-so a resumed or woken child stays on the same model. Leave both off and
-the child gets the harness default.
+so a resumed or woken child stays on the same model. Leave `--model` off
+and the child gets `$FLOW_AUTO_MODEL_<HARNESS>` (e.g.
+`FLOW_AUTO_MODEL_CODEX`), else `$FLOW_AUTO_MODEL`, else the harness
+default. When one is set, flow's driver line shows it per harness
+(`claude → sonnet`). Follow the user's preference: they set these to keep
+children off an expensive model, so don't override with `--model`
+unless the job needs it.
 
 Routine or CLI-heavy children (run these commands, check this output,
 apply this known fix) can run on a cheaper model. A cheaper model can't

@@ -37,6 +37,9 @@ func withHarnessEnv(t *testing.T, onPath ...string) harnessEnv {
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CODEX_THREAD_ID", "")
+	for _, k := range []string{"FLOW_AUTO_MODEL", "FLOW_AUTO_MODEL_CLAUDE", "FLOW_AUTO_MODEL_CODEX", "FLOW_AUTO_MODEL_PRX"} {
+		t.Setenv(k, "") // the driver line shows these; keep tests hermetic
+	}
 	found := map[string]bool{}
 	for _, b := range onPath {
 		found[b] = true

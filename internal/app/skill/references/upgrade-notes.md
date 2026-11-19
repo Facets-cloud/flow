@@ -11,6 +11,10 @@
 
 ## Unreleased
 
+- **Default model for auto children.** With no `--model`, an auto child
+  runs on `$FLOW_AUTO_MODEL_<HARNESS>`, else `$FLOW_AUTO_MODEL`. Your
+  driver line shows it per harness (`claude → sonnet`); keep to it unless
+  the job needs more (references/delegation.md).
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
   `flow run playbook` take `--model <m>` and `--effort <e>`, passed to the
   harness as given. The task keeps them, so resumes reuse them; `flow show

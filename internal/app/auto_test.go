@@ -370,3 +370,40 @@ func TestAutoExecPassesLastMessagePath(t *testing.T) {
 		t.Errorf("LastMessagePath=%q", gotOpts.LastMessagePath)
 	}
 }
+
+// $FLOW_AUTO_MODEL_<HARNESS> beats $FLOW_AUTO_MODEL; a model already on the
+// launch (--model, stored on the task) beats both; a value the harness can't
+// take is skipped, not passed on.
+func TestApplyAutoModelEnv(t *testing.T) {
+	claude, _ := harnessByName("claude")
+	codex, _ := harnessByName("codex")
+	for _, k := range []string{"FLOW_AUTO_MODEL", "FLOW_AUTO_MODEL_CLAUDE", "FLOW_AUTO_MODEL_CODEX"} {
+		t.Setenv(k, "")
+	}
+	model := func(h harness.Harness, have string) string {
+		o := harness.LaunchOpts{Model: have}
+		applyAutoModelEnv(h, &o)
+		return o.Model
+	}
+	if got := model(claude, ""); got != "" {
+		t.Errorf("none set = %q, want empty", got)
+	}
+	t.Setenv("FLOW_AUTO_MODEL", "env-m")
+	if got := model(claude, ""); got != "env-m" {
+		t.Errorf("generic env = %q, want env-m", got)
+	}
+	t.Setenv("FLOW_AUTO_MODEL_CODEX", "codex-m")
+	if got := model(codex, ""); got != "codex-m" {
+		t.Errorf("per-harness env over generic = %q, want codex-m", got)
+	}
+	if got := model(claude, ""); got != "env-m" {
+		t.Errorf("another harness's variable applied: got %q, want env-m", got)
+	}
+	if got := model(codex, "flag-m"); got != "flag-m" {
+		t.Errorf("--model over env = %q, want flag-m", got)
+	}
+	t.Setenv("FLOW_AUTO_MODEL", "--bad value")
+	if got := model(claude, ""); got != "" {
+		t.Errorf("unsafe env value passed on: %q", got)
+	}
+}

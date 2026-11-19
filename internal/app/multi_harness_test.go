@@ -85,3 +85,23 @@ func TestSkillDelegationCoversHarnessChoice(t *testing.T) {
 		}
 	}
 }
+
+// The driver line shows each harness's default child model, so a driver
+// sees what its children will run on without reading the environment.
+func TestDriverLineShowsChildModels(t *testing.T) {
+	withHarnessEnv(t, "claude", "codex")
+	t.Setenv("FLOW_AUTO_MODEL_CLAUDE", "claude-sonnet-x")
+	line := childHarnessesLine()
+	if !strings.Contains(line, "claude → claude-sonnet-x, codex (") || !strings.Contains(line, "$FLOW_AUTO_MODEL") {
+		t.Errorf("want per-harness models in %q", line)
+	}
+}
+
+// One harness plus a default model still shows the line, for the model.
+func TestDriverLineShownForModelWithOneHarness(t *testing.T) {
+	withHarnessEnv(t, "claude")
+	t.Setenv("FLOW_AUTO_MODEL", "m1")
+	if line := childHarnessesLine(); !strings.Contains(line, "claude → m1") {
+		t.Errorf("want the model shown with one harness, got %q", line)
+	}
+}
