@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"flow/internal/flowdb"
 	"flow/internal/harness"
 	"flow/internal/spawner"
 )
@@ -135,9 +136,39 @@ func maybeStripLegacyHooks() {
 	}
 	_ = os.MkdirAll(d, 0o700)
 	_ = os.WriteFile(stamp, nil, 0o600)
-	if stripped, _ := stripLegacyClaudeHooks(false, true); stripped {
-		fmt.Fprintln(os.Stderr, "flow: removed flow's legacy hooks from ~/.claude/settings.json (the flow plugin carries them now)")
+	stripLegacyClaudeHooks(false, true)
+}
+
+// inHookPath is set by Run for `flow hook` / `flow inbox` (the hook and
+// rewake-waiter paths). The strip never runs there: no settings rewrite,
+// no ps scan, and nothing printed into a hook's output.
+var inHookPath bool
+
+// legacyStripNotice is the one line shown when the strip runs. Claude
+// sessions opened before stripAt still ran on the legacy entries only if
+// flow could not see them (a plain `claude` outside flow) or a forced
+// strip overrode a live one; they get flow hooks back on restart.
+func legacyStripNotice(stripAt time.Time) string {
+	return fmt.Sprintf("flow: hooks moved to the flow plugin; restart any Claude sessions opened before %s to get flow hooks back.",
+		stripAt.Local().Format("15:04"))
+}
+
+// announceLegacyStrip prints the strip notice to stderr and leaves it for
+// the human as an FYI on the bus (best-effort: errors are ignored).
+func announceLegacyStrip(stripAt time.Time) {
+	msg := legacyStripNotice(stripAt)
+	fmt.Fprintln(os.Stderr, msg)
+	db, err := openBusDB()
+	if err != nil {
+		return
 	}
+	defer db.Close()
+	s := currentBusSender()
+	_ = flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: s.Assignee, FromTaskSlug: s.TaskSlug, SenderSessionID: s.SessionID,
+		ToAssignee: busUser, Body: msg, FYI: true,
+	})
 }
 
 // stripLegacyClaudeHooks removes flow's legacy entries from
@@ -145,6 +176,9 @@ func maybeStripLegacyHooks() {
 // unconditionally with force. It returns whether entries were removed,
 // and why not otherwise.
 func stripLegacyClaudeHooks(force, quiet bool) (bool, string) {
+	if inHookPath {
+		return false, "not inside a hook"
+	}
 	h, err := harnessByName(string(harness.NameClaude))
 	if err != nil {
 		return false, err.Error()
@@ -179,7 +213,10 @@ func stripLegacyClaudeHooks(force, quiet bool) (bool, string) {
 			}
 		}
 	}
-	n := migrateLegacyHooks(h, quiet)
+	n := migrateLegacyHooks(h, true)
 	recordLegacyStripDone()
+	if n > 0 {
+		announceLegacyStrip(time.Now())
+	}
 	return n > 0, ""
 }

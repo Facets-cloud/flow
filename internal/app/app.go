@@ -19,6 +19,8 @@ func Run(args []string) int {
 		return 0
 	}
 	cmd, rest := args[0], args[1:]
+	inHookPath = cmd == "hook" || cmd == "inbox"
+	defer func() { inHookPath = false }()
 
 	// Auto-upgrade the skill + SessionStart hook if the binary version
 	// has changed since the last install. Skipped for `init`, `skill`,
@@ -29,7 +31,7 @@ func Run(args []string) int {
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
-		if cmd != "hook" && cmd != "inbox" {
+		if !inHookPath {
 			// Never in a hook's path (inbox: the rewake waiter).
 			maybeStripLegacyHooks()
 		}

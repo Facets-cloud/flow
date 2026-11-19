@@ -195,9 +195,8 @@ func installHooksOpts(h harness.Harness, quiet, stripLegacy bool) {
 		}
 		// Strip the legacy settings.json copies once that is safe (or
 		// right away with --strip-legacy); see legacystrip.go.
-		if stripped, why := stripLegacyClaudeHooks(stripLegacy, quiet); stripped && !quiet {
-			fmt.Printf("%s: removed flow's legacy hooks from ~/.claude/settings.json\n", name)
-		} else if !stripped && !quiet && legacyClaudeEntriesPresent() {
+		// A strip announces itself (stderr + a human FYI).
+		if stripped, why := stripLegacyClaudeHooks(stripLegacy, quiet); !stripped && !quiet && legacyClaudeEntriesPresent() {
 			fmt.Printf("%s: kept flow's legacy hooks in ~/.claude/settings.json for now: %s\n", name, why)
 		}
 		return

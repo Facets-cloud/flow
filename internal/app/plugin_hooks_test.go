@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"flow/internal/flowdb"
 )
 
 // Claude hooks ship as a skills-dir plugin inside ~/.claude/skills/flow/.
@@ -738,4 +740,134 @@ func TestLegacyEntriesReappearClearDone(t *testing.T) {
 	if legacyStripDone() {
 		t.Error("reappeared legacy entries must clear the done record")
 	}
+}
+
+// ---------- strip announcement ----------
+
+// stripAnnounceEnv: an initialized flow root + DB, the plugin installed,
+// legacy entries present, no live Claude session, checks unthrottled.
+func stripAnnounceEnv(t *testing.T) string {
+	t.Helper()
+	initTempFlowRoot(t)
+	t.Setenv(selfUpgradeEnv, "")
+	t.Setenv("CLAUDE_PID", "")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "")
+	stubLiveClaude(t)
+	old := legacyStripEvery
+	legacyStripEvery = 0
+	t.Cleanup(func() { legacyStripEvery = old })
+	captureStdout(t, func() {
+		if rc := cmdInit([]string{"--harness", "claude"}); rc != 0 {
+			t.Fatalf("init rc=%d", rc)
+		}
+	})
+	home := os.Getenv("HOME")
+	sp := filepath.Join(home, ".claude", "settings.json")
+	_ = os.MkdirAll(filepath.Dir(sp), 0o755)
+	_ = os.WriteFile(sp, []byte(legacySettingsFixture), 0o644)
+	_ = os.Remove(legacyStripDonePath()) // as if upgraded over a legacy install
+	return home
+}
+
+// stripFYIs returns the unread human FYIs carrying the strip notice.
+func stripFYIs(t *testing.T) []string {
+	t.Helper()
+	db, err := openBusDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ms, err := flowdb.UnreadForHuman(db, busUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, m := range ms {
+		if strings.Contains(m.Body, "hooks moved to the flow plugin") {
+			if !m.FYI {
+				t.Errorf("strip notice must be an FYI: %+v", m)
+			}
+			out = append(out, m.Body)
+		}
+	}
+	return out
+}
+
+func TestLegacyStripAnnouncesOnce(t *testing.T) {
+	home := stripAnnounceEnv(t)
+	before := time.Now()
+	stderr := stderrOf(t, maybeStripLegacyHooks)
+	if strings.Contains(legacySettings(t, home), `"flow hook`) {
+		t.Fatal("expected the strip to run")
+	}
+	want := legacyStripNotice(before)
+	if strings.Count(stderr, "hooks moved to the flow plugin") != 1 ||
+		!strings.Contains(stderr, "restart any Claude sessions opened before ") {
+		t.Errorf("want exactly one notice line on stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, want) && !strings.Contains(stderr, legacyStripNotice(time.Now())) {
+		t.Errorf("notice should carry the strip time (HH:MM); got %q want %q", stderr, want)
+	}
+	if fyis := stripFYIs(t); len(fyis) != 1 || !strings.Contains(stderr, fyis[0]) {
+		t.Errorf("want one human FYI with the same text, got %v", fyis)
+	}
+	// Re-runs (automatic and explicit) never repeat it.
+	stderr = stderrOf(t, func() {
+		maybeStripLegacyHooks()
+		captureStdoutOnly(t, func() { cmdSkill([]string{"update", "--harness", "claude"}) })
+		captureStdoutOnly(t, func() { cmdSkill([]string{"update", "--harness", "claude", "--strip-legacy"}) })
+	})
+	if strings.Contains(stderr, "hooks moved") {
+		t.Errorf("re-run repeated the notice: %q", stderr)
+	}
+	if n := len(stripFYIs(t)); n != 1 {
+		t.Errorf("re-run added FYIs: %d, want 1", n)
+	}
+}
+
+func TestLegacyStripForcedAnnounces(t *testing.T) {
+	stripAnnounceEnv(t)
+	stubLiveClaude(t, "still-on-legacy")
+	stderr := stderrOf(t, func() {
+		captureStdoutOnly(t, func() { cmdSkill([]string{"update", "--harness", "claude", "--strip-legacy"}) })
+	})
+	if strings.Count(stderr, "hooks moved to the flow plugin") != 1 || len(stripFYIs(t)) != 1 {
+		t.Errorf("--strip-legacy must announce once; stderr=%q fyis=%v", stderr, stripFYIs(t))
+	}
+}
+
+// Nothing stripped → no line, no FYI: a clean install, a live legacy
+// session, and the hook path.
+func TestLegacyStripSilentWhenNothingStripped(t *testing.T) {
+	t.Run("clean install", func(t *testing.T) {
+		home := stripAnnounceEnv(t)
+		_ = os.Remove(filepath.Join(home, ".claude", "settings.json"))
+		stderr := stderrOf(t, func() {
+			maybeStripLegacyHooks()
+			captureStdoutOnly(t, func() { cmdSkill([]string{"update", "--harness", "claude"}) })
+		})
+		if strings.Contains(stderr, "hooks moved") || len(stripFYIs(t)) != 0 {
+			t.Errorf("nothing to strip must be silent; stderr=%q", stderr)
+		}
+	})
+	t.Run("live legacy session", func(t *testing.T) {
+		stripAnnounceEnv(t)
+		stubLiveClaude(t, "still-on-legacy")
+		stderr := stderrOf(t, maybeStripLegacyHooks)
+		if strings.Contains(stderr, "hooks moved") || len(stripFYIs(t)) != 0 {
+			t.Errorf("a kept strip must be silent; stderr=%q", stderr)
+		}
+	})
+	t.Run("hook path", func(t *testing.T) {
+		home := stripAnnounceEnv(t)
+		inHookPath = true
+		t.Cleanup(func() { inHookPath = false })
+		stderr := stderrOf(t, func() {
+			captureStdoutOnly(t, func() { cmdSkill([]string{"update", "--harness", "claude", "--strip-legacy"}) })
+		})
+		if strings.Contains(stderr, "hooks moved") || len(stripFYIs(t)) != 0 ||
+			!strings.Contains(legacySettings(t, home), `"flow hook stop"`) {
+			t.Errorf("no strip and no notice inside a hook; stderr=%q", stderr)
+		}
+	})
 }

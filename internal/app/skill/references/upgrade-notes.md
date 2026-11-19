@@ -27,7 +27,10 @@
   (`/reload-plugins` or a restart switches it over); nothing fires twice
   meanwhile. Once no running session still needs them, flow removes its
   old entries from `settings.json` by itself (`flow skill update
-  --strip-legacy` does it now). The skill is still named `flow`. If the
+  --strip-legacy` does it now) and says so: a stderr line plus an FYI
+  in the user's inbox. A plain `claude` session started outside flow
+  before the upgrade is invisible to that check, so it may lose flow
+  hooks after the strip until it is restarted. The skill is still named `flow`. If the
   user disabled the plugin, flow's hooks stay off — leave that choice to
   them.
 
