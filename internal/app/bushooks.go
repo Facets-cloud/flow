@@ -414,12 +414,13 @@ func nudgeBackoffFor(attempts int) time.Duration {
 //     blocks, so a nudge there would loop.
 func cmdHookStop(args []string) int {
 	fs := flagSet("hook stop")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	// A missing or malformed payload: when in doubt, don't block.
 	p, ok := readHookPayload()
-	if !ok {
+	if !ok || hookSuperseded(*src, false) {
 		return 0
 	}
 	db, err := openBusDB()

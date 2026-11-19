@@ -112,6 +112,8 @@ flow/
 
 ## Things to watch out for
 
-- `hookCommand` (SessionStart) and `userPromptSubmitHookCommand` (UserPromptSubmit) in `internal/app/skill.go` are the exact strings matched in `~/.claude/settings.json`. Changing either orphans existing installations.
+- **Claude hooks ship as a skills-dir plugin, never in `~/.claude/settings.json`.** `flow skill install|update`, `flow init` and the implicit refresh write `~/.claude/skills/flow/.claude-plugin/plugin.json` (NO `skills` key — it would rename the skill `flow:flow`) and `hooks/hooks.json`, generated from `flowHooks()` + the rewake waiter by `pluginHooks()` in `internal/app/skill.go`, each command suffixed `--src plugin`. Codex and prx still get config-file merges. `TestSkillInstallDoesNotTouchSettingsJSON` and the e2e step pin "no settings.json write".
+- The bare hook strings (`hookCommand`, `userPromptSubmitHookCommand`, `stopHookCommand`, `preToolUseHookCommand`, `postToolUseHookCommand`, `rewakeHookCommand`) are the exact-match keys for Codex/prx hook files and for stripping the legacy `~/.claude/settings.json` entries older flow versions wrote. Changing one orphans existing installations.
+- **Legacy-hook guard (two-release migration):** pre-plugin installs keep their settings.json entries this release (`stripLegacyClaudeHooks = false`; `migrateLegacyHooks` is built, tested, and used by uninstall). A plugin-invoked handler records `$FLOW_ROOT/hooks/plugin/<session_id>`; a legacy-invoked handler in a Claude session no-ops when that marker exists (`internal/app/hookguard.go`). Every new `flow hook *` handler must parse `--src` (`hookSrcFlag`) and call `hookSuperseded` right after reading its payload.
 - `do.go` uses `openConcurrentDB` with `busy_timeout(30000)` and `_txlock=immediate` for safe concurrent access.
 - Tests override `$HOME` — any code that calls `os.UserHomeDir()` will see the test's temp dir, not the real home.

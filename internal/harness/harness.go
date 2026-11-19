@@ -572,3 +572,38 @@ type SessionLocator interface {
 	// start directory can't be established from the transcript.
 	LocateSession(sessionID string) (cwd string, found bool)
 }
+
+// PluginHook is one hook delivered through a harness plugin's own hook
+// file instead of the user's settings. Rewake marks Claude's asyncRewake
+// form (background, wakes an idle session when it exits 2).
+type PluginHook struct {
+	Event         string
+	Command       string
+	Rewake        bool
+	RewakeMessage string
+}
+
+// PluginHookInstaller is an OPTIONAL capability for harnesses that can
+// load flow's hooks from a flow-owned plugin directory (Claude Code: a
+// skills-dir plugin at ~/.claude/skills/flow/ with .claude-plugin/
+// plugin.json + hooks/hooks.json). A harness that implements it gets its
+// hooks this way and flow never writes hooks into the harness's user
+// settings; the Install*Hook methods remain only to clean up (strip)
+// entries written by older flow versions.
+type PluginHookInstaller interface {
+	// InstallPluginHooks writes (or refreshes) the plugin manifest at
+	// version and the hook file holding exactly hooks. changed reports
+	// whether any file content changed.
+	InstallPluginHooks(version string, hooks []PluginHook) (changed bool, err error)
+	// UninstallPluginHooks removes the manifest and hook file.
+	UninstallPluginHooks() (removed bool, err error)
+	// PluginInstalled reports whether the plugin manifest + hook file
+	// are on disk.
+	PluginInstalled() bool
+	// PluginDisabled reports whether the user turned the plugin off in
+	// the harness's own settings. flow reads it, never writes it.
+	PluginDisabled() bool
+	// RemoveSkillKeepPlugin deletes the skill content but leaves the
+	// plugin manifest + hook file (`flow skill uninstall --keep-hook`).
+	RemoveSkillKeepPlugin() error
+}

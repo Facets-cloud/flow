@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"flow/internal/harness"
+	"flow/internal/harness/claude"
 
 	"golang.org/x/mod/semver"
 )
@@ -137,12 +138,65 @@ func flowHooks() []flowHook {
 	}
 }
 
-// installHooks registers every live flow hook for h and removes the
-// retired PostToolUse hook. Hook failures are warnings, not errors: the
-// skill is usable without hooks and the user can wire them manually.
-// quiet suppresses per-hook stdout (auto-upgrade).
+// pluginSrcSuffix is appended to every hook command in the Claude flow
+// plugin's hooks.json, so a handler can tell a plugin invocation from a
+// legacy settings.json one (see hookguard.go). The legacy strings above
+// stay the exact match keys for stripping old settings entries.
+const pluginSrcSuffix = " --src " + hookSrcPlugin
+
+// stripLegacyClaudeHooks gates migrateLegacyHooks on install/refresh.
+// OFF in this release (two-release guard): installs made by older flow
+// versions keep their ~/.claude/settings.json entries so sessions that
+// started before the plugin existed keep their hooks until they restart;
+// the per-session marker guard stops double-firing in new sessions. A
+// later release flips it on to strip the legacy entries.
+var stripLegacyClaudeHooks = false
+
+// pluginHooks is the hook set the Claude plugin's hooks.json carries:
+// every flowHooks entry plus the asyncRewake waiter on SessionStart and
+// Stop, each with pluginSrcSuffix. Generated from flowHooks so the plugin
+// and the legacy settings install can't drift apart.
+func pluginHooks() []harness.PluginHook {
+	var out []harness.PluginHook
+	for _, fh := range flowHooks() {
+		out = append(out, harness.PluginHook{Event: fh.event, Command: fh.command + pluginSrcSuffix})
+	}
+	for _, ev := range []string{"SessionStart", "Stop"} {
+		out = append(out, harness.PluginHook{Event: ev, Command: rewakeHookCommand + pluginSrcSuffix,
+			Rewake: true, RewakeMessage: rewakeMessage})
+	}
+	return out
+}
+
+// installHooks registers every live flow hook for h. Hook failures are
+// warnings, not errors: the skill is usable without hooks and the user
+// can wire them manually. quiet suppresses per-hook stdout (auto-upgrade).
+//
+// A plugin-capable harness (Claude) gets the hooks as plugin files inside
+// its skill dir and its user settings are never written. Other harnesses
+// (Codex, prx) get the settings-file merge, plus removal of the retired
+// PostToolUse hook.
 func installHooks(h harness.Harness, quiet bool) {
 	name := h.Name()
+	if ph, ok := h.(harness.PluginHookInstaller); ok {
+		changed, err := ph.InstallPluginHooks(Version, pluginHooks())
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "warning: %s: could not install the flow plugin hooks: %v\n", name, err)
+		case quiet:
+		case changed:
+			fmt.Printf("%s: installed flow plugin hooks (SessionStart, UserPromptSubmit, Stop, PreToolUse, wake) — no settings.json changes\n", name)
+		default:
+			fmt.Printf("%s: flow plugin hooks already installed — leaving as is\n", name)
+		}
+		if err == nil && !quiet && ph.PluginDisabled() {
+			fmt.Printf("%s: note: the flow plugin is disabled in your settings (enabledPlugins %q is false), so its hooks will not run; flow leaves that choice alone\n", name, claude.PluginID)
+		}
+		if stripLegacyClaudeHooks {
+			migrateLegacyHooks(h, quiet)
+		}
+		return
+	}
 	if removed, err := h.UninstallPostToolUseHook(postToolUseHookCommand); err == nil && removed && !quiet {
 		fmt.Printf("%s: removed retired PostToolUse hook (bus delivery now rides `flow inbox pop --wait`)\n", name)
 	}
@@ -158,8 +212,9 @@ func installHooks(h harness.Harness, quiet bool) {
 			fmt.Printf("%s: %s hook already installed — leaving as is\n", name, fh.event)
 		}
 	}
-	// Harness wake fallback (Claude's asyncRewake waiter). Installed even
-	// when wake is off for this shell: the waiter checks the switch itself.
+	// Harness wake fallback (asyncRewake waiter) for a non-plugin harness
+	// that supports it. Installed even when wake is off for this shell:
+	// the waiter checks the switch itself.
 	if rw, ok := h.(harness.RewakeHookInstaller); ok {
 		added, err := rw.InstallRewakeHook(rewakeHookCommand, rewakeMessage)
 		switch {
@@ -169,6 +224,39 @@ func installHooks(h harness.Harness, quiet bool) {
 			fmt.Printf("%s: installed wake fallback hook (asyncRewake on SessionStart + Stop)\n", name)
 		}
 	}
+}
+
+// migrateLegacyHooks strips every hook entry flow ever wrote into h's
+// settings by exact command match — the live set, the retired PostToolUse
+// hook and the rewake waiter — leaving unrelated hooks alone. Used by
+// uninstall, and by installHooks once stripLegacyClaudeHooks is on.
+// Returns how many hook kinds were removed.
+func migrateLegacyHooks(h harness.Harness, quiet bool) int {
+	name := h.Name()
+	n := 0
+	hooks := append(flowHooks(), flowHook{"PostToolUse", postToolUseHookCommand, "", nil,
+		harness.Harness.UninstallPostToolUseHook})
+	for _, fh := range hooks {
+		if removed, err := fh.remove(h, fh.command); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: could not remove %s hook: %v\n", name, fh.event, err)
+		} else if removed {
+			n++
+			if !quiet {
+				fmt.Printf("%s: removed %s hook\n", name, fh.event)
+			}
+		}
+	}
+	if rw, ok := h.(harness.RewakeHookInstaller); ok {
+		if removed, err := rw.UninstallRewakeHook(rewakeHookCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: could not remove the wake fallback hook: %v\n", name, err)
+		} else if removed {
+			n++
+			if !quiet {
+				fmt.Printf("%s: removed wake fallback hook\n", name)
+			}
+		}
+	}
+	return n
 }
 
 // skillVersionKey reduces a version to the release it was built from
@@ -392,34 +480,33 @@ func uninstallSkillFor(h harness.Harness, keepHook bool) bool {
 		return false
 	}
 	skillDir := filepath.Dir(dest)
+	ph, plugin := h.(harness.PluginHookInstaller)
+	hadPlugin := plugin && ph.PluginInstalled()
 	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
 		fmt.Printf("%s: flow skill not installed at %s — nothing to do\n", name, skillDir)
+	} else if keepHook && plugin {
+		// The plugin's hooks live in the skill dir: keep exactly those.
+		if err := ph.RemoveSkillKeepPlugin(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s: %v\n", name, err)
+			return false
+		}
+		fmt.Printf("%s: uninstalled flow skill from %s (kept the plugin hooks)\n", name, skillDir)
 	} else {
+		// For a plugin harness this removes the plugin manifest + hooks too.
 		if err := h.UninstallSkill(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s: %v\n", name, err)
 			return false
 		}
 		fmt.Printf("%s: uninstalled flow skill from %s\n", name, skillDir)
+		if hadPlugin {
+			fmt.Printf("%s: removed flow plugin hooks\n", name)
+		}
 	}
 	if keepHook {
 		fmt.Printf("%s: --keep-hook: leaving hooks in place\n", name)
 		return true
 	}
-	hooks := append(flowHooks(), flowHook{"PostToolUse", postToolUseHookCommand, "", nil,
-		harness.Harness.UninstallPostToolUseHook})
-	for _, fh := range hooks {
-		if removed, err := fh.remove(h, fh.command); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %s: could not remove %s hook: %v\n", name, fh.event, err)
-		} else if removed {
-			fmt.Printf("%s: removed %s hook\n", name, fh.event)
-		}
-	}
-	if rw, ok := h.(harness.RewakeHookInstaller); ok {
-		if removed, err := rw.UninstallRewakeHook(rewakeHookCommand); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %s: could not remove the wake fallback hook: %v\n", name, err)
-		} else if removed {
-			fmt.Printf("%s: removed wake fallback hook\n", name)
-		}
-	}
+	// Legacy settings entries (pre-plugin installs) are stripped too.
+	migrateLegacyHooks(h, false)
 	return true
 }

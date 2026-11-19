@@ -144,7 +144,7 @@ Sessions:
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>
-  flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  flow hook session-start                      (SessionStart hook handler — Claude: the flow plugin's hooks.json)
 
 Read:
   flow show task       [<ref>]

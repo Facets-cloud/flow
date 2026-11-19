@@ -11,8 +11,8 @@ import (
 
 // installSkillAs installs the skill + hooks into a temp HOME as if a
 // binary of version `installed` had done it, then stomps SKILL.md and
-// settings.json with sentinels so a later refresh is detectable.
-// Returns (skillPath, settingsPath).
+// the Claude plugin's hooks/hooks.json with sentinels so a later refresh
+// is detectable. Returns (skillPath, hooksPath).
 func installSkillAs(t *testing.T, installed string) (string, string) {
 	t.Helper()
 	home := withTempHome(t)
@@ -21,7 +21,7 @@ func installSkillAs(t *testing.T, installed string) (string, string) {
 		t.Fatalf("install rc=%d", rc)
 	}
 	skillPath := filepath.Join(home, ".claude", "skills", "flow", "SKILL.md")
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settingsPath := filepath.Join(home, ".claude", "skills", "flow", "hooks", "hooks.json")
 	if err := os.WriteFile(skillPath, []byte("sentinel-skill"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func assertUntouched(t *testing.T, skillPath, settingsPath, wantVersion string) 
 		t.Errorf("SKILL.md was rewritten; want it untouched")
 	}
 	if got, _ := os.ReadFile(settingsPath); string(got) != `{"sentinel":true}` {
-		t.Errorf("settings.json hooks were rewritten; got %s", got)
+		t.Errorf("plugin hooks.json was rewritten; got %s", got)
 	}
 	if v := readSkillVersion(claude.New()); v != wantVersion {
 		t.Errorf("VERSION sidecar=%q, want %q (untouched)", v, wantVersion)
@@ -50,7 +50,10 @@ func assertRefreshed(t *testing.T, skillPath, settingsPath, wantVersion string) 
 		t.Errorf("SKILL.md was not refreshed")
 	}
 	if got, _ := os.ReadFile(settingsPath); !strings.Contains(string(got), "SessionStart") {
-		t.Errorf("hooks were not re-installed; settings.json=%s", got)
+		t.Errorf("hooks were not re-installed; hooks.json=%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Errorf("a refresh must not write ~/.claude/settings.json; stat err=%v", err)
 	}
 	if v := readSkillVersion(claude.New()); v != wantVersion {
 		t.Errorf("VERSION sidecar=%q, want %q", v, wantVersion)
@@ -120,7 +123,7 @@ func TestInitDoesNotDowngradeHooks(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
-	settingsPath := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
+	settingsPath := filepath.Join(os.Getenv("HOME"), ".claude", "skills", "flow", "hooks", "hooks.json")
 	if err := os.WriteFile(settingsPath, []byte(`{"sentinel":true}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +134,7 @@ func TestInitDoesNotDowngradeHooks(t *testing.T) {
 		}
 	})
 	if got, _ := os.ReadFile(settingsPath); string(got) != `{"sentinel":true}` {
-		t.Errorf("init by an older binary rewrote hooks; settings.json=%s", got)
+		t.Errorf("init by an older binary rewrote hooks; hooks.json=%s", got)
 	}
 	if !strings.Contains(stderr, "newer") {
 		t.Errorf("want a warning about the newer install; stderr=%q", stderr)

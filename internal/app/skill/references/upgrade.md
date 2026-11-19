@@ -54,7 +54,8 @@ cannot run or its last attempt failed. The log is
    also lets flow upgrade itself from then on).
 4. Run `flow skill update` to refresh the embedded skill on disk and
    re-wire the supported hooks for every present harness
-   (`~/.claude/settings.json` and/or `$CODEX_HOME/hooks.json`, default
+   (Claude: the flow plugin files inside `~/.claude/skills/flow/`, never
+   `~/.claude/settings.json`; Codex: `$CODEX_HOME/hooks.json`, default
    `~/.codex`; `--harness claude|codex` limits it to one). (The auto-upgrade path runs the same
    refresh on the next `flow` invocation, but explicit is better and
    surfaces any errors immediately.) The implicit refresh only moves

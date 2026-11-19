@@ -63,8 +63,9 @@ const (
 	wakePushTimeout = 3 * time.Second
 	// wakeCrossCheckTimeout bounds the Claude `claude agents` cross-check.
 	wakeCrossCheckTimeout = 3 * time.Second
-	// rewakeHookCommand is the asyncRewake hook command recorded in
-	// ~/.claude/settings.json. Stable — changing it orphans installs.
+	// rewakeHookCommand is the asyncRewake hook command: the legacy
+	// ~/.claude/settings.json entry (stripped by exact match) and, with
+	// pluginSrcSuffix, the flow plugin's hooks.json entry. Stable.
 	rewakeHookCommand = "flow inbox wait --rewake"
 	rewakeMessage     = "flow bus:"
 )
@@ -242,7 +243,7 @@ func recordClaudeEndpoint(sessionID string) {
 	if sessionID == "" || os.Getenv(autoRunEnvVar) != "" {
 		return
 	}
-	if os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET") == "" && os.Getenv("CLAUDE_PID") == "" {
+	if !claudeHookProcess() {
 		return // not a Claude Code hook process
 	}
 	dir := wakeStateDir()
@@ -302,11 +303,12 @@ func cmdInboxWait(args []string) int {
 	fs := flagSet("inbox wait")
 	rewake := fs.Bool("rewake", false, "asyncRewake hook mode (exit 2 + notice on stderr)")
 	timeout := fs.Int("timeout", 3600, "seconds to wait before giving up")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *rewake {
-		return rewakeWait(time.Duration(*timeout) * time.Second)
+		return rewakeWait(time.Duration(*timeout)*time.Second, *src)
 	}
 	db, err := openBusDB()
 	if err != nil {
@@ -360,8 +362,11 @@ func headlessClaude() bool {
 	return strings.HasPrefix(os.Getenv("CLAUDE_CODE_ENTRYPOINT"), "sdk-")
 }
 
-func rewakeWait(timeout time.Duration) int {
-	readHookPayload()
+func rewakeWait(timeout time.Duration, src string) int {
+	p, _ := readHookPayload()
+	if hookSuperseded(src, p.HookEventName == "SessionStart" && p.Source != "compact") {
+		return 0
+	}
 	if !wakeActive() || os.Getenv(autoRunEnvVar) != "" || headlessClaude() {
 		return 0
 	}

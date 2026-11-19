@@ -1,7 +1,10 @@
 // Package claude implements harness.Harness for Anthropic's Claude
 // Code CLI. It pre-allocates session UUIDs (claude accepts
 // --session-id), runs `claude -p` for headless sweeps, and wires
-// SessionStart hooks into ~/.claude/settings.json.
+// its hooks through a skills-dir plugin (plugin.go): ~/.claude/skills/flow/
+// carries .claude-plugin/plugin.json + hooks/hooks.json, so flow never
+// writes hooks into ~/.claude/settings.json. The settings.json hook code
+// below is kept only to strip entries older flow versions wrote.
 package claude
 
 import (
@@ -47,6 +50,10 @@ const (
 	// on the command, not the matcher, and migrates an older matcher
 	// (e.g. "startup|resume") in place, so changing it is safe.
 	hookMatcher = "startup|resume|compact|fork"
+
+	// toolMatcher is the Pre/PostToolUse matcher: the tools after which a
+	// just-arrived message should surface.
+	toolMatcher = "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch"
 )
 
 // New returns a fresh claude harness. The struct is stateless; we
@@ -417,7 +424,7 @@ func (c *claude) UninstallUserPromptSubmitHook(command string) (bool, error) {
 func (c *claude) InstallPostToolUseHook(command string) (bool, error) {
 	// Aggressive by design: fires on every tool call. The handler's
 	// fast path (no bound task / empty inbox) exits without output.
-	return installHook("PostToolUse", "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch", command)
+	return installHook("PostToolUse", toolMatcher, command)
 }
 
 func (c *claude) UninstallPostToolUseHook(command string) (bool, error) {
@@ -428,7 +435,7 @@ func (c *claude) InstallPreToolUseHook(command string) (bool, error) {
 	// Fires before every tool call. The handler delta-gates the inbox and
 	// exits without output on the fast path (no bound task / nothing new),
 	// so a given message is surfaced at most once despite the frequency.
-	return installHook("PreToolUse", "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch", command)
+	return installHook("PreToolUse", toolMatcher, command)
 }
 
 func (c *claude) UninstallPreToolUseHook(command string) (bool, error) {

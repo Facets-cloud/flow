@@ -20,6 +20,14 @@
   sweep runs on its stored model too. Owners take the same flags on `flow
   add owner` and `flow owner start`; every tick runs on them, and the tasks
   an owner dispatches keep their own (references/owners.md).
+- **Claude Code: flow's hooks now come from the flow plugin** inside the
+  skill folder (`~/.claude/skills/flow/`, `flow@skills-dir`), not from
+  `~/.claude/settings.json`; flow no longer writes that file. A session
+  started before the upgrade keeps its old hooks until it restarts; run
+  `/reload-plugins` or restart to switch it over (nothing fires twice
+  either way). The skill is still named `flow`. If the user disabled the
+  plugin, flow's hooks stay off — leave that choice to them.
+
 - Restart running Codex sessions after upgrading, then review the pending hooks (`/hooks`) and trust flow's hooks.
 - **Every interactive task is a driver.** Rules: references/driver.md
   (flow's session line and a brief's `Role: driver` line point there).

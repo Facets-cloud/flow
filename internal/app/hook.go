@@ -43,7 +43,7 @@ func cmdHook(args []string) int {
 	case "post-tool-use":
 		// Retired: per-tool-call delivery was removed in favor of the
 		// `flow inbox pop --wait` listener discipline. Kept as a silent
-		// no-op so stale settings.json entries never error.
+		// no-op so stale settings.json / hooks.json entries never error.
 		return 0
 	case "stop":
 		return cmdHookStop(rest)
@@ -72,6 +72,7 @@ type hookPayload struct {
 	Source         string `json:"source"`
 	StopHookActive bool   `json:"stop_hook_active"`
 	Prompt         string `json:"prompt"`
+	HookEventName  string `json:"hook_event_name"`
 }
 
 // readHookPayload decodes the hook's stdin payload and records its
@@ -93,7 +94,8 @@ func readHookPayload() (p hookPayload, ok bool) {
 }
 
 // cmdHookSessionStart emits a Claude Code SessionStart hook response.
-// Wired via ~/.claude/settings.json with a matcher of
+// Wired via the Claude flow plugin's hooks/hooks.json (legacy installs:
+// ~/.claude/settings.json; see hookguard.go) with a matcher of
 // "startup|resume|compact|fork" so it fires for fresh spawns, `claude
 // --resume`, `claude --bg --resume` (a `--fork-session` under a new id —
 // the wake endpoint must be recorded under that id), AND after
@@ -113,10 +115,14 @@ func readHookPayload() (p hookPayload, ok bool) {
 //     ambient skill hint so Claude knows the flow skill is available.
 func cmdHookSessionStart(args []string) int {
 	fs := flagSet("hook session-start")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	payload, _ := readHookPayload()
+	if hookSuperseded(*src, payload.Source != "compact") {
+		return 0
+	}
 	// Claude socket push: only this hook process sees the session's
 	// socket token, so record it on every start/resume/compaction.
 	recordClaudeEndpoint(currentSessionID())
@@ -342,10 +348,14 @@ func emitHookContext(event, ctx string) int {
 // the prompt has drifted or signals completion is Claude's call.
 func cmdHookUserPromptSubmit(args []string) int {
 	fs := flagSet("hook user-prompt-submit")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	readHookPayload()
+	if hookSuperseded(*src, false) {
+		return 0
+	}
 	t := lookupBoundTask()
 	if t != nil && !isAutoRunSession(t) {
 		markSessionState(t.Slug, flowdb.SessionBusy)
@@ -388,10 +398,14 @@ func cmdHookUserPromptSubmit(args []string) int {
 // here once. Inform-only — it never consumes.
 func cmdHookPreToolUse(args []string) int {
 	fs := flagSet("hook pre-tool-use")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	readHookPayload()
+	if hookSuperseded(*src, false) {
+		return 0
+	}
 	ctx := busPreToolUseContext() + upgradeNoticeContext(nil)
 	if ctx == "" {
 		return 0

@@ -576,28 +576,27 @@ func TestSkillInstallArmsRewakeHook(t *testing.T) {
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
+	hooks := readPluginHooks(t, home)
 	for _, ev := range []string{"SessionStart", "Stop"} {
-		hooks, _ := readSettings(t, filepath.Join(home, ".claude", "settings.json"))["hooks"].(map[string]any)
 		found := false
 		entries, _ := hooks[ev].([]any)
 		for _, e := range entries {
 			for _, h := range e.(map[string]any)["hooks"].([]any) {
 				hm := h.(map[string]any)
-				if hm["command"] == rewakeHookCommand && hm["asyncRewake"] == true {
+				if hm["command"] == rewakeHookCommand+pluginSrcSuffix && hm["asyncRewake"] == true {
 					found = true
 				}
 			}
 		}
 		if !found {
-			t.Errorf("%s: no asyncRewake %q hook: %v", ev, rewakeHookCommand, entries)
+			t.Errorf("%s: no asyncRewake %q hook in the plugin: %v", ev, rewakeHookCommand, entries)
 		}
 	}
 	if rc := cmdSkill([]string{"uninstall"}); rc != 0 {
 		t.Fatalf("uninstall rc=%d", rc)
 	}
-	raw, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
-	if strings.Contains(string(raw), rewakeHookCommand) {
-		t.Errorf("uninstall left the rewake hook: %s", raw)
+	if _, hp := claudePluginPaths(home); fileExists(hp) {
+		t.Error("uninstall left the plugin hooks.json")
 	}
 }
 
