@@ -1440,6 +1440,15 @@ func cmdDoHere(query string, force bool) int {
 		}
 	}
 
+	// A never-bound task has no transcript keyed on its work_dir yet:
+	// adopt this session's start dir instead of refusing the bind.
+	adopted := ""
+	if !task.SessionID.Valid || task.SessionID.String == "" {
+		if start := sessionStartDir(h, sid); start != "" && start != task.WorkDir {
+			task.WorkDir, adopted = start, start
+		}
+	}
+
 	// Invariant validation. Any task with session_id has work_dir
 	// == the cwd that session was created at — because the
 	// harness's on-disk transcript path is keyed by (cwd, sid),
@@ -1476,9 +1485,10 @@ func cmdDoHere(query string, force bool) int {
 			status          = 'in-progress',
 			status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			harness         = ?,
+			work_dir        = ?,
 			updated_at      = ?
 		WHERE slug = ?`,
-		sid, now, now, string(h.Name()), now, task.Slug,
+		sid, now, now, string(h.Name()), task.WorkDir, now, task.Slug,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: bind session: %v\n", err)
@@ -1489,9 +1499,15 @@ func cmdDoHere(query string, force bool) int {
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	if adopted != "" {
+		fmt.Printf("work_dir → %s (this session's folder)\n", adopted)
+	}
 	// A session bound mid-flight missed SessionStart, so hand it the
-	// role block now (driver or light delegation).
-	if blk := roleBlockFor(db, task); blk != "" {
+	// driver block now. task was loaded before the bind: no
+	// session_started = first bind = intake turn.
+	first := !task.SessionStarted.Valid
+	task.Harness = sql.NullString{String: string(h.Name()), Valid: true} // post-bind harness (--force may switch it)
+	if blk := roleBlockFor(task, first); blk != "" {
 		fmt.Println(strings.TrimSpace(blk))
 	}
 	return 0

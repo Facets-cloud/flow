@@ -13,7 +13,7 @@ import (
 // driverRoleMarker is the heading of the stronger block a task tagged
 // `driver` gets. Regular bound tasks keep the light delegation block
 // (delegationMarker); tests key on the markers so wording can evolve.
-const driverRoleMarker = "flow DRIVER task"
+const driverRoleMarker = "You are the DRIVER for this task: follow references/driver.md"
 
 func tagTask(t *testing.T, slug, tag string) {
 	t.Helper()
@@ -32,24 +32,10 @@ func TestSessionStartDriverTaskGetsDriverBlock(t *testing.T) {
 	if !strings.Contains(out, driverRoleMarker) {
 		t.Fatalf("driver task should get the driver block, got:\n%s", out)
 	}
-	for _, want := range []string{"end to end", "flow auto", "Needs from you", "Agent"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("driver block missing %q", want)
-		}
-	}
-}
-
-func TestSessionStartRegularTaskKeepsLightBlock(t *testing.T) {
-	setupFlowRoot(t)
-	t.Setenv("FLOW_AUTO_RUN", "")
-	seedTask(t, "plain")
-	bindSession(t, "plain", "sid-plain")
-	out := sessionStartOutput(t)
-	if strings.Contains(out, driverRoleMarker) {
-		t.Errorf("regular task must not get the driver block:\n%s", out)
-	}
-	if !strings.Contains(out, delegationMarker) {
-		t.Errorf("regular task keeps the light delegation block:\n%s", out)
+	// The rules live in the skill's references/driver.md; the hook only
+	// points at the installed copy.
+	if !strings.Contains(out, "driver.md") {
+		t.Errorf("driver pointer must name driver.md:\n%s", out)
 	}
 }
 
@@ -70,7 +56,8 @@ func TestDoHerePrintsRoleBlock(t *testing.T) {
 		driver              bool
 	}{
 		{"driver", driverRoleMarker, "", true},
-		{"regular", delegationMarker, driverRoleMarker, false},
+		// Every human-driven bound session is a driver; no tag needed.
+		{"untagged", driverRoleMarker, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setupFlowRoot(t)
@@ -97,26 +84,22 @@ func TestDoHerePrintsRoleBlock(t *testing.T) {
 	}
 }
 
-func TestUpdateTagDriverOnBoundTaskPrintsDriverBlock(t *testing.T) {
+// Every interactive session is a driver whatever its tags, so tagging or
+// untagging `driver` announces no role change.
+func TestUpdateTagDriverAnnouncesNoRoleChange(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("FLOW_AUTO_RUN", "")
 	seedTask(t, "mid")
 	bindSession(t, "mid", "sid-mid")
-	var rc int
-	out := captureStdout(t, func() { rc = cmdUpdate([]string{"task", "mid", "--tag", "driver"}) })
-	if rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	if !strings.Contains(out, driverRoleMarker) {
-		t.Errorf("tagging the bound task driver should switch this session now:\n%s", out)
-	}
-
-	out = captureStdout(t, func() { rc = cmdUpdate([]string{"task", "mid", "--remove-tag", "driver"}) })
-	if rc != 0 {
-		t.Fatalf("rc=%d", rc)
-	}
-	if !strings.Contains(out, "no longer a driver") {
-		t.Errorf("removing the driver tag should say so:\n%s", out)
+	for _, args := range [][]string{{"--tag", "driver"}, {"--remove-tag", "driver"}} {
+		out := captureStdout(t, func() {
+			if rc := cmdUpdate(append([]string{"task", "mid"}, args...)); rc != 0 {
+				t.Fatalf("rc=%d", rc)
+			}
+		})
+		if strings.Contains(out, driverRoleMarker) || strings.Contains(out, "flow DRIVER task") || strings.Contains(out, "no longer a driver") {
+			t.Errorf("%v must not announce a role change:\n%s", args, out)
+		}
 	}
 }
 
@@ -233,21 +216,6 @@ func TestCompletedChildSendsNoCrashNotice(t *testing.T) {
 	msgs, _ := pendingForIdentity(openFlowDB(t), busSender{Assignee: busUser, TaskSlug: "parent"})
 	if len(msgs) != 0 {
 		t.Errorf("completed child should not post a crash notice; got %d", len(msgs))
-	}
-}
-
-// The intake driver question must be spelled out in the resident core:
-// a pointer to a reference file alone gets skipped in practice.
-func TestSkillCoreIntakeAsksDriverQuestion(t *testing.T) {
-	core, err := fs.ReadFile(skillFiles(), "SKILL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(core)
-	for _, want := range []string{"How should this task run?", "--tag driver", "Driver (Recommended)"} {
-		if !strings.Contains(s, want) {
-			t.Errorf("SKILL.md intake missing %q", want)
-		}
 	}
 }
 

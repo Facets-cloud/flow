@@ -69,6 +69,7 @@ var (
 // a hook's stdin that flow reads.
 type hookPayload struct {
 	SessionID      string `json:"session_id"`
+	Source         string `json:"source"`
 	StopHookActive bool   `json:"stop_hook_active"`
 	Prompt         string `json:"prompt"`
 }
@@ -115,16 +116,20 @@ func cmdHookSessionStart(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	readHookPayload()
+	payload, _ := readHookPayload()
 	// Claude socket push: only this hook process sees the session's
 	// socket token, so record it on every start/resume/compaction.
 	recordClaudeEndpoint(currentSessionID())
 	// The session (re)loads the current skill now: record its version
-	// silently so the prompt/tool hooks don't announce an upgrade.
-	recordSessionVersion()
+	// silently so the prompt/tool hooks don't announce an upgrade. A
+	// compaction reloads nothing, so a pending notice must survive it.
+	if payload.Source != "compact" {
+		recordSessionVersion()
+	}
 
 	bound := lookupBoundTask()
-	if bound != nil && !isAutoRunSession(bound) {
+	// A compaction-triggered start can arrive mid-turn: never mark it idle.
+	if bound != nil && !isAutoRunSession(bound) && payload.Source != "compact" {
 		markSessionState(bound.Slug, flowdb.SessionIdle)
 	}
 	if bound == nil {
@@ -134,15 +139,10 @@ func cmdHookSessionStart(args []string) int {
 	}
 	slug := bound.Slug
 	pageCtx := busSessionStartContext()
-	// Only the human-driven driver session may delegate. An auto child
-	// never sees this block, so delegation cannot recurse.
-	if !isAutoRunSession(bound) {
-		if isDriverSlug(slug) {
-			pageCtx += driverRoleBlock()
-		} else {
-			pageCtx += driverDelegationBlock()
-		}
-	}
+	// Every human-driven bound session is a driver (auto and playbook runs
+	// get nothing, so delegation cannot recurse). A spawned task's first,
+	// never-resumed start is its intake turn.
+	pageCtx += roleBlockFor(bound, payload.Source == "startup" && !bound.SessionLastResumed.Valid)
 	// Every bound session, tab or headless child, is told the PR trailer
 	// (an instruction, not an enforcement; FLOW_PR_TRAILER=off drops it).
 	pageCtx += prTrailerBlock()
@@ -280,11 +280,13 @@ func emitAmbientSkillHint() int {
 		"days, and maintains a central knowledge base of durable facts about them, " +
 		"their org, and their work. Their tasks, projects, and KB already exist. " +
 		"Load the `flow` skill now — " + flowSkillHow() + " — and let it run alongside the " +
-		"conversation. When the user starts any work in this session, before doing it, " +
-		"confirm with them (AskUserQuestion if your harness has it, else ask in chat): is this part of an existing flow task, " +
-		"or should we create a new one? The user's work belongs in flow — don't " +
-		"silently proceed in an unbound transcript. The skill knows how to list " +
-		"candidates, run intake, and `flow do` the chosen task. " +
+		"conversation. When the user states work they want done in this session, start a task " +
+		"via flow FIRST; brainstorm inside it (brainstorming, planning and debugging skills run inside " +
+		"the task). Follow the skill's §4.2 \"Start a driver\": one interaction asking the goal (if " +
+		"unstated) and which project it belongs to (AskUserQuestion if your harness has it, else ask in " +
+		"chat), route to an existing flow task only when its goal really matches, else create one and " +
+		"bind this session to it. The user's work belongs in flow — don't silently proceed in an " +
+		"unbound transcript. A one-off question needs no task. " +
 		"\n\n" +
 		"If the user's message uses unfamiliar terminology — an internal codename, a " +
 		"person, a customer, a product line, a tool you don't recognize — consult " +

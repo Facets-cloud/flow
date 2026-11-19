@@ -94,7 +94,7 @@ func isOwnerManaged(db *sql.DB, slug string) bool {
 		return false
 	}
 	for _, tag := range tags {
-		if strings.HasPrefix(tag, "owner:") {
+		if isOwnerTag(tag) {
 			return true
 		}
 	}

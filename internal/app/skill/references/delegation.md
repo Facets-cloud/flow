@@ -16,53 +16,27 @@ user -> flow do <task>              (interactive, unchanged)
         `- live/prod change: child plans + gates, driver applies with the user
 ```
 
-The SessionStart hook prints a `flow driver delegation` block in bound,
-human-driven sessions only. Unbound sessions and auto children never get
-it.
+The SessionStart hook points every bound, human-driven session at
+references/driver.md (the driver rules). Unbound sessions, auto children
+and playbook runs never get it.
 
-## Driver tasks (tag `driver`)
+## Driver tasks
 
-A **driver task** is the explicit, stronger form of the above. It owns its
-outcome end to end and is the single place the user talks to; ANY
-self-contained unit of work goes to a `flow auto` child, not just scans
-or "grunt work" (implementation, research, debugging, fix + PR + test
-all qualify). Never use the harness's built-in Agent/subagent tool for
-it: a flow child has its own task, brief, transcript and close-out sweep.
+Every interactive task is a driver (the `driver` tag is optional and
+changes nothing). It owns its outcome end to end and is the single place
+the user talks to; ANY self-contained unit of work goes to a `flow auto`
+child (implementation, research, debugging, fix + PR + test all qualify).
+Never use the harness's built-in Agent/subagent tool for it: a flow child
+has its own task, brief, transcript and close-out sweep.
 
 ```
- user ◀──▶ DRIVER (tag driver)            regular bound task
-           ├─ talk, design, decisions      ├─ same, plus light delegation
-           ├─ verify every child result    │  (scans, audits, fix+PR)
-           ├─ live/prod applies            └─ no "own it end to end" prompt
+ user ◀──▶ DRIVER (every interactive task)
+           ├─ talk, design, decisions
+           ├─ verify every child result
+           ├─ live/prod applies
            └─ everything else → flow auto children
                   child dead → driver inbox gets a crash notice
 ```
-
-Flow marks it everywhere: `flow list` shows `◆driver` (json
-`"driver": true`), `flow show task` prints `role: driver`, the per-prompt
-anchor says `[driver]`, and SessionStart / `flow do --here` print the
-`flow DRIVER task` block. Auto children never get it, even if tagged.
-
-### Intake question (§4.2 step 5)
-
-After Priority, AskUserQuestion (header "Driver?"):
-
-> "How should this task run?"
-> - **Driver (owns it end to end)**: "I keep design and decisions with
->   you and hand self-contained work to background flow auto tasks."
-> - **Regular (just this session)**
-
-Mark **Driver (Recommended)** when the brief has several workstreams or
-the user describes a big goal; else Regular first. On Driver, add
-`--tag driver` to `flow add task`. Skip if the user already said.
-
-### Mid-session switch
-
-"make this a driver", "drive this", "you own this end to end" → run
-`flow update task <bound-slug> --tag driver`. Its output prints the
-driver block: follow it from that turn on. To step back, `--remove-tag
-driver` (output says it is no longer a driver). Tell the user in one
-line; no confirmation needed when they asked.
 
 ### Driver habits
 
