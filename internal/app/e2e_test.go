@@ -128,6 +128,16 @@ func TestE2EFullRoundtrip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(flowRoot, "projects")); err != nil {
 		t.Fatalf("projects dir not created: %v", err)
 	}
+	// Headline guarantee: Claude hooks ship as the flow skills-dir plugin,
+	// so init on a clean HOME never creates ~/.claude/settings.json.
+	if _, err := os.Stat(filepath.Join(tmp, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("init created ~/.claude/settings.json (stat err=%v)", err)
+	}
+	for _, p := range []string{".claude-plugin/plugin.json", "hooks/hooks.json", "SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(tmp, ".claude", "skills", "flow", p)); err != nil {
+			t.Fatalf("init did not install the flow plugin file %s: %v", p, err)
+		}
+	}
 
 	// 2. add project
 	step("add project", cmdAdd([]string{"project", "Budgeting App Revamp", "--work-dir", repo}))

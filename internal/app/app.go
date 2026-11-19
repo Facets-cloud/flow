@@ -19,6 +19,8 @@ func Run(args []string) int {
 		return 0
 	}
 	cmd, rest := args[0], args[1:]
+	inHookPath = cmd == "hook" || cmd == "inbox"
+	defer func() { inHookPath = false }()
 
 	// Auto-upgrade the skill + SessionStart hook if the binary version
 	// has changed since the last install. Skipped for `init`, `skill`,
@@ -29,6 +31,10 @@ func Run(args []string) int {
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
+		if !inHookPath {
+			// Never in a hook's path (inbox: the rewake waiter).
+			maybeStripLegacyHooks()
+		}
 	}
 
 	rc := runCommand(cmd, rest)
@@ -126,7 +132,7 @@ Setup:
   flow init [--harness claude|codex|prx]
   flow skill install [--force] [--harness claude|codex|prx]
   flow skill uninstall [--harness claude|codex|prx]
-  flow skill update [--harness claude|codex|prx]
+  flow skill update [--harness claude|codex|prx] [--strip-legacy]   (--strip-legacy: drop old flow hooks from ~/.claude/settings.json now)
   (default: every present harness — binary on PATH or config home exists)
   flow upgrade [--check] [--force]             (install the latest release now; flow also upgrades
                                                 itself after a command and refreshes an older skill —
@@ -144,7 +150,7 @@ Sessions:
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>
-  flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
+  flow hook session-start                      (SessionStart hook handler — Claude: the flow plugin's hooks.json)
 
 Read:
   flow show task       [<ref>]
