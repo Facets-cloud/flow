@@ -1,7 +1,6 @@
 package flowdb
 
 import (
-	"context"
 	"database/sql"
 	"time"
 )
@@ -30,81 +29,6 @@ import (
 // or waiting for input (idle), written by flow's own hooks:
 // UserPromptSubmit/PreToolUse → busy (+activity), Stop → idle. A busy
 // session is left to its hooks; only an idle one is pushed a notice.
-const wakeDDL = `
-CREATE TABLE IF NOT EXISTS bus_session_state (
-    task_slug      TEXT PRIMARY KEY,
-    state          TEXT NOT NULL,
-    changed_at     TEXT NOT NULL,
-    last_activity  TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS bus_wake_nudged (
-    task_slug   TEXT NOT NULL,
-    message_id  TEXT NOT NULL,
-    nudged_at   TEXT NOT NULL,
-    renudged    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (task_slug, message_id)
-);`
-
-// applyWakeSchema creates the wake tables. On the first open after an
-// upgrade from a release where bus_surfaced was one claim shared by wake
-// and hooks (alpha.38), a pending row's mark may be a push that never
-// arrived: free every pending row's mark so the hooks announce it again.
-// Worst case is one harmless duplicate PreToolUse line. Keyed on the new
-// table's absence, so it runs once.
-func applyWakeSchema(db *sql.DB) error {
-	exists := func(q interface {
-		QueryRowContext(context.Context, string, ...any) *sql.Row
-	}) (bool, error) {
-		var n int
-		err := q.QueryRowContext(context.Background(),
-			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bus_wake_nudged'`).Scan(&n)
-		return n > 0, err
-	}
-	// Fast path (every open after the first): nothing to do, no write lock.
-	if ok, err := exists(db); err != nil || ok {
-		if err == nil {
-			_, err = db.Exec(wakeDDL)
-		}
-		return err
-	}
-	// One IMMEDIATE transaction on one connection: the table's existence is
-	// the "migrated" marker, so it never commits without the cleanup, and
-	// concurrent first opens serialize on the write lock (busy_timeout)
-	// instead of failing a deferred read→write upgrade.
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
-		return err
-	}
-	commit := false
-	defer func() {
-		if !commit {
-			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
-		}
-	}()
-	ok, err := exists(conn)
-	if err != nil {
-		return err
-	}
-	if _, err := conn.ExecContext(ctx, wakeDDL); err != nil {
-		return err
-	}
-	if !ok {
-		if _, err := conn.ExecContext(ctx, `DELETE FROM bus_surfaced
-            WHERE message_id IN (SELECT id FROM bus_messages WHERE status='pending')`); err != nil {
-			return err
-		}
-	}
-	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
-		return err
-	}
-	commit = true
-	return nil
-}
 
 // Session states recorded by flow's hooks.
 const (

@@ -8,7 +8,6 @@ import (
 	"flow/internal/harness"
 	"flow/internal/spawner"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -59,37 +58,13 @@ func loadInjectionText(fs *flag.FlagSet, withInstr, withFile string) (string, in
 	return "read instructions at " + abs, 0
 }
 
-// openConcurrentDB opens flow.db with a generous busy_timeout so that two
-// concurrent `flow do` processes (or two goroutines in the tests) will
-// serialize at the SQLite file level rather than failing fast with
-// SQLITE_BUSY. The pragma is applied at connection-open time via the DSN
-// so every conn in the pool inherits it. Schema creation still runs via
-// OpenDB to keep DDL in one place.
+// openConcurrentDB opens flow.db for `flow do`'s bootstrap transaction:
+// busy_timeout(30000) on every pooled connection, and `_txlock=immediate`
+// so BEGIN takes the RESERVED lock up front and two concurrent `flow do`
+// transactions serialize at tx.Begin() instead of racing to the first
+// write. One open: the schema step is part of it (flowdb.OpenDBImmediate).
 func openConcurrentDB(path string) (*sql.DB, error) {
-	// Ensure schema exists via the shared OpenDB path.
-	pre, err := flowdb.OpenDB(path)
-	if err != nil {
-		return nil, err
-	}
-	pre.Close()
-
-	q := url.Values{}
-	// 30s is enough to cover realistic bootstraps; tests finish in ms.
-	q.Set("_pragma", "busy_timeout(30000)")
-	// BEGIN IMMEDIATE acquires a RESERVED lock up-front, so two concurrent
-	// `flow do` transactions serialize at tx.Begin() (waiting on the busy
-	// timeout) instead of racing to the first write and failing.
-	q.Set("_txlock", "immediate")
-	dsn := "file:" + path + "?" + q.Encode()
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign_keys: %w", err)
-	}
-	return db, nil
+	return flowdb.OpenDBImmediate(path)
 }
 
 // cmdDo flips a task to in-progress, bootstraps a Claude session if

@@ -26,6 +26,7 @@ func TestMigrationAddsParentSlugToOldDB(t *testing.T) {
 	if _, err := db.Exec(`ALTER TABLE tasks DROP COLUMN parent_slug`); err != nil {
 		t.Fatalf("drop column: %v", err)
 	}
+	resetSchemaVersion(t, db) // the hand-rolled old shape is pre-versioning
 	db.Close()
 
 	db, err = OpenDB(path)

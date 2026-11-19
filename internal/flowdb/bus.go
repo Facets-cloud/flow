@@ -25,68 +25,6 @@ import (
 // Addresses: "<assignee>" is a human, "<assignee>/<task-slug>" is the
 // session bound to that task. self = the local user.
 
-// busDDL is idempotent and applied on every OpenDB, after migrations.
-const busDDL = `
-CREATE TABLE IF NOT EXISTS bus_messages (
-    id                 TEXT PRIMARY KEY,
-    created_at         TEXT NOT NULL,
-    kind               TEXT NOT NULL CHECK (kind IN ('message','broadcast')),
-    from_assignee      TEXT NOT NULL,
-    from_task_slug     TEXT,
-    sender_session_id  TEXT,
-    to_assignee        TEXT NOT NULL,
-    to_task_slug       TEXT,
-    body               TEXT NOT NULL,
-    urgent             INTEGER NOT NULL DEFAULT 0,
-    status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','delivered','acked')),
-    delivered_at       TEXT,
-    acked_at           TEXT,
-    waited_s           REAL,
-    acked_by           TEXT,
-    reply_to           TEXT,
-    seen_at            TEXT,
-    consumed_by_identity TEXT,
-    consumed_by_session  TEXT,
-    options            TEXT,
-    fyi                INTEGER NOT NULL DEFAULT 0,
-    ping               INTEGER NOT NULL DEFAULT 0,
-    notified_at        TEXT,
-    answered_at        TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_bus_messages_inbox
-    ON bus_messages(to_assignee, to_task_slug, status);
-CREATE INDEX IF NOT EXISTS idx_bus_messages_sender
-    ON bus_messages(sender_session_id, status);
-
-DROP TABLE IF EXISTS bus_listeners;
-
-CREATE TABLE IF NOT EXISTS bus_watches (
-    watcher     TEXT NOT NULL,
-    watched     TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    PRIMARY KEY (watcher, watched)
-);
-
-CREATE TABLE IF NOT EXISTS bus_nudges (
-    task_slug  TEXT PRIMARY KEY,
-    nudged_at  TEXT NOT NULL,
-    attempts   INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS bus_human_surfaced (
-    session_id  TEXT NOT NULL,
-    message_id  TEXT NOT NULL,
-    surfaced_at TEXT NOT NULL,
-    PRIMARY KEY (session_id, message_id)
-);
-
-CREATE TABLE IF NOT EXISTS bus_surfaced (
-    task_slug   TEXT NOT NULL,
-    message_id  TEXT NOT NULL,
-    PRIMARY KEY (task_slug, message_id)
-);
-`
-
 // BusMessage mirrors one bus_messages row.
 type BusMessage struct {
 	ID              string
@@ -928,24 +866,6 @@ func SweepBus(db *sql.DB, now time.Time) error {
 	if _, err := db.Exec(
 		`DELETE FROM bus_human_surfaced WHERE message_id NOT IN (SELECT id FROM bus_messages)`); err != nil {
 		return fmt.Errorf("sweep human surfaced: %w", err)
-	}
-	return nil
-}
-
-// migrateBusSelfToUser renames the reserved assignee 'self' to 'user'
-// in existing rows (the old spelling confused agents into reading
-// "message self" as talking to themselves). Idempotent and cheap; runs
-// on every open.
-func migrateBusSelfToUser(db *sql.DB) error {
-	for _, q := range []string{
-		`UPDATE bus_messages SET to_assignee='user' WHERE to_assignee='self'`,
-		`UPDATE bus_messages SET from_assignee='user' WHERE from_assignee='self'`,
-		`UPDATE bus_watches SET watcher='user' WHERE watcher='self'`,
-		`UPDATE bus_watches SET watcher='user' || substr(watcher, 5) WHERE watcher LIKE 'self/%'`,
-	} {
-		if _, err := db.Exec(q); err != nil {
-			return err
-		}
 	}
 	return nil
 }
