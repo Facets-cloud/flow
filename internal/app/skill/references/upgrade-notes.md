@@ -20,6 +20,18 @@
   sweep runs on its stored model too. Owners take the same flags on `flow
   add owner` and `flow owner start`; every tick runs on them, and the tasks
   an owner dispatches keep their own (references/owners.md).
+- Restart running Codex sessions after upgrading, then review the pending hooks (`/hooks`) and trust flow's hooks.
+- **Every interactive task is a driver.** Rules: references/driver.md
+  (flow's session line and a brief's `Role: driver` line point there).
+  New work goes through §4.2 "Start a driver": goal + ONE project question
+  (never "no project"), create, bind, announce "Created driver task …".
+  Never ask "driver or not?". While flow prints `INTAKE TURN`, end the turn
+  at the goal + proposed Done when + "Needs from you:".
+- **`flow do --here` needs the directory the session STARTED in.** If you
+  `cd` into a worktree, `$PWD` is not that directory. When the bind is
+  refused, run the `flow update task … --work-dir` command only if it shows
+  a real path. If it shows `<real-cwd>`, or says the task is still bound to
+  another session, open the task in a new tab with `flow do <slug>`.
 
 ## v0.1.0-alpha.38
 

@@ -3,6 +3,8 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -79,17 +81,57 @@ func childHarnessesLine() string {
 		" (flow auto … --harness <name>; follow the user's preference)"
 }
 
-// roleBlockFor picks the block for a bound, human-driven session: the
-// driver block for driver tasks, the light delegation block otherwise.
-// Auto children get neither, so delegation never recurses.
-func roleBlockFor(db *sql.DB, t *flowdb.Task) string {
-	if isAutoRunSession(t) {
+// roleBlockFor is what a bound session gets: every human-driven session
+// is a driver (no tag needed) and gets ONE line pointing at the skill's
+// references/driver.md (the rules live there, not in Go); auto runs (so
+// delegation never recurses) and playbook runs (frozen brief) get
+// nothing. The INTAKE TURN line follows on the first bind/start (first)
+// or while the brief still holds the Done-when placeholder.
+func roleBlockFor(t *flowdb.Task, first bool) string {
+	if isAutoRunSession(t) || t.Kind == "playbook_run" {
 		return ""
 	}
-	if isDriverTask(db, t.Slug) {
-		return driverRoleBlock()
+	path := "references/driver.md in the flow skill"
+	if h, err := harnessByName(string(sessionHarness(t))); err == nil {
+		if skillMD, err := h.SkillInstallPath(); err == nil {
+			path = filepath.Join(filepath.Dir(skillMD), "references", "driver.md") // the session's own install
+		}
 	}
-	return driverDelegationBlock()
+	blk := " You are the DRIVER for this task: follow references/driver.md (" + path + ")." + childHarnessesLine()
+	if first {
+		return blk + "\n" + intakeTurnLine
+	}
+	return blk + intakeTurnBlock(t.Slug)
+}
+
+// doneWhenPlaceholder is the driver brief's "Done when" body until the
+// user agrees the criteria (skill references/templates.md).
+const doneWhenPlaceholder = "*Agree with the user on the first turn.*"
+
+// intakeTurnLine is the deterministic intake stop, so every harness ends
+// the intake turn at the proposal instead of building.
+const intakeTurnLine = "INTAKE TURN: restate the goal, propose Done when + 'Needs from you:', then END the turn. Do not build or close anything."
+
+// intakeTurnBlock returns intakeTurnLine (on its own line) while slug's
+// brief's ## Done when still holds the placeholder, else "".
+func intakeTurnBlock(slug string) string {
+	root, err := flowRoot()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(root, "tasks", slug, "brief.md"))
+	if err != nil {
+		return ""
+	}
+	// Only the ## Done when section counts (a quote under Decisions is history).
+	_, done, _ := strings.Cut(string(b), "## Done when")
+	if i := strings.Index(done, "\n## "); i >= 0 {
+		done = done[:i]
+	}
+	if !strings.Contains(done, doneWhenPlaceholder) {
+		return ""
+	}
+	return "\n" + intakeTurnLine
 }
 
 // notifyParentOfDeadChild posts to the driver's inbox when a child's auto

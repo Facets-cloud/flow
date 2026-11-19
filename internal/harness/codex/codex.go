@@ -387,8 +387,16 @@ func (c *codex) UninstallSkill() error {
 	return os.RemoveAll(filepath.Dir(p))
 }
 
+// InstallSessionStartHook also adds a separate "compact" group: Codex re-runs
+// SessionStart with source=compact after a compaction (PostCompact output
+// cannot reach the model), and existing groups stay untouched.
 func (c *codex) InstallSessionStartHook(command string) (bool, error) {
-	return installHook("SessionStart", "startup|resume", command)
+	a, err := installHook("SessionStart", "startup|resume", command)
+	if err != nil {
+		return a, err
+	}
+	b, err := installHook("SessionStart", "compact", command)
+	return a || b, err
 }
 
 func (c *codex) UninstallSessionStartHook(command string) (bool, error) {

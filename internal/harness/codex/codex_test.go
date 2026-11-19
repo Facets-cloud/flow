@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -278,5 +279,58 @@ func TestInstallSkillWritesFlowRules(t *testing.T) {
 	// Uninstall with no rules file present is fine.
 	if err := h.UninstallSkill(); err != nil {
 		t.Errorf("second UninstallSkill: %v", err)
+	}
+}
+
+// SessionStart installs flow twice: the existing startup|resume group stays
+// untouched, plus one compact group (Codex re-runs SessionStart with
+// source=compact after compaction). Fresh installs and upgrades end the
+// same; repeated installs add nothing.
+func TestSessionStartAddsCompactGroup(t *testing.T) {
+	const cmd = "flow hook session-start"
+	flow := func(m string) string {
+		return `{"hooks":[{"command":"` + cmd + `","type":"command"}],"matcher":"` + m + `"}`
+	}
+	for name, before := range map[string]string{
+		"fresh":   ``,
+		"upgrade": `{"hooks":{"SessionStart":[{"matcher":"startup|resume","hooks":[{"type":"command","command":"` + cmd + `"}]}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", "")
+			path := filepath.Join(home, ".codex", "hooks.json")
+			if before != "" {
+				if err := errors.Join(os.MkdirAll(filepath.Dir(path), 0o755), os.WriteFile(path, []byte(before), 0o644)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := 0; i < 3; i++ {
+				if _, err := New().InstallSessionStartHook(cmd); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var got struct{ Hooks map[string]any }
+			raw, _ := os.ReadFile(path)
+			json.Unmarshal(raw, &got)
+			norm, _ := json.Marshal(got.Hooks["SessionStart"])
+			if want := "[" + flow("startup|resume") + "," + flow("compact") + "]"; string(norm) != want {
+				t.Errorf("SessionStart =\n %s\nwant\n %s", norm, want)
+			}
+		})
+	}
+}
+
+// Events without a matcher keep one flow group, even when a hand-edited
+// group around flow's command carries a matcher such as "*".
+func TestNoMatcherEventKeepsOneFlowGroup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	path := filepath.Join(home, ".codex", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(`{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"c"}]}]}}`), 0o644)
+	if added, err := installHook("PreToolUse", "", "c"); err != nil || added {
+		t.Errorf("added=%v err=%v: an existing flow group must count", added, err)
 	}
 }
