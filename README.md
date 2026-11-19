@@ -311,7 +311,8 @@ Or open [INSTALL.md](INSTALL.md) in Claude Code or Codex and let the agent
 install it. `flow init` installs a skill and its hooks into your
 harness. In Claude Code they ship as a small plugin inside the skill folder
 (`~/.claude/skills/flow/`, shown as `flow@skills-dir` in `/plugin`), so flow
-never edits your `~/.claude/settings.json`; `claude plugin disable
+never adds to your `~/.claude/settings.json` (it only removes the hook
+entries older flow versions put there, once no running session uses them); `claude plugin disable
 flow@skills-dir` turns the hooks off and flow leaves that choice alone. That is how the agent knows what "pick up the billing migration"
 means. Those two commands are the last ones you need to type. In Codex,
 review the pending hooks when asked (first run in a folder, and after an

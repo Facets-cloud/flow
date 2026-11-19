@@ -138,31 +138,26 @@ func flowHooks() []flowHook {
 	}
 }
 
-// pluginSrcSuffix is appended to every hook command in the Claude flow
-// plugin's hooks.json, so a handler can tell a plugin invocation from a
-// legacy settings.json one (see hookguard.go). The legacy strings above
-// stay the exact match keys for stripping old settings entries.
-const pluginSrcSuffix = " --src " + hookSrcPlugin
-
-// stripLegacyClaudeHooks gates migrateLegacyHooks on install/refresh.
-// OFF in this release (two-release guard): installs made by older flow
-// versions keep their ~/.claude/settings.json entries so sessions that
-// started before the plugin existed keep their hooks until they restart;
-// the per-session marker guard stops double-firing in new sessions. A
-// later release flips it on to strip the legacy entries.
-var stripLegacyClaudeHooks = false
+// pluginCommand is cmd as the Claude flow plugin's hooks.json runs it:
+// prefixed with FLOW_HOOK_SRC=plugin so the handler can tell a plugin
+// invocation from a legacy settings.json one (see hookguard.go). An env
+// prefix, not a flag: an older flow binary (a rollback) ignores it, where
+// an unknown flag would exit 2 — which Claude treats as "block this tool
+// call / prompt / stop". The bare strings above stay the exact match keys
+// for stripping old settings entries.
+func pluginCommand(cmd string) string { return hookSrcEnv + "=" + hookSrcPlugin + " " + cmd }
 
 // pluginHooks is the hook set the Claude plugin's hooks.json carries:
 // every flowHooks entry plus the asyncRewake waiter on SessionStart and
-// Stop, each with pluginSrcSuffix. Generated from flowHooks so the plugin
+// Stop, each through pluginCommand. Generated from flowHooks so the plugin
 // and the legacy settings install can't drift apart.
 func pluginHooks() []harness.PluginHook {
 	var out []harness.PluginHook
 	for _, fh := range flowHooks() {
-		out = append(out, harness.PluginHook{Event: fh.event, Command: fh.command + pluginSrcSuffix})
+		out = append(out, harness.PluginHook{Event: fh.event, Command: pluginCommand(fh.command)})
 	}
 	for _, ev := range []string{"SessionStart", "Stop"} {
-		out = append(out, harness.PluginHook{Event: ev, Command: rewakeHookCommand + pluginSrcSuffix,
+		out = append(out, harness.PluginHook{Event: ev, Command: pluginCommand(rewakeHookCommand),
 			Rewake: true, RewakeMessage: rewakeMessage})
 	}
 	return out
@@ -177,6 +172,12 @@ func pluginHooks() []harness.PluginHook {
 // (Codex, prx) get the settings-file merge, plus removal of the retired
 // PostToolUse hook.
 func installHooks(h harness.Harness, quiet bool) {
+	installHooksOpts(h, quiet, false)
+}
+
+// installHooksOpts is installHooks; stripLegacy forces the Claude legacy
+// settings.json strip (`--strip-legacy`).
+func installHooksOpts(h harness.Harness, quiet, stripLegacy bool) {
 	name := h.Name()
 	if ph, ok := h.(harness.PluginHookInstaller); ok {
 		changed, err := ph.InstallPluginHooks(Version, pluginHooks())
@@ -192,8 +193,12 @@ func installHooks(h harness.Harness, quiet bool) {
 		if err == nil && !quiet && ph.PluginDisabled() {
 			fmt.Printf("%s: note: the flow plugin is disabled in your settings (enabledPlugins %q is false), so its hooks will not run; flow leaves that choice alone\n", name, claude.PluginID)
 		}
-		if stripLegacyClaudeHooks {
-			migrateLegacyHooks(h, quiet)
+		// Strip the legacy settings.json copies once that is safe (or
+		// right away with --strip-legacy); see legacystrip.go.
+		if stripped, why := stripLegacyClaudeHooks(stripLegacy, quiet); stripped && !quiet {
+			fmt.Printf("%s: removed flow's legacy hooks from ~/.claude/settings.json\n", name)
+		} else if !stripped && !quiet && legacyClaudeEntriesPresent() {
+			fmt.Printf("%s: kept flow's legacy hooks in ~/.claude/settings.json for now: %s\n", name, why)
 		}
 		return
 	}
@@ -229,7 +234,7 @@ func installHooks(h harness.Harness, quiet bool) {
 // migrateLegacyHooks strips every hook entry flow ever wrote into h's
 // settings by exact command match — the live set, the retired PostToolUse
 // hook and the rewake waiter — leaving unrelated hooks alone. Used by
-// uninstall, and by installHooks once stripLegacyClaudeHooks is on.
+// uninstall and by the Claude legacy strip (legacystrip.go).
 // Returns how many hook kinds were removed.
 func migrateLegacyHooks(h harness.Harness, quiet bool) int {
 	name := h.Name()
@@ -382,6 +387,7 @@ func skillInstall(args []string, forceDefault bool) int {
 	fs := flagSet("skill install")
 	force := fs.Bool("force", forceDefault, "overwrite an existing installation")
 	skipHook := fs.Bool("skip-hook", false, "don't auto-install the hooks")
+	stripLegacy := fs.Bool("strip-legacy", false, "claude: remove flow's legacy hooks from ~/.claude/settings.json now, even if a live session still uses them")
 	only := harnessFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -392,14 +398,14 @@ func skillInstall(args []string, forceDefault bool) int {
 	}
 	rc := 0
 	for _, h := range targets {
-		if !installSkillFor(h, *force, *skipHook) {
+		if !installSkillFor(h, *force, *skipHook, *stripLegacy) {
 			rc = 1
 		}
 	}
 	return rc
 }
 
-func installSkillFor(h harness.Harness, force, skipHook bool) bool {
+func installSkillFor(h harness.Harness, force, skipHook, stripLegacy bool) bool {
 	name := h.Name()
 	dest, err := h.SkillInstallPath()
 	if err != nil {
@@ -428,7 +434,7 @@ func installSkillFor(h harness.Harness, force, skipHook bool) bool {
 		fmt.Printf("%s: --skip-hook: leaving harness settings alone\n", name)
 		return true
 	}
-	installHooks(h, false)
+	installHooksOpts(h, false, stripLegacy)
 	return true
 }
 

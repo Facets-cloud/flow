@@ -2,9 +2,12 @@ package app
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -66,7 +69,7 @@ func TestSkillInstallPluginManifestVersion(t *testing.T) {
 }
 
 // Every flowHooks entry and the rewake waiter appear in hooks.json exactly
-// once with --src plugin, under the matcher the legacy entries used.
+// once in plugin form (FLOW_HOOK_SRC=plugin prefix), under the matcher the legacy entries used.
 func TestPluginHooksMatchFlowHooks(t *testing.T) {
 	home := withTempHome(t)
 	if rc := cmdSkill([]string{"install"}); rc != 0 {
@@ -82,7 +85,7 @@ func TestPluginHooksMatchFlowHooks(t *testing.T) {
 	type want struct{ event, cmd string }
 	var wants []want
 	for _, fh := range flowHooks() {
-		wants = append(wants, want{fh.event, fh.command + " --src plugin"})
+		wants = append(wants, want{fh.event, "FLOW_HOOK_SRC=plugin " + fh.command})
 	}
 	if len(wants) != 4 {
 		t.Fatalf("flowHooks has %d entries; update this test's matcher table", len(wants))
@@ -105,7 +108,7 @@ func TestPluginHooksMatchFlowHooks(t *testing.T) {
 		for _, e := range entries {
 			for _, h := range e.(map[string]any)["hooks"].([]any) {
 				hm := h.(map[string]any)
-				if hm["command"] == rewakeHookCommand+" --src plugin" {
+				if hm["command"] == "FLOW_HOOK_SRC=plugin "+rewakeHookCommand {
 					found++
 					if hm["asyncRewake"] != true || hm["timeout"] != float64(86400) || hm["rewakeMessage"] != rewakeMessage {
 						t.Errorf("%s: rewake hook lost its async fields: %v", ev, hm)
@@ -130,9 +133,10 @@ func TestPluginHooksMatchFlowHooks(t *testing.T) {
 	}
 }
 
-// The headline guarantee: installing never creates or rewrites
-// ~/.claude/settings.json — not on a clean HOME, not over an existing
-// file (legacy flow entries included: this release keeps them).
+// The headline guarantee: installing never creates ~/.claude/settings.json
+// and never adds to it. Over a legacy file it changes nothing while a live
+// session still runs on those legacy hooks (the strip waits; see
+// TestAutoStrip*).
 func TestSkillInstallDoesNotTouchSettingsJSON(t *testing.T) {
 	t.Run("clean home", func(t *testing.T) {
 		home := withTempHome(t)
@@ -147,6 +151,8 @@ func TestSkillInstallDoesNotTouchSettingsJSON(t *testing.T) {
 	})
 	t.Run("existing settings with legacy flow hooks", func(t *testing.T) {
 		home := withTempHome(t)
+		t.Setenv("FLOW_ROOT", t.TempDir())
+		stubLiveClaude(t, "legacy-sess")
 		sp := filepath.Join(home, ".claude", "settings.json")
 		_ = os.MkdirAll(filepath.Dir(sp), 0o755)
 		before := []byte(legacySettingsFixture)
@@ -260,24 +266,6 @@ func TestMigrateLegacyHooksRemovesAll(t *testing.T) {
 	}
 }
 
-// With the gate on, install strips the legacy entries.
-func TestInstallStripsLegacyWhenGateOn(t *testing.T) {
-	home := withTempHome(t)
-	old := stripLegacyClaudeHooks
-	stripLegacyClaudeHooks = true
-	t.Cleanup(func() { stripLegacyClaudeHooks = old })
-	sp := filepath.Join(home, ".claude", "settings.json")
-	_ = os.MkdirAll(filepath.Dir(sp), 0o755)
-	_ = os.WriteFile(sp, []byte(legacySettingsFixture), 0o644)
-	if rc := cmdSkill([]string{"install", "--harness", "claude"}); rc != 0 {
-		t.Fatalf("install rc=%d", rc)
-	}
-	raw, _ := os.ReadFile(sp)
-	if strings.Contains(string(raw), "flow hook") {
-		t.Errorf("gate on: legacy entries should be stripped: %s", raw)
-	}
-}
-
 func TestUninstallRemovesPluginAndLegacy(t *testing.T) {
 	home := withTempHome(t)
 	sp := filepath.Join(home, ".claude", "settings.json")
@@ -361,133 +349,336 @@ func TestSkillInstallRespectsDisabledPlugin(t *testing.T) {
 	}
 }
 
-// ---------- legacy-hook guard ----------
+// ---------- duplicate-copy claim guard ----------
+
+// stubLiveClaude pins the live Claude session ids the legacy strip sees.
+func stubLiveClaude(t *testing.T, ids ...string) {
+	t.Helper()
+	old := liveClaudeSessions
+	liveClaudeSessions = func() (map[string]int, error) {
+		m := map[string]int{}
+		for _, id := range ids {
+			m[id] = 1
+		}
+		return m, nil
+	}
+	t.Cleanup(func() { liveClaudeSessions = old })
+}
 
 // guardEnv sets up a Claude hook process environment with the plugin
-// installed and a short start-time wait.
-func guardEnv(t *testing.T) {
+// installed and a legacy settings.json kept (a live legacy session).
+func guardEnv(t *testing.T) string {
 	t.Helper()
-	withTempHome(t)
+	home := withTempHome(t)
 	t.Setenv("FLOW_ROOT", t.TempDir())
 	t.Setenv("CLAUDE_PID", "1")
-	old := legacyStartWait
-	legacyStartWait = 150 * time.Millisecond
-	t.Cleanup(func() { legacyStartWait = old })
+	stubLiveClaude(t, "some-legacy-session")
+	sp := filepath.Join(home, ".claude", "settings.json")
+	_ = os.MkdirAll(filepath.Dir(sp), 0o755)
+	_ = os.WriteFile(sp, []byte(legacySettingsFixture), 0o644)
 	if rc := cmdSkill([]string{"install", "--harness", "claude"}); rc != 0 {
 		t.Fatalf("install rc=%d", rc)
 	}
+	if legacyStripDone() {
+		t.Fatal("strip must wait for the live legacy session")
+	}
+	return home
 }
 
-func setHookSession(t *testing.T, sid string) {
+// setHook sets the decoded-payload globals a handler sees.
+func setHook(t *testing.T, sid, raw string) {
 	t.Helper()
-	old := hookSessionID
-	hookSessionID = sid
-	t.Cleanup(func() { hookSessionID = old })
+	oldS, oldR := hookSessionID, hookRawPayload
+	hookSessionID, hookRawPayload = sid, []byte(raw)
+	t.Cleanup(func() { hookSessionID, hookRawPayload = oldS, oldR })
 }
 
-func TestLegacyHookNoopsWhenPluginMarker(t *testing.T) {
+// Both copies of one invocation race: exactly one wins, every time.
+func TestClaimRaceExactlyOneRuns(t *testing.T) {
 	guardEnv(t)
-	setHookSession(t, "sess-a")
-	if hookSuperseded("", false) {
-		t.Fatal("no marker yet: legacy hook must run")
-	}
-	if hookSuperseded(hookSrcPlugin, true) {
-		t.Fatal("a plugin hook is never superseded")
-	}
-	if !pluginMarked("sess-a") {
-		t.Fatal("plugin hook should record the session marker")
-	}
-	if !hookSuperseded("", false) || !hookSuperseded("", true) {
-		t.Error("marker present: legacy hooks must no-op")
-	}
-	setHookSession(t, "sess-b")
-	if hookSuperseded("", false) {
-		t.Error("another session without a marker must still run legacy hooks")
+	for i := 0; i < 50; i++ {
+		payload := []byte(fmt.Sprintf(`{"session_id":"s","n":%d}`, i))
+		var wg sync.WaitGroup
+		var wins atomic.Int32
+		for c := 0; c < 2; c++ {
+			wg.Add(1)
+			go func(c int) {
+				defer wg.Done()
+				var won bool
+				if i%2 == 0 {
+					won = claim("stop", "s", payload)
+				} else {
+					won = claimHandle("pre-tool-use", "s", fmt.Sprintf("toolu_%d", i))
+				}
+				if won {
+					wins.Add(1)
+				}
+			}(c)
+		}
+		wg.Wait()
+		if wins.Load() != 1 {
+			t.Fatalf("iteration %d: %d copies ran, want exactly 1", i, wins.Load())
+		}
 	}
 }
 
-// At a session start the legacy and plugin SessionStart run in parallel:
-// the legacy one waits briefly for the plugin's marker.
-func TestLegacySessionStartWaitsForPluginMarker(t *testing.T) {
+// Whichever copy (plugin or legacy) arrives first runs; the other no-ops.
+func TestClaimBothOrders(t *testing.T) {
 	guardEnv(t)
-	setHookSession(t, "sess-c")
-	go func() {
-		time.Sleep(30 * time.Millisecond)
-		markPluginSession("sess-c", false)
-	}()
-	if !hookSuperseded("", true) {
-		t.Error("legacy start hook should stand down once the plugin marker lands")
+	for _, order := range [][2]string{{hookSrcPlugin, ""}, {"", hookSrcPlugin}} {
+		raw := fmt.Sprintf(`{"session_id":"s1","hook_event_name":"Stop","order":%q}`, order[0])
+		setHook(t, "s1", raw)
+		p := hookPayload{SessionID: "s1"}
+		if hookLoses("stop", order[0], p) {
+			t.Errorf("order %q first: the first copy must run", order)
+		}
+		if !hookLoses("stop", order[1], p) {
+			t.Errorf("order %q first: the second copy must no-op", order)
+		}
 	}
-	// No plugin hook ever runs (e.g. plugins blocked): run after the wait.
-	setHookSession(t, "sess-d")
-	start := time.Now()
-	if hookSuperseded("", true) {
-		t.Error("no marker within the wait: legacy hook must run")
-	}
-	if time.Since(start) < legacyStartWait {
-		t.Error("legacy start hook should have waited for the marker")
+	if !sessionOnPlugin("s1") {
+		t.Error("a --src plugin copy must record the session as on plugin")
 	}
 }
 
-// Without the plugin installed (or when disabled) a start never waits.
-func TestLegacyHookNoWaitWithoutPlugin(t *testing.T) {
-	withTempHome(t)
-	t.Setenv("FLOW_ROOT", t.TempDir())
-	t.Setenv("CLAUDE_PID", "1")
-	old := legacyStartWait
-	legacyStartWait = 5 * time.Second
-	t.Cleanup(func() { legacyStartWait = old })
-	setHookSession(t, "sess-e")
-	start := time.Now()
-	if hookSuperseded("", true) {
-		t.Error("no plugin: legacy hook must run")
-	}
-	if time.Since(start) > time.Second {
-		t.Error("no plugin: must not wait")
-	}
-}
-
-// Codex/prx hooks (no Claude env) are never superseded, marker or not.
-func TestLegacyGuardIgnoresNonClaude(t *testing.T) {
+// Handle claims key on the native id (tool_use_id, prompt_id), not the
+// payload; hash claims key on the payload; handlers never share claims.
+func TestClaimHandleVsHashKeys(t *testing.T) {
 	guardEnv(t)
+	setHook(t, "s2", `{"a":1}`)
+	if hookLoses("pre-tool-use", "", hookPayload{ToolUseID: "toolu_1"}) {
+		t.Fatal("first pre-tool-use copy must run")
+	}
+	hookRawPayload = []byte(`{"a":2}`) // different bytes, same tool_use_id
+	if !hookLoses("pre-tool-use", hookSrcPlugin, hookPayload{ToolUseID: "toolu_1"}) {
+		t.Error("same tool_use_id must lose even with different payload bytes")
+	}
+	if hookLoses("pre-tool-use", "", hookPayload{ToolUseID: "toolu_2"}) {
+		t.Error("a new tool_use_id must run")
+	}
+	if hookLoses("user-prompt-submit", "", hookPayload{PromptID: "p1"}) ||
+		!hookLoses("user-prompt-submit", hookSrcPlugin, hookPayload{PromptID: "p1"}) {
+		t.Error("user-prompt-submit must key on prompt_id")
+	}
+	// Hash claims: same handler + bytes lose; other bytes or handler run.
+	hookRawPayload = []byte(`{"x":1}`)
+	if hookLoses("session-start", "", hookPayload{}) || !hookLoses("session-start", hookSrcPlugin, hookPayload{}) {
+		t.Error("identical session-start payloads: first runs, second loses")
+	}
+	if hookLoses("rewake", "", hookPayload{}) {
+		t.Error("rewake must not share session-start's claim")
+	}
+	hookRawPayload = []byte(`{"x":2}`)
+	if hookLoses("session-start", "", hookPayload{}) {
+		t.Error("a different payload must run")
+	}
+	// Other session, same bytes: runs.
+	setHook(t, "s3", `{"x":2}`)
+	if hookLoses("session-start", "", hookPayload{}) {
+		t.Error("another session must run")
+	}
+}
+
+// The hash window lets a genuinely repeated identical event run again;
+// handle claims have no window.
+func TestClaimWindowExpiry(t *testing.T) {
+	guardEnv(t)
+	old := claimWindow
+	claimWindow = 80 * time.Millisecond
+	t.Cleanup(func() { claimWindow = old })
+	payload := []byte(`{"session_id":"s4","prompt":"same again"}`)
+	if !claim("user-prompt-submit", "s4", payload) || claim("user-prompt-submit", "s4", payload) {
+		t.Fatal("first claim wins, immediate duplicate loses")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !claim("user-prompt-submit", "s4", payload) {
+		t.Error("an identical prompt after the window must run")
+	}
+	if !claimHandle("pre-tool-use", "s4", "toolu_9") {
+		t.Fatal("handle claim")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if claimHandle("pre-tool-use", "s4", "toolu_9") {
+		t.Error("handle claims have no window")
+	}
+}
+
+// Codex/prx hooks (no Claude env) never claim, so never lose; after the
+// strip there is one copy and the claim is skipped too.
+func TestClaimSkippedOutsideClaudeAndAfterStrip(t *testing.T) {
+	guardEnv(t)
+	setHook(t, "s5", `{"y":1}`)
 	t.Setenv("CLAUDE_PID", "")
 	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "")
-	setHookSession(t, "sess-f")
-	markPluginSession("sess-f", false)
-	if hookSuperseded("", true) {
-		t.Error("a non-Claude hook process must never be superseded")
+	if hookLoses("stop", "", hookPayload{}) || hookLoses("stop", "", hookPayload{}) {
+		t.Error("a non-Claude hook process must never lose")
+	}
+	t.Setenv("CLAUDE_PID", "1")
+	recordLegacyStripDone()
+	if hookLoses("stop", "", hookPayload{}) || hookLoses("stop", hookSrcPlugin, hookPayload{}) {
+		t.Error("after the strip no claim is taken")
 	}
 }
 
-// End to end through the handler: with the marker present the legacy
-// SessionStart handler prints nothing; the plugin one still emits its
-// context (here the unbound-session skill hint).
+// End to end through the handlers: the copy that runs second is silent.
 func TestHookHandlersHonorGuard(t *testing.T) {
 	guardEnv(t)
-	payload := `{"session_id":"sess-g","source":"startup","hook_event_name":"SessionStart"}`
-	markPluginSession("sess-g", false)
-	var rc int
-	out := captureStdout(t, func() {
-		runWithStdin(t, payload, func() { rc = cmdHook([]string{"session-start"}) })
-	})
-	if rc != 0 || strings.TrimSpace(out) != "" {
-		t.Errorf("legacy handler with marker: rc=%d out=%q, want silent 0", rc, out)
+	run := func(payload string, args ...string) (int, string) {
+		var rc int
+		out := captureStdout(t, func() { runWithStdin(t, payload, func() { rc = cmdHook(args) }) })
+		return rc, strings.TrimSpace(out)
 	}
-	out = captureStdout(t, func() {
-		runWithStdin(t, payload, func() { rc = cmdHook([]string{"session-start", "--src", "plugin"}) })
-	})
-	if rc != 0 || strings.TrimSpace(out) == "" {
-		t.Errorf("plugin handler: rc=%d out=%q, want context", rc, out)
+	p1 := `{"session_id":"sess-g","source":"startup","hook_event_name":"SessionStart"}`
+	if rc, out := run(p1, "session-start", "--src", "plugin"); rc != 0 || out == "" {
+		t.Errorf("plugin copy first: rc=%d out=%q, want context", rc, out)
+	}
+	if rc, out := run(p1, "session-start"); rc != 0 || out != "" {
+		t.Errorf("legacy copy second: rc=%d out=%q, want silent 0", rc, out)
+	}
+	p2 := `{"session_id":"sess-h","source":"startup","hook_event_name":"SessionStart"}`
+	if rc, out := run(p2, "session-start"); rc != 0 || out == "" {
+		t.Errorf("legacy copy first: rc=%d out=%q, want context", rc, out)
+	}
+	if rc, out := run(p2, "session-start", "--src", "plugin"); rc != 0 || out != "" {
+		t.Errorf("plugin copy second: rc=%d out=%q, want silent 0", rc, out)
+	}
+	if !sessionOnPlugin("sess-h") {
+		t.Error("a losing plugin copy still proves the session is on plugin")
 	}
 	for _, sub := range []string{"user-prompt-submit", "pre-tool-use", "stop"} {
-		if rc := runHookWithStdin(t, payload, sub, "--src", "plugin"); rc != 0 {
+		if rc := runHookWithStdin(t, p1, sub, "--src", "plugin"); rc != 0 {
 			t.Errorf("%s --src plugin rc=%d", sub, rc)
 		}
 	}
-	// The rewake waiter accepts --src too (and exits quietly here).
-	runWithStdin(t, payload, func() { rc = cmdInboxWait([]string{"--rewake", "--src", "plugin", "--timeout", "1"}) })
+	var rc int
+	runWithStdin(t, p1, func() { rc = cmdInboxWait([]string{"--rewake", "--src", "plugin", "--timeout", "1"}) })
 	if rc != 0 {
 		t.Errorf("inbox wait --rewake --src plugin rc=%d", rc)
+	}
+}
+
+// ---------- legacy strip ----------
+
+func legacySettings(t *testing.T, home string) string {
+	t.Helper()
+	raw, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	return string(raw)
+}
+
+// The automatic strip waits while a live session is not on plugin, then
+// strips once it is (or has ended), records done, and leaves user hooks.
+func TestAutoStripWaitsForLiveLegacySession(t *testing.T) {
+	home := guardEnv(t)
+	t.Setenv(selfUpgradeEnv, "")
+	old := legacyStripEvery
+	legacyStripEvery = 0
+	t.Cleanup(func() { legacyStripEvery = old })
+
+	stubLiveClaude(t, "legacy-1", "plugin-1")
+	markPluginSession("plugin-1")
+	maybeStripLegacyHooks()
+	if !strings.Contains(legacySettings(t, home), `"flow hook stop"`) || legacyStripDone() {
+		t.Fatal("legacy-1 is live and not on plugin: must not strip")
+	}
+	markPluginSession("LEGACY-1") // ids compare case-insensitively
+	maybeStripLegacyHooks()
+	got := legacySettings(t, home)
+	if strings.Contains(got, `"flow hook`) || strings.Contains(got, `"flow inbox wait --rewake"`) {
+		t.Errorf("every live session on plugin: legacy entries should be stripped: %s", got)
+	}
+	if !strings.Contains(got, "user-stop") || !legacyStripDone() {
+		t.Errorf("strip must keep user hooks and record done: %s", got)
+	}
+}
+
+func TestAutoStripWhenLegacySessionEnded(t *testing.T) {
+	home := guardEnv(t)
+	t.Setenv(selfUpgradeEnv, "")
+	stubLiveClaude(t) // the legacy session is gone
+	old := legacyStripEvery
+	legacyStripEvery = time.Hour
+	t.Cleanup(func() { legacyStripEvery = old })
+	// guardEnv's install touched no throttle stamp: the first check runs.
+	maybeStripLegacyHooks()
+	if strings.Contains(legacySettings(t, home), `"flow hook`) {
+		t.Error("no live legacy session: should strip")
+	}
+}
+
+// The throttle: within legacyStripEvery the check is skipped.
+func TestAutoStripThrottled(t *testing.T) {
+	home := guardEnv(t)
+	t.Setenv(selfUpgradeEnv, "")
+	old := legacyStripEvery
+	legacyStripEvery = time.Hour
+	t.Cleanup(func() { legacyStripEvery = old })
+	maybeStripLegacyHooks() // live legacy session: checked, kept
+	stubLiveClaude(t)
+	maybeStripLegacyHooks() // throttled
+	if !strings.Contains(legacySettings(t, home), `"flow hook stop"`) {
+		t.Error("a second check within the throttle window must not run")
+	}
+}
+
+// The automatic check honors FLOW_NO_AUTO_UPGRADE and the plugin being
+// disabled.
+func TestAutoStripSkips(t *testing.T) {
+	home := guardEnv(t)
+	stubLiveClaude(t)
+	old := legacyStripEvery
+	legacyStripEvery = 0
+	t.Cleanup(func() { legacyStripEvery = old })
+	t.Setenv(selfUpgradeEnv, "1")
+	maybeStripLegacyHooks()
+	if !strings.Contains(legacySettings(t, home), `"flow hook stop"`) {
+		t.Error("FLOW_NO_AUTO_UPGRADE must stop the automatic strip")
+	}
+	t.Setenv(selfUpgradeEnv, "")
+	sp := filepath.Join(home, ".claude", "settings.json")
+	disabled := strings.Replace(legacySettingsFixture, `"other@market": true`, `"other@market": true, "flow@skills-dir": false`, 1)
+	_ = os.WriteFile(sp, []byte(disabled), 0o644)
+	maybeStripLegacyHooks()
+	if !strings.Contains(legacySettings(t, home), `"flow hook stop"`) {
+		t.Error("a disabled plugin must keep the legacy hooks")
+	}
+}
+
+// --strip-legacy forces the strip despite a live legacy session.
+func TestSkillUpdateStripLegacyForces(t *testing.T) {
+	home := guardEnv(t)
+	out := captureStdout(t, func() {
+		if rc := cmdSkill([]string{"update", "--harness", "claude"}); rc != 0 {
+			t.Fatalf("update rc=%d", rc)
+		}
+	})
+	if !strings.Contains(out, "kept flow's legacy hooks") || !strings.Contains(legacySettings(t, home), `"flow hook stop"`) {
+		t.Fatalf("without the flag the live legacy session keeps them; out=%s", out)
+	}
+	out = captureStdout(t, func() {
+		if rc := cmdSkill([]string{"update", "--harness", "claude", "--strip-legacy"}); rc != 0 {
+			t.Fatalf("update --strip-legacy rc=%d", rc)
+		}
+	})
+	if strings.Contains(legacySettings(t, home), `"flow hook`) || !legacyStripDone() {
+		t.Errorf("--strip-legacy must strip and record done; out=%s settings=%s", out, legacySettings(t, home))
+	}
+}
+
+// The strip never runs inside a hook: Run skips it for hook/inbox.
+func TestRunSkipsStripInHooks(t *testing.T) {
+	home := guardEnv(t)
+	t.Setenv(selfUpgradeEnv, "")
+	stubLiveClaude(t)
+	old := legacyStripEvery
+	legacyStripEvery = 0
+	t.Cleanup(func() { legacyStripEvery = old })
+	runWithStdin(t, `{"session_id":"z","hook_event_name":"Stop"}`, func() { Run([]string{"hook", "stop"}) })
+	if !strings.Contains(legacySettings(t, home), `"flow hook stop"`) {
+		t.Error("a hook invocation must not strip")
+	}
+	captureStdout(t, func() { Run([]string{"list", "tasks"}) })
+	if strings.Contains(legacySettings(t, home), `"flow hook stop"`) {
+		t.Error("an ordinary command should run the strip check")
 	}
 }
 
@@ -511,4 +702,40 @@ func runHookWithStdin(t *testing.T, payload string, args ...string) int {
 	var rc int
 	runWithStdin(t, payload, func() { rc = cmdHook(args) })
 	return rc
+}
+
+// The plugin form marks its source via FLOW_HOOK_SRC (an env prefix an
+// older binary ignores), not only via --src.
+func TestHookSrcFromEnv(t *testing.T) {
+	guardEnv(t)
+	setHook(t, "s-env", `{"e":1}`)
+	t.Setenv(hookSrcEnv, hookSrcPlugin)
+	if hookLoses("stop", "", hookPayload{}) {
+		t.Fatal("first copy must run")
+	}
+	if !sessionOnPlugin("s-env") {
+		t.Error("FLOW_HOOK_SRC=plugin must record the session as on plugin")
+	}
+}
+
+// Legacy entries that reappear (an older flow re-installed them) clear the
+// done record, so the guard claims again until the next strip.
+func TestLegacyEntriesReappearClearDone(t *testing.T) {
+	home := withTempHome(t)
+	t.Setenv("FLOW_ROOT", t.TempDir())
+	stubLiveClaude(t, "legacy-x")
+	if rc := cmdSkill([]string{"install", "--harness", "claude"}); rc != 0 {
+		t.Fatal("install")
+	}
+	if !legacyStripDone() {
+		t.Fatal("a clean install has nothing to strip: done")
+	}
+	sp := filepath.Join(home, ".claude", "settings.json")
+	_ = os.WriteFile(sp, []byte(legacySettingsFixture), 0o644)
+	if rc := cmdSkill([]string{"update", "--harness", "claude"}); rc != 0 {
+		t.Fatal("update")
+	}
+	if legacyStripDone() {
+		t.Error("reappeared legacy entries must clear the done record")
+	}
 }

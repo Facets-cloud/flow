@@ -27,9 +27,10 @@ import (
 //	hooks/hooks.json            same schema as settings.json hooks
 //
 // Plugin hooks merge with settings hooks and a handler present in both
-// fires twice, which is why the plugin commands carry `--src plugin` and
-// the legacy (settings) handlers stand down for a session the plugin
-// already covers (see app/hookguard.go).
+// fires twice, which is why the plugin commands carry FLOW_HOOK_SRC=plugin,
+// every handler claims its invocation so only one copy runs, and flow
+// strips the legacy settings entries once no live session needs them
+// (see app/hookguard.go and app/legacystrip.go).
 
 // PluginID is the id Claude Code gives the flow skills-dir plugin; the key
 // a user's `claude plugin disable` writes under enabledPlugins.

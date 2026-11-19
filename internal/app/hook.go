@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flow/internal/flowdb"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -73,7 +74,13 @@ type hookPayload struct {
 	StopHookActive bool   `json:"stop_hook_active"`
 	Prompt         string `json:"prompt"`
 	HookEventName  string `json:"hook_event_name"`
+	PromptID       string `json:"prompt_id"`
+	ToolUseID      string `json:"tool_use_id"`
 }
+
+// hookRawPayload is the hook's raw stdin bytes (nil outside a hook). The
+// duplicate-copy claim (hookguard.go) hashes it.
+var hookRawPayload []byte
 
 // readHookPayload decodes the hook's stdin payload and records its
 // session_id for currentSessionID. Codex exports $CODEX_THREAD_ID only to
@@ -85,9 +92,12 @@ func readHookPayload() (p hookPayload, ok bool) {
 	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice != 0 {
 		return p, false
 	}
-	if err := json.NewDecoder(os.Stdin).Decode(&p); err != nil {
+	hookRawPayload = nil
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil || json.Unmarshal(raw, &p) != nil {
 		return p, false
 	}
+	hookRawPayload = raw
 	hookSessionID = p.SessionID
 	hookPrompt, hookPromptKnown = p.Prompt, true
 	return p, true
@@ -120,7 +130,7 @@ func cmdHookSessionStart(args []string) int {
 		return 2
 	}
 	payload, _ := readHookPayload()
-	if hookSuperseded(*src, payload.Source != "compact") {
+	if hookLoses("session-start", *src, payload) {
 		return 0
 	}
 	// Claude socket push: only this hook process sees the session's
@@ -352,8 +362,8 @@ func cmdHookUserPromptSubmit(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	readHookPayload()
-	if hookSuperseded(*src, false) {
+	p, _ := readHookPayload()
+	if hookLoses("user-prompt-submit", *src, p) {
 		return 0
 	}
 	t := lookupBoundTask()
@@ -402,8 +412,8 @@ func cmdHookPreToolUse(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	readHookPayload()
-	if hookSuperseded(*src, false) {
+	p, _ := readHookPayload()
+	if hookLoses("pre-tool-use", *src, p) {
 		return 0
 	}
 	ctx := busPreToolUseContext() + upgradeNoticeContext(nil)

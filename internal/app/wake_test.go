@@ -583,7 +583,7 @@ func TestSkillInstallArmsRewakeHook(t *testing.T) {
 		for _, e := range entries {
 			for _, h := range e.(map[string]any)["hooks"].([]any) {
 				hm := h.(map[string]any)
-				if hm["command"] == rewakeHookCommand+pluginSrcSuffix && hm["asyncRewake"] == true {
+				if hm["command"] == pluginCommand(rewakeHookCommand) && hm["asyncRewake"] == true {
 					found = true
 				}
 			}

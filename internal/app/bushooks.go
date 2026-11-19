@@ -420,7 +420,7 @@ func cmdHookStop(args []string) int {
 	}
 	// A missing or malformed payload: when in doubt, don't block.
 	p, ok := readHookPayload()
-	if !ok || hookSuperseded(*src, false) {
+	if !ok || hookLoses("stop", *src, p) {
 		return 0
 	}
 	db, err := openBusDB()

@@ -7,5 +7,5 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 exec docker run --rm \
   -v "$here":/src -w /src \
   -v flow-gomod:/go/pkg/mod -v flow-gocache:/root/.cache/go-build \
-  -e HOME=/root -e FLOW_ROOT=/root/.flow -e FLOW_NO_AUTO_UPGRADE=1 \
+  -e HOME=/root \
   golang:1.25 go test "${@:-./...}"

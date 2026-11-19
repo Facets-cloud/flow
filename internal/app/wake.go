@@ -65,7 +65,7 @@ const (
 	wakeCrossCheckTimeout = 3 * time.Second
 	// rewakeHookCommand is the asyncRewake hook command: the legacy
 	// ~/.claude/settings.json entry (stripped by exact match) and, with
-	// pluginSrcSuffix, the flow plugin's hooks.json entry. Stable.
+	// pluginCommand, the flow plugin's hooks.json entry. Stable.
 	rewakeHookCommand = "flow inbox wait --rewake"
 	rewakeMessage     = "flow bus:"
 )
@@ -364,7 +364,7 @@ func headlessClaude() bool {
 
 func rewakeWait(timeout time.Duration, src string) int {
 	p, _ := readHookPayload()
-	if hookSuperseded(src, p.HookEventName == "SessionStart" && p.Source != "compact") {
+	if hookLoses("rewake", src, p) {
 		return 0
 	}
 	if !wakeActive() || os.Getenv(autoRunEnvVar) != "" || headlessClaude() {

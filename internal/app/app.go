@@ -29,6 +29,10 @@ func Run(args []string) int {
 		// no auto-upgrade
 	default:
 		maybeAutoUpgradeSkill()
+		if cmd != "hook" && cmd != "inbox" {
+			// Never in a hook's path (inbox: the rewake waiter).
+			maybeStripLegacyHooks()
+		}
 	}
 
 	rc := runCommand(cmd, rest)
@@ -126,7 +130,7 @@ Setup:
   flow init [--harness claude|codex|prx]
   flow skill install [--force] [--harness claude|codex|prx]
   flow skill uninstall [--harness claude|codex|prx]
-  flow skill update [--harness claude|codex|prx]
+  flow skill update [--harness claude|codex|prx] [--strip-legacy]   (--strip-legacy: drop old flow hooks from ~/.claude/settings.json now)
   (default: every present harness — binary on PATH or config home exists)
   flow upgrade [--check] [--force]             (install the latest release now; flow also upgrades
                                                 itself after a command and refreshes an older skill —

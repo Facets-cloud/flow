@@ -23,10 +23,13 @@
 - **Claude Code: flow's hooks now come from the flow plugin** inside the
   skill folder (`~/.claude/skills/flow/`, `flow@skills-dir`), not from
   `~/.claude/settings.json`; flow no longer writes that file. A session
-  started before the upgrade keeps its old hooks until it restarts; run
-  `/reload-plugins` or restart to switch it over (nothing fires twice
-  either way). The skill is still named `flow`. If the user disabled the
-  plugin, flow's hooks stay off — leave that choice to them.
+  started before the upgrade keeps its old hooks until it restarts
+  (`/reload-plugins` or a restart switches it over); nothing fires twice
+  meanwhile. Once no running session still needs them, flow removes its
+  old entries from `settings.json` by itself (`flow skill update
+  --strip-legacy` does it now). The skill is still named `flow`. If the
+  user disabled the plugin, flow's hooks stay off — leave that choice to
+  them.
 
 - Restart running Codex sessions after upgrading, then review the pending hooks (`/hooks`) and trust flow's hooks.
 - **Every interactive task is a driver.** Rules: references/driver.md

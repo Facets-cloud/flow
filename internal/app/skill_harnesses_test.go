@@ -64,25 +64,25 @@ func fileExists(p string) bool {
 // the given settings/hooks file.
 func assertAllFlowHooks(t *testing.T, path string) {
 	t.Helper()
-	assertFlowHooksWithSuffix(t, path, "")
+	assertFlowHooksWith(t, path, func(c string) string { return c })
 }
 
 // assertClaudePluginHooks checks the Claude plugin's hooks.json carries the
 // four live hooks (with --src plugin) and that settings.json was not created.
 func assertClaudePluginHooks(t *testing.T, e harnessEnv) {
 	t.Helper()
-	assertFlowHooksWithSuffix(t, e.claudePluginHooks(), pluginSrcSuffix)
+	assertFlowHooksWith(t, e.claudePluginHooks(), pluginCommand)
 	if fileExists(e.claudeSettings()) {
 		t.Errorf("claude: %s must not be written", e.claudeSettings())
 	}
 }
 
-func assertFlowHooksWithSuffix(t *testing.T, path, suffix string) {
+func assertFlowHooksWith(t *testing.T, path string, form func(string) string) {
 	t.Helper()
 	settings := readSettings(t, path)
 	hooks, _ := settings["hooks"].(map[string]any)
 	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"} {
-		if !hookEventReferencesCommand(hooks, ev, expectedCommand(ev)+suffix) {
+		if !hookEventReferencesCommand(hooks, ev, form(expectedCommand(ev))) {
 			t.Errorf("%s: %s hook missing; hooks=%#v", path, ev, hooks[ev])
 		}
 	}

@@ -11,7 +11,8 @@ in=$(cat 2>/dev/null || true)
 case "$1" in hook|inbox)
   out=$(printf '%s' "$in" | flow-real "$@"); rc=$?
   ev=$(printf '%s' "$in" | jq -r '.hook_event_name // "-"' 2>/dev/null)
-  printf '%s\t%s\trc=%s\tout=%s\n' "$ev" "$*" "$rc" "${#out}" >> /tmp/hooks.log
+  sum=$(printf '%s' "$in" | sha256sum | cut -c1-10)
+  printf '%s\t%s\tsrc=%s\tstdin=%s\trc=%s\tout=%s\n' "$ev" "$*" "${FLOW_HOOK_SRC:-legacy}" "$sum" "$rc" "${#out}" >> /tmp/hooks.log
   printf '%s' "$out"; exit $rc ;;
 esac
 printf '%s' "$in" | exec flow-real "$@"
@@ -48,6 +49,14 @@ cat > ~/.claude/settings.json <<'JSON'
  "Stop":[{"hooks":[{"type":"command","command":"flow hook stop"}]},
    {"hooks":[{"type":"command","command":"flow inbox wait --rewake","asyncRewake":true,"timeout":86400,"rewakeMessage":"flow bus:"}]}]}}
 JSON
+# Simulate an upgrade while an old session is still live: the strip has
+# not run yet, so both copies are registered.
+rm -f "$FLOW_ROOT/hooks/legacy-stripped"
 sid2=$(cat /proc/sys/kernel/random/uuid)
 run "legacy+plugin: claude -p" -p --session-id "$sid2" --dangerously-skip-permissions "$P"
-echo "markers: $(ls $FLOW_ROOT/hooks/plugin 2>/dev/null | tr '\n' ' ')"
+echo "on-plugin markers: $(ls $FLOW_ROOT/hooks/plugin 2>/dev/null | tr '\n' ' ')"
+echo "claims taken: $(ls $FLOW_ROOT/hooks/claims 2>/dev/null | wc -l)"
+# An ordinary flow command now runs the strip check: no live legacy session.
+FLOW_NO_AUTO_UPGRADE= flow list tasks >/dev/null 2>&1
+echo "after flow list: legacy flow entries left in settings.json: $(grep -c '"flow hook\|"flow inbox' ~/.claude/settings.json)"
+echo "strip done record: $(test -e $FLOW_ROOT/hooks/legacy-stripped && echo yes || echo no)"
