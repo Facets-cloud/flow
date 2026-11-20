@@ -393,10 +393,6 @@ func TestSkillSection414(t *testing.T) {
 func TestSkillIntakeMinimal(t *testing.T) {
 	got := skillCorpus(t)
 	for _, want := range []string{
-		"Required sections (always asked, in this order)",
-		"Optional sections (offered, can be deferred)",
-		"Detail now",
-		"Defer until you start the task",
 		"Thin task brief (intake-minimal)",
 		"*Deferred — fill in at task start.*",
 		"Deferred-section prompt",

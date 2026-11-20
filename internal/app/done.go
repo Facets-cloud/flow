@@ -162,7 +162,10 @@ func runCloseoutSweep(h harness.Harness, task *flowdb.Task) error {
 	if task.ProjectSlug.Valid {
 		projectSlug = task.ProjectSlug.String
 	}
-	return h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug))
+	// The sweep runs on the task's stored model/effort, when set.
+	var opts harness.LaunchOpts
+	applyTaskModel(task, &opts)
+	return h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug), opts)
 }
 
 // buildCloseoutSweepPrompt composes the headless prompt that drives

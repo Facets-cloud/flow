@@ -49,7 +49,7 @@ func TestCommands(t *testing.T) {
 
 func TestSessionIDs(t *testing.T) {
 	h := New()
-	id, err := h.NewSessionID("")
+	id, err := h.NewSessionID("", harness.LaunchOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
