@@ -1,50 +1,50 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 57,
-    "dead": 6,
-    "done": 46,
-    "messages_between_tasks": 50,
-    "notes": 95,
-    "refs": 45,
-    "running": 1,
-    "tasks": 61
+    "children": 54,
+    "dead": 5,
+    "done": 41,
+    "messages_between_tasks": 120,
+    "notes": 108,
+    "refs": 35,
+    "running": 4,
+    "tasks": 59
   },
   "dead_reasons": {
     "exited without closing": 1,
-    "no log written": 5
+    "no log written": 4
   },
-  "generated_at": "2026-11-19T11:30:21+05:30",
+  "generated_at": "2026-11-20T11:30:19+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 61
+      "tasks": 59
     },
     {
-      "items": 96,
+      "items": 109,
       "name": "updates/",
-      "tasks": 61
+      "tasks": 59
     },
     {
-      "items": 78,
+      "items": 85,
       "name": "auto-runs/",
-      "tasks": 48
+      "tasks": 43
     },
     {
-      "items": 38,
+      "items": 41,
       "name": "other files",
-      "tasks": 9
-    },
-    {
-      "items": 82,
-      "name": "evidence/",
-      "tasks": 7
+      "tasks": 12
     },
     {
       "items": 0,
       "name": "workspace/",
       "tasks": 5
+    },
+    {
+      "items": 29,
+      "name": "evidence/",
+      "tasks": 3
     },
     {
       "items": 25,
@@ -101,8 +101,112 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-19-06-00",
+      "slug": "site-daily--2026-11-20-06-00",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-multi-device",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-page",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "agent-ui-levers-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "help-20",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-dogfood",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "pm-tracking-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 10,
+      "refs": [
+        12
+      ],
+      "shown": true,
+      "slug": "iop-cli-build",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "hud-intent-slice1",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 5,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-hud-go",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-19-06-00",
+      "status": "done"
     },
     {
       "auto_run_status": null,
@@ -166,7 +270,7 @@
         182,
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-18-06-00",
       "status": "done"
     },
@@ -409,13 +513,13 @@
       "auto_run_status": null,
       "child": true,
       "dead_reason": null,
-      "notes": 17,
+      "notes": 18,
       "refs": [
         187
       ],
       "shown": true,
       "slug": "driver-first-ux",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -672,146 +776,6 @@
       "refs": [],
       "shown": false,
       "slug": "flow-folder-trust",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        146
-      ],
-      "shown": false,
-      "slug": "rebase-146",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "bg-resume-name",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        146,
-        149
-      ],
-      "shown": false,
-      "slug": "upgrade-notice",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "desk-wake-text",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "wake-build-v1",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "connectors-autoupdate",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "no log written",
-      "notes": 0,
-      "refs": [],
-      "shown": true,
-      "slug": "harness-wake-build",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "pr143-sandbox-rules",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "codex-sandbox-modes",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "codex-unsandboxed-default",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        1,
-        4,
-        5,
-        11,
-        17,
-        28,
-        35,
-        71,
-        87
-      ],
-      "shown": false,
-      "slug": "review-pr138",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        113,
-        132,
-        136,
-        142
-      ],
-      "shown": false,
-      "slug": "pr132-fold-notes",
       "status": "done"
     }
   ],
