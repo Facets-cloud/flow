@@ -1,50 +1,50 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 54,
-    "dead": 5,
-    "done": 41,
-    "messages_between_tasks": 120,
-    "notes": 108,
-    "refs": 35,
-    "running": 4,
-    "tasks": 59
+    "children": 52,
+    "dead": 7,
+    "done": 42,
+    "messages_between_tasks": 241,
+    "notes": 154,
+    "refs": 31,
+    "running": 3,
+    "tasks": 58
   },
   "dead_reasons": {
-    "exited without closing": 1,
+    "exited without closing": 3,
     "no log written": 4
   },
-  "generated_at": "2026-11-20T11:30:19+05:30",
+  "generated_at": "2026-11-21T13:49:50+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 59
+      "tasks": 58
     },
     {
-      "items": 109,
+      "items": 155,
       "name": "updates/",
-      "tasks": 59
+      "tasks": 58
     },
     {
-      "items": 85,
+      "items": 122,
       "name": "auto-runs/",
-      "tasks": 43
+      "tasks": 46
     },
     {
-      "items": 41,
+      "items": 34,
       "name": "other files",
-      "tasks": 12
+      "tasks": 11
     },
     {
-      "items": 0,
+      "items": 1,
       "name": "workspace/",
-      "tasks": 5
+      "tasks": 6
     },
     {
-      "items": 29,
+      "items": 22,
       "name": "evidence/",
-      "tasks": 3
+      "tasks": 2
     },
     {
       "items": 25,
@@ -101,28 +101,129 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-20-06-00",
+      "slug": "site-daily--2026-11-21-08-16",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "exited without closing",
+      "notes": 5,
+      "refs": [
+        9
+      ],
+      "shown": true,
+      "slug": "operator-alpha-driver",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-queue-driver",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-releases-repo",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "exited without closing",
+      "notes": 3,
+      "refs": [
+        12,
+        115
+      ],
+      "shown": true,
+      "slug": "operator-page-b",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-plugin-setup-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 5,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-alpha-pack",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-alpha-readiness",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-gap-list",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-20-06-00",
+      "status": "done"
     },
     {
       "auto_run_status": null,
       "child": true,
       "dead_reason": null,
-      "notes": 2,
+      "notes": 3,
       "refs": [],
       "shown": false,
       "slug": "flow-multi-device",
       "status": "in-progress"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 2,
-      "refs": [],
-      "shown": false,
+      "notes": 12,
+      "refs": [
+        12,
+        18,
+        115
+      ],
+      "shown": true,
       "slug": "operator-page",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -165,16 +266,14 @@
       "status": "done"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 10,
-      "refs": [
-        12
-      ],
-      "shown": true,
+      "notes": 35,
+      "refs": [],
+      "shown": false,
       "slug": "iop-cli-build",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "auto_run_status": "running",
@@ -187,10 +286,10 @@
       "status": "done"
     },
     {
-      "auto_run_status": null,
+      "auto_run_status": "running",
       "child": true,
       "dead_reason": null,
-      "notes": 5,
+      "notes": 13,
       "refs": [],
       "shown": false,
       "slug": "flow-hud-go",
@@ -228,7 +327,7 @@
         187,
         188
       ],
-      "shown": true,
+      "shown": false,
       "slug": "flow-plugin-build",
       "status": "done"
     },
@@ -241,7 +340,7 @@
         157,
         188
       ],
-      "shown": true,
+      "shown": false,
       "slug": "flow-plugin",
       "status": "done"
     },
@@ -662,120 +761,6 @@
       ],
       "shown": false,
       "slug": "pr132-resolve-main",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "brief-shapes-docs",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 2,
-      "refs": [
-        11,
-        29,
-        74,
-        165,
-        187,
-        188
-      ],
-      "shown": true,
-      "slug": "driver-brief-knowhow",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "cc-linkedin-post",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "tray-settings",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        153,
-        154
-      ],
-      "shown": false,
-      "slug": "pr153-review",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 6,
-      "refs": [
-        176
-      ],
-      "shown": false,
-      "slug": "flow-hub-role",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "wake-option-c",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 4,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-coord",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        151
-      ],
-      "shown": false,
-      "slug": "pr151-conflicts",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-folder-trust",
       "status": "done"
     }
   ],
