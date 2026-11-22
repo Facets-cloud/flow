@@ -252,6 +252,11 @@ does not        Jira, Linear, GitHub Issues: no integration, none planned.
 scheduling      not in flow today. My playbooks fire from launchd plists I
                 copied by hand. flow schedule (launchd, systemd, cron) is in
                 review ([#130](https://github.com/Facets-cloud/flow/pull/130)).
+a band          flow-band, a Claude Code mod, shows the bound task and your
+                unread inbox count above the prompt. /fs opens a switcher over
+                in-progress tasks. Install it from a Claude Code session:
+                /plugin install flow-band --marketplace pa/cc-mods
+                ([source](https://github.com/pa/cc-mods/tree/main/flow-band)).
 reaching you    connectors are small scripts: a macOS dialog ships with flow, the
                 Slack one in the video is 60 lines of bash and will ship as a
                 sample. Without one, asks wait in your inbox until you look.
