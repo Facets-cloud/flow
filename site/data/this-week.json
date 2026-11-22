@@ -1,38 +1,38 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 52,
+    "children": 46,
     "dead": 7,
-    "done": 42,
-    "messages_between_tasks": 241,
-    "notes": 154,
+    "done": 39,
+    "messages_between_tasks": 190,
+    "notes": 157,
     "refs": 31,
-    "running": 3,
-    "tasks": 58
+    "running": 2,
+    "tasks": 53
   },
   "dead_reasons": {
     "exited without closing": 3,
     "no log written": 4
   },
-  "generated_at": "2026-11-21T13:49:50+05:30",
+  "generated_at": "2026-11-22T12:12:27+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 58
+      "tasks": 53
     },
     {
-      "items": 155,
+      "items": 158,
       "name": "updates/",
-      "tasks": 58
+      "tasks": 53
     },
     {
-      "items": 122,
+      "items": 126,
       "name": "auto-runs/",
-      "tasks": 46
+      "tasks": 43
     },
     {
-      "items": 34,
+      "items": 31,
       "name": "other files",
       "tasks": 11
     },
@@ -40,11 +40,6 @@
       "items": 1,
       "name": "workspace/",
       "tasks": 6
-    },
-    {
-      "items": 22,
-      "name": "evidence/",
-      "tasks": 2
     },
     {
       "items": 25,
@@ -77,6 +72,11 @@
       "tasks": 1
     },
     {
+      "items": 11,
+      "name": "evidence/",
+      "tasks": 1
+    },
+    {
       "items": 6,
       "name": "sbx-503/",
       "tasks": 1
@@ -101,20 +101,44 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-21-08-16",
+      "slug": "site-daily--2026-11-22-06-14",
       "status": "in-progress"
     },
     {
-      "auto_run_status": "dead",
+      "auto_run_status": "completed",
       "child": true,
-      "dead_reason": "exited without closing",
-      "notes": 5,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-rules-driver",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
       "refs": [
-        9
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-21-08-16",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 10,
+      "refs": [
+        9,
+        20,
+        21
       ],
       "shown": true,
       "slug": "operator-alpha-driver",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -286,12 +310,12 @@
       "status": "done"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "dead",
       "child": true,
-      "dead_reason": null,
-      "notes": 13,
+      "dead_reason": "exited without closing",
+      "notes": 20,
       "refs": [],
-      "shown": false,
+      "shown": true,
       "slug": "flow-hud-go",
       "status": "in-progress"
     },
@@ -303,7 +327,7 @@
       "refs": [
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-19-06-00",
       "status": "done"
     },
@@ -356,7 +380,7 @@
         187,
         188
       ],
-      "shown": true,
+      "shown": false,
       "slug": "driver-first-upgrade-test",
       "status": "done"
     },
@@ -672,95 +696,6 @@
       "refs": [],
       "shown": false,
       "slug": "desk-lazy-restart",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        165
-      ],
-      "shown": false,
-      "slug": "driver-role-ab",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 6,
-      "refs": [],
-      "shown": false,
-      "slug": "driver-role-section",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "bgfork-probe",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        170,
-        171,
-        172
-      ],
-      "shown": false,
-      "slug": "bg-resume-phantom-id",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "bg-resume-kickoff",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 2,
-      "refs": [
-        132,
-        165,
-        170,
-        171,
-        172,
-        178,
-        179,
-        180
-      ],
-      "shown": false,
-      "slug": "bg-resume-wake",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        132,
-        143,
-        152
-      ],
-      "shown": false,
-      "slug": "pr132-resolve-main",
       "status": "done"
     }
   ],
