@@ -6,10 +6,10 @@ package connectors
 
 import "embed"
 
-// Samples holds one directory per sample connector (e.g. "macos",
+// Samples holds one directory per sample connector ("macos", "linux",
 // "peer-local").
 // embed drops file modes, so the installer restores the exec bit on each
 // manifest's exec target.
 //
-//go:embed macos peer-local
+//go:embed macos linux peer-local
 var Samples embed.FS
