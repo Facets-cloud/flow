@@ -223,7 +223,8 @@ func TestCmdDoAutoCarriesModel(t *testing.T) {
 		got = opts
 		return nil
 	})
-	if rc := cmdAutoExec([]string{"am"}); rc != 0 {
+	logPath := autoTestLog(t, "am")
+	if rc := cmdAutoExec([]string{"am", "--log", logPath}); rc != 0 {
 		t.Fatalf("cmdAutoExec rc=%d", rc)
 	}
 	if got.Model != "haiku" || got.Effort != "low" {
