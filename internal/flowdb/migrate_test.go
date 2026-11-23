@@ -98,16 +98,16 @@ func schemaShape(t *testing.T, db *sql.DB, skip map[string]bool) string {
 			lines = append(lines, fmt.Sprintf("col %s.%s %s nn=%d dflt=%s pk=%d", tbl, name, typ, nn, dflt, pk))
 		}
 		rows.Close()
-		rows, err = db.Query(`SELECT "table", "from", COALESCE("to",'') FROM pragma_foreign_key_list(?)`, tbl)
+		rows, err = db.Query(`SELECT "table", "from", COALESCE("to",''), on_update, on_delete FROM pragma_foreign_key_list(?)`, tbl)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for rows.Next() {
-			var to, from, toCol string
-			if err := rows.Scan(&to, &from, &toCol); err != nil {
+			var to, from, toCol, onUpd, onDel string
+			if err := rows.Scan(&to, &from, &toCol, &onUpd, &onDel); err != nil {
 				t.Fatal(err)
 			}
-			lines = append(lines, fmt.Sprintf("fk %s.%s -> %s(%s)", tbl, from, to, toCol))
+			lines = append(lines, fmt.Sprintf("fk %s.%s -> %s(%s) on_update=%s on_delete=%s", tbl, from, to, toCol, onUpd, onDel))
 		}
 		rows.Close()
 		rows, err = db.Query(`SELECT name, "unique", partial FROM pragma_index_list(?) WHERE origin != 'pk'`, tbl)
@@ -243,8 +243,11 @@ func TestUpgradeFromEveryFixture(t *testing.T) {
 			if got := taskKeys(t, db); strings.Join(got, "\n") != strings.Join(beforeTasks, "\n") {
 				t.Errorf("task rows changed:\nbefore %v\nafter  %v", beforeTasks, got)
 			}
-			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Err(); err != nil {
+			var fkViol int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&fkViol); err != nil {
 				t.Errorf("foreign_key_check: %v", err)
+			} else if fkViol != 0 {
+				t.Errorf("foreign_key_check: %d violation(s) after migration", fkViol)
 			}
 			// The commands' read paths work on the migrated DB.
 			if _, err := ListTasks(db, TaskFilter{IncludeArchived: true}); err != nil {
@@ -333,6 +336,36 @@ func TestFreshDBIsAtLatestVersion(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "backups")); !os.IsNotExist(err) {
 		t.Errorf("a fresh DB must not be backed up (stat err %v)", err)
+	}
+}
+
+// A path with URI-significant characters opens the file it names, not a
+// %-decoded or ?/#-truncated variant of it.
+func TestOpenDBPathWithURIChars(t *testing.T) {
+	for _, name := range []string{"flow%20work", "a?b", "c#d", "plain"} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), name)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "flow.db")
+			db, err := OpenDB(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("DB not created at %q: %v", path, err)
+			}
+			db, err = OpenDB(path) // reopen hits the fast path on the same file
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if v, _ := userVersion(db); v != latestVersion() {
+				t.Errorf("user_version = %d, want %d", v, latestVersion())
+			}
+		})
 	}
 }
 
