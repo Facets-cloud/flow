@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -861,5 +862,28 @@ func TestAutoChildEnvStripsAutoTab(t *testing.T) {
 		if strings.HasPrefix(kv, autoTabEnvVar+"=") {
 			t.Errorf("owner tick env kept %q: a tick could open tabs", kv)
 		}
+	}
+}
+
+// Item 5: a dir flow just created with --mkdir is trusted per launch only
+// when it is NOT inside a git repo (the FlowOwnedRoot rule): a new folder
+// inside someone's repo would inherit that repo's hooks, so a human must
+// still answer the trust prompt. TestCmdAutoTabMkdirTrustsCreatedDir is
+// the outside-a-repo half.
+func TestCmdAutoTabMkdirInsideGitRepoNotTrusted(t *testing.T) {
+	setupFlowRoot(t)
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(repo, "new", "wd")
+	brief := writeFile(t, t.TempDir(), "b.md", "# goal\nDone when: x\n")
+	if rc := cmdAuto([]string{"git child", "--slug", "gitmk", "--brief", brief, "--tab", "--harness", "prx", "--work-dir", dir, "--mkdir"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if s := script(); strings.Contains(s, "-trust-workspace") {
+		t.Errorf("a --mkdir dir inside a git repo must keep prx's trust prompt; got:\n%s", s)
 	}
 }

@@ -60,6 +60,13 @@ func resolve(p string) (string, error) {
 
 // inGitRepo reports whether dir or any ancestor holds a .git entry
 // (directory, or file for worktrees/submodules).
+// InGitRepo reports whether dir is inside a git work tree (a .git entry
+// in dir or any ancestor). It is FlowOwnedRoot's repo check, exported so a
+// folder flow just created elsewhere (`flow auto --mkdir`) is held to the
+// same rule: inside a repo it inherits that repo's hooks, so a human must
+// still answer the harness's trust prompt.
+func InGitRepo(dir string) bool { return inGitRepo(dir) }
+
 func inGitRepo(dir string) bool {
 	for d := dir; ; {
 		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {

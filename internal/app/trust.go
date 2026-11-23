@@ -60,7 +60,10 @@ func trustMkdirCreated(workDir string, opts *harness.LaunchOpts) {
 	if opts == nil || mkdirCreatedWorkDir == "" {
 		return
 	}
-	if resolved, err := filepath.EvalSymlinks(workDir); err == nil && resolved == mkdirCreatedWorkDir {
+	// Only a dir flow created that is NOT inside a git repo (FlowOwnedRoot's
+	// rule): a new folder inside someone's repo would load that repo's
+	// hooks, so it keeps the trust prompt for a human.
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil && resolved == mkdirCreatedWorkDir && !trust.InGitRepo(resolved) {
 		opts.TrustDir = resolved
 	}
 }
