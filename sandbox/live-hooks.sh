@@ -9,5 +9,8 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 envfile=${1:-}
 docker build -q -t flow-sandbox "$here/sandbox" >/dev/null
 set -- --rm -v "$here":/src:ro -v flow-gomod:/go/pkg/mod -v flow-gocache:/root/.cache/go-build
-[ -n "$envfile" ] && [ -f "$envfile" ] && set -- "$@" --env-file "$envfile"
+if [ -n "$envfile" ]; then
+  [ -f "$envfile" ] || { echo "live-hooks: env file not found: $envfile" >&2; exit 2; }
+  set -- "$@" --env-file "$envfile"
+fi
 exec docker run "$@" flow-sandbox sh /src/sandbox/live-hooks-inner.sh
