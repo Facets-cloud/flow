@@ -2,7 +2,6 @@ package flowdb
 
 import (
 	"database/sql"
-	"fmt"
 	"strings"
 )
 
@@ -18,24 +17,6 @@ import (
 //	  blocked, created_at         delivery       outbound: dispatched|sent|failed
 //	  last_seen_at                delivery_error
 //	                              UNIQUE(peer, origin_ref) WHERE origin_ref NOT NULL
-const peersDDL = `
-CREATE TABLE IF NOT EXISTS peers (
-    name          TEXT PRIMARY KEY,
-    connector     TEXT NOT NULL,
-    at            TEXT NOT NULL,
-    blocked       INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT NOT NULL,
-    last_seen_at  TEXT,
-    UNIQUE (connector, at)
-);
-`
-
-// peerBusIndexDDL runs after the peer columns exist: a duplicate inbound
-// delivery of the same (peer, origin_ref) is refused by the database.
-const peerBusIndexDDL = `
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bus_messages_peer_origin
-    ON bus_messages(peer, origin_ref) WHERE origin_ref IS NOT NULL;
-`
 
 // Delivery states of an outbound peer row.
 const (
@@ -43,31 +24,6 @@ const (
 	DeliverySent       = "sent"
 	DeliveryFailed     = "failed"
 )
-
-// migratePeers creates the peers table and backfills the peer columns on
-// bus_messages (nullable, no data) plus their unique index.
-func migratePeers(db *sql.DB) error {
-	if _, err := db.Exec(peersDDL); err != nil {
-		return fmt.Errorf("peers table: %w", err)
-	}
-	// attachments (JSON array of {name,size,sha256}) arrived with peer
-	// desk primitives; additive and nullable like the peer columns.
-	for _, col := range []string{"peer", "origin_ref", "delivery", "delivery_error", "attachments"} {
-		has, err := columnExists(db, "bus_messages", col)
-		if err != nil {
-			return err
-		}
-		if !has {
-			if _, err := db.Exec(`ALTER TABLE bus_messages ADD COLUMN ` + col + ` TEXT`); err != nil {
-				return fmt.Errorf("bus_messages.%s: %w", col, err)
-			}
-		}
-	}
-	if _, err := db.Exec(peerBusIndexDDL); err != nil {
-		return fmt.Errorf("peer origin index: %w", err)
-	}
-	return nil
-}
 
 // Peer mirrors one peers row.
 type Peer struct {

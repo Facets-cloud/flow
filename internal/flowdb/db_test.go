@@ -2,6 +2,7 @@ package flowdb
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -619,6 +620,7 @@ func TestMigrationDeduplicatesSessionIDs(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	resetSchemaVersion(t, db) // the hand-rolled old shape is pre-versioning
 	db.Close()
 
 	// Reopen — the migration's dedupe step should fire.
@@ -744,6 +746,7 @@ func TestMigrationAddsModelAndEffort(t *testing.T) {
 			t.Fatalf("drop %s: %v", col, err)
 		}
 	}
+	setSchemaVersion(t, db, 1) // a v1 DB: reopening runs migration v2
 	db.Close()
 
 	db, err = OpenDB(path)
@@ -783,6 +786,7 @@ func TestMigrationAddsOwnerModelAndEffort(t *testing.T) {
 			t.Fatalf("drop %s: %v", col, err)
 		}
 	}
+	setSchemaVersion(t, db, 1) // a v1 DB: reopening runs migration v2
 	db.Close()
 
 	db, err = OpenDB(path)
@@ -812,5 +816,25 @@ func TestMigrationAddsOwnerModelAndEffort(t *testing.T) {
 	}
 	if err := SetOwnerModel(db, "missing", "haiku", ""); err == nil {
 		t.Error("SetOwnerModel on a missing owner should fail")
+	}
+}
+
+// setSchemaVersion stamps db as being at schema version v, so the next
+// OpenDB runs only the migrations after v.
+func setSchemaVersion(t *testing.T, db *sql.DB, v int) {
+	t.Helper()
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, v)); err != nil {
+		t.Fatalf("set user_version: %v", err)
+	}
+}
+
+// resetSchemaVersion marks db as a pre-versioning flow.db (user_version 0),
+// the state every DB written by a release before versioned migrations is
+// in. Tests that hand-roll an old shape on top of a fresh DB call it so
+// the next OpenDB runs the baseline over that shape.
+func resetSchemaVersion(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`PRAGMA user_version = 0`); err != nil {
+		t.Fatalf("reset user_version: %v", err)
 	}
 }

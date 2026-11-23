@@ -144,6 +144,7 @@ func TestBusPeerColumnsMigrate(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+	resetSchemaVersion(t, db) // the hand-rolled old shape is pre-versioning
 	db.Close()
 	db, err = OpenDB(path)
 	if err != nil {

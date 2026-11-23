@@ -14,13 +14,6 @@ import (
 // is bound to an id with no transcript; the lineage lets flow resume from
 // the nearest ancestor that has one instead of starting fresh and losing
 // the conversation.
-const sessionLineageDDL = `
-CREATE TABLE IF NOT EXISTS session_lineage (
-    session_id         TEXT PRIMARY KEY,
-    source_session_id  TEXT NOT NULL,
-    task_slug          TEXT,
-    created_at         TEXT NOT NULL
-);`
 
 // RecordSessionSource records that sessionID was forked from source.
 func RecordSessionSource(db *sql.DB, sessionID, source, taskSlug string) error {

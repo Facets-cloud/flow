@@ -9,6 +9,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Versioned flow.db migrations.** flow.db now records its schema version
+  (`PRAGMA user_version`). Opening a current DB is a single read that skips
+  the per-open schema checks and data fixes, so it no longer takes a write
+  lock and no longer queues behind another writer's open transaction
+  (SQLite can still make it wait briefly while another process commits).
+  An upgrade first backs the DB up to a `backups/` directory beside
+  `flow.db` (`~/.flow/backups/` by default, `$FLOW_ROOT/backups/` when
+  `FLOW_ROOT` is set; the newest 3 are kept; a brand-new empty DB is not
+  backed up) and migrates in one transaction, so concurrent first opens no
+  longer fail with "duplicate column". If the backup can't be written (full
+  disk, unwritable `backups/`), flow warns and migrates anyway. Foreign keys are now enforced on
+  every connection. An older flow keeps working on a newer DB unless a
+  change is marked breaking, in which case a flow from this release on asks
+  you to run `flow upgrade`. Releases before this one don't check the
+  schema version, so they can't refuse a breaking change.
+
 - **prx (praxis-harness) is a third harness.** `flow do --harness prx`,
   `flow auto --harness prx`, `flow do --here`, `flow transcript` and the
   close-out sweep work with prx as they do with Claude Code and Codex.
