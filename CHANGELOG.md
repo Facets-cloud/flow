@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.40] — 2026-11-23
+
 ### Added
 
 - **prx (praxis-harness) is a third harness.** `flow do --harness prx`,
