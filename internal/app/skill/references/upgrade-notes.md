@@ -11,6 +11,22 @@
 
 ## Unreleased
 
+- **Run outcomes are recorded.** flow keeps an append-only event log per
+  task — done (and who closed it: auto-run, driver, session or human),
+  reopen, status changes, auto-run start/finish, verify receipts and
+  review verdicts. Read it with `flow events [<ref>] --format json`.
+- **`blocked` auto runs.** A child that sets waiting_on and exits without
+  `flow done` is now `blocked`, not `dead`; its driver gets a "blocked
+  on: …" notice instead of a dead-child one.
+- **`## Verify` in briefs.** `flow done` runs the brief's `## Verify`
+  commands (default inside the task's own auto run; `--verify` elsewhere,
+  `--no-verify` to skip) and records each receipt; `--require-verify` or
+  `FLOW_REQUIRE_VERIFY=1` refuses the close on a failure. Auto children:
+  give `flow done` a long enough tool timeout. Drivers: write the section
+  in briefs (references/delegation.md).
+- **`flow review <child> accept|reject`.** Drivers record their verdict
+  after verifying a child; reject needs `--reason`, reopens a done child
+  and sends it the reason (references/driver.md).
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
   `flow run playbook` take `--model <m>` and `--effort <e>`, passed to the
   harness as given. The task keeps them, so resumes reuse them; `flow show

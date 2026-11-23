@@ -110,6 +110,10 @@ func runCommand(cmd string, rest []string) int {
 		return cmdBroadcast(rest)
 	case "watch":
 		return cmdWatch(rest)
+	case "events":
+		return cmdEvents(rest)
+	case "review":
+		return cmdReview(rest)
 	case "-h", "--help", "help":
 		printUsage()
 		return 0
@@ -143,7 +147,12 @@ Sessions:
   flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx] [--model <m>] [--effort <e>]
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
-  flow done              <ref>
+  flow done              <ref> [--verify] [--no-verify] [--require-verify]
+                         (runs the brief's ## Verify commands and records receipts — by default
+                          inside the task's own auto run; --require-verify refuses on a failure)
+  flow review            <ref> accept [--note "<text>"]
+  flow review            <ref> reject --reason "<why>"   (record a verdict on a child's result;
+                                                       reject reopens a done task and sends the reason)
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
 Read:
@@ -154,6 +163,9 @@ Read:
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
   flow list tags                                            (every tag in use, with per-tag task counts)
+  flow events          [<ref>] [--since <RFC3339>] [--after-id <n>] [--kind k1,k2] [--limit n] [--format table|json]
+                         (append-only task event log: done/reopen/status, auto-run start/finish,
+                          verify receipts, review verdicts — each with its actor)
 
 Edit / mutate:
   flow edit        <ref>

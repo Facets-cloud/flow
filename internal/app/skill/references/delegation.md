@@ -96,7 +96,13 @@ judgment calls from the user mid-way:
    flow-bus notice says mail landed. No listener to arm.
 5. When the child says it is done, open the update note it names
    (`flow show task <slug>` lists it), verify the result yourself, then
-   report to the user. Do not relay a child's claim unverified.
+   report to the user. Do not relay a child's claim unverified. Check its
+   `## Verify` receipts with `flow events <slug> --kind verify`, then
+   record your verdict: `flow review <slug> accept`, or `flow review
+   <slug> reject --reason "<what is wrong>"`, which reopens the child and
+   sends it the reason (re-run it with `flow do <slug> --auto --with "…"`).
+   A child that exits with waiting_on set is `blocked`, not dead: answer
+   it and re-run.
 
 Prefer this over the harness's built-in Agent/subagent tool for multi-step
 work: a flow child has its own task, transcript, brief and close-out
@@ -189,6 +195,11 @@ or ask the user which model they want.
 ## Done when
 <checkable criteria: file written, tests green, PR open with URL>
 
+## Verify
+```sh
+<one shell command per line, run in work_dir by `flow done`; e.g. go test ./...>
+```
+
 ## Gates
 <what it may do on its own vs. stop at: e.g. "plan only, do NOT apply
 to prod", "may push a branch and open a PR, do NOT merge">
@@ -202,8 +213,18 @@ to prod", "may push a branch and open a PR, do NOT merge">
   a message (for example from the user via the hub) surfaces as a
   flow-bus notice before your next tool call: pop it in the foreground.
   If a decision truly needs the user, set waiting_on, message the driver, and exit.
-- When Done when is met: flow done <slug>, then exit.
+- When Done when is met: flow done <slug>, then exit. flow done runs the
+  ## Verify commands first and records each result; give that call a
+  long enough tool timeout for them. If one fails, fix it and run flow
+  done again.
 ```
+
+Write `## Verify` whenever Done when can be checked by a command: flow
+runs those commands at the child's `flow done` and records a receipt for
+each (exit code, git HEAD, output tail). The result is recorded by flow,
+not reported by the child. Prose in the section is never run; only lines
+inside its code fence are. Add `FLOW_REQUIRE_VERIFY=1` to refuse a close
+whose checks fail.
 
 ## Reporting rule (one rule)
 

@@ -7,6 +7,7 @@ import (
 	"flow/internal/harness"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // cmdDone marks a task done. Per spec §5.3 this is a single UPDATE that
@@ -35,7 +36,15 @@ func cmdDone(args []string) int {
 	}
 	query := args[0]
 	fs := flagSet("done")
+	verifyFlag := fs.Bool("verify", false, "run the brief's ## Verify commands and record receipts (default inside an auto run)")
+	noVerify := fs.Bool("no-verify", false, "skip the brief's ## Verify commands")
+	requireVerify := fs.Bool("require-verify", false, "refuse to close unless every ## Verify command passes (also FLOW_REQUIRE_VERIFY=1)")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	require := *requireVerify || os.Getenv("FLOW_REQUIRE_VERIFY") == "1"
+	if *noVerify && (*verifyFlag || *requireVerify) {
+		fmt.Fprintln(os.Stderr, "error: --no-verify cannot be combined with --verify or --require-verify")
 		return 2
 	}
 
@@ -82,6 +91,16 @@ func cmdDone(args []string) int {
 		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
 		return 0
 	}
+	// Checkable Done-when: run the brief's ## Verify commands and record
+	// each receipt before the flip. Default on inside the task's own auto
+	// run (the self-close is exactly the claim that needs a receipt),
+	// opt-in elsewhere. Advisory unless required.
+	inAutoRun := os.Getenv(autoRunEnvVar) == task.Slug
+	if !*noVerify && (inAutoRun || *verifyFlag || require) {
+		if rc := runDoneVerify(db, task, require); rc != 0 {
+			return rc
+		}
+	}
 	beforeDoneFlip()
 	now := flowdb.NowISO()
 	// RETURNING reads the auto-run columns in the same statement as the
@@ -104,6 +123,7 @@ func cmdDone(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: mark done: %v\n", err)
 		return 1
 	}
+	recordTaskEvent(db, task, flowdb.EventDone, map[string]string{"from": task.Status})
 	if err := flowdb.CleanupTaskBus(db, task.Slug); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err) // best-effort hygiene
 	}
@@ -249,4 +269,60 @@ func buildCloseoutSweepPrompt(slug, projectSlug string) string {
 	)
 
 	return preamble + projectStep + tail
+}
+
+// runDoneVerify runs the task's ## Verify commands, records a verify event
+// per command, and prints a one-line summary each. With require, any failed
+// check refuses the close (rc 1) so the caller keeps working; otherwise the
+// receipts are advisory and done proceeds.
+func runDoneVerify(db *sql.DB, task *flowdb.Task, require bool) int {
+	cmds, err := taskVerifyCommands(task.Slug)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: read brief for verify: %v\n", err)
+		return 0
+	}
+	if len(cmds) == 0 {
+		if require {
+			fmt.Println("verify: the brief has no ## Verify commands; nothing to require")
+		}
+		return 0
+	}
+	fmt.Printf("verify: running %d check(s) from the brief in %s\n", len(cmds), task.WorkDir)
+	failed := 0
+	for _, r := range runVerifyChecks(task.WorkDir, cmds) {
+		recordTaskEvent(db, task, flowdb.EventVerify, r)
+		mark, note := "✓", ""
+		if !r.Passed {
+			failed++
+			mark = "✗"
+			note = fmt.Sprintf(" — exit %d", r.ExitCode)
+			if r.TimedOut {
+				note = " — timed out"
+			}
+		}
+		fmt.Printf("  %s %s (%.1fs)%s\n", mark, r.Command, float64(r.DurationMS)/1000, note)
+		if !r.Passed && r.OutputTail != "" {
+			for _, l := range strings.Split(lastLines(r.OutputTail, 8), "\n") {
+				fmt.Printf("      %s\n", l)
+			}
+		}
+	}
+	if failed > 0 && require {
+		fmt.Fprintf(os.Stderr, "not closed: %d of %d verify check(s) failed; fix them and run flow done %s again\n",
+			failed, len(cmds), task.Slug)
+		return 1
+	}
+	if failed > 0 {
+		fmt.Printf("verify: %d of %d check(s) failed (recorded); closing anyway — pass --require-verify to refuse\n", failed, len(cmds))
+	}
+	return 0
+}
+
+// lastLines returns the last n lines of s.
+func lastLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }

@@ -241,16 +241,18 @@ func finalizeAutoRun(db *sql.DB, slug, status string) (owned bool, err error) {
 	return n > 0, err
 }
 
-// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, "dead") gated on
-// the task still not being done, in the same statement. owned=false means
-// either a newer run owns the row or a `flow done` landed first; the caller
-// re-reads the task to tell which.
-func finalizeAutoRunUnlessDone(db *sql.DB, slug string) (owned bool, err error) {
+// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, status) gated on
+// the task still not being done, in the same statement. status is the
+// not-done terminal status: 'dead', or 'blocked' for a run that exited
+// with waiting_on set (exitedBlocked). owned=false means either a newer
+// run owns the row or a `flow done` landed first; the caller re-reads the
+// task to tell which.
+func finalizeAutoRunUnlessDone(db *sql.DB, slug, status string) (owned bool, err error) {
 	now := flowdb.NowISO()
 	res, err := db.Exec(
-		`UPDATE tasks SET auto_run_status='dead', auto_run_finished=?, auto_run_pid=NULL, updated_at=?
+		`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
 		 WHERE slug=? AND status != 'done' AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
-		now, now, slug, supervisorPID(),
+		status, now, now, slug, supervisorPID(),
 	)
 	if err != nil {
 		return false, err
@@ -287,6 +289,7 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	t.AutoRunStatus = sql.NullString{String: status, Valid: true}
 	t.AutoRunFinished = sql.NullString{String: finished, Valid: true}
 	t.AutoRunPID = sql.NullInt64{}
+	recordRunFinished(db, t.Slug, status, "", map[string]any{"reconciled": true})
 	// The supervisor itself died (kill -9, reboot), so it never sent a
 	// dead notice. This UPDATE matched exactly once, so this is the single
 	// running→dead transition: tell the human about a parentless run.
@@ -333,6 +336,7 @@ func cmdAutoExec(args []string) int {
 	if !task.SessionID.Valid || task.SessionID.String == "" {
 		fmt.Fprintf(os.Stderr, "error: task %q has no session_id; cannot run headlessly\n", slug)
 		if owned, _ := finalizeAutoRun(db, slug, "dead"); owned {
+			recordRunFinished(db, slug, "dead", "", map[string]any{"error": "no session_id"})
 			notifyHumanOfDeadOrphan(db, task)
 		}
 		return 1
@@ -356,6 +360,7 @@ func cmdAutoExec(args []string) int {
 	if herr != nil {
 		fmt.Fprintf(os.Stderr, "error: resolve harness for %q: %v\n", slug, herr)
 		if owned, _ := finalizeAutoRun(db, slug, "dead"); owned {
+			recordRunFinished(db, slug, "dead", "", map[string]any{"error": herr.Error()})
 			notifyHumanOfDeadOrphan(db, task)
 		}
 		return 1
@@ -374,6 +379,9 @@ func cmdAutoExec(args []string) int {
 	}
 	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
+	// waiting_on as it was before the harness ran: a run is blocked only
+	// if IT set (or changed) waiting_on, not if one was left from before.
+	waitingBefore := task.WaitingOn.String
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
 
 	// Re-read status: the session may have called `flow done` on itself.
@@ -388,12 +396,20 @@ func cmdAutoExec(args []string) int {
 	// finalize is a no-op and we re-read and take the done path below), or
 	// the finalize came first (done then sees a finalized row and sweeps
 	// inline). No window where a done is neither swept nor counted.
-	status := "dead"
+	// Not done: a run that set waiting_on and exited did what the brief
+	// told it to ("set waiting_on, message the driver, and exit") — it is
+	// blocked, not dead.
+	notDone := "dead"
+	waitingAfter := ""
+	if gerr == nil && !isDone && exitedBlocked(waitingBefore, final) {
+		notDone, waitingAfter = "blocked", final.WaitingOn.String
+	}
+	status := notDone
 	var owned bool
 	var ferr error
 	finalized := false
 	if !isDone {
-		owned, ferr = finalizeAutoRunUnlessDone(db, slug)
+		owned, ferr = finalizeAutoRunUnlessDone(db, slug, notDone)
 		if ferr != nil || owned {
 			finalized = true
 		} else if late, lerr := flowdb.GetTask(db, slug); lerr == nil && late.Status == "done" {
@@ -405,7 +421,7 @@ func cmdAutoExec(args []string) int {
 	// A done task is a completed run even if the harness then exited
 	// non-zero: the child finished its work, so it is never reported dead.
 	if isDone {
-		status = "completed"
+		status, waitingAfter = "completed", ""
 	}
 	// Deferred close-out sweep (harness.CloseoutDeferrer, i.e. Codex): the
 	// run's own `flow done` skipped the inline sweep because a nested
@@ -435,9 +451,16 @@ func cmdAutoExec(args []string) int {
 		// nor sends a dead-child notice.
 		fmt.Printf("flow: a newer auto run took over %q; leaving its status alone (this run: %s)\n", slug, status)
 	}
+	if owned && ferr == nil {
+		recordRunFinished(db, slug, status, waitingAfter, nil)
+	}
 	if status == "dead" && owned {
 		notifyParentOfDeadChild(db, task)
 		notifyHumanOfDeadOrphan(db, task)
+	}
+	if status == "blocked" && owned {
+		notifyParentOfBlockedChild(db, task, waitingAfter)
+		notifyHumanOfBlockedOrphan(db, task, waitingAfter)
 	}
 
 	if runErr != nil {
@@ -502,7 +525,31 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 			"- Do NOT arm an inbox listener: no Monitor, no background flow inbox pop --wait loop, no flow watch (nobody reads a listener's output in a headless run, so it would ack and lose your mail; flow refuses pop --wait here). When a flow-bus notice says mail landed, and before each report and before flow done, run flow inbox pop in the foreground (one-shot, never --wait): it shows you one message; repeat until empty and act on what it says.\n"+
 			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
 			"Closing out:\n"+
-			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
+			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will. If the brief has a ## Verify section, flow done first runs those commands and records each result, so give the call a long enough timeout; if a check fails, fix it and run flow done again.\n",
 		slug, slug,
 	)
+}
+
+// exitedBlocked reports whether a not-done run ended blocked: waiting_on is
+// set now and differs from what it was when the run started, i.e. the run
+// itself declared what it is waiting on.
+func exitedBlocked(waitingBefore string, final *flowdb.Task) bool {
+	if final == nil || !final.WaitingOn.Valid {
+		return false
+	}
+	w := strings.TrimSpace(final.WaitingOn.String)
+	return w != "" && w != strings.TrimSpace(waitingBefore)
+}
+
+// recordRunFinished appends the run-finished event for a terminal auto-run
+// status. The supervisor is the actor: it, not the child, observed the end.
+func recordRunFinished(db *sql.DB, slug, status, waitingOn string, extra map[string]any) {
+	d := map[string]any{"status": status}
+	if waitingOn != "" {
+		d["waiting_on"] = waitingOn
+	}
+	for k, v := range extra {
+		d[k] = v
+	}
+	recordTaskEventAs(db, slug, flowdb.EventRunFinished, flowdb.ActorSupervisor, "", d)
 }

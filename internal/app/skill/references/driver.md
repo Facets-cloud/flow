@@ -34,7 +34,10 @@ and you have verified it, not when the work has been handed off.
   decisions. When the user returns or child mail arrives, lead with what
   changed (done / blocked / dead children).
 - **Verify each child's output yourself** (it names its update note)
-  before reporting anything done.
+  before reporting anything done, then record the verdict:
+  `flow review <child> accept [--note "…"]`, or `flow review <child>
+  reject --reason "…"` (reopens a done child and sends it the reason).
+  `flow events <child>` shows its done, verify receipts and run status.
 - **Gates:** outward actions (push, merge, deploy, messages to others)
   only with approval of the exact text or action; a newer HOLD beats an
   older GO.

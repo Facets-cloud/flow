@@ -409,6 +409,7 @@ func cmdDo(args []string) int {
 		return 1
 	}
 	committed = true
+	recordFlipToInProgress(db, task, curStatus)
 
 	if *fresh && curSessionID.Valid {
 		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
@@ -450,6 +451,9 @@ func cmdDo(args []string) int {
 		if err := recordAutoRunLaunched(db, task.Slug, pid, logPath); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: record auto run: %v\n", err)
 		}
+		recordTaskEvent(db, task, flowdb.EventRunStarted, map[string]string{
+			"harness": task.Harness.String, "log": logPath,
+		})
 		if _, err := db.Exec(`UPDATE workdirs SET last_used_at = ? WHERE path = ?`, flowdb.NowISO(), task.WorkDir); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
 		}
@@ -1044,6 +1048,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 			fmt.Fprintf(os.Stderr, "error: record resume: %v\n", err)
 			return 1
 		}
+		recordFlipToInProgress(db, task, task.Status)
 		if agent.SessionID != resumeFrom {
 			// Claude started a copy (last resort): keep the lineage, and
 			// stop the original if it is alive and idle so two sessions
@@ -1097,6 +1102,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 		fmt.Fprintf(os.Stderr, "error: record session: %v\n", err)
 		return 1
 	}
+	recordFlipToInProgress(db, task, task.Status)
 	bumpWorkdirUsed(db, task.WorkDir)
 	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  %s\n",
 		task.Slug, agent.SessionID, agent.ShortID, title, bgViewHint(h, agent.SessionID))
@@ -1554,6 +1560,7 @@ func cmdDoHere(query string, force bool) int {
 		fmt.Fprintf(os.Stderr, "error: task %q not updated\n", task.Slug)
 		return 1
 	}
+	recordFlipToInProgress(db, task, task.Status)
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
 	if adopted != "" {
 		fmt.Printf("work_dir → %s (this session's folder)\n", adopted)

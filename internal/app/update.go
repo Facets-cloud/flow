@@ -243,6 +243,7 @@ func cmdUpdateTask(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: update status: %v\n", err)
 			return 1
 		}
+		recordStatusChange(db, task, task.Status, *status, "")
 		fmt.Printf("status → %s\n", *status)
 	}
 	if *priority != "" {

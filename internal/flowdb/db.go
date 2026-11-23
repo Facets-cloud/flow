@@ -174,7 +174,8 @@ type Task struct {
 	Harness sql.NullString
 	// Autonomous-run bookkeeping (set by `flow do --auto`). AutoRunStatus
 	// is NULL for tasks that were never run in --auto mode; otherwise one
-	// of 'running' | 'completed' | 'dead'. AutoRunPID is the detached
+	// of 'running' | 'completed' | 'dead' | 'blocked' (exited not done with
+	// waiting_on newly set by the run). AutoRunPID is the detached
 	// supervisor process's PID (used for read-time liveness reconciliation
 	// while status='running'); cleared on finalize.
 	AutoRunStatus   sql.NullString
@@ -284,6 +285,10 @@ func OpenDB(path string) (*sql.DB, error) {
 	if _, err := db.Exec(sessionLineageDDL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply session lineage schema: %w", err)
+	}
+	if _, err := db.Exec(taskEventsDDL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply task events schema: %w", err)
 	}
 	if err := migrateBusSelfToUser(db); err != nil {
 		db.Close()

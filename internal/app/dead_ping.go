@@ -100,3 +100,29 @@ func isOwnerManaged(db *sql.DB, slug string) bool {
 	}
 	return false
 }
+
+// notifyHumanOfBlockedOrphan pings the human when a PARENTLESS auto run
+// exits blocked. Same gating as notifyHumanOfDeadOrphan (parented runs
+// report to their parent; owner-managed tasks are reviewed by the owner's
+// next tick), but the notice says what the run needs instead of "died".
+func notifyHumanOfBlockedOrphan(db *sql.DB, t *flowdb.Task, waitingOn string) {
+	if t.ParentSlug.Valid && t.ParentSlug.String != "" {
+		return
+	}
+	if isOwnerManaged(db, t.Slug) {
+		return
+	}
+	body := fmt.Sprintf("auto run %q (%s) is blocked on: %s — answer with `flow do %s --auto --with \"<answer>\"` or take it over",
+		t.Name, t.Slug, waitingOn, t.Slug)
+	m := &flowdb.BusMessage{
+		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: busUser, FromTaskSlug: t.Slug,
+		ToAssignee: busUser,
+		Body:       body,
+	}
+	if err := flowdb.InsertBusMessage(db, m); err != nil {
+		return
+	}
+	maybeDispatch(m)
+	_ = flowdb.SweepBus(db, time.Now())
+}

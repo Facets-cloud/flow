@@ -164,3 +164,33 @@ func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 	}
 	_ = flowdb.SweepBus(db, time.Now())
 }
+
+// notifyParentOfBlockedChild tells the parent driver that an auto child
+// exited blocked (waiting_on set, not done) — the counterpart of
+// notifyParentOfDeadChild for a run that stopped on purpose. The child is
+// told to message its driver itself; this notice is the one flow
+// guarantees, and it names what the child is waiting on.
+func notifyParentOfBlockedChild(db *sql.DB, child *flowdb.Task, waitingOn string) {
+	if !child.ParentSlug.Valid || child.ParentSlug.String == "" {
+		return
+	}
+	parent := child.ParentSlug.String
+	body := fmt.Sprintf("auto child %s exited blocked on: %s — answer it, then re-run with "+
+		"`flow do %s --auto --with \"<answer>\"`, or take it over", child.Slug, waitingOn, child.Slug)
+	toSlug := parent
+	if p, err := flowdb.GetTask(db, parent); err != nil || p == nil || deliverableTask(p) != nil {
+		toSlug = ""
+		body = fmt.Sprintf("FYI: auto child %s of closed task %s exited blocked on: %s",
+			child.Slug, parent, waitingOn)
+	}
+	m := &flowdb.BusMessage{
+		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: busUser, FromTaskSlug: child.Slug,
+		ToAssignee: busUser, ToTaskSlug: toSlug,
+		Body: body, FYI: toSlug == "",
+	}
+	if err := flowdb.InsertBusMessage(db, m); err != nil {
+		return
+	}
+	_ = flowdb.SweepBus(db, time.Now())
+}

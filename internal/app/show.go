@@ -350,7 +350,7 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 				}
 				line += ")"
 			}
-		case "completed", "dead":
+		case "completed", "dead", "blocked":
 			if t.AutoRunFinished.Valid && t.AutoRunFinished.String != "" {
 				line += " (" + t.AutoRunFinished.String + ")"
 			}
