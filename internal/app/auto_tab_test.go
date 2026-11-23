@@ -755,3 +755,33 @@ func TestCmdDoAutoTabRunningGuardSaysTab(t *testing.T) {
 		t.Errorf("guard message = %q", errOut)
 	}
 }
+
+// A tab launch that commits between done's load and its flip must still
+// be seen as a tab run: the flip's RETURNING re-reads auto_run_mode, so a
+// deferring harness detaches the sweep instead of running it inline.
+func TestCmdDoneSeesTabModeCommittedBeforeFlip(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "late-tab")
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', session_id=?, session_started=?, harness='prx' WHERE slug='late-tab'`,
+		fakeSessionID("late-tab"), flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(autoRunEnvVar, "")
+	old := beforeDoneFlip
+	beforeDoneFlip = func() {
+		if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_mode='tab', auto_run_pid=NULL,
+			auto_run_started=? WHERE slug='late-tab'`, flowdb.NowISO()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { beforeDoneFlip = old })
+	inline := stubPrxSweep(t)
+	launched := stubCloseoutLauncher(t)
+	if rc := cmdDone([]string{"late-tab"}); rc != 0 {
+		t.Fatalf("done rc=%d", rc)
+	}
+	if *inline != 0 || len(*launched) != 1 {
+		t.Errorf("inline=%d detached=%v, want 0 inline and 1 detached (fresh auto_run_mode from the flip)", *inline, *launched)
+	}
+}

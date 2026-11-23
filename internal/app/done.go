@@ -92,9 +92,9 @@ func cmdDone(args []string) int {
 	// status='done', and the supervisor takes the done path (and sweeps).
 	err = db.QueryRow(
 		`UPDATE tasks SET status='done', status_changed_at=?, updated_at=? WHERE slug=? AND status != 'done'
-		 RETURNING auto_run_status, auto_run_pid`,
+		 RETURNING auto_run_status, auto_run_pid, auto_run_mode`,
 		now, now, task.Slug,
-	).Scan(&task.AutoRunStatus, &task.AutoRunPID)
+	).Scan(&task.AutoRunStatus, &task.AutoRunPID, &task.AutoRunMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		fmt.Printf("%s is already done; close-out sweep skipped (it ran, or is running, for the first done)\n", task.Slug)
 		return 0
