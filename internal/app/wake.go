@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"flow/internal/flowdb"
@@ -132,15 +133,15 @@ func (r wakeResult) String() string {
 
 // wakeResults maps message id → outcome for this process, so the sending
 // command can report it.
-var wakeResults = map[string]wakeResult{}
+var wakeResults sync.Map // message id → wakeResult; inserts may run concurrently
 
 func init() { flowdb.AfterInsert = afterBusInsert }
 
 // wakeOutcome renders what happened to message id for the sender
 // ("woke <slug>" | "stored: <reason>").
 func wakeOutcome(id string) string {
-	if r, ok := wakeResults[id]; ok {
-		return r.String()
+	if r, ok := wakeResults.Load(id); ok {
+		return r.(wakeResult).String()
 	}
 	return "stored: delivered on its next activity or pop"
 }
@@ -149,7 +150,7 @@ func afterBusInsert(db *sql.DB, m *flowdb.BusMessage) {
 	if m.ToTaskSlug == "" {
 		return // human mail never wakes a session
 	}
-	wakeResults[m.ID] = wakeTask(db, m.ToTaskSlug)
+	wakeResults.Store(m.ID, wakeTask(db, m.ToTaskSlug))
 }
 
 // wakeTask pushes a notice into slug's session if every gate passes.
