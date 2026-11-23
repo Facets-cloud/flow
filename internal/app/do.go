@@ -551,8 +551,10 @@ func cmdDo(args []string) int {
 	// Env propagation. Flow never injects harness-specific env vars
 	// (the harness exports its own session id env; flow only reads it).
 	// It forwards only its own: $FLOW_ROOT and the pinned launcher binary
-	// (pinnedFlowEnv).
+	// (pinnedFlowEnv), and prepends that binary's dir to the tab's own PATH
+	// (withFlowOnPath).
 	spawnEnv := pinnedFlowEnv()
+	command = withFlowOnPath(command)
 	if autoTab {
 		spawnEnv[autoRunEnvVar] = task.Slug // same hook/inbox/self-upgrade guards as a headless run
 	}
@@ -588,7 +590,7 @@ func cmdDo(args []string) int {
 			// has no transcript yet; `--resume` would be refused, so hand
 			// out the bootstrap command (same id) again.
 			if !needsBootstrap && !sessionOnDisk {
-				command = bootstrapCmd()
+				command = withFlowOnPath(bootstrapCmd())
 			}
 			printNoTerminalHandoff(task.Slug, cwd, command, spawnEnv)
 			handedOff = true

@@ -90,7 +90,7 @@ var ownerInteractiveLauncher = func(o *flowdb.Owner, prompt string) error {
 		return fmt.Errorf("new session id: %w", err)
 	}
 	command := h.LaunchCmd(sid, prompt, opts)
-	return spawner.SpawnTab("owner: "+o.Slug, o.WorkDir, command, pinnedFlowEnv())
+	return spawner.SpawnTab("owner: "+o.Slug, o.WorkDir, withFlowOnPath(command), pinnedFlowEnv())
 }
 
 // ownerTickManual implements `flow owner tick <slug>`: a hand-triggered,

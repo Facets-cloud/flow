@@ -534,16 +534,15 @@ func TestCmdDoAutoTabEnvDefaultNoTerminalFallsBackLoudly(t *testing.T) {
 	}
 }
 
-// B3: a tab must run the same flow binary that launched it. The tab's
-// login shell may put another flow first on PATH (e.g. ~/.local/bin), so
-// the spawn pins the launcher's directory first on PATH and FLOW_BIN.
+// B3 / review item 6: a tab must run the same flow binary that launched
+// it, without copying the launcher's PATH. The tab's own shell evaluates
+// PATH=<flowdir>:"$PATH", so only the flow dir is prepended to whatever
+// the tab's login shell set; FLOW_BIN is the unresolved launcher path.
 func TestCmdDoAutoTabPinsLauncherBinary(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "pinned")
 	binDir := t.TempDir()
-	old := flowBinPath
-	flowBinPath = func() string { return filepath.Join(binDir, "flow") }
-	t.Cleanup(func() { flowBinPath = old })
+	stubTabFlowBin(t, filepath.Join(binDir, "flow"))
 	t.Setenv("PATH", "/shadow/bin:/usr/bin")
 	_, script := stubITerm(t)
 	noHeadlessLaunch(t)
@@ -553,24 +552,26 @@ func TestCmdDoAutoTabPinsLauncherBinary(t *testing.T) {
 	s := script()
 	for _, want := range []string{
 		"FLOW_BIN='" + filepath.Join(binDir, "flow") + "'",
-		"PATH='" + binDir + ":/shadow/bin:/usr/bin'",
+		"PATH='" + binDir + "':",
+		"$PATH",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("tab spawn missing %q; got:\n%s", want, s)
 		}
 	}
+	if strings.Contains(s, "/shadow/bin") {
+		t.Errorf("the launcher's PATH must not be copied into the tab; got:\n%s", s)
+	}
 }
 
-// pinnedFlowEnv does not repeat the launcher dir when it is already on PATH.
-func TestPinnedFlowEnvDedupesPath(t *testing.T) {
-	old := flowBinPath
-	flowBinPath = func() string { return "/opt/flow/bin/flow" }
-	t.Cleanup(func() { flowBinPath = old })
-	t.Setenv("PATH", "/a:/opt/flow/bin:/b")
+// pinnedFlowEnv carries FLOW_BIN (+ FLOW_ROOT) only: no PATH value.
+func TestPinnedFlowEnvHasNoPath(t *testing.T) {
+	stubTabFlowBin(t, "/opt/flow/bin/flow")
+	t.Setenv("PATH", "/a:/b")
 	t.Setenv("FLOW_ROOT", "")
 	env := pinnedFlowEnv()
-	if env["PATH"] != "/opt/flow/bin:/a:/b" {
-		t.Errorf("PATH = %q, want /opt/flow/bin:/a:/b", env["PATH"])
+	if _, ok := env["PATH"]; ok {
+		t.Errorf("pinnedFlowEnv must not carry PATH; got %q", env["PATH"])
 	}
 	if env["FLOW_BIN"] != "/opt/flow/bin/flow" {
 		t.Errorf("FLOW_BIN = %q", env["FLOW_BIN"])
@@ -578,6 +579,57 @@ func TestPinnedFlowEnvDedupesPath(t *testing.T) {
 	if _, ok := env["FLOW_ROOT"]; ok {
 		t.Error("FLOW_ROOT must not be set when the launcher has none")
 	}
+	if got := withFlowOnPath("claude x"); got != `PATH='/opt/flow/bin':"$PATH" claude x` {
+		t.Errorf("withFlowOnPath = %q", got)
+	}
+}
+
+// FLOW_BIN is not symlink-resolved: a Homebrew Cellar path dies after
+// brew upgrade + cleanup, the /opt/homebrew/bin symlink does not.
+func TestTabFlowBinPathKeepsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "Cellar-flow")
+	if err := os.WriteFile(real, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "flow")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	old := executablePath
+	executablePath = func() (string, error) { return link, nil }
+	t.Cleanup(func() { executablePath = old })
+	if got := tabFlowBinPath(); got != link {
+		t.Errorf("tabFlowBinPath = %q, want the unresolved %q", got, link)
+	}
+}
+
+// The no-terminal handoff prints a short PATH prefix, not the launcher's
+// whole PATH.
+func TestNoTerminalHandoffHasNoLauncherPath(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "linux-path")
+	pinNoTerminalHost(t)
+	stubTabFlowBin(t, "/opt/flow/bin/flow")
+	t.Setenv("PATH", "/very/long/launcher/marker:/usr/bin")
+	var rc int
+	out := captureStdout(t, func() { rc = cmdDo([]string{"linux-path"}) })
+	if rc != 0 {
+		t.Fatalf("rc=%d; output:\n%s", rc, out)
+	}
+	if strings.Contains(out, "/very/long/launcher/marker") {
+		t.Errorf("handoff must not print the launcher's PATH; got:\n%s", out)
+	}
+	if !strings.Contains(out, `PATH='/opt/flow/bin':"$PATH"`) {
+		t.Errorf("handoff should prepend only the flow dir; got:\n%s", out)
+	}
+}
+
+func stubTabFlowBin(t *testing.T, bin string) {
+	t.Helper()
+	old := tabFlowBinPath
+	tabFlowBinPath = func() string { return bin }
+	t.Cleanup(func() { tabFlowBinPath = old })
 }
 
 // B4: a tab run falsely reconciled dead must still complete on its own

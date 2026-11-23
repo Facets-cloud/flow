@@ -20,11 +20,12 @@
   reads `auto_run: running (tab, …)`; closing the tab before `flow done`
   marks the run dead.
 - **Tabs run the flow that launched them.** Every flow-spawned tab gets
-  the launcher's binary first on `PATH` and as `$FLOW_BIN`, so another
+  the launcher's binary dir prepended to its own `PATH` and the binary as `$FLOW_BIN`, so another
   `flow` on your login-shell PATH no longer handles your hooks or your
   `flow done`. If `flow` in your shell still resolves elsewhere, call
   `"$FLOW_BIN"`. A tab run marked dead still completes on its own
-  `flow done`, and `flow auto --mkdir` trusts the dir it just created.
+  `flow done`, and `flow auto --mkdir` trusts the dir it just created
+  unless that dir is inside a git repo.
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
   `flow run playbook` take `--model <m>` and `--effort <e>`, passed to the
   harness as given. The task keeps them, so resumes reuse them; `flow show
