@@ -790,6 +790,67 @@ func TestModelEffortColumnsFromPreVersioningBuild(t *testing.T) {
 	}
 }
 
+// fkDB is a fresh, fully migrated DB holding two tasks; ghost-a already
+// violates its project FK (as a real DB can before migrating).
+func fkDB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "flow.db")
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertProject(t, db, "real", "Real", "/tmp/real", "high")
+	insertTask(t, db, "a", "A", "backlog", "medium", "/tmp/a", "real")
+	insertTask(t, db, "b", "B", "backlog", "medium", "/tmp/b", "real")
+	db.Close()
+	raw := rawOpen(t, path) // foreign_keys off by default
+	if _, err := raw.Exec(`UPDATE tasks SET project_slug = 'ghost-a' WHERE slug = 'a'`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	return path
+}
+
+// The FK check compares violation sets, not counts: a migration that fixes
+// one pre-existing violation and introduces a different one fails.
+func TestMigrationSwappingFKViolationFails(t *testing.T) {
+	path := fkDB(t)
+	withMigrations(t, Migration{
+		Version: latestVersion() + 1, Name: "swaps-violation",
+		Up: func(q querier) error {
+			if _, err := q.Exec(`UPDATE tasks SET project_slug = 'real' WHERE slug = 'a'`); err != nil {
+				return err
+			}
+			_, err := q.Exec(`UPDATE tasks SET project_slug = 'ghost-b' WHERE slug = 'b'`)
+			return err
+		},
+	})
+	_, err := OpenDB(path)
+	if err == nil || !strings.Contains(err.Error(), "1 new violation") {
+		t.Fatalf("OpenDB err = %v, want 1 new FK violation", err)
+	}
+	raw := rawOpen(t, path)
+	var b string
+	_ = raw.QueryRow(`SELECT project_slug FROM tasks WHERE slug = 'b'`).Scan(&b)
+	if b != "real" {
+		t.Errorf("task b project_slug = %q after rolled-back migration, want real", b)
+	}
+}
+
+// A violation that predates the migration does not block it.
+func TestMigrationKeepsPreexistingFKViolation(t *testing.T) {
+	path := fkDB(t)
+	withMigrations(t, Migration{
+		Version: latestVersion() + 1, Name: "noop",
+		Up:      func(q querier) error { return nil },
+	})
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatalf("OpenDB with a pre-existing FK violation: %v", err)
+	}
+	db.Close()
+}
+
 // A failed backup (here: an unwritable backups/ dir) warns and the
 // migration still runs, rather than leaving flow.db unopenable.
 func TestBackupFailureDoesNotBlockMigration(t *testing.T) {

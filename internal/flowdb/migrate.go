@@ -243,7 +243,7 @@ func migrate(db *sql.DB, path string) error {
 	}
 
 	q := connQuerier{ctx: ctx, c: conn}
-	fkBefore, err := countFKViolations(q)
+	fkBefore, err := fkViolations(q)
 	if err != nil {
 		return err
 	}
@@ -252,13 +252,22 @@ func migrate(db *sql.DB, path string) error {
 			return fmt.Errorf("migrate schema v%d (%s): %w", m.Version, m.Name, err)
 		}
 	}
-	fkAfter, err := countFKViolations(q)
+	fkAfter, err := fkViolations(q)
 	if err != nil {
 		return err
 	}
-	if fkAfter > fkBefore {
-		return fmt.Errorf("migrate schema v%d→v%d: foreign_key_check found %d new violation(s)",
-			from, latest, fkAfter-fkBefore)
+	// Compare sets, not counts: a migration that fixes one pre-existing
+	// violation and introduces another must still fail.
+	var added []string
+	for v := range fkAfter {
+		if !fkBefore[v] {
+			added = append(added, v)
+		}
+	}
+	if len(added) > 0 {
+		sort.Strings(added)
+		return fmt.Errorf("migrate schema v%d→v%d: foreign_key_check found %d new violation(s): %s",
+			from, latest, len(added), strings.Join(added[:min(len(added), 5)], "; "))
 	}
 	if _, err := q.Exec(
 		`INSERT INTO schema_meta (id, min_binary_schema) VALUES (1, ?)
@@ -301,17 +310,31 @@ func checkNewer(db *sql.DB, v, latest int) error {
 	return nil
 }
 
-func countFKViolations(q querier) (int, error) {
+// fkViolations returns PRAGMA foreign_key_check as a set of
+// "table rowid=… parent=… fkid=…" keys.
+func fkViolations(q querier) (map[string]bool, error) {
 	rows, err := q.Query(`PRAGMA foreign_key_check`)
 	if err != nil {
-		return 0, fmt.Errorf("foreign_key_check: %w", err)
+		return nil, fmt.Errorf("foreign_key_check: %w", err)
 	}
 	defer rows.Close()
-	n := 0
+	set := map[string]bool{}
 	for rows.Next() {
-		n++
+		var (
+			table, parent string
+			rowid         sql.NullInt64 // NULL for WITHOUT ROWID tables
+			fkid          int
+		)
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			return nil, fmt.Errorf("foreign_key_check: %w", err)
+		}
+		r := "null"
+		if rowid.Valid {
+			r = fmt.Sprint(rowid.Int64)
+		}
+		set[fmt.Sprintf("%s rowid=%s parent=%s fkid=%d", table, r, parent, fkid)] = true
 	}
-	return n, rows.Err()
+	return set, rows.Err()
 }
 
 // backupDB writes a consistent copy of the DB to <dir>/backups/ and prunes
