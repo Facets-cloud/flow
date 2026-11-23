@@ -105,25 +105,51 @@ func TestAutoExecLastMessageFileIsAuthoritative(t *testing.T) {
 	}
 }
 
-// Only the LAST nonblank line of the final message decides: a BLOCKED: line
-// quoted earlier, followed by ordinary output, does not make the run blocked.
-func TestAutoExecBlockedOnlyFromLastNonblankLine(t *testing.T) {
+// A BLOCKED: line followed by a closing line still makes the run blocked:
+// the closing line is the usual last line of a final message.
+func TestAutoExecBlockedWithClosingLine(t *testing.T) {
 	root := setupFlowRoot(t)
-	logPath := seedDeadPingTask(t, root, "quoted")
+	logPath := seedDeadPingTask(t, root, "closing")
 	lastMsg := autoRunLastMessagePath(logPath)
 	if err := os.MkdirAll(filepath.Dir(lastMsg), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(lastMsg, []byte("BLOCKED: staging access\naccess works, verification crashed\n\n"), 0o644); err != nil {
+	if err := os.WriteFile(lastMsg, []byte("did part A\nBLOCKED: staging access\nI reported to the parent.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
 		return errors.New("exit status 1")
 	})
 
-	cmdAutoExec(autoExecArgv(t, "quoted"))
-	if got := finalAutoRun(t, "quoted").AutoRunStatus.String; got != "dead" {
-		t.Errorf("auto_run_status = %q, want dead (BLOCKED: is not the last line)", got)
+	cmdAutoExec(autoExecArgv(t, "closing"))
+	if got := finalAutoRun(t, "closing").AutoRunStatus.String; got != "blocked" {
+		t.Errorf("auto_run_status = %q, want blocked (BLOCKED: on a middle line)", got)
+	}
+}
+
+// finalMessageHasBlockedLine: a line starting with BLOCKED: (leading
+// whitespace ignored) counts; BLOCKED: mid-sentence and a message with no
+// such line do not.
+func TestFinalMessageHasBlockedLine(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       bool
+	}{
+		{"middle line then closing line", "did part A\nBLOCKED: need token\nI reported to X.\n", true},
+		{"leading whitespace", "  \tBLOCKED: need token\n", true},
+		{"no BLOCKED line", "did everything\nall green\n", false},
+		{"BLOCKED: mid-sentence", "the note said BLOCKED: earlier, see above\n", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "last.txt")
+			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := finalMessageHasBlockedLine(p); got != c.want {
+				t.Errorf("finalMessageHasBlockedLine = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 

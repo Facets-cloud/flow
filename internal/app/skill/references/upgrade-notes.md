@@ -30,10 +30,10 @@
   Never ask "driver or not?". While flow prints `INTAKE TURN`, end the turn
   at the goal + proposed Done when + "Needs from you:".
 - **A headless child that stops on a blocker is `blocked`, not `dead`.** Its
-  final message's last nonblank line starts with `BLOCKED:`. A `waiting_on`
+  final message has a line that starts with `BLOCKED:`. A `waiting_on`
   set during the run does not count: it may be a human's note. `flow show
   task` and `flow list` report `blocked`, and no dead-child alarm is sent. A
-  stuck child should end with that line.
+  stuck child should put that line in its final message.
 - **`flow do --here` needs the directory the session STARTED in.** If you
   `cd` into a worktree, `$PWD` is not that directory. When the bind is
   refused, run the `flow update task … --work-dir` command only if it shows
