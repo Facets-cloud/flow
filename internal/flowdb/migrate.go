@@ -193,10 +193,15 @@ func migrate(db *sql.DB, path string) error {
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&tables); err != nil {
 		return fmt.Errorf("inspect schema: %w", err)
 	}
-	backup := ""
+	// The backup is a safety net, not what keeps the data correct (the
+	// migration below is one transaction that rolls back on failure), so
+	// a failed backup (full disk, unwritable backups/) warns and goes on
+	// rather than leaving flow.db unopenable.
+	backup, backupErr := "", error(nil)
 	if tables > 0 {
-		if backup, err = backupDB(db, path, v); err != nil {
-			return fmt.Errorf("backup before migrating: %w", err)
+		if backup, backupErr = backupDB(db, path, v); backupErr != nil {
+			backup = ""
+			warnf("flow: could not back up flow.db before migrating (%v); migrating without a backup\n", backupErr)
 		}
 	}
 
@@ -268,8 +273,11 @@ func migrate(db *sql.DB, path string) error {
 		return fmt.Errorf("commit migration: %w", err)
 	}
 	committed = true
-	if backup != "" {
+	switch {
+	case backup != "":
 		warnf("flow: migrated flow.db schema v%d → v%d (backup: %s)\n", from, latest, backup)
+	case backupErr != nil:
+		warnf("flow: migrated flow.db schema v%d → v%d (no backup)\n", from, latest)
 	}
 	if afterMigrate != nil {
 		afterMigrate(from, latest)

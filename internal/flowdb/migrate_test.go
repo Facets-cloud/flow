@@ -789,3 +789,35 @@ func TestModelEffortColumnsFromPreVersioningBuild(t *testing.T) {
 		t.Errorf("owner model/effort = %+v %+v (%v)", ow.Model, ow.Effort, err)
 	}
 }
+
+// A failed backup (here: an unwritable backups/ dir) warns and the
+// migration still runs, rather than leaving flow.db unopenable.
+func TestBackupFailureDoesNotBlockMigration(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	fs := fixtureFiles(t)
+	path := loadFixture(t, fs[0])
+	bdir := filepath.Join(filepath.Dir(path), "backups")
+	if err := os.Mkdir(bdir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bdir, 0o755) })
+
+	warn := captureWarnings(t)
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatalf("OpenDB with unwritable backups/: %v", err)
+	}
+	defer db.Close()
+	if v, _ := userVersion(db); v != latestVersion() {
+		t.Errorf("user_version = %d, want %d", v, latestVersion())
+	}
+	w := warn.String()
+	if !strings.Contains(w, "could not back up flow.db") || !strings.Contains(w, "(no backup)") {
+		t.Errorf("warnings = %q, want backup-failure and no-backup notices", w)
+	}
+	if bks, _ := filepath.Glob(filepath.Join(bdir, "*")); len(bks) != 0 {
+		t.Errorf("backups/ = %v, want empty", bks)
+	}
+}

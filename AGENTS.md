@@ -120,7 +120,7 @@ flow/
 
 ## Schema migrations
 
-flow.db's schema version is `PRAGMA user_version`. `OpenDB` reads it; at the latest version the open is one read with no write lock. Otherwise the pending migrations in `internal/flowdb/migrate.go` run once, after a `VACUUM INTO` backup to `$FLOW_ROOT/backups/` (newest 3 kept), inside one `BEGIN IMMEDIATE` transaction with foreign keys off, followed by a `foreign_key_check`. v1 (`baseline.go`) is every schema check the pre-versioning OpenDB ran on each open, and it accepts every historical shape.
+flow.db's schema version is `PRAGMA user_version`. `OpenDB` reads it; at the latest version the open is one read with no write lock. Otherwise the pending migrations in `internal/flowdb/migrate.go` run once, after a `VACUUM INTO` backup to `$FLOW_ROOT/backups/` (newest 3 kept; a failed backup warns and the migration proceeds), inside one `BEGIN IMMEDIATE` transaction with foreign keys off, followed by a `foreign_key_check`. v1 (`baseline.go`) is every schema check the pre-versioning OpenDB ran on each open, and it accepts every historical shape.
 
 Rules for a schema change:
 

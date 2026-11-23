@@ -18,7 +18,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `flow.db` (`~/.flow/backups/` by default, `$FLOW_ROOT/backups/` when
   `FLOW_ROOT` is set; the newest 3 are kept; a brand-new empty DB is not
   backed up) and migrates in one transaction, so concurrent first opens no
-  longer fail with "duplicate column". Foreign keys are now enforced on
+  longer fail with "duplicate column". If the backup can't be written (full
+  disk, unwritable `backups/`), flow warns and migrates anyway. Foreign keys are now enforced on
   every connection. An older flow keeps working on a newer DB unless a
   change is marked breaking, in which case a flow from this release on asks
   you to run `flow upgrade`. Releases before this one don't check the
