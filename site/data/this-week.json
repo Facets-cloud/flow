@@ -3,33 +3,33 @@
     "asks_to_human": 0,
     "children": 46,
     "dead": 7,
-    "done": 39,
-    "messages_between_tasks": 190,
-    "notes": 157,
-    "refs": 31,
+    "done": 40,
+    "messages_between_tasks": 155,
+    "notes": 165,
+    "refs": 33,
     "running": 2,
-    "tasks": 53
+    "tasks": 54
   },
   "dead_reasons": {
     "exited without closing": 3,
     "no log written": 4
   },
-  "generated_at": "2026-11-22T12:12:27+05:30",
+  "generated_at": "2026-11-23T11:30:17+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 53
+      "tasks": 54
     },
     {
-      "items": 158,
+      "items": 169,
       "name": "updates/",
-      "tasks": 53
+      "tasks": 54
     },
     {
-      "items": 126,
+      "items": 132,
       "name": "auto-runs/",
-      "tasks": 43
+      "tasks": 44
     },
     {
       "items": 31,
@@ -101,16 +101,30 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-22-06-14",
+      "slug": "site-daily--2026-11-23-06-00",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-22-06-14",
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 2,
-      "refs": [],
-      "shown": false,
+      "notes": 3,
+      "refs": [
+        33
+      ],
+      "shown": true,
       "slug": "operator-rules-driver",
       "status": "done"
     },
@@ -130,11 +144,12 @@
       "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 10,
+      "notes": 13,
       "refs": [
         9,
         20,
-        21
+        21,
+        35
       ],
       "shown": true,
       "slug": "operator-alpha-driver",
@@ -221,7 +236,7 @@
       "refs": [
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-20-06-00",
       "status": "done"
     },
@@ -313,7 +328,7 @@
       "auto_run_status": "dead",
       "child": true,
       "dead_reason": "exited without closing",
-      "notes": 20,
+      "notes": 23,
       "refs": [],
       "shown": true,
       "slug": "flow-hud-go",
@@ -640,7 +655,7 @@
       "refs": [
         187
       ],
-      "shown": true,
+      "shown": false,
       "slug": "driver-first-ux",
       "status": "done"
     },
