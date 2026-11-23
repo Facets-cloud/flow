@@ -939,3 +939,37 @@ func TestCmdAutoTabMkdirInsideGitRepoNotTrusted(t *testing.T) {
 		t.Errorf("a --mkdir dir inside a git repo must keep prx's trust prompt; got:\n%s", s)
 	}
 }
+
+// Review item 7: a prx tab still at the workspace trust prompt has no
+// owner record, but its `prx -session-id` process is running: past the
+// startup grace it stays running. Once that process is gone it is dead.
+func TestReconcilePrxTabAtTrustPromptStaysRunning(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("PRAXIS_CODING_AGENT_DIR", t.TempDir()) // no owner records
+	t.Setenv("PRAXIS_CODING_AGENT_SESSION_DIR", "")
+	seedTask(t, "prx-trust")
+	seedTabRun(t, "prx-trust", time.Hour)
+	sid := fakeSessionID("prx-trust")
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET harness='prx' WHERE slug='prx-trust'`); err != nil {
+		t.Fatal(err)
+	}
+	old := prx.PSRunner
+	t.Cleanup(func() { prx.PSRunner = old })
+
+	prx.PSRunner = func() ([]byte, error) {
+		return []byte("  PID COMMAND\n  777 prx -session-id " + sid + " -permission-mode yolo -trust-workspace -prompt x\n"), nil
+	}
+	task := getTask(t, "prx-trust")
+	reconcileAutoRun(db, task)
+	if task.AutoRunStatus.String != "running" {
+		t.Fatalf("prx tab waiting at its trust prompt reconciled to %q, want running", task.AutoRunStatus.String)
+	}
+
+	prx.PSRunner = func() ([]byte, error) { return []byte("  PID COMMAND\n"), nil }
+	task = getTask(t, "prx-trust")
+	reconcileAutoRun(db, task)
+	if task.AutoRunStatus.String != "dead" {
+		t.Errorf("prx tab with no process reconciled to %q, want dead", task.AutoRunStatus.String)
+	}
+}

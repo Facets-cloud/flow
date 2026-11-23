@@ -22,6 +22,11 @@ func isolate(t *testing.T) (agent, sessions string) {
 	sessions = filepath.Join(agent, "sessions")
 	t.Setenv("PRAXIS_CODING_AGENT_DIR", agent)
 	t.Setenv("PRAXIS_CODING_AGENT_SESSION_DIR", "")
+	// No real process table: a prx running on the dev machine must not
+	// leak into LiveSessionIDs results.
+	origPS := PSRunner
+	PSRunner = func() ([]byte, error) { return nil, nil }
+	t.Cleanup(func() { PSRunner = origPS })
 	return agent, sessions
 }
 
@@ -263,5 +268,52 @@ func TestInteractiveTrustsFlowWorkspace(t *testing.T) {
 		if strings.Contains(cmd, "trust-workspace") {
 			t.Errorf("%s without TrustDir must keep the trust prompt; got %q", name, cmd)
 		}
+	}
+}
+
+// Review item 7: a prx TUI still at its trust prompt has no owner record
+// yet, but its process (`prx -session-id <id> …`) is running. Count it, so
+// a tab run waiting on a human is not reconciled dead. A session already
+// counted from its owner record is not counted twice; other commands that
+// merely mention the id (grep, prx run -session) are ignored.
+func TestLiveSessionIDsCountsPrxProcessWithoutOwnerRecord(t *testing.T) {
+	_, sessions := isolate(t)
+	origAlive, origHost := PIDAlive, Hostname
+	t.Cleanup(func() { PIDAlive, Hostname = origAlive, origHost })
+	PIDAlive = func(pid int) bool { return pid == 100 }
+	Hostname = func() (string, error) { return "here", nil }
+	ownerDir := filepath.Join(sessions, ".owner")
+	if err := os.MkdirAll(ownerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"sessionId": "aaaa", "pid": 100, "host": "here"})
+	if err := os.WriteFile(filepath.Join(ownerDir, "aaaa.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	PSRunner = func() ([]byte, error) {
+		return []byte(strings.Join([]string{
+			"  PID COMMAND",
+			"  100 prx -session-id aaaa -permission-mode yolo -prompt x", // has owner record
+			"  101 /Users/me/.local/bin/prx -session-id BBBB -trust-workspace -prompt y",
+			"  102 grep -session-id cccc",
+			"  103 prx run -session dddd -prompt z",
+		}, "\n")), nil
+	}
+	live, err := New().LiveSessionIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"aaaa": 1, "bbbb": 1}; !reflect.DeepEqual(live, want) {
+		t.Errorf("live=%v, want %v", live, want)
+	}
+}
+
+// A ps failure leaves the owner-record answer intact.
+func TestLiveSessionIDsPSFailureKeepsOwnerRecords(t *testing.T) {
+	isolate(t)
+	PSRunner = func() ([]byte, error) { return nil, os.ErrPermission }
+	live, err := New().LiveSessionIDs()
+	if err != nil || len(live) != 0 {
+		t.Errorf("live=%v err=%v, want empty and no error", live, err)
 	}
 }
