@@ -62,7 +62,9 @@ func (p *prx) SessionIDEnvVar() string { return "PRAXIS_SESSION_ID" }
 // flow mints v4. Both are lowercase RFC-4122 UUIDs.
 var sessionIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-func (p *prx) NewSessionID(workDir string) (string, error) { return newUUID() }
+func (p *prx) NewSessionID(workDir string, _ harness.LaunchOpts) (string, error) {
+	return newUUID()
+}
 
 func (p *prx) ValidateSessionID(s string) error {
 	if !sessionIDRe.MatchString(s) {
@@ -100,6 +102,10 @@ func interactive(sessionID string, opts harness.LaunchOpts) string {
 	if opts.SkipPermissions {
 		cmd += " -permission-mode " + bypass
 	}
+	a := modelArgv(opts)
+	for i := 0; i+1 < len(a); i += 2 {
+		cmd += " " + a[i] + " " + spawner.ShellQuote(a[i+1])
+	}
 	// A flow-created work dir is trusted for this launch only (nothing is
 	// saved), mirroring codex's per-launch override: the TUI would
 	// otherwise stop at its trust prompt, which hangs a tab auto run.
@@ -110,7 +116,26 @@ func interactive(sessionID string, opts harness.LaunchOpts) string {
 	return cmd
 }
 
-func (p *prx) SkipPermissionsRun(prompt string) error { return SkipPermissionsRunner(prompt) }
+// SelectsModel: prx honours --model and --effort in every launch shape
+// (harness.ModelSelector).
+func (p *prx) SelectsModel() bool { return true }
+
+// modelArgv maps LaunchOpts.Model/Effort to `-model <m> -thinking <e>`,
+// flags of both `prx` (chat) and `prx run`. nil when both are empty.
+func modelArgv(opts harness.LaunchOpts) []string {
+	var a []string
+	if opts.Model != "" {
+		a = append(a, "-model", opts.Model)
+	}
+	if opts.Effort != "" {
+		a = append(a, "-thinking", opts.Effort)
+	}
+	return a
+}
+
+func (p *prx) SkipPermissionsRun(prompt string, opts harness.LaunchOpts) error {
+	return SkipPermissionsRunner(prompt, opts)
+}
 
 // DefersCloseoutInAutoRun: prx's bash tool promotes an inline command to a
 // background job after 5 minutes (tool.DefaultBashBackgroundAfter), so a
@@ -119,8 +144,16 @@ func (p *prx) SkipPermissionsRun(prompt string) error { return SkipPermissionsRu
 // harness.CloseoutDeferrer).
 func (p *prx) DefersCloseoutInAutoRun() bool { return true }
 
-func runSkipPermissions(prompt string) error {
-	cmd := exec.Command("prx", "run", "-permission-mode", bypass, "-max-turns", maxTurns, "-prompt", prompt)
+// skipPermissionsArgv is `prx run -permission-mode <bypass> -max-turns <n>
+// [-model <m>] [-thinking <e>] -prompt <prompt>`.
+func skipPermissionsArgv(prompt string, opts harness.LaunchOpts) []string {
+	argv := append([]string{"prx", "run", "-permission-mode", bypass, "-max-turns", maxTurns}, modelArgv(opts)...)
+	return append(argv, "-prompt", prompt)
+}
+
+func runSkipPermissions(prompt string, opts harness.LaunchOpts) error {
+	argv := skipPermissionsArgv(prompt, opts)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	return cmd.Run()
 }
@@ -137,6 +170,7 @@ func (p *prx) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) []s
 	if opts.SkipPermissions {
 		argv = append(argv, "-permission-mode", bypass)
 	}
+	argv = append(argv, modelArgv(opts)...)
 	return append(argv, "-prompt", prompt)
 }
 

@@ -32,6 +32,14 @@ the task to `in-progress`. No terminal tab is spawned.
 - Claude Code validates that its cwd-keyed transcript belongs to the task's
   `work_dir`; a `cd` inside a tool command cannot bypass that check. Codex
   transcripts are keyed only by thread id, so no cwd validation is needed.
+  So a task you mean to bind with `--here` needs `work_dir` = the directory
+  this session was STARTED in, not a worktree or other directory you `cd`'ed
+  into later. On a refusal, look at the `flow update task … --work-dir`
+  command the error prints. If it shows a real path, run it, then run
+  `flow do --here` again. If it shows `<real-cwd>`, open the task in a new
+  tab with `flow do <slug>`. If the error says the task is still bound to
+  another session, do not change `work_dir`; continue in that session or
+  open a new tab.
 
 Never invent or guess a session id. `--here` always binds the current tab's
 session; to bind a different tab, switch to that tab first.

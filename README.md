@@ -310,11 +310,15 @@ flow init
 Or open [INSTALL.md](INSTALL.md) in Claude Code or Codex and let the agent
 install it. `flow init` installs a skill and a session-start hook into your
 harness. That is how the agent knows what "pick up the billing migration"
-means. Those two commands are the last ones you need to type.
+means. Those two commands are the last ones you need to type. In Codex,
+review the pending hooks when asked (first run in a folder, and after an
+upgrade changes a flow hook): check each command and trust flow's hooks,
+or none of them run.
 
 1. In Claude Code, mid-way on something: "bind this session to a task called
    <name>". The conversation you already have is now a task. Starting fresh:
-   "add a task for <thing>". You get interviewed; it is annoying once.
+   just say the goal ("I want <thing>"); flow asks which project it belongs
+   in and agrees "done" with you before anything gets built.
 2. Close the tab. Tomorrow: "let's pick up <name>". A tab opens where you
    left off (or it runs headless if you have no supported terminal).
 3. Children, playbooks and the bus make sense after three or four tasks. Not
@@ -322,7 +326,9 @@ means. Those two commands are the last ones you need to type.
 
 flow upgrades itself: after a command, it installs a newer release in the
 background (checksum-verified). `flow upgrade` does it now;
-`FLOW_NO_AUTO_UPGRADE=1` turns it off. Source builds, CI, root and a binary
+`FLOW_NO_AUTO_UPGRADE=1` turns it off (and the skill + hook refresh that
+follows an upgrade). That refresh only ever moves forward: an older or source
+build never rewrites a newer install's skill or hooks. Source builds, CI, root and a binary
 folder flow cannot write are skipped; the same install command works there.
 Uninstall by deleting the binary and `~/.flow`.
 

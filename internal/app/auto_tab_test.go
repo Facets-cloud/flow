@@ -311,7 +311,7 @@ func stubPrxSweep(t *testing.T) *int {
 	t.Helper()
 	var n int
 	old := prx.SkipPermissionsRunner
-	prx.SkipPermissionsRunner = func(string) error { n++; return nil }
+	prx.SkipPermissionsRunner = func(string, harness.LaunchOpts) error { n++; return nil }
 	t.Cleanup(func() { prx.SkipPermissionsRunner = old })
 	return &n
 }
@@ -783,5 +783,48 @@ func TestCmdDoneSeesTabModeCommittedBeforeFlip(t *testing.T) {
 	}
 	if *inline != 0 || len(*launched) != 1 {
 		t.Errorf("inline=%d detached=%v, want 0 inline and 1 detached (fresh auto_run_mode from the flip)", *inline, *launched)
+	}
+}
+
+// #175 × --tab: --model/--effort on `flow auto --tab` reach the tab's
+// interactive launch command and are stored on the task, so a later tab
+// resume reuses them.
+func TestCmdAutoTabPassesModelEffort(t *testing.T) {
+	setupFlowRoot(t)
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	brief := writeFile(t, t.TempDir(), "b.md", "# goal\nDone when: x\n")
+	if rc := cmdAuto([]string{"tab model", "--slug", "tm", "--brief", brief, "--tab", "--model", "opus-test", "--effort", "high"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	s := script()
+	for _, want := range []string{"--model 'opus-test'", "--effort 'high'", "AUTONOMOUS"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("tab command missing %q; got:\n%s", want, s)
+		}
+	}
+	task := getTask(t, "tm")
+	if task.Model.String != "opus-test" || task.Effort.String != "high" || task.AutoRunMode.String != autoRunModeTab {
+		t.Errorf("model=%q effort=%q mode=%q, want opus-test/high/tab", task.Model.String, task.Effort.String, task.AutoRunMode.String)
+	}
+}
+
+// The resume path of a tab run keeps the task's stored model.
+func TestCmdDoAutoTabResumeKeepsModel(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "tab-model-resume")
+	stubClaudeStatOK(t)
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', session_id=?, session_started=?, harness='claude', model='sonnet-test'
+		WHERE slug='tab-model-resume'`, fakeSessionID("tab-model-resume"), flowdb.NowISO()); err != nil {
+		t.Fatal(err)
+	}
+	_, script := stubITerm(t)
+	noHeadlessLaunch(t)
+	if rc := cmdDo([]string{"tab-model-resume", "--auto", "--tab"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	if s := script(); !strings.Contains(s, "--resume ") || !strings.Contains(s, "--model 'sonnet-test'") {
+		t.Errorf("resumed tab command should carry the stored model; got:\n%s", s)
 	}
 }

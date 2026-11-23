@@ -3,7 +3,9 @@ package app
 import (
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"strings"
 	"testing"
 )
 
@@ -20,7 +22,7 @@ func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 	t.Helper()
 	old := claude.SkipPermissionsRunner
 	calls := &[]capturedClaudeCall{}
-	claude.SkipPermissionsRunner = func(prompt string) error {
+	claude.SkipPermissionsRunner = func(prompt string, _ harness.LaunchOpts) error {
 		*calls = append(*calls, capturedClaudeCall{prompt: prompt})
 		return retErr
 	}
@@ -108,8 +110,15 @@ func TestCmdDoneRefusesTaskWithoutSession(t *testing.T) {
 	if rc := cmdAdd([]string{"task", "No Session Task"}); rc != 0 {
 		t.Fatalf("add rc=%d", rc)
 	}
+	stderr := captureStderr(t)
 	if rc := cmdDone([]string{"no-session-task"}); rc != 1 {
 		t.Errorf("done rc=%d, want 1 (sessionless task should be refused)", rc)
+	}
+	// The refusal ends on the outcome, so a reader of only the last line
+	// still learns the task was not closed (GH #173).
+	got := strings.TrimSpace(stderr())
+	if last := got[strings.LastIndex(got, "\n")+1:]; !strings.HasPrefix(last, "not closed:") {
+		t.Errorf("last stderr line = %q, want a \"not closed:\" line; full output:\n%s", last, got)
 	}
 	if len(*calls) != 0 {
 		t.Errorf("expected 0 sweep calls, got %d", len(*calls))

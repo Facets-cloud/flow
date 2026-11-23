@@ -246,13 +246,14 @@ func TestSpawnBackgroundShortIDNotInRegistry(t *testing.T) {
 	}
 }
 
-// ResumeBackground resumes the OLD id under --bg but, because --bg mints
-// a fresh id, must return the NEW captured agent (history inherited).
+// ResumeBackground resumes the OLD id under --bg and returns whatever agent
+// the banner names — here a different id (claude started a copy), which
+// must be returned rather than the requested one.
 func TestResumeBackgroundCapturesNewID(t *testing.T) {
 	cap := stubBG(t, realBanner, realAgentsJSON)
 	h := New().(harness.BackgroundLauncher)
 	oldSID := "00000000-1111-4222-8333-444444444444"
-	agent, err := h.ResumeBackground("/repo/app", "proj/task", oldSID, harness.LaunchOpts{SkipPermissions: true})
+	agent, err := h.ResumeBackground("/repo/app", "proj/task", oldSID, "", harness.LaunchOpts{SkipPermissions: true})
 	if err != nil {
 		t.Fatalf("ResumeBackground: %v", err)
 	}
@@ -322,4 +323,38 @@ func containsPair(ss []string, flag, val string) bool {
 		}
 	}
 	return false
+}
+
+// ResumeBackground passes the resume prompt as the positional first
+// message, with opts.Inject appended behind the marker (as on spawn).
+func TestResumeBackgroundPromptAndInjection(t *testing.T) {
+	cap := stubBG(t, realBanner, realAgentsJSON)
+	h := New().(harness.BackgroundLauncher)
+	if _, err := h.ResumeBackground("/w", "n", "00000000-1111-4222-8333-444444444444",
+		"kick", harness.LaunchOpts{Inject: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(cap.args, "kick\n\n"+harness.InjectionMarker+"\nx") {
+		t.Errorf("resume argv missing prompt+injection: %v", cap.args)
+	}
+}
+
+// A session that still has a background record keeps "saved options";
+// any launch flag on `claude --bg --resume` (even the same --name) makes
+// claude start a COPY under a new id (verified live, claude 2.1.325:
+// "keeps its own saved options, so the flags you passed started a copy").
+// With ResumeRegistered flow passes no flags at all — only the id and the
+// prompt — so claude wakes the SAME session with its saved options.
+func TestResumeBackgroundRegisteredPassesNoFlags(t *testing.T) {
+	cap := stubBG(t, realBanner, realAgentsJSON)
+	h := New().(harness.BackgroundLauncher)
+	sid := "00000000-1111-4222-8333-444444444444"
+	if _, err := h.ResumeBackground("/w", "proj/task", sid, "kick",
+		harness.LaunchOpts{SkipPermissions: true, Inject: "x", ResumeRegistered: true}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--bg", "--resume", sid, "kick\n\n" + harness.InjectionMarker + "\nx"}
+	if strings.Join(cap.args, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("registered resume argv = %q, want %q", cap.args, want)
+	}
 }

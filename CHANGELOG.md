@@ -35,6 +35,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   task in a detached prx host and needs prx v0.6.56 or later; resuming
   it keeps the session id.
 
+### Changed
+
+- **Just tell flow the goal.** Stating work starts a driver task in one
+  interaction: the goal (if unstated) and which project it belongs in
+  (best matches + "New project"; never none, never picked silently). The
+  task interview and the "driver or not?" question are gone.
+- **Every interactive task is a driver.** The driver rules now live in the
+  skill's `references/driver.md`; SessionStart and `flow do --here` print
+  one line pointing at it for any bound, human-driven session (no tag
+  needed; auto and playbook runs get nothing), and new briefs carry a
+  `Role: driver` line. While a brief's Done when is still the placeholder
+  (or on a task's first bind), flow prints an `INTAKE TURN` line so the
+  first turn ends at the proposal instead of building.
+
+### Fixed
+
+- **The automatic skill refresh never downgrades.** On every command flow
+  refreshed the skill and hooks whenever the installed version differed from
+  the binary's, so an older binary (a `.bak` copy, a rollback, a repro of an
+  old release) run with the real `HOME` replaced a newer install's hooks with
+  its own. It now refreshes only when the binary is strictly newer; it leaves
+  a `dev` or unparsable install alone, and `flow init` leaves a newer
+  install's hooks alone. `FLOW_NO_AUTO_UPGRADE=1` now stops this refresh as
+  well as the binary self-upgrade. `flow skill update` still installs on
+  request and warns when it replaces a newer install.
+- **`flow do --here` names the directory to use when it refuses a bind.**
+  If the session started outside the task's `work_dir`, the error now prints
+  the session's start directory as a ready `flow update task … --work-dir`
+  command. `flow add task` prints a note when the session that runs it
+  cannot bind to the new `work_dir`. A refused `flow done` ends with a
+  `not closed:` line (#173).
+
 ## [0.1.0-alpha.39] — 2026-11-13
 
 ### Fixed

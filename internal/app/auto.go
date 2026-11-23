@@ -462,6 +462,7 @@ func cmdAutoExec(args []string) int {
 		return 1
 	}
 	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
+	applyTaskModel(task, &opts)
 	// A re-run on a session that already ran must resume it, from the
 	// directory it lives in. This process was launched in work_dir and the
 	// harness inherits its cwd, so move there first when they differ.

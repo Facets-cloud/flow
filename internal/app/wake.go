@@ -295,7 +295,8 @@ func pruneClaudeEndpoints(dir string) {
 // a hook already showed, nudges rows older than rewakeGrace that nobody
 // pushed (the sender's socket push goes first), re-nudges once a push
 // still unread after rewakeRenudgeAfter, and runs one waiter per session
-// (pid lock). It exits quietly when wake is off, in an auto run, in an unbound
+// (pid lock). It exits quietly when wake is off, in an auto run, under a
+// headless Claude (`claude -p`, Agent SDK), in an unbound
 // or closed session, or when the Claude process is gone.
 func cmdInboxWait(args []string) int {
 	fs := flagSet("inbox wait")
@@ -348,9 +349,20 @@ func rewakeLockPath(sessionID string) string {
 	return filepath.Join(wakeStateDir(), "claude", filepath.Base(sessionID)+".waiter.pid")
 }
 
+// headlessClaude reports whether this hook runs under a headless Claude
+// process: `claude -p` (entrypoint sdk-cli) or an Agent SDK client
+// (sdk-ts, sdk-py). Such a process waits for its async hooks before it
+// exits, so an armed waiter would hold it for the hook's 24h timeout. An
+// interactive session, `--bg` included, runs the TUI (entrypoint cli).
+// Verified live: a bound non-auto `claude -p --resume` turn hung on the
+// waiter; with this gate it exits in seconds.
+func headlessClaude() bool {
+	return strings.HasPrefix(os.Getenv("CLAUDE_CODE_ENTRYPOINT"), "sdk-")
+}
+
 func rewakeWait(timeout time.Duration) int {
 	readHookPayload()
-	if !wakeActive() || os.Getenv(autoRunEnvVar) != "" {
+	if !wakeActive() || os.Getenv(autoRunEnvVar) != "" || headlessClaude() {
 		return 0
 	}
 	sid := currentSessionID()

@@ -70,7 +70,7 @@ first; let them choose what happens next.
    actions. Pick 3–4 options that fit the current state — for
    example:
    - "Show me what's on my plate" — runs §4.1 start-the-day.
-   - "Add a new task" — runs §4.2 task intake.
+   - "Start something new" — runs §4.2 Start a driver.
    - "Add a project" — runs §4.3 project intake.
    - "Just exploring" — stop and wait.
 3. Dispatch on the user's pick. If "Just exploring" or the user
@@ -138,11 +138,12 @@ Create
                            [--priority high|medium|low] [--due <date>] [--assignee <name>]
                            [--tag <t> ...]
   flow add playbook "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir]
+  flow add owner    "<name>" --work-dir <path> --every <dur> [--slug <s>] [--project <slug>] [--mkdir] [--model/--effort]
 
 Sessions
   flow do               <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--force]
                               [--with "<instruction>" | --with-file <path>]
+                              [--model <m>] [--effort <e>]  (kept on task; also auto/run; not --here)
   flow do --here        <ref> [--force]   (bind THIS harness session to the task — no new tab)
   flow do --auto        <ref> [--with "<instruction>" | --with-file <path>]
                               (run headlessly in the background — no tab, no human; the
@@ -162,7 +163,7 @@ Playbook runs
 Owners (autonomous ownership — see §4.17)
   flow owner list                   all owners with status + next tick   (alias: flow list owners)
   flow owner show   <slug>          charter + what it owns (in-flight / playbook runs / questions) + next tick   (alias: flow show owner <slug>)
-  flow owner start  <slug>          begin ticking — first tick now, then every <dur> (reactivates a paused OR retired owner)
+  flow owner start  <slug> [--model/--effort]  begin ticking — first tick now, then every <dur> (reactivates a paused OR retired owner)
   flow owner pause  <slug>          stop ticking, keep all state
   flow owner tick   <slug>          wake the owner NOW, interactively (a tab you drive); --auto = headless now
   flow owner next   <slug> --in <dur> | --at <when>   set the next tick time (how a tick self-paces)
@@ -276,106 +277,56 @@ working on", "where did I leave off", "give me a status".
 
 Do not auto-run `flow do` after listing. Wait for the user to pick.
 
-### 4.2 Add a task — INTERVIEW MODE (mandatory)
+### 4.2 Start a driver
 
-**Triggers:** "add a task", "new task", "track this work", "let me add a
-flow task for X".
+**Triggers:** the user states work they want done ("I want a phonics app",
+"fix the login bug", "let's build X", "add a task for X"). The ONE intake
+path for new work, before any other process skill (brainstorming,
+planning, debugging): those run inside the task. Every interactive task is
+a driver (rules: references/driver.md), so never ask "driver or not?". Say
+"driver task" to the user; keep slug, tag and template jargon off the user
+path. **Backlog capture** ("remind me later"): steps 1, 2 and 4 (no
+routing or opening), then stop without binding.
 
-**The interview is the whole point** — you interview before saving.
-NEVER solution during intake, NEVER fill blanks with guesses. If a
-section is unclear, ask; if the user says "I don't know yet", write
-"Open question: ..." in the brief and move on.
-
-**Required sections (always asked, in this order):**
-
-1. **Name** — one-sentence description (e.g. "Add OAuth login to the
-   budgeting app").
-2. **Slug** — short, memorable, ASCII. AskUserQuestion with 2–3
-   candidates derived from the name (e.g. `oauth`, `auth-budget`,
-   `oauth-budget`); "Other" lets them type a custom one. If they pick
-   Other and leave it blank, omit `--slug`.
-3. **Where?** — work_dir. Use the §6 recipe; pass `--mkdir` (AskUserQuestion
-   "Yes, create it" / "No, I'll fix the path") if the path doesn't exist.
-4. **Priority** — AskUserQuestion "High" / "Medium (Recommended)" / "Low",
-   default Medium. Skip if already stated.
-5. **Driver?** — AskUserQuestion "How should this task run?":
-   "Driver (Recommended)" (owns it end to end, spawns `flow auto`
-   children) / "Regular" (this session only). Recommend Driver for
-   multi-part goals; on Driver add `--tag driver`. Never skip.
-
-Also, before saving: **project attachment** — AskUserQuestion with one
-option per existing project (label = slug, desc = name) plus "None
-(floating task)"; skip if no projects exist.
-
-**Optional sections (offered, can be deferred):** after the required
-fields, AskUserQuestion:
-
-> "Want to capture more detail now (Why, Done when, Out of scope, Open
-> questions), or defer until you start the task?"
-> - Detail now (recommended for tasks you'll start later)
-> - Defer until you start the task
-
-- **Detail now:** interview Why / Done when / Out of scope / Open
-  questions and draft the full brief (template → references/templates.md).
-- **Defer:** save a thin brief (template → references/templates.md). The
-  §9 deferred-section prompt walks the missing sections at `flow do`
-  time, when the user has more context.
-
-**Confirmation:** show the drafted brief, then AskUserQuestion (header:
-"Brief", "Save it" / "Revise"). Do NOT run `flow add task` until "Save
-it"; on "Revise", ask what to change and re-confirm.
-
-**After `flow add task` succeeds** it prints the slug and a stub
-`brief.md` path. Overwrite the stub with your drafted content using
-**Read once, then Edit (`replace_all: true`) or Write** — the harness
-requires a prior Read before any mutation.
-
-**Tag step — always ask, easy to skip.** Right after the brief saves,
-before "Open now?", surface ONE tag question. The user skips with a
-click; do NOT pre-skip on their behalf.
-
-1. `flow list tags` for the existing vocabulary.
-2. AskUserQuestion (header: "Tags?", `multiSelect: true`): if tags exist,
-   offer the top 3 as `#<tag>` (desc "N tasks already have this tag") +
-   "New tag(s)" (Other → comma-separated) + "Skip — no tags". If none
-   exist, ask "Tag this task? (optional)" → "Yes, set tags" / "Skip — no
-   tags"; on Yes, prompt for comma-separated values.
-3. On any selection: `flow update task <slug> --tag <t1> --tag <t2> ...`.
-   On "Skip": nothing, move on without dwelling.
-
-The only legitimate pre-skip is when the user already said "just save
-it" / "no more questions" this turn.
-
-**Finally, "Open now?" — shape depends on binding.** Probe `flow show
-task` (no arg): errors with `not bound to a task` → unbound (dispatch);
-else already bound.
-
-**Unbound — three options** (AskUserQuestion, header "Open now?"):
-- **Yes, in a new tab** — §4.4 `flow do <slug>` (spawns a tab, flips to
-  in-progress). Pick when work hasn't started.
-- **Continue here (bind this session)** — run **`flow do --here <slug>`**
-  now (binds the active harness session id, flips to in-progress, no tab).
-  Pick when the work already began in this session — the common case when
-  §4.14 triggered intake from the SessionStart intercept.
-- **No, keep in backlog** — save and stop.
-
-**Status follow-through:** neither Yes-path leaves the task in backlog
-(both flip to in-progress). If the task is purely retrospective (records
-something already complete here — "track the script I just wrote"),
-immediately offer §4.7 closure after Continue-here (AskUserQuestion
-"Mark done now?") so it moves backlog → in-progress → done — never leave
-a retrospective record sitting in in-progress.
-
-**Bound — two options ONLY** (AskUserQuestion "Yes, open it" / "No, keep
-in backlog"). Do NOT offer "Continue here"/"Rebind"/any variant: a
-session_id belongs to at most one task (partial unique index), and `flow
-do --here` REJECTS a re-bind even with `--force` — offering it surfaces
-an option the binary refuses. Intent is almost always "open in a separate
-tab". On "Yes" → §4.4; on "No" → stop.
-
-> **Different-tab hint.** "Continue here" only ever attaches the
-> *current* dispatch session. To track work from a *different* open
-> session, switch to that tab and run `flow do --here <slug>` there.
+**Recipe (one interaction):**
+1. **Goal.** Not stated → ask: "I'll create a driver task for this — what
+   goal do you want to achieve?" (free-text Other). Stated → skip.
+2. **Project.** Every driver task has a project: always ask ONE project
+   question, even on an exact repo-path match (never skip it), never a "no
+   project" or "standalone" option, never auto-create silently: "I'll create a driver
+   task for this — which project does it belong in?" Options: best
+   existing match(es) from `flow list projects` (by repo/work_dir path
+   first, then by name/goal; max 3, top one "(Recommended)"); ALWAYS
+   include a "New project <name>" option, even when a match is obvious;
+   free-text Other. Ask it with AskUserQuestion (both questions in ONE call
+   when step 1 also asks); chat only if the tool is unavailable; with a
+   parent task, ask via `flow message`. Only on the user's pick: attach, or `flow
+   add project "<name>" --work-dir <repo, else this session's start dir>`
+   (never invent a folder) with a thin brief;
+   skip references/intake-project.md's first-task follow-up.
+3. **Route.** `flow list tasks --project <p>`: route there only when a live
+   driver's goal really matches (say so, offer to open it via §4.4); never override
+   an explicit "new" from the user.
+4. **Create.** `flow add task "<short name>" --project <p> --work-dir
+   <this session's start dir>` when unbound (no confirm step). Read the stub, then Write the driver brief
+   (references/templates.md): the line `Role: driver, follow flow skill
+   references/driver.md`, then `## Goal` (verbatim), `## Done when`, `##
+   Context`, `## Decisions`. Done when the user stated goes in now;
+   otherwise keep the placeholder `*Agree with the user on the first
+   turn.*` verbatim until the user agrees.
+5. **Bind + announce** (mandatory, only after it succeeds). Unbound →
+   ALWAYS run `flow do --here <slug>` first (never predict a refusal; a new
+   task adopts this session's folder): "Created driver task <name> in
+   project <p>; continuing here." (name the folder if flow printed
+   `work_dir →`). If it can't bind (e.g. this session is bound to another
+   task), ASK: "Open it in a new tab?" / "Keep working here without a
+   task"; a new tab is only ever the user's call. Never say "tracked task".
+6. **The intake turn ENDS** after you restate the goal, propose Done when
+   and close with a numbered "Needs from you:" list; build nothing (flow
+   prints `INTAKE TURN` then). Only an explicit yes to the proposed Done
+   when ends intake; anything else (edits, questions, silence, "go ahead
+   and build") → revise and re-ask. Then write the agreed Done when and
+   plan / delegate (§4.4a).
 
 ### 4.3 Add a project
 
@@ -409,7 +360,7 @@ X", or a bare `flow do --auto X`.
 2. Run `flow do <ref>` (one positional, exact slug match). Add
    `--dangerously-skip-permissions` for skip-permissions, or `--auto` for
    Autonomous (don't add both — `--auto` implies skip).
-3. On "no task matching", ask the user to clarify or offer `flow add task`.
+3. On "no task matching", ask the user to clarify or offer §4.2.
 4. Pass `--fresh` ONLY if the user explicitly asked ("start over", "fresh
    session"). Never on your own.
 5. **Harness selection:** pass `--harness codex` only when the user
@@ -457,15 +408,13 @@ it: progress note → `flow transcript` handoff file → un-pin via the scoped
 sqlite UPDATE → `flow do --harness <h> --with-file <handoff>`.
 ### 4.4a Driver tasks & delegation (auto children)
 
-A task tagged `driver` (list `◆driver`, show `role: driver`, anchor
-`[driver]`) owns its outcome end to end: hand ANY self-contained work
-(implementation, research, debug, fix+PR, scans) to `flow auto "<name>"
---slug <s> --brief <file|->` children, never harness subagents; keep talk,
-decisions, verifying results, live/prod applies inline. Other bound
-sessions delegate lightly. No §4.2/§4.4 asks;
-announce `spawning auto child: <slug>`. Make one mid-session: `flow
-update task <bound> --tag driver` (prints the block). No grandchildren.
-Habits, brief template → **references/delegation.md**.
+Every interactive task is a driver: flow points each bound, human-driven
+session at references/driver.md (SessionStart / `do --here`). If your
+brief says `Role: driver`, read references/driver.md. Own the outcome; hand
+self-contained work to `flow auto` children, never harness subagents;
+announce `spawning auto child: <slug>`; no grandchildren. Auto runs and
+playbook runs get no pointer and do the work themselves. Child-brief
+template → **references/delegation.md**.
 
 ### 4.5 Save a progress note
 
@@ -658,11 +607,8 @@ nearby infra the brief reasonably implies; the very first turn.
 
 **Recipe:** pause and AskUserQuestion (header "New task?", question names
 the `<current-slug>` and the one-line drift):
-- **Yes, new task** — run the §4.2 intake interview for a name derived
-  from what you observed; attach to the bound task's project only if it
-  genuinely belongs, else floating/other per intake; then offer `flow do
-  <new-slug>` (AskUserQuestion "Yes, open it" / "No, keep in backlog") so
-  the follow-on gets its own transcript.
+- **Yes, new task** — run §4.2 for the goal you observed (bound session
+  → offer a new tab), so the follow-on gets its own transcript.
 - **No, stay here** — accept it, update your model of the task's scope,
   don't re-ask on the same thread.
 - **Later** — offer a drift note (AskUserQuestion "Yes, save a drift
@@ -707,20 +653,17 @@ after session start.
 2. Run `flow list tasks --status in-progress` and
    `flow list tasks --status backlog --priority high` for candidates.
 3. AskUserQuestion with three options:
-   - **Create a new flow task** → §4.2 intake. Its "Open now?" tail
-     offers **Continue here (bind this session)**, usually the right
-     pick here: work already started in this conversation, and binding
-     keeps the transcript.
+   - **Start a driver (Recommended)** → §4.2: goal + project, then bind
+     this session (unbound) or offer a new tab (bound; the user decides).
    - **Switch to an existing task** → list candidates; on selection spawn
      `flow do <slug>` (new tab). If THIS session is already bound, never
      offer `flow do --here <existing-slug>`: the binary refuses
      (session_id uniqueness), even with `--force`.
    - **Proceed ad-hoc** (no resumability, no context accumulation).
 
-**Process-skill ordering:** load the process skill first (so the user
-sees it engage), then run this check **before** its first concrete
-action. On "create new" or "switch", the process skill resumes in the
-new session, not this one.
+**Process-skill ordering:** task first. Start (or route to) the driver
+before any other process skill acts; brainstorming / planning run inside
+it. If one already loaded, run this check before its first action.
 
 **Important: this is an ongoing check, not one-shot.** The SessionStart
 hook gets you the first check; you own every later one, especially when
@@ -860,9 +803,8 @@ Y?", stop and use the tool.
   Don't loop `flow do X` → "multiple matches" → guess → rerun.
 - **Do not bundle multiple saves into one `flow add task`.** One task per
   interview (or batch explicitly with consent).
-- **Do not skip the interview on "quick adds".** Even "just add a task,
-  nothing fancy" → ask at minimum What/Why/Where (non-negotiable); other
-  sections may be "TBD".
+- **Do not skip §4.2 on "quick adds".** Even "just add a task" → the goal
+  (if unstated) and the project question, non-negotiable.
 - **Do not overwrite an existing `brief.md` blind.** Read the stub first;
   if it holds real content (user edited it), merge and confirm before
   writing.
@@ -968,7 +910,7 @@ If any section body in your brief is the literal `*Deferred — fill in at
 task start.*` or `*Deferred*`, pause before doing any work and offer the
 user (via AskUserQuestion):
 
-- **Fill in now** — run a mini-§4.2 interview for just the missing
+- **Fill in now** — run a short interview for just the missing
   sections (Why, Done when, Out of scope, Open questions). Save the
   filled-in brief by overwriting the existing `brief.md`.
 - **Skip — proceed** — accept that scope is implicit. Reasonable for

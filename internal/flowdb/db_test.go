@@ -726,3 +726,91 @@ func TestMigrationAddsProjectTerminalGroup(t *testing.T) {
 		db2.Close()
 	}
 }
+
+// A DB created before tasks.model/effort existed gets both columns on
+// open, NULL for existing rows, and they round-trip through GetTask.
+func TestMigrationAddsModelAndEffort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flow.db")
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := NowISO()
+	if _, err := db.Exec(`INSERT INTO tasks (slug, name, work_dir, created_at, updated_at) VALUES ('old', 'Old', '/w', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, col := range []string{"model", "effort"} {
+		if _, err := db.Exec(`ALTER TABLE tasks DROP COLUMN ` + col); err != nil {
+			t.Fatalf("drop %s: %v", col, err)
+		}
+	}
+	db.Close()
+
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db.Close()
+	got, err := GetTask(db, "old")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Model.Valid || got.Effort.Valid {
+		t.Errorf("existing row should read NULL model/effort, got %+v %+v", got.Model, got.Effort)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET model='haiku', effort='low' WHERE slug='old'`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = GetTask(db, "old"); got.Model.String != "haiku" || got.Effort.String != "low" {
+		t.Errorf("round-trip model=%q effort=%q", got.Model.String, got.Effort.String)
+	}
+}
+
+// A DB created before owners.model/effort existed gets both columns on
+// open, NULL for existing rows; SetOwnerModel round-trips through GetOwner
+// and leaves a column given as "" untouched.
+func TestMigrationAddsOwnerModelAndEffort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flow.db")
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateOwner(db, &Owner{Slug: "old", Name: "Old", WorkDir: "/w", Every: "1h"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, col := range []string{"model", "effort"} {
+		if _, err := db.Exec(`ALTER TABLE owners DROP COLUMN ` + col); err != nil {
+			t.Fatalf("drop %s: %v", col, err)
+		}
+	}
+	db.Close()
+
+	db, err = OpenDB(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db.Close()
+	got, err := GetOwner(db, "old")
+	if err != nil {
+		t.Fatalf("GetOwner: %v", err)
+	}
+	if got.Model.Valid || got.Effort.Valid {
+		t.Errorf("existing row should read NULL model/effort, got %+v %+v", got.Model, got.Effort)
+	}
+	if err := SetOwnerModel(db, "old", "haiku", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = GetOwner(db, "old"); got.Model.String != "haiku" || got.Effort.Valid {
+		t.Errorf("round-trip model=%+v effort=%+v", got.Model, got.Effort)
+	}
+	// Only the given column is written: an effort-only call keeps model.
+	if err := SetOwnerModel(db, "old", "", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = GetOwner(db, "old"); got.Model.String != "haiku" || got.Effort.String != "high" {
+		t.Errorf("effort-only write model=%+v effort=%+v", got.Model, got.Effort)
+	}
+	if err := SetOwnerModel(db, "missing", "haiku", ""); err == nil {
+		t.Error("SetOwnerModel on a missing owner should fail")
+	}
+}

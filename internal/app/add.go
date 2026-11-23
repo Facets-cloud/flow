@@ -24,6 +24,27 @@ session. Sections to cover: What / Why / Where / Done when / Out of scope /
 Open questions.
 `
 
+// driverBriefStub is the brief a human-added task starts with (skill §4.2).
+const driverBriefStub = "# %s\n\nRole: driver, follow flow skill references/driver.md\n\n## Goal\n\n## Done when\n" +
+	doneWhenPlaceholder + "\n\n## Context\n\n## Decisions\n"
+
+// hasOwnerTag reports whether tags include an owner-managed tag.
+func hasOwnerTag(tags []string) bool {
+	for _, t := range tags {
+		if isOwnerTag(strings.ToLower(strings.TrimSpace(t))) {
+			return true
+		}
+	}
+	return false
+}
+
+// isOwnerTag is the owner ledger's exact form: owner:<slug>, slug non-empty
+// with no surrounding space.
+func isOwnerTag(tag string) bool {
+	slug, ok := strings.CutPrefix(tag, "owner:")
+	return ok && slug != "" && slug == strings.TrimSpace(slug)
+}
+
 // cmdAdd dispatches `flow add project|task|playbook ...`.
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
@@ -139,7 +160,11 @@ func addProject(args []string) int {
 	return 0
 }
 
-func addTask(args []string) int {
+func addTask(args []string) int { return createTask(args, true) }
+
+// createTask is `flow add task`. hereNote=false is `flow auto`: a child for
+// a new session, never bound here, so it keeps the plain brief stub.
+func createTask(args []string, hereNote bool) int {
 	if len(args) == 0 || args[0] == "" {
 		fmt.Fprintln(os.Stderr, "error: add task requires a name")
 		return 2
@@ -292,9 +317,13 @@ func addTask(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	stub := taskBriefStub
+	if hereNote && !isAutoRunSession(parent) && !hasOwnerTag(tags) {
+		stub = driverBriefStub // a human add: its placeholder drives INTAKE TURN
+	}
 	briefPath := filepath.Join(taskDir, "brief.md")
 	if _, err := os.Stat(briefPath); os.IsNotExist(err) {
-		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(taskBriefStub, name)), 0o644); err != nil {
+		if err := os.WriteFile(briefPath, []byte(fmt.Sprintf(stub, name)), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
