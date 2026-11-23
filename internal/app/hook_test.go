@@ -3,6 +3,8 @@ package app
 import (
 	"encoding/json"
 	"flow/internal/flowdb"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -61,6 +63,45 @@ func TestHookSessionStartUnboundEmitsAmbientHint(t *testing.T) {
 	// no slug-bound reload).
 	if strings.Contains(ctx, "flow register-session") {
 		t.Errorf("ambient hint should not instruct register-session (no FLOW_TASK bound):\n%s", ctx)
+	}
+}
+
+// A fresh install (no projects/tasks, empty KB) gets the onboarding nudge
+// and no "already exist" claim; one task or one kb entry ends it.
+func TestHookSessionStartFreshInstallOnboarding(t *testing.T) {
+	root := setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	run := func() string {
+		return busHookContext(t, captureStdout(t, func() { cmdHookSessionStart(nil) }))
+	}
+	ctx := run()
+	if !strings.Contains(ctx, "flow-onboarding:") || !strings.Contains(ctx, "references/setup.md") {
+		t.Errorf("fresh install missing onboarding nudge:\n%s", ctx)
+	}
+	if strings.Contains(ctx, "already exist") {
+		t.Errorf("fresh install must not claim tasks/KB exist:\n%s", ctx)
+	}
+
+	// One kb fact ends it.
+	kb := filepath.Join(root, "kb", "user.md")
+	f, err := os.OpenFile(kb, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("- 2026-11-18 — I'm an SRE\n")
+	f.Close()
+	if ctx := run(); strings.Contains(ctx, "flow-onboarding:") || !strings.Contains(ctx, "already exist") {
+		t.Errorf("kb entry should end onboarding:\n%s", ctx)
+	}
+}
+
+func TestHookSessionStartTaskEndsOnboarding(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	seedTask(t, "first")
+	ctx := busHookContext(t, captureStdout(t, func() { cmdHookSessionStart(nil) }))
+	if strings.Contains(ctx, "flow-onboarding:") {
+		t.Errorf("a task should end onboarding:\n%s", ctx)
 	}
 }
 
@@ -240,5 +281,42 @@ func TestHookBindsFromStdinSessionID(t *testing.T) {
 	}
 	if !strings.Contains(prompt, `flow session → task`) {
 		t.Errorf("user-prompt-submit should emit the bound anchor; got:\n%s", prompt)
+	}
+}
+
+// Declining onboarding (`flow onboard dismiss`) writes the marker that
+// silences the nudge, even on an empty install with no flow.db.
+func TestOnboardingDismissedStaysQuiet(t *testing.T) {
+	root := setupFlowRoot(t)
+	os.Remove(filepath.Join(root, "flow.db"))
+	if ctx := onboardingHint(root); !strings.Contains(ctx, "flow-onboarding:") {
+		t.Fatalf("precondition: fresh install should nudge:\n%s", ctx)
+	}
+	captureStdout(t, func() {
+		if rc := cmdOnboard([]string{"dismiss"}); rc != 0 {
+			t.Fatalf("dismiss rc=%d", rc)
+		}
+	})
+	if ctx := onboardingHint(root); ctx != "" {
+		t.Errorf("dismissed install still nudges:\n%s", ctx)
+	}
+}
+
+// A missing flow.db is named by its path, and a kb fact still ends the
+// nudge without a database.
+func TestOnboardingMissingDBNamesRootAndChecksKB(t *testing.T) {
+	root := setupFlowRoot(t)
+	os.Remove(filepath.Join(root, "flow.db"))
+	if ctx := onboardingHint(root); !strings.Contains(ctx, "no flow.db at "+root) {
+		t.Errorf("missing flow.db not named by root:\n%s", ctx)
+	}
+	f, err := os.OpenFile(filepath.Join(root, "kb", "user.md"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("- 2026-11-23 — I prefer async\n")
+	f.Close()
+	if ctx := onboardingHint(root); ctx != "" {
+		t.Errorf("kb entry should end the nudge even without flow.db:\n%s", ctx)
 	}
 }
