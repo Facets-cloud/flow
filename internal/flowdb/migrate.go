@@ -145,7 +145,7 @@ func openDB(path string, o openOptions) (*sql.DB, error) {
 	if o.immediateTx {
 		q.Set("_txlock", "immediate")
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	db, err := sql.Open("sqlite", "file:"+dsnPath(path)+"?"+q.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
@@ -154,6 +154,13 @@ func openDB(path string, o openOptions) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// dsnPath escapes the characters a SQLite "file:" URI would otherwise
+// interpret: '%' (SQLite decodes %HH), '?' (query start; the driver also
+// splits the DSN there) and '#' (fragment). Plain paths are unchanged.
+func dsnPath(path string) string {
+	return strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(path)
 }
 
 func userVersion(q interface {

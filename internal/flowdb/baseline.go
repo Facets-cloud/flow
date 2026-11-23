@@ -3,7 +3,6 @@ package flowdb
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -435,8 +434,7 @@ func migrateTasksSessionIDUnique(q querier) error {
 	}
 
 	if len(dupedSIDs) > 0 {
-		fmt.Fprintf(os.Stderr,
-			"flow migration: deduplicating %d session_id(s) shared across multiple tasks (only one task may carry a given session_id):\n",
+		warnf("flow migration: deduplicating %d session_id(s) shared across multiple tasks (only one task may carry a given session_id):\n",
 			len(dupedSIDs))
 		now := NowISO()
 		for _, sid := range dupedSIDs {
@@ -468,11 +466,10 @@ func migrateTasksSessionIDUnique(q querier) error {
 				continue
 			}
 			winner := carriers[0]
-			fmt.Fprintf(os.Stderr,
-				"  %s: keeping on %s (was %s); demoting to backlog with NULL session_id:\n",
+			warnf("  %s: keeping on %s (was %s); demoting to backlog with NULL session_id:\n",
 				sid, winner.slug, winner.status)
 			for _, l := range carriers[1:] {
-				fmt.Fprintf(os.Stderr, "    - %s (was %s)\n", l.slug, l.status)
+				warnf("    - %s (was %s)\n", l.slug, l.status)
 				if _, err := q.Exec(
 					`UPDATE tasks SET session_id=NULL, session_started=NULL, status='backlog', updated_at=? WHERE slug=?`,
 					now, l.slug,
@@ -597,12 +594,11 @@ func migrateTasksSessionInvariant(q querier) error {
 	rows.Close()
 
 	if len(vs) > 0 {
-		fmt.Fprintf(os.Stderr,
-			"flow migration: demoting %d task(s) without session_id back to backlog "+
-				"(only backlog may have NULL session_id under the new invariant):\n",
+		warnf("flow migration: demoting %d task(s) without session_id back to backlog "+
+			"(only backlog may have NULL session_id under the new invariant):\n",
 			len(vs))
 		for _, v := range vs {
-			fmt.Fprintf(os.Stderr, "  %s (was %s)\n", v.slug, v.prevStatus)
+			warnf("  %s (was %s)\n", v.slug, v.prevStatus)
 		}
 		if _, err := q.Exec(
 			`UPDATE tasks SET status='backlog', updated_at=? WHERE status != 'backlog' AND session_id IS NULL`,
