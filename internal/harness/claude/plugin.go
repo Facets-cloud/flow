@@ -116,8 +116,9 @@ func marshalJSON(v any) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// writeIfChanged writes content to path (creating parents) unless the file
-// already holds exactly that content.
+// writeIfChanged atomically writes content to path (creating parents)
+// unless the file already holds exactly that content. A concurrent Claude
+// startup sees the old file or the new one, never a partial one.
 func writeIfChanged(path string, content []byte) (bool, error) {
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, content) {
 		return false, nil
@@ -125,8 +126,8 @@ func writeIfChanged(path string, content []byte) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
+	if err := writeFileAtomic(path, content, 0o644); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -191,6 +192,12 @@ func (c *claude) PluginInstalled() bool {
 // PluginDisabled reports enabledPlugins["flow@skills-dir"] == false in
 // ~/.claude/settings.json — what `claude plugin disable flow@skills-dir`
 // writes. Read-only: flow never re-enables a plugin the user turned off.
+//
+// Only the user layer is read, and that is deliberate: this is an
+// informational note at install time, never a gate for the legacy strip.
+// The strip's proof that the plugin is active is the plugin's own
+// SessionStart actually running (legacystrip.go), which already accounts
+// for every layer — settings.local.json, project settings, managed policy.
 func (c *claude) PluginDisabled() bool {
 	path, err := settingsPath()
 	if err != nil {
