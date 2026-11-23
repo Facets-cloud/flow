@@ -26,6 +26,9 @@
   `"$FLOW_BIN"`. A tab run marked dead still completes on its own
   `flow done`, and `flow auto --mkdir` trusts the dir it just created
   unless that dir is inside a git repo.
+
+## v0.1.0-alpha.40
+
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
   `flow run playbook` take `--model <m>` and `--effort <e>`, passed to the
   harness as given. The task keeps them, so resumes reuse them; `flow show
