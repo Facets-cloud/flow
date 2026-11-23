@@ -2,9 +2,9 @@
 # Container half of e2e-old-db.sh. Never run on the host.
 set -euo pipefail
 [ -f /.dockerenv ] || { echo "refusing to run outside Docker" >&2; exit 1; }
-tag=$1
+tag=$1 srcdir=/src/$2
 old=/tmp/flow-old new=/tmp/flow-new
-(cd /src/.fixture-build-e2e/$tag && go build -o $old .)
+(cd "$srcdir" && go build -o $old .)
 go build -o $new .
 go build -o /tmp/sqldump ./scripts/sqldump
 export HOME=/tmp/e2e-home FLOW_ROOT=/tmp/e2e-home/.flow
@@ -68,6 +68,33 @@ echo "user_version=$uv"
 after=$(/tmp/sqldump $FLOW_ROOT/flow.db | grep '^INSERT' | grep -vc 'schema_meta')
 echo "rows before=$before after(excluding schema_meta)=$after"
 [ "$after" -ge "$before" ] || { echo "FAIL: rows lost"; exit 1; }
+# Per-table counts: every table the old DB had keeps exactly its rows
+# (bus_listeners is dropped by the baseline by design).
+q() { /tmp/sqldump -query "$1" "$2"; }
+for t in $(q "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bus_listeners','schema_meta') ORDER BY name" /tmp/old-copy.db); do
+  t=${t//\'/}
+  c0=$(q "SELECT COUNT(*) FROM \"$t\"" /tmp/old-copy.db)
+  c1=$(q "SELECT COUNT(*) FROM \"$t\"" $FLOW_ROOT/flow.db)
+  [ "$c0" = "$c1" ] || { echo "FAIL: table $t: $c0 rows before, $c1 after"; exit 1; }
+done
+# Row identities and values survive: every column the old DB had, for the
+# entity tables, compared row by row (keyed by primary key). The fixture is
+# already consistent, so the baseline's data fixes must not touch these.
+ident() {
+  local t cols
+  for t in projects tasks workdirs playbooks owners task_tags; do
+    cols=$(q "SELECT group_concat('\"' || name || '\"', ',') FROM pragma_table_info('$t')" /tmp/old-copy.db)
+    cols=${cols#\'}; cols=${cols%\'}
+    [ -n "$cols" ] && [ "$cols" != NULL ] || continue
+    echo "-- $t"
+    q "SELECT $cols FROM \"$t\" ORDER BY 1, 2" "$1"
+  done
+}
+ident /tmp/old-copy.db > /tmp/ident-before
+ident $FLOW_ROOT/flow.db > /tmp/ident-after
+grep -q "^'a1'" /tmp/ident-before || { echo "FAIL: identity dump is empty"; exit 1; }
+diff /tmp/ident-before /tmp/ident-after || { echo "FAIL: entity rows changed by the migration"; exit 1; }
+echo "per-table counts and row identities unchanged"
 
 echo "== writes + hooks on the migrated DB"
 step $new add task "New after upgrade" --project alpha --slug n1
