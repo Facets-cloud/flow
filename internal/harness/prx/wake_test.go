@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -204,12 +205,14 @@ func TestWakeLiveNeedsPeerWatcher(t *testing.T) {
 }
 
 // An app-chat-only session publishes inbound "refuse" and never reads its peer
-// inbox; accept/hold/default sessions have a draining watcher.
+// inbox. "hold" parks every message for the human's approval until it is
+// released, so no turn starts from a wake: it is not live either. Only accept
+// (and the default, which accepts) has a watcher that starts turns on arrival.
 func TestWakeLivePeerInboundPolicy(t *testing.T) {
 	for _, c := range []struct {
 		inbound string
 		live    bool
-	}{{"", true}, {"accept", true}, {"hold", true}, {"refuse", false}, {"REFUSE", false}} {
+	}{{"", true}, {"accept", true}, {"hold", false}, {"refuse", false}, {"REFUSE", false}, {"HOLD", false}} {
 		withOwner(t, "sid-live", 4242, true)
 		writePeerRecord(t, "sid-live", c.inbound)
 		if got := (&prx{}).WakeLive(harness.WakeRequest{SessionID: "sid-live"}); got != c.live {
@@ -221,7 +224,8 @@ func TestWakeLivePeerInboundPolicy(t *testing.T) {
 // A prx that hangs and leaves a child holding stderr must not block the send
 // past its timeout: the group is killed and WaitDelay bounds the pipe.
 func TestPeerSendTimeoutKillsDescendantHoldingStderr(t *testing.T) {
-	fakePrx(t, "sleep 30 &\nsleep 30\n")
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	fakePrx(t, "sleep 30 &\necho $! > "+pidFile+"\nsleep 30\n")
 	start := time.Now()
 	_, err := runPeerSend([]string{"prx", "peer", "send"}, time.Second)
 	if err == nil {
@@ -229,5 +233,40 @@ func TestPeerSendTimeoutKillsDescendantHoldingStderr(t *testing.T) {
 	}
 	if d := time.Since(start); d > 6*time.Second {
 		t.Fatalf("send blocked %v past its 1s timeout", d)
+	}
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("descendant never recorded its pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		t.Fatalf("bad descendant pid %q: %v", raw, err)
+	}
+	// Failure cleanup: never leave the orphan running past this test.
+	t.Cleanup(func() {
+		if processAlive(pid) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	// Reaping an orphan can lag the kill by a moment, so poll briefly.
+	for deadline := time.Now().Add(2 * time.Second); processAlive(pid) && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if processAlive(pid) {
+		t.Fatalf("descendant pid %d still alive after the send timed out: its process group was not killed", pid)
+	}
+}
+
+// processAlive reports whether pid exists (a zombie counts as alive until reaped).
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
+}
+
+// The push is chat from another session, so --with text must never ride it.
+func TestPrxPushIsChatOnly(t *testing.T) {
+	var w harness.Waker = &prx{}
+	c, ok := w.(harness.ChatOnlyWaker)
+	if !ok || !c.ChatOnly() {
+		t.Fatal("prx push must report ChatOnly: --with text would reach the agent as a peer message")
 	}
 }

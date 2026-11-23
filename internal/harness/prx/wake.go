@@ -56,6 +56,10 @@ func peerSendCmd(argv []string, timeout time.Duration) (*exec.Cmd, context.Cance
 	return cmd, cancel
 }
 
+// ChatOnly: a prx push is a peer message, which the receiver frames as chat from
+// another session, so it must not carry a user's --with instruction.
+func (p *prx) ChatOnly() bool { return true }
+
 // WakeLive reports whether the session has a live owner AND a peer watcher that
 // drains its inbox. `prx peer send` appends and exits 0 either way, so without
 // the watcher check a session with peers.enabled off (no watcher) would count
@@ -75,9 +79,10 @@ type peerRecord struct {
 	Inbound   string `json:"inbound"`
 }
 
-// peerWatching reports whether a prx peer watcher is draining the session's
-// inbox: its record exists and does not refuse inbound messages. An
-// app-chat-only session publishes inbound "refuse" and never reads the inbox.
+// peerWatching reports whether a prx peer watcher will start a turn on a notice
+// sent now: its record exists and its inbound policy is "accept" (or the
+// default). "refuse" (app-chat-only sessions never read the inbox) and "hold"
+// (messages wait for the human's approval, so no turn starts) both mean no.
 // A false "no" is harmless: the mail is stored and the session's hooks deliver.
 func peerWatching(sessionID string) bool {
 	dir, err := sessionDir()
@@ -92,7 +97,14 @@ func peerWatching(sessionID string) bool {
 	if json.Unmarshal(raw, &rec) != nil || rec.SessionID == "" {
 		return false
 	}
-	return strings.EqualFold(rec.SessionID, sessionID) && !strings.EqualFold(strings.TrimSpace(rec.Inbound), "refuse")
+	if !strings.EqualFold(rec.SessionID, sessionID) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(rec.Inbound)) {
+	case "refuse", "hold":
+		return false
+	}
+	return true
 }
 
 // Wake delivers req.Notice into the live session. A session that went away

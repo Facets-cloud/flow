@@ -1094,6 +1094,11 @@ func deliverToIdleBg(db *sql.DB, task *flowdb.Task, sessionID, inject string, un
 	if w == nil {
 		return false
 	}
+	// A --with instruction is the user's. A chat-only push would reach the
+	// agent as another session's message, so it takes the stop + same-id resume.
+	if c, ok := w.(harness.ChatOnlyWaker); ok && c.ChatOnly() && inject != "" {
+		return false
+	}
 	req := harness.WakeRequest{SessionID: sessionID, StateDir: wakeStateDir(), Timeout: wakePushTimeout}
 	if !w.WakeLive(req) {
 		return false

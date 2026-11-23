@@ -24,7 +24,12 @@ type fakeWaker struct {
 	known   bool
 	checked int
 	detail  string // returned on success (a Codex queue "Warning:" line)
+	// chatOnly: the push reaches the session as chat from another session,
+	// not as an instruction (see harness.ChatOnlyWaker).
+	chatOnly bool
 }
+
+func (f *fakeWaker) ChatOnly() bool { return f.chatOnly }
 
 func (f *fakeWaker) WakeLive(harness.WakeRequest) bool { return f.live }
 func (f *fakeWaker) Wake(r harness.WakeRequest) (string, error) {
