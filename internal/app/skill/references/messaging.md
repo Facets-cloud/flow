@@ -63,7 +63,8 @@ with no human watching. Its prompt carries the rule:
 - **Parent done/archived** (flow rejects the message) → still write the
   update note, then send the done/blocked report to the human as an FYI:
   `flow message user "FYI: <slug> done — see <update file>" --fyi`. A child
-  that dies is reported the same way by flow itself.
+  that dies is reported the same way by flow itself. `--fyi` goes only with
+  the bare `user` address: `flow message user/<task> … --fyi` exits 2.
 - **No parent** → result in an update note; message the human ONLY when
   done or blocked, naming the note. Never routine progress.
 - **No inbox listener, ever.** An auto run must not arm a Monitor, a
