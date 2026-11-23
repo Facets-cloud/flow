@@ -130,7 +130,15 @@ func cmdHookSessionStart(args []string) int {
 		return 2
 	}
 	payload, _ := readHookPayload()
-	if hookLoses("session-start", *src, payload) {
+	loses := hookLoses("session-start", *src, payload)
+	// The plugin copy proves the plugin loads here: it may strip the
+	// legacy settings.json copies, whichever copy won the claim.
+	hookSrc := *src
+	if hookSrc == "" {
+		hookSrc = os.Getenv(hookSrcEnv)
+	}
+	maybeAutoStripLegacy(hookSrc, currentSessionID())
+	if loses {
 		return 0
 	}
 	// Claude socket push: only this hook process sees the session's

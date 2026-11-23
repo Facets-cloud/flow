@@ -184,20 +184,27 @@ func installHooksOpts(h harness.Harness, quiet, stripLegacy bool) {
 		switch {
 		case err != nil:
 			fmt.Fprintf(os.Stderr, "warning: %s: could not install the flow plugin hooks: %v\n", name, err)
+			// No working replacement: never strip the legacy copies.
+			return
 		case quiet:
 		case changed:
 			fmt.Printf("%s: installed flow plugin hooks (SessionStart, UserPromptSubmit, Stop, PreToolUse, wake) — no settings.json changes\n", name)
 		default:
 			fmt.Printf("%s: flow plugin hooks already installed — leaving as is\n", name)
 		}
-		if err == nil && !quiet && ph.PluginDisabled() {
+		if !quiet && ph.PluginDisabled() {
 			fmt.Printf("%s: note: the flow plugin is disabled in your settings (enabledPlugins %q is false), so its hooks will not run; flow leaves that choice alone\n", name, claude.PluginID)
 		}
-		// Strip the legacy settings.json copies once that is safe (or
-		// right away with --strip-legacy); see legacystrip.go.
-		// A strip announces itself (stderr + a human FYI).
-		if stripped, why := stripLegacyClaudeHooks(stripLegacy, quiet); !stripped && !quiet && legacyClaudeEntriesPresent() {
-			fmt.Printf("%s: kept flow's legacy hooks in ~/.claude/settings.json for now: %s\n", name, why)
+		// Legacy settings.json copies are stripped automatically only by
+		// the plugin's own SessionStart (proof it loads; see
+		// legacystrip.go), or right here with --strip-legacy. A strip
+		// announces itself (stderr + a human FYI).
+		if stripLegacy {
+			if _, why := stripLegacyClaudeHooks(true, ""); why != "" && !quiet {
+				fmt.Printf("%s: legacy hooks: %s\n", name, why)
+			}
+		} else if present, _ := legacyClaudeEntriesPresent(); present && !quiet {
+			fmt.Printf("%s: kept flow's legacy hooks in ~/.claude/settings.json for now: they are removed automatically the first time the flow plugin loads in a Claude session while no other Claude session is live (force with --strip-legacy)\n", name)
 		}
 		return
 	}

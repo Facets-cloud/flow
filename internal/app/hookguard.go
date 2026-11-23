@@ -37,10 +37,10 @@ import (
 //     event after the window runs again.
 //
 // A plugin invocation also records the session as "on plugin"
-// ($FLOW_ROOT/hooks/plugin/<session_id>); the legacy strip waits until
-// every live Claude session is on plugin (or gone).
+// ($FLOW_ROOT/hooks/plugin/<session_id>). The plugin copy of SessionStart
+// is also what triggers the automatic legacy strip (legacystrip.go).
 //
-// Only Claude hook processes claim: Codex and prx have one hook copy.
+// Claims are taken only while a second copy can exist (mayHaveTwoCopies).
 
 // hookSrcPlugin is the source value the plugin's hook commands set
 // (FLOW_HOOK_SRC=plugin; `--src plugin` is accepted too).
@@ -50,7 +50,16 @@ const hookSrcPlugin = "plugin"
 const hookSrcEnv = "FLOW_HOOK_SRC"
 
 // claimWindow is how long a payload-hash claim blocks an identical
-// invocation. Both copies of one event start within milliseconds.
+// invocation. Both copies of one event start within milliseconds. Why a
+// genuine repeat inside the window is not a concern: (1) claims are taken
+// only while legacy settings entries exist (mayHaveTwoCopies), i.e. during
+// the changeover; (2) SessionStart cannot genuinely repeat byte-identically
+// (a restart is a new process with a new source/session); (3) Stop's
+// payload changes between turns (stop_hook_active flips after a nudge, and
+// a re-stop follows a whole model turn); (4) if a Stop or rewake repeat
+// were dropped anyway, the next Stop redoes the same idempotent work
+// (state mark, inbox delta, waiter re-arm). Handle-keyed claims
+// (tool_use_id, prompt_id) have no window at all.
 var claimWindow = 5 * time.Second
 
 // claimTTL is how long any claim file is kept before pruning; handle
@@ -112,6 +121,29 @@ func claudeHookProcess() bool {
 	return os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET") != "" || os.Getenv("CLAUDE_PID") != ""
 }
 
+// mayHaveTwoCopies reports whether this hook invocation can have a twin:
+// a Claude hook process (by env, or by the hook_event_name every Claude
+// hook payload carries, so a Claude release that stops exporting
+// CLAUDE_PID / CLAUDE_CODE_MESSAGING_SOCKET still claims) while
+// settings.json holds legacy flow entries, or within legacyStripGrace of
+// a strip (a legacy copy that started before it may still be in flight).
+// It re-reads settings.json on every call, so entries an older flow binary
+// re-adds (a downgrade) turn claiming back on at once. A read error counts
+// as "may": claiming a single copy is harmless.
+//
+// Claiming a Codex/prx hook (their payloads carry hook_event_name too) is
+// also harmless — a lone copy always wins its claim — and only happens
+// while Claude legacy entries exist.
+func mayHaveTwoCopies(sid string, p hookPayload) bool {
+	if sid == "" || (!claudeHookProcess() && p.HookEventName == "") {
+		return false // a manual run: one copy only
+	}
+	if present, err := legacyClaudeEntriesPresent(); err != nil || present {
+		return true
+	}
+	return legacyStripRecent()
+}
+
 // claudePlugin returns the Claude harness's plugin capability.
 func claudePlugin() harness.PluginHookInstaller {
 	h, err := harnessByName(string(harness.NameClaude))
@@ -153,11 +185,8 @@ func hookLoses(handler, src string, p hookPayload) bool {
 	if src == hookSrcPlugin {
 		markPluginSession(sid)
 	}
-	if sid == "" || !claudeHookProcess() {
-		return false // Codex / prx / a manual run: one copy only
-	}
-	if legacyStripDone() {
-		return false // settings copies are gone: the plugin is the only copy
+	if !mayHaveTwoCopies(sid, p) {
+		return false // one copy only: nothing to claim
 	}
 	if h := hookHandle(handler, p); h != "" {
 		return !claimHandle(handler, sid, h)
