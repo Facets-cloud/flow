@@ -25,9 +25,12 @@ package harness
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // Name is the short identifier persisted on tasks.harness and used to
@@ -45,6 +48,20 @@ const (
 // typed user input. Shared across harnesses — the receiver only needs
 // to recognize the literal string.
 const InjectionMarker = "[via flow do --with]"
+
+// WithInjection appends a `flow do --with` instruction to prompt behind
+// InjectionMarker. With no prompt the marked instruction stands alone;
+// with no instruction prompt is returned unchanged.
+func WithInjection(prompt, inject string) string {
+	if inject == "" {
+		return prompt
+	}
+	marked := InjectionMarker + "\n" + inject
+	if prompt == "" {
+		return marked
+	}
+	return prompt + "\n\n" + marked
+}
 
 // LaunchOpts are options forwarded into the spawn command builder.
 // Harness adapters translate to per-CLI flags (Claude:
@@ -64,6 +81,16 @@ type LaunchOpts struct {
 	// existing session as "already in use").
 	Resume bool
 
+	// ResumeRegistered marks a background resume of a session that still
+	// has a record in the harness's background registry (claude: listed by
+	// `claude agents --json --all`, any state). Claude keeps such a
+	// session's launch options ("saved options") and treats ANY flag on
+	// `claude --bg --resume <id>` (even the same --name) as a request for a
+	// COPY under a new id. With this set the harness passes no launch flags
+	// — just the id and the prompt — so the SAME session wakes with its
+	// saved name and permission mode.
+	ResumeRegistered bool
+
 	// LastMessagePath, when set on a headless run, asks the harness to
 	// write the session's final message to this file (codex: -o). Impls
 	// without an equivalent ignore it.
@@ -76,6 +103,47 @@ type LaunchOpts struct {
 	// persisted to config.toml). Claude ignores it — its trust lives in
 	// ~/.claude.json and is persisted via WorkspaceTruster instead.
 	TrustDir string
+
+	// Model and Effort pick the model and reasoning-effort level for this
+	// launch (`flow do --model/--effort`). Empty adds no flag, so the
+	// harness uses its own default. flow keeps no list of model names:
+	// values pass through to the harness CLI as given, so new models work
+	// without a flow release. Only harnesses that implement ModelSelector
+	// receive them; CheckModelOpts gates everything else.
+	Model  string
+	Effort string
+}
+
+// ModelSelector is an OPTIONAL capability: honouring LaunchOpts.Model and
+// LaunchOpts.Effort in every launch shape (tab, resume, auto run,
+// background). A harness that does not implement it makes flow fail with
+// a clear error when --model/--effort is given, never drop the values.
+type ModelSelector interface {
+	SelectsModel() bool
+}
+
+// CheckModelOpts rejects model/effort values h can't honour. Empty values
+// always pass. A value must also be safe to hand to a harness CLI as one
+// flag argument: no leading '-' (it would read as a flag), no whitespace or
+// control characters, no '"' or '\' (codex embeds effort in a TOML string).
+func CheckModelOpts(h Harness, model, effort string) error {
+	if model == "" && effort == "" {
+		return nil
+	}
+	if s, ok := h.(ModelSelector); !ok || !s.SelectsModel() {
+		return fmt.Errorf("harness %s does not support --model/--effort", h.Name())
+	}
+	for _, v := range []struct{ flag, val string }{{"--model", model}, {"--effort", effort}} {
+		if v.val != "" && !safeFlagValue(v.val) {
+			return fmt.Errorf("invalid %s value %q: must not start with '-' or contain whitespace, quotes or backslashes", v.flag, v.val)
+		}
+	}
+	return nil
+}
+
+func safeFlagValue(v string) bool {
+	return !strings.HasPrefix(v, "-") && !strings.ContainsAny(v, "\"\\") &&
+		strings.IndexFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
 // WorkspaceTruster is an OPTIONAL harness capability: persistently
@@ -102,6 +170,61 @@ type BackgroundAgent struct {
 	PID       int
 	Status    string // coarse liveness, e.g. "busy" / "idle"
 	State     string // finer state, e.g. "working" / "blocked" / "done"
+	Detail    string // why it failed, when the harness knows (state "failed")
+	// Activity is what a live session is doing between turns, when the
+	// harness knows (claude: its job's state.json). nil = unknown.
+	Activity *BackgroundActivity
+}
+
+// BackgroundActivity is a live background session's in-between-turns
+// work. A coarse "idle" status does not rule either out: claude reports a
+// session waiting on the user (a permission prompt or a question) as
+// status "idle" / state "blocked", and background shells or monitors keep
+// running while the session is idle.
+type BackgroundActivity struct {
+	NeedsInput bool // waiting on the user (pending ask / permission prompt)
+	InFlight   int  // background tasks, queued tasks and monitors still running
+}
+
+// ProvablyIdle reports whether stopping this live session would lose
+// nothing in progress: alive, idle, not waiting on the user, and with a
+// known activity record showing no background work in flight. Anything
+// less is not provably idle; the reason says why.
+func (a BackgroundAgent) ProvablyIdle() (bool, string) {
+	switch {
+	case a.PID <= 0:
+		return false, "not running"
+	case a.Status != "idle":
+		return false, "busy"
+	case a.State == "blocked":
+		return false, "waiting on you"
+	case a.Activity == nil:
+		return false, "its background work can't be checked"
+	case a.Activity.NeedsInput:
+		return false, "waiting on you"
+	case a.Activity.InFlight > 0:
+		return false, fmt.Sprintf("%d background task(s) in flight", a.Activity.InFlight)
+	}
+	return true, ""
+}
+
+// BackgroundStopper is an OPTIONAL BackgroundLauncher extension: stop a
+// live background session (claude: `claude stop <shortId>`). flow uses it
+// on a session that is idle and never took a turn (it holds no
+// conversation, so stopping it loses nothing), on a provably idle session
+// (BackgroundAgent.ProvablyIdle) that has work to deliver and no wake
+// channel — it is resumed under the same id right after — and on the
+// original of a last-resort copy.
+type BackgroundStopper interface {
+	StopBackground(shortID string) error
+}
+
+// BackgroundForkSourcer is an OPTIONAL BackgroundLauncher extension: name
+// the session a live background agent was forked from (claude: the
+// process's `--fork-session --resume <source>` arguments). It recovers the
+// history source of forks recorded before flow kept session lineage.
+type BackgroundForkSourcer interface {
+	BackgroundForkSource(a BackgroundAgent) (string, bool)
 }
 
 // BackgroundLauncher is an OPTIONAL harness capability: hosting
@@ -126,19 +249,21 @@ type BackgroundLauncher interface {
 	// BackgroundAgent.SessionID is what flow records on the task.
 	SpawnBackground(workDir, name, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
-	// ResumeBackground brings a no-longer-tracked background session's
-	// conversation back as a fresh background agent, seeded from the
-	// prior session's transcript. NOTE: a backgrounding harness manages
-	// its own id, so this MINTS A NEW session id (the prior history is
-	// inherited, but `claude --bg --resume <id>` does not preserve the
-	// id — verified against the CLI and documented behavior). The
-	// returned BackgroundAgent carries the NEW id, which flow re-records
-	// on the task. workDir is where the resumed agent begins (the task's
-	// work_dir). name is the display name, the same one SpawnBackground
-	// got, so the resumed agent keeps its title instead of being named
-	// after the injected prompt. opts.Inject, if set, is delivered as the
-	// first message after resume.
-	ResumeBackground(workDir, name, sessionID string, opts LaunchOpts) (BackgroundAgent, error)
+	// ResumeBackground brings a background session that is NOT running
+	// back as a background agent, seeded from its transcript. Claude
+	// (2.1.325) keeps the SAME session id when the session is not alive
+	// and either has no background record or gets no launch flags (see
+	// LaunchOpts.ResumeRegistered); it starts a COPY under a new id when
+	// the session is still alive or a registered session gets flags. The
+	// returned BackgroundAgent carries whichever id actually came up, and
+	// flow records it (and the lineage, if it is a copy). workDir is where
+	// the resumed agent begins (the task's work_dir). name is the display
+	// name, the same one SpawnBackground got (ignored when the registry
+	// already holds it). prompt is the first message after resume (flow's
+	// resume kickoff): without one a resumed background session never
+	// takes a turn. opts.Inject, if set, is appended behind
+	// InjectionMarker, exactly as SpawnBackground appends it.
+	ResumeBackground(workDir, name, sessionID, prompt string, opts LaunchOpts) (BackgroundAgent, error)
 
 	// BackgroundAgents returns the current background-agent registry
 	// (claude: `claude agents --json --all`, so exited / failed /
@@ -176,7 +301,11 @@ type Harness interface {
 	// a one-shot to mint and capture an id). Always returns a real
 	// id on success — flow's caller has a single uniform spawn path.
 	// workDir is the task's work_dir; probing impls run there.
-	NewSessionID(workDir string) (string, error)
+	// opts.Model/Effort, when set, are the session's model and effort:
+	// a probing impl runs its probe on them too, so minting a session
+	// never falls back to the harness default model. Other fields are
+	// ignored.
+	NewSessionID(workDir string, opts LaunchOpts) (string, error)
 
 	// ValidateSessionID rejects strings that can't be a session id for
 	// this harness. Used by `flow do --here` to gate the env-var-
@@ -218,9 +347,12 @@ type Harness interface {
 
 	// SkipPermissionsRun executes a non-interactive prompt against
 	// the harness with per-tool approvals auto-allowed (used by
-	// `flow done`'s close-out sweep). Stdout/stderr are discarded;
-	// only the exit code matters.
-	SkipPermissionsRun(prompt string) error
+	// `flow done`'s close-out sweep and headless owner ticks).
+	// Stdout/stderr are discarded; only the exit code matters.
+	// opts.Model/Effort map to the harness's flags as in every other
+	// launch shape; empty values leave the argv unchanged. Other fields
+	// are ignored.
+	SkipPermissionsRun(prompt string, opts LaunchOpts) error
 
 	// AutoRunArgv builds the argv for a headless, self-completing
 	// autonomous run (`flow do --auto`) pinned to sessionID. This is a

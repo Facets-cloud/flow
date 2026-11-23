@@ -264,7 +264,13 @@ func busPreToolUseContext() string {
 	}
 	// A tool is about to run: the session is mid-turn (busy). This also
 	// covers turns that start without a UserPromptSubmit (a pushed wake).
-	_ = flowdb.TouchSessionActivity(db, s.TaskSlug, time.Now())
+	// Not from a headless auto run's own process: its turn state is the
+	// auto-run row, and its supervisor must be able to tell activity after
+	// the run started (a human's --force tab on the same session) from
+	// its own (see markIdleAfterRun).
+	if os.Getenv(autoRunEnvVar) == "" {
+		_ = flowdb.TouchSessionActivity(db, s.TaskSlug, time.Now())
+	}
 	// Atomic claim in the HOOK record: rows no hook path showed yet. A
 	// wake push does not count — it may have been swallowed.
 	msgs, err := flowdb.ClaimUnsurfaced(db, s.TaskSlug)

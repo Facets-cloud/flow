@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -84,7 +85,7 @@ func TestClaimReviveAtomic(t *testing.T) {
 		BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := flowdb.ClaimRevive(db, "d", time.Now(), reviveLimit, 1); err == nil {
+	if _, err := flowdb.ClaimRevive(db, "d", time.Now(), reviveLimit, flowdb.RunClaim{LogPath: "/l1", HolderPID: 1}); err == nil {
 		t.Fatal("claim succeeded despite the failed insert")
 	}
 	task, _ := flowdb.GetTask(db, "d")
@@ -104,7 +105,7 @@ func TestClaimRevivePrunesOldRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if c, err := flowdb.ClaimRevive(db, "d", now, reviveLimit, 1); err != nil || c != flowdb.ReviveClaimed {
+	if c, err := flowdb.ClaimRevive(db, "d", now, reviveLimit, flowdb.RunClaim{LogPath: "/l1", HolderPID: 1}); err != nil || c != flowdb.ReviveClaimed {
 		t.Fatalf("claim = %v, %v", c, err)
 	}
 	var n int
@@ -132,7 +133,7 @@ func TestClaimReviveWindowBoundary(t *testing.T) {
 			if _, err := db.Exec(`INSERT INTO bus_revives (task_slug, revived_at) VALUES ('d', ?)`, ts); err != nil {
 				t.Fatal(err)
 			}
-			got, err := flowdb.ClaimRevive(db, "d", now, flowdb.ReviveLimit{Window: time.Hour, Max: 1}, 1)
+			got, err := flowdb.ClaimRevive(db, "d", now, flowdb.ReviveLimit{Window: time.Hour, Max: 1}, flowdb.RunClaim{LogPath: "/l1", HolderPID: 1})
 			if err != nil || got != c.want {
 				t.Errorf("claim = %v, %v; want %v", got, err, c.want)
 			}
@@ -162,7 +163,7 @@ func TestClaimReviveSingleFlightConcurrent(t *testing.T) {
 				return
 			}
 			defer c.Close()
-			results[i], errs[i] = flowdb.ClaimRevive(c, "d", time.Now(), reviveLimit, 100+i)
+			results[i], errs[i] = flowdb.ClaimRevive(c, "d", time.Now(), reviveLimit, flowdb.RunClaim{LogPath: fmt.Sprintf("/l%d", i), HolderPID: 100 + i})
 		}(i)
 	}
 	wg.Wait()
@@ -251,6 +252,8 @@ func TestReviveIfMailLandedBounds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// It qualified as a child report when it was sent.
+			_ = flowdb.MarkChildReport(db, "d", m.ID)
 			reviveIfMailLanded(db, "d", c.start(c.created))
 			if len(*envs) != c.want {
 				t.Errorf("launches = %d, want %d", len(*envs), c.want)
@@ -373,7 +376,7 @@ func TestAutoExecLeavesSessionIdle(t *testing.T) {
 	db := openFlowDB(t)
 	_ = flowdb.SetSessionState(db, "ar", flowdb.SessionBusy, time.Now())
 	stubAutoRunner(t, func(harness.Harness, string, string, harness.LaunchOpts) error { return nil })
-	cmdAutoExec([]string{"ar"})
+	cmdAutoExec(autoExecArgv(t, "ar"))
 	if st, _ := flowdb.GetSessionState(db, "ar"); st.State == flowdb.SessionBusy {
 		t.Errorf("session state = busy after the auto run exited")
 	}
@@ -384,20 +387,12 @@ func TestAutoExecLeavesSessionIdle(t *testing.T) {
 // the sender's late record then left the row 'running' with a dead pid.
 func TestReviveFastSupervisorFinalizes(t *testing.T) {
 	db, envs := reviveSetup(t)
-	oldPID := supervisorPID
-	t.Cleanup(func() { supervisorPID = oldPID })
 	stubAutoRunner(t, func(harness.Harness, string, string, harness.LaunchOpts) error { return nil })
 	autoLauncher = func(slug, workDir, logPath, injection string, env []string) (int, error) {
 		*envs = append(*envs, env)
 		// The supervisor runs to completion before launch returns.
-		supervisorPID = func() int { return 9301 }
 		t.Setenv(reviveEnvVar, slug)
-		for _, kv := range env { // the real supervisor gets the claim holder via its env
-			if v, ok := strings.CutPrefix(kv, reviveHolderEnvVar+"="); ok {
-				t.Setenv(reviveHolderEnvVar, v)
-			}
-		}
-		cmdAutoExec([]string{slug})
+		cmdAutoExec([]string{slug, "--log", logPath})
 		return 9301, nil
 	}
 	mail(t, db, "fs", "c", "d", false)
@@ -420,10 +415,10 @@ func TestReleaseReviveDropsOneRow(t *testing.T) {
 	now := time.Now()
 	ts := now.UTC().Format(time.RFC3339)
 	_, _ = db.Exec(`INSERT INTO bus_revives (task_slug, revived_at) VALUES ('d', ?)`, ts)
-	if c, err := flowdb.ClaimRevive(db, "d", now, reviveLimit, 7); err != nil || c != flowdb.ReviveClaimed {
+	if c, err := flowdb.ClaimRevive(db, "d", now, reviveLimit, flowdb.RunClaim{LogPath: "/l7", HolderPID: 7}); err != nil || c != flowdb.ReviveClaimed {
 		t.Fatalf("claim = %v, %v", c, err)
 	}
-	if err := flowdb.ReleaseRevive(db, "d", 7, now, flowdb.AutoRunRecord{}); err != nil {
+	if err := flowdb.ReleaseRevive(db, "d", "/l7", now, flowdb.AutoRunRecord{}); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -512,20 +507,17 @@ func TestReconcileStaleSnapshotSparesNewerClaim(t *testing.T) {
 // --force) adopts nothing and starts no harness.
 func TestSupersededReviveSupervisorStartsNoHarness(t *testing.T) {
 	db, _ := reviveSetup(t)
-	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=7777 WHERE slug='d'`); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=7777, auto_run_log='/runs/newer.log' WHERE slug='d'`); err != nil {
 		t.Fatal(err)
 	}
-	oldPID := supervisorPID
-	t.Cleanup(func() { supervisorPID = oldPID })
-	supervisorPID = func() int { return 9999 }
 	t.Setenv(reviveEnvVar, "d")
-	t.Setenv(reviveHolderEnvVar, "1234")
 	ran := false
 	stubAutoRunner(t, func(harness.Harness, string, string, harness.LaunchOpts) error { ran = true; return nil })
-	cmdAutoExec([]string{"d"})
+	cmdAutoExec([]string{"d", "--log", "/runs/superseded.log"})
 	task, _ := flowdb.GetTask(db, "d")
-	if ran || task.AutoRunPID.Int64 != 7777 {
-		t.Fatalf("superseded revive ran=%v pid=%v, want no run and pid 7777 kept", ran, task.AutoRunPID)
+	if ran || task.AutoRunPID.Int64 != 7777 || task.AutoRunStatus.String != "running" {
+		t.Fatalf("superseded revive ran=%v pid=%v status=%q, want no run and the newer run kept",
+			ran, task.AutoRunPID, task.AutoRunStatus.String)
 	}
 }
 
@@ -536,14 +528,15 @@ func TestClaimAutoRunRefusesInFlight(t *testing.T) {
 	if _, err := db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=7777 WHERE slug='d'`); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := flowdb.ClaimAutoRun(db, "d", os.Getpid(), false); err != nil || ok {
+	c := flowdb.RunClaim{LogPath: "/runs/mine.log", HolderPID: os.Getpid()}
+	if ok, err := flowdb.ClaimAutoRun(db, "d", c, false); err != nil || ok {
 		t.Fatalf("claim over an in-flight run = %v, %v; want refused", ok, err)
 	}
-	if ok, err := flowdb.ClaimAutoRun(db, "d", os.Getpid(), true); err != nil || !ok {
+	if ok, err := flowdb.ClaimAutoRun(db, "d", c, true); err != nil || !ok {
 		t.Fatalf("forced claim = %v, %v; want claimed", ok, err)
 	}
 	prev := flowdb.AutoRunRecord{Status: "completed"}
-	if err := flowdb.ReleaseAutoRunClaim(db, "d", os.Getpid(), prev); err != nil {
+	if err := flowdb.ReleaseAutoRunClaim(db, "d", c.LogPath, prev); err != nil {
 		t.Fatal(err)
 	}
 	if task, _ := flowdb.GetTask(db, "d"); task.AutoRunStatus.String != "completed" || task.AutoRunPID.Valid {

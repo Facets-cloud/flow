@@ -129,7 +129,8 @@ Setup:
   flow skill update [--harness claude|codex|prx]
   (default: every present harness — binary on PATH or config home exists)
   flow upgrade [--check] [--force]             (install the latest release now; flow also upgrades
-                                                itself after a command — FLOW_NO_AUTO_UPGRADE=1 stops that)
+                                                itself after a command and refreshes an older skill —
+                                                FLOW_NO_AUTO_UPGRADE=1 stops both)
 
 Create:
   flow add project "<name>" --work-dir <path> [--slug <s>] [--priority h|m|l] [--mkdir]
@@ -137,9 +138,9 @@ Create:
                    (from a task-bound session: records that task as parent, inherits its project)
 
 Sessions:
-  flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions]
-  flow do --auto         <ref> [--harness claude|codex|prx] (run headlessly in the background; self-completes via flow done)
-  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx]
+  flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--model <m>] [--effort <e>]
+  flow do --auto         <ref> [--harness claude|codex|prx] [--model <m>] [--effort <e>] (run headlessly in the background; self-completes via flow done)
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx] [--model <m>] [--effort <e>]
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>
@@ -214,17 +215,18 @@ Workdirs:
 
 Playbooks:
   flow add playbook   "<name>" --work-dir <path> [--slug <s>] [--project <slug>] [--mkdir]
-  flow run playbook   <slug> [--dangerously-skip-permissions]   (spawn a new tab)
+  flow run playbook   <slug> [--dangerously-skip-permissions] [--model <m>] [--effort <e>]   (spawn a new tab; --model/--effort also work with --auto)
   flow run playbook   <slug> --here                              (bind THIS harness session to the new run; no new tab)
   flow run playbook   <slug> --auto                              (run the playbook headlessly in the background)
   flow show playbook  <ref>
   flow list playbooks [--project <slug>] [--include-archived]
 
 Owners (autonomous, self-prompting controllers — see flow skill §4.17):
-  flow add owner     "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--mkdir]
+  flow add owner     "<name>" --work-dir <path> [--every <dur>] [--slug <s>] [--project <slug>] [--mkdir] [--model <m>] [--effort <e>]
   flow owner list                              (alias: flow list owners)
   flow owner show    <slug>                     (alias: flow show owner <slug>)
   flow owner start|pause <slug>                 (start reactivates a paused OR retired owner)
+  flow owner start   <slug> [--model <m>] [--effort <e>]   (also change the model/effort every tick runs on)
   flow owner tick    <slug> [--auto]            (wake now; interactive by default, --auto = headless)
   flow owner next    <slug> --in <dur> | --at <when>   (self-pace the next wake)
   flow owner retire  <slug> [--delete]`)

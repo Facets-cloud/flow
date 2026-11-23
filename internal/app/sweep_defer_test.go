@@ -15,7 +15,7 @@ func stubCodexSweep(t *testing.T, onCall func()) *[]string {
 	t.Helper()
 	old := codex.SkipPermissionsRunner
 	calls := &[]string{}
-	codex.SkipPermissionsRunner = func(prompt string) error {
+	codex.SkipPermissionsRunner = func(prompt string, _ harness.LaunchOpts) error {
 		*calls = append(*calls, prompt)
 		if onCall != nil {
 			onCall()
@@ -136,7 +136,7 @@ func TestAutoExecCodexRunsDeferredSweepAfterExit(t *testing.T) {
 	})
 
 	out := captureStdout(t, func() {
-		if rc := cmdAutoExec([]string{"cx"}); rc != 0 {
+		if rc := cmdAutoExec(autoExecArgv(t, "cx")); rc != 0 {
 			t.Fatalf("cmdAutoExec rc=%d", rc)
 		}
 	})
@@ -166,7 +166,7 @@ func TestAutoExecCodexNoSweepWhenNotDone(t *testing.T) {
 	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
 		return nil
 	})
-	if rc := cmdAutoExec([]string{"cx"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "cx")); rc != 0 {
 		t.Fatalf("cmdAutoExec rc=%d", rc)
 	}
 	if len(*calls) != 0 {
@@ -190,7 +190,7 @@ func TestAutoExecClaudeDoesNotSweep(t *testing.T) {
 		_, err := db.Exec(`UPDATE tasks SET status='done' WHERE slug='cl'`)
 		return err
 	})
-	if rc := cmdAutoExec([]string{"cl"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "cl")); rc != 0 {
 		t.Fatalf("cmdAutoExec rc=%d", rc)
 	}
 	if len(*calls) != 0 {

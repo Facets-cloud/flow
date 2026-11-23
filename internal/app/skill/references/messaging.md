@@ -63,7 +63,8 @@ with no human watching. Its prompt carries the rule:
 - **Parent done/archived** (flow rejects the message) → still write the
   update note, then send the done/blocked report to the human as an FYI:
   `flow message user "FYI: <slug> done — see <update file>" --fyi`. A child
-  that dies is reported the same way by flow itself.
+  that dies is reported the same way by flow itself. `--fyi` goes only with
+  the bare `user` address: `flow message user/<task> … --fyi` exits 2.
 - **No parent** → result in an update note; message the human ONLY when
   done or blocked, naming the note. Never routine progress.
 - **No inbox listener, ever.** An auto run must not arm a Monitor, a
@@ -223,13 +224,17 @@ human. `flow inbox wait` is the non-acking wait (returns when unannounced
 mail lands; leaves it unread).
 
 **Driver revive (exited session).** Wake needs a live process. When a
-DRIVER task's session has exited and one of its own auto children sends it
-a non-FYI message, flow resumes that same session headlessly (`woke <slug>
-(revived …)`): you get a `[flow-bus wake]` prompt saying no human is
+DRIVER task's session has exited and one of its own auto children, while
+its auto run is running, sends it a non-FYI message (or the child's run
+dies), flow resumes that same session headlessly (`woke <slug>
+(revived …)`), in the permission mode the driver was last launched with
+(prompting unless it was launched with --dangerously-skip-permissions):
+you get a `[flow-bus wake]` prompt saying no human is
 watching — pop the inbox, act as the driver (verify, note, dispatch the
 next child), send the human ONE `flow message user` if a decision is
 needed, and end the turn. A revive may dispatch auto children. Never while
-any process may hold the session; one at a time; at most 4 per hour per
+any process may hold the session, or the harness cannot say it has exited
+(a Claude driver, for now); one at a time; at most 4 per hour per
 driver; off with `FLOW_NO_REVIVE=1` (or `FLOW_NO_WAKE=1`). Other mail to an
 exited session waits for the next `flow do`. The human gets ONE FYI (no
 repeat while it is unread) naming the driver when a revive is refused for

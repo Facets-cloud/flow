@@ -32,6 +32,7 @@ func cmdAuto(args []string) int {
 	workDir := fs.String("work-dir", "", "work directory (default: inherited like flow add task)")
 	mkdir := fs.Bool("mkdir", false, "same as flow add task --mkdir")
 	harnessName := fs.String("harness", "", "harness for the child session (one of: "+registeredHarnessNames()+")")
+	model, effort := modelFlags(fs)
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -78,6 +79,11 @@ func cmdAuto(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: priority must be high|medium|low, got %q\n", *priority)
 		return 2
 	}
+	// Refuse --model/--effort the child's harness can't honour before the
+	// task exists, so a bad flag leaves nothing behind. cmdDo re-checks.
+	if rc := checkModelForNewTask(*harnessName, *model, *effort); rc != 0 {
+		return rc
+	}
 
 	slug := *slugFlag
 	if slug == "" {
@@ -94,7 +100,7 @@ func cmdAuto(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: task %q already exists; pick another --slug\n", slug)
 		return 1
 	}
-	// addTask and cmdDo open their own handles.
+	// createTask and cmdDo open their own handles.
 	db.Close()
 
 	addArgs := []string{name, "--slug", slug, "--priority", *priority}
@@ -104,7 +110,7 @@ func cmdAuto(args []string) int {
 	if *mkdir {
 		addArgs = append(addArgs, "--mkdir")
 	}
-	if rc := addTask(addArgs); rc != 0 {
+	if rc := createTask(addArgs, false); rc != 0 {
 		return rc
 	}
 
@@ -123,6 +129,7 @@ func cmdAuto(args []string) int {
 	if *harnessName != "" {
 		doArgs = append(doArgs, "--harness", *harnessName)
 	}
+	doArgs = append(doArgs, modelFlagArgs(*model, *effort)...)
 	if rc := cmdDo(doArgs); rc != 0 {
 		fmt.Fprintf(os.Stderr, "error: task %q was created but its auto run did not launch; retry with: flow do --auto %s\n", slug, slug)
 		return rc

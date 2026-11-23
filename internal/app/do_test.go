@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/harness/claude"
 	"flow/internal/harness/codex"
 	"flow/internal/iterm"
@@ -42,7 +43,7 @@ func stubNewUUID(t *testing.T, sid string) {
 func stubCodexProbe(t *testing.T, sid string) {
 	t.Helper()
 	old := codex.ProbeRunner
-	codex.ProbeRunner = func(string) ([]byte, error) {
+	codex.ProbeRunner = func(string, harness.LaunchOpts) ([]byte, error) {
 		return []byte(`{"type":"thread.started","thread_id":"` + sid + `"}`), nil
 	}
 	t.Cleanup(func() { codex.ProbeRunner = old })
@@ -776,6 +777,22 @@ func TestBuildBootstrapPromptForRegularTask(t *testing.T) {
 	}
 }
 
+// TestBootstrapPromptsNameTheSlug: a background spawn records the
+// session id only after the agent starts, so a no-arg `flow show task`
+// (session-id reverse lookup) can race and find no bound task. Every
+// bootstrap prompt names the slug explicitly.
+func TestBootstrapPromptsNameTheSlug(t *testing.T) {
+	if got := buildBootstrapPromptForKindV2("foo", "regular", "", false); !strings.Contains(got, "Run: flow show task foo.") {
+		t.Errorf("regular prompt must run flow show task foo:\n%s", got)
+	}
+	for _, first := range []bool{false, true} {
+		got := buildBootstrapPromptForKindV2("pb-run-1", "playbook_run", "pb", first)
+		if !strings.Contains(got, "Run: flow show task pb-run-1.") {
+			t.Errorf("playbook run prompt (first=%v) must run flow show task pb-run-1:\n%s", first, got)
+		}
+	}
+}
+
 func TestBuildBootstrapPromptForKindWithEmptyKind(t *testing.T) {
 	// Defensive: an empty kind string (legacy rows that somehow didn't
 	// migrate) should fall through to the regular-task variant.
@@ -1391,7 +1408,7 @@ func TestCmdDoCodexProbeRunsInTaskWorkDir(t *testing.T) {
 	const sid = "019ff4b1-6162-7263-974f-f5f1866ad0fe"
 	var gotDir string
 	old := codex.ProbeRunner
-	codex.ProbeRunner = func(workDir string) ([]byte, error) {
+	codex.ProbeRunner = func(workDir string, _ harness.LaunchOpts) ([]byte, error) {
 		gotDir = workDir
 		return []byte(`{"type":"thread.started","thread_id":"` + sid + `"}`), nil
 	}
@@ -1538,5 +1555,88 @@ func TestCmdDoNoTerminalFallbackReservedNeverStarted(t *testing.T) {
 	}
 	if strings.Contains(out, "--resume") {
 		t.Errorf("never-started session must not be resumed; got:\n%s", out)
+	}
+}
+
+// TestCmdDoHereRefusalNamesSessionStartDir pins GH #173: when --here
+// refuses because the session was started outside work_dir, the error
+// gives the session's start directory as a ready command, and following
+// it makes the bind succeed. A `<real-cwd>` placeholder invites `$PWD`,
+// which is wrong once the session has cd'ed.
+// A never-bound task adopts the session's start dir as work_dir (no
+// transcript is keyed on the old dir yet), so `--here` binds in place.
+func TestCmdDoHereNeverBoundAdoptsSessionStartDir(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const sid = "22222222-3333-4444-8555-666666666666"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+	if rc := cmdAdd([]string{"task", "started-elsewhere", "--work-dir", elsewhere}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+	var rc int
+	out := captureStdout(t, func() { rc = cmdDoHere("started-elsewhere", false) })
+	if rc != 0 {
+		t.Fatalf("cmdDoHere rc=%d, want 0:\n%s", rc, out)
+	}
+	if want := "work_dir → " + started + " (this session's folder)"; !strings.Contains(out, want) {
+		t.Errorf("stdout missing %q:\n%s", want, out)
+	}
+	db := openFlowDB(t)
+	defer db.Close()
+	if tk, _ := flowdb.GetTask(db, "started-elsewhere"); tk.WorkDir != started || tk.SessionID.String != sid {
+		t.Errorf("work_dir=%q sid=%q, want %q bound to %s", tk.WorkDir, tk.SessionID.String, started, sid)
+	}
+}
+
+// TestCmdAddTaskNotesHereBindMismatch pins the creation-time half of GH
+// #173: a harness session that adds a task at a work_dir it was not
+// started in is told so, with the directory that would bind. No note when
+// the session could bind.
+// `flow do --here` adopts the session's start dir for a never-bound task,
+// so adding a task in another dir prints no "can't bind" warning.
+func TestCmdAddTaskNoHereBindWarning(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const sid = "33333333-4444-4555-8666-777777777777"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+	out := captureStdout(t, func() {
+		if rc := cmdAdd([]string{"task", "note-mismatch", "--work-dir", elsewhere}); rc != 0 {
+			t.Errorf("add rc=%d", rc)
+		}
+	})
+	if strings.Contains(out, "can't bind") {
+		t.Errorf("no bind warning expected:\n%s", out)
+	}
+}
+
+// TestCmdDoHereForceRefusalOmitsRepoint pins the --force case of GH #173:
+// the task is still bound to another session, so `flow update task
+// --work-dir <this session's dir>` would be refused. The hint must not
+// offer it, and must name the binding that blocks it.
+func TestCmdDoHereForceRefusalOmitsRepoint(t *testing.T) {
+	setupFlowRoot(t)
+	started, elsewhere := realTempDir(t), realTempDir(t)
+	const other = "55555555-6666-4777-8888-999999999999"
+	const sid = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if rc := cmdAdd([]string{"task", "bound-elsewhere", "--work-dir", elsewhere}); rc != 0 {
+		t.Fatalf("seed task rc=%d", rc)
+	}
+	bindSession(t, "bound-elsewhere", other)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+	writeClaudeTranscript(t, started, sid)
+
+	stderr := captureStderr(t)
+	if rc := cmdDoHere("bound-elsewhere", true); rc != 1 {
+		t.Fatalf("cmdDoHere --force rc=%d, want 1", rc)
+	}
+	got := stderr()
+	if strings.Contains(got, "--work-dir "+spawner.ShellQuote(started)) {
+		t.Errorf("hint offers a repoint that update would refuse:\n%s", got)
+	}
+	if want := "still bound to session " + other; !strings.Contains(got, want) {
+		t.Errorf("stderr missing %q; got:\n%s", want, got)
 	}
 }

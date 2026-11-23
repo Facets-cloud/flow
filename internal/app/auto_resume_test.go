@@ -6,6 +6,7 @@ import (
 	"flow/internal/harness/claude"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,15 +33,21 @@ func TestAutoExecResumesWhenTranscriptExists(t *testing.T) {
 			}
 		}
 		var got harness.LaunchOpts
+		var gotPrompt string
 		stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
-			got = opts
+			got, gotPrompt = opts, prompt
 			return nil
 		})
-		if rc := cmdAutoExec([]string{"auto-task"}); rc != 0 {
+		if rc := cmdAutoExec(autoExecArgv(t, "auto-task")); rc != 0 {
 			t.Fatalf("cmdAutoExec rc=%d", rc)
 		}
 		if got.Resume != withTranscript {
 			t.Errorf("transcript=%v: opts.Resume=%v", withTranscript, got.Resume)
+		}
+		// Unlike a bare bg resume, an auto resume always carries the full
+		// autonomous prompt, so it takes a turn and drains queued mail.
+		if !strings.Contains(gotPrompt, "flow inbox pop") {
+			t.Errorf("transcript=%v: auto prompt lacks the inbox drain:\n%s", withTranscript, gotPrompt)
 		}
 	}
 }

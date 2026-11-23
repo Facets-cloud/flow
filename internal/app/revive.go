@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -51,9 +50,6 @@ const (
 	// the driver, not a child) and tells the supervisor which prompt and
 	// final status to use. autoChildEnv strips it.
 	reviveEnvVar = "FLOW_AUTO_REVIVE"
-	// reviveHolderEnvVar is the pid of the sender whose claim started the
-	// revive; the supervisor adopts the row only while it still holds it.
-	reviveHolderEnvVar = "FLOW_AUTO_REVIVE_HOLDER"
 	// reviveStatus is the auto_run_status a revive ends with when the
 	// driver did not close itself (the normal case).
 	reviveStatus = "revived"
@@ -86,8 +82,13 @@ func defaultReviveProbe(t *flowdb.Task, w harness.Waker) (live, onDisk bool) {
 	}
 	if tc, ok := w.(harness.TurnStateChecker); ok {
 		if _, known := tc.SessionBusy(sid, wakeCrossCheckTimeout); known {
-			return true, true
+			return true, true // the harness lists the session: still there
 		}
+		// known=false: the check timed out or failed. Doubt counts as live.
+		// TurnStateChecker cannot yet tell that apart from "not listed"
+		// (an exited session), so for now this holds off every revive of a
+		// harness that implements it (Claude) until the interface can.
+		return true, true
 	}
 	if h.ValidateSession(t.WorkDir, sid) == nil {
 		return false, true
@@ -99,37 +100,56 @@ func defaultReviveProbe(t *flowdb.Task, w harness.Waker) (live, onDisk bool) {
 	return false, false
 }
 
-// isChildReport reports whether m is mail that may revive its recipient:
-// a non-FYI message from a task the recipient spawned (its child), which
-// includes flow's own dead-child notice (sent from the child's slug).
+// isChildReport reports, at SEND time, whether m is mail that may revive
+// its recipient: a non-FYI message from a task the recipient spawned (its
+// child) whose auto run is running NOW. A child the human opened in its own
+// tab, or one whose earlier auto run is long over, does not count even
+// though its row still carries an auto-run record. flow's own dead-child
+// notice counts: the child's supervisor inserts it right after finalizing
+// the run, from the run's own process (autoRunEnvVar names the child).
 func isChildReport(db *sql.DB, m *flowdb.BusMessage) bool {
 	if m.Kind != "message" || m.FYI || m.ToTaskSlug == "" || m.FromTaskSlug == "" {
 		return false
 	}
 	from, err := flowdb.GetTask(db, m.FromTaskSlug)
-	// Only an auto run's child: a child the human runs in its own tab has no
-	// auto-run record and must not revive its driver.
-	return err == nil && from != nil && from.ParentSlug.Valid && from.ParentSlug.String == m.ToTaskSlug &&
-		from.AutoRunStatus.Valid
+	if err != nil || from == nil || !from.ParentSlug.Valid || from.ParentSlug.String != m.ToTaskSlug {
+		return false
+	}
+	return from.AutoRunStatus.String == "running" || os.Getenv(autoRunEnvVar) == from.Slug
+}
+
+// wasChildReport reports whether m qualified as a child report when it was
+// sent (maybeRevive marked it). Checks that run later, after the child's
+// run has usually finished, read this mark instead of isChildReport.
+func wasChildReport(db *sql.DB, m *flowdb.BusMessage) bool {
+	return flowdb.WasChildReport(db, m.ID)
 }
 
 // maybeRevive upgrades a "not live" wake result into a revive when every
 // gate passes; otherwise r comes back unchanged, or with the reason a
 // revive was refused (the human gets one FYI for a refusal: the sender is
-// a headless child nobody watches).
+// a headless child nobody watches). It runs at send time, so this is where
+// a child report is judged and marked.
 func maybeRevive(db *sql.DB, m *flowdb.BusMessage, r wakeResult) wakeResult {
 	if !wakeActive() || !isChildReport(db, m) || !isDriverTask(db, m.ToTaskSlug) {
 		return r
 	}
+	_ = flowdb.MarkChildReport(db, m.ToTaskSlug, m.ID)
+	return reviveDriver(db, m.ToTaskSlug, r)
+}
+
+// reviveDriver runs the revive gates for driver slug, which has an
+// eligible child report waiting.
+func reviveDriver(db *sql.DB, slug string, r wakeResult) wakeResult {
 	if !r.notLive {
-		noteBacklogDriver(db, m.ToTaskSlug)
+		noteBacklogDriver(db, slug)
 		return r
 	}
 	if !reviveActive() {
 		r.Reason += "; not revived: revive off (" + reviveOffEnv + ")"
 		return r
 	}
-	t, err := flowdb.GetTask(db, m.ToTaskSlug)
+	t, err := flowdb.GetTask(db, slug)
 	if err != nil || t == nil || !t.SessionID.Valid || t.SessionID.String == "" {
 		return r
 	}
@@ -184,13 +204,22 @@ func noteBacklogDriver(db *sql.DB, slug string) {
 		"driver — move it to in-progress and reopen it with flow do "+slug+" when you want it handled")
 }
 
-// launchRevive claims and starts the headless resume.
+// launchRevive claims and starts the headless resume. The claim stamps
+// the reserved log as the run's owner, the same as `flow do --auto`.
 func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
-	prev := flowdb.AutoRunRecord{
-		Status: t.AutoRunStatus.String, Started: t.AutoRunStarted.String, Finished: t.AutoRunFinished.String,
+	root, err := flowRoot()
+	var logPath string
+	if err == nil {
+		logPath, err = reserveRunLog(t, root)
 	}
+	if err != nil {
+		r.Reason += "; revive failed: " + err.Error()
+		noteReviveLaunchFailed(db, t.Slug, err)
+		return r
+	}
+	prev := autoRunRecordOf(t)
 	now := time.Now()
-	claim, err := flowdb.ClaimRevive(db, t.Slug, now, reviveLimit, os.Getpid())
+	claim, err := flowdb.ClaimRevive(db, t.Slug, now, reviveLimit, flowdb.RunClaim{LogPath: logPath, HolderPID: os.Getpid()})
 	switch {
 	case err != nil:
 		r.Reason += "; not revived: " + err.Error()
@@ -203,24 +232,12 @@ func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
 	case claim != flowdb.ReviveClaimed:
 		return r
 	}
-	root, err := flowRoot()
-	var pid int
-	var logPath string
-	if err == nil {
-		pid, logPath, err = launchAutoRunEnv(t, root, "",
-			reviveEnvVar+"="+t.Slug, reviveHolderEnvVar+"="+strconv.Itoa(os.Getpid()))
-	}
+	pid, err := launchClaimedRun(db, t, autoLaunch{logPath: logPath, extraEnv: []string{reviveEnvVar + "=" + t.Slug},
+		release: func() error { return flowdb.ReleaseRevive(db, t.Slug, logPath, now, prev) }})
 	if err != nil {
-		_ = flowdb.ReleaseRevive(db, t.Slug, os.Getpid(), now, prev)
 		r.Reason += "; revive failed: " + err.Error()
 		noteReviveLaunchFailed(db, t.Slug, err)
 		return r
-	}
-	if err := recordReviveLaunchedRetry(db, t.Slug, os.Getpid(), pid, logPath); err != nil {
-		// The run is live and the supervisor adopts the row itself, but the
-		// human must know the bookkeeping failed.
-		fyiHumanOnce(db, t.Slug, fmt.Sprintf(reviveFailedPrefix+"%s: revive launched but its bookkeeping failed", t.Slug),
-			fmt.Sprintf("revive of %s started (pid %d) but its run record could not be written (%v)", t.Slug, pid, err))
 	}
 	r.Woke, r.Reason = true, "revived its exited session headlessly, pid "+fmt.Sprint(pid)
 	return r
@@ -234,47 +251,6 @@ func noteReviveLaunchFailed(db *sql.DB, slug string, err error) {
 	key := fmt.Sprintf(reviveFailedPrefix+"%s but could not launch the headless resume", slug)
 	fyiHumanOnce(db, slug, key, fmt.Sprintf("%s (%v); its children's mail is still unread — reopen it with flow do %s",
 		key, err, slug))
-}
-
-// recordReviveLaunched records the launched supervisor's pid and log. The
-// pid moves only while the row is still this claim's run (the claimant's
-// pid, or the supervisor's own once it adopted the row): a supervisor that
-// already finished must not be put back to 'running' with a dead pid.
-func recordReviveLaunched(db *sql.DB, slug string, holderPID, pid int, logPath string) error {
-	_, err := db.Exec(`UPDATE tasks SET auto_run_log=?, updated_at=?,
-            auto_run_pid = CASE WHEN auto_run_status='running' AND auto_run_pid IN (?,?) THEN ? ELSE auto_run_pid END
-        WHERE slug=?`, logPath, flowdb.NowISO(), holderPID, pid, pid, slug)
-	return err
-}
-
-// adoptReviveRun runs first in a revive's supervisor: the claim stamped
-// the SENDER's pid, so the supervisor takes the row over, or a run that
-// ends before the sender records the pid could not finalize it. It takes
-// the row only while it still holds the claim (the sender's pid or its own):
-// a newer run that replaced the claim keeps its row, and false tells the
-// caller to start no harness.
-func adoptReviveRun(db *sql.DB, slug string) bool {
-	holder, _ := strconv.Atoi(os.Getenv(reviveHolderEnvVar))
-	res, err := db.Exec(`UPDATE tasks SET auto_run_pid=? WHERE slug=? AND auto_run_status='running' AND auto_run_pid IN (?,?)`,
-		supervisorPID(), slug, holder, supervisorPID())
-	if err != nil {
-		return false
-	}
-	n, _ := res.RowsAffected()
-	return n == 1
-}
-
-// recordReviveLaunchedRetry retries recordReviveLaunched across a busy
-// database (a concurrent writer holds the lock).
-func recordReviveLaunchedRetry(db *sql.DB, slug string, holderPID, pid int, logPath string) error {
-	var err error
-	for i := 0; i < 3; i++ {
-		if err = recordReviveLaunched(db, slug, holderPID, pid, logPath); err == nil {
-			return nil
-		}
-		time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
-	}
-	return err
 }
 
 // isReviveRun reports whether this process belongs to the revive run of
@@ -303,10 +279,10 @@ func reviveIfMailLanded(db *sql.DB, slug, startedAt string) bool {
 		c, err := time.Parse(time.RFC3339, m.CreatedAt)
 		// Second precision: a report stamped in the start second is the one
 		// that triggered this revive, not mail that landed mid-run.
-		if err != nil || !c.After(start) || !isChildReport(db, m) {
+		if err != nil || !c.After(start) || !wasChildReport(db, m) {
 			continue
 		}
-		res := maybeRevive(db, m, wakeResult{Slug: slug, notLive: true})
+		res := reviveDriver(db, slug, wakeResult{Slug: slug, notLive: true})
 		fmt.Printf("flow: mail landed during the revive: %s\n", res)
 		return true
 	}
@@ -371,7 +347,7 @@ func noteUnreadAfterRevive(db *sql.DB, slug string) bool {
 	}
 	n := 0
 	for _, m := range ms {
-		if isChildReport(db, m) {
+		if wasChildReport(db, m) {
 			n++
 		}
 	}

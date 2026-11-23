@@ -2,6 +2,7 @@ package app
 
 import (
 	"flow/internal/harness"
+	"os"
 	"testing"
 )
 
@@ -28,7 +29,8 @@ func TestAutoExecDoneAfterStatusReadIsPickedUp(t *testing.T) {
 			}
 			db.Close()
 			seedRunningAuto(t, "cx", 4242)
-			stubAlive(t, func(pid int) bool { return pid == 4242 })
+			// The test process plays the supervisor: it adopts the row with its own pid.
+			stubAlive(t, func(pid int) bool { return pid == 4242 || pid == os.Getpid() })
 			codexCalls := stubCodexSweep(t, nil)
 			claudeCalls := stubClaudeRunner(t, nil)
 			stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
@@ -42,7 +44,7 @@ func TestAutoExecDoneAfterStatusReadIsPickedUp(t *testing.T) {
 				}
 			})
 			captureStdout(t, func() {
-				if rc := cmdAutoExec([]string{"cx"}); rc != 0 {
+				if rc := cmdAutoExec(autoExecArgv(t, "cx")); rc != 0 {
 					t.Fatalf("cmdAutoExec rc=%d", rc)
 				}
 			})
@@ -73,13 +75,14 @@ func TestDoneAfterSupervisorFinalizedSweepsInline(t *testing.T) {
 	setupFlowRoot(t)
 	seedHarnessTask(t, "cx", "codex")
 	seedRunningAuto(t, "cx", 4242)
-	stubAlive(t, func(pid int) bool { return pid == 4242 })
+	// The test process plays the supervisor: it adopts the row with its own pid.
+	stubAlive(t, func(pid int) bool { return pid == 4242 || pid == os.Getpid() })
 	calls := stubCodexSweep(t, nil)
 	t.Setenv(autoRunEnvVar, "")
 	stubBeforeDoneFlip(t, func() {
 		db := openFlowDB(t)
 		defer db.Close()
-		if _, err := finalizeAutoRun(db, "cx", "dead"); err != nil {
+		if _, err := finalizeAutoRun(db, "cx", autoTestLog(t, "cx"), "dead"); err != nil {
 			t.Fatal(err)
 		}
 	})

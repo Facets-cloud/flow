@@ -25,6 +25,15 @@ schedule, just the heartbeat floor (ticks self-pace). Then `flow add owner
 the manual into `charter.md` (Read stub once, then Write), and offer to `flow
 owner start <slug>`.
 
+**Model per owner.** `--model <m>` / `--effort <e>` on `flow add owner` pick
+the model and effort level every tick runs on (scheduled, `--auto` and
+interactive), passed to the harness as given; omitted = harness default.
+`flow owner start <slug> --model <m>` (or `--effort`) changes them later; a
+flag you leave out keeps its stored value. `flow owner show` prints
+`model:`/`effort:` when set. Tasks and playbook runs the owner dispatches do
+NOT inherit them: pass `--model`/`--effort` on their `flow do --auto` /
+`flow run playbook` if they should run on a cheaper model too.
+
 **The tag contract (how everything an owner touches is tracked):**
 - Every task an owner creates/manages is tagged **`owner:<slug>`** → its
   ledger is `flow list tasks --tag owner:<slug>`, and the tag renders on

@@ -67,8 +67,9 @@ func cmdDone(args []string) int {
 				"    - if you've been working on this task in the current Claude session, bind it now and retry close-out:\n"+
 				"        flow do --here %s   (then re-run: flow done %s)\n"+
 				"    - if it was never worked on and isn't relevant, archive it instead:\n"+
-				"        flow archive %s\n",
-			task.Slug, task.Slug, task.Slug, task.Slug)
+				"        flow archive %s\n"+
+				"not closed: task %q is still %s.\n",
+			task.Slug, task.Slug, task.Slug, task.Slug, task.Slug, task.Status)
 		return 1
 	}
 
@@ -161,7 +162,10 @@ func runCloseoutSweep(h harness.Harness, task *flowdb.Task) error {
 	if task.ProjectSlug.Valid {
 		projectSlug = task.ProjectSlug.String
 	}
-	return h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug))
+	// The sweep runs on the task's stored model/effort, when set.
+	var opts harness.LaunchOpts
+	applyTaskModel(task, &opts)
+	return h.SkipPermissionsRun(buildCloseoutSweepPrompt(task.Slug, projectSlug), opts)
 }
 
 // buildCloseoutSweepPrompt composes the headless prompt that drives

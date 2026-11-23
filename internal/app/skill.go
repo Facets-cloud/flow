@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"flow/internal/harness"
+
+	"golang.org/x/mod/semver"
 )
 
 // embeddedSkillFS holds the entire skill directory — SKILL.md (the lean
@@ -169,32 +171,90 @@ func installHooks(h harness.Harness, quiet bool) {
 	}
 }
 
-// maybeAutoUpgradeSkill checks each harness's recorded skill version
-// against the running binary's version and, where they differ,
-// refreshes that harness's skill + hooks. Designed to run on every flow
-// invocation so the user gets a self-healing upgrade flow after
-// replacing the binary.
+// skillVersionKey reduces a version to the release it was built from
+// (a `git describe` source build compares as its tag) and reports
+// whether it is a comparable semver. "dev", "" and anything else
+// unparsable are not.
+func skillVersionKey(v string) (string, bool) {
+	v = describeSuffixRe.ReplaceAllString(strings.TrimSpace(v), "")
+	return v, semver.IsValid(v)
+}
+
+// skillRefreshWanted reports whether a binary of version `binary` may
+// implicitly replace a skill + hooks recorded as `installed`. It is
+// true only when the binary is strictly newer: an implicit refresh
+// must never downgrade. An older or other binary (a `.bak` copy, a
+// rollback, a repro of an old release) run with the real HOME would
+// otherwise overwrite the newer hooks with its own.
+//
+//   - binary "dev"/unparsable  → false (a developer's build never auto-installs)
+//   - installed ""             → true  (pre-sidecar install: historical refresh)
+//   - installed "dev"/unparsable → false (a developer's install; hands off)
+//   - otherwise                → semver(binary) > semver(installed)
+func skillRefreshWanted(installed, binary string) bool {
+	b, ok := skillVersionKey(binary)
+	if !ok {
+		return false
+	}
+	if strings.TrimSpace(installed) == "" {
+		return true
+	}
+	i, ok := skillVersionKey(installed)
+	if !ok {
+		return false
+	}
+	return semver.Compare(b, i) > 0
+}
+
+// installedIsNewer reports whether the skill recorded as `installed`
+// is newer than (or a dev build replaced by) a `binary` release — the
+// case where installing would be a downgrade.
+func installedIsNewer(installed, binary string) bool {
+	installed = strings.TrimSpace(installed)
+	if installed == "" || installed == binary {
+		return false
+	}
+	if _, ok := skillVersionKey(binary); !ok {
+		return false // a dev binary: the user's own build, no warning
+	}
+	i, ok := skillVersionKey(installed)
+	if !ok {
+		return true // a dev/source install replaced by a release
+	}
+	b, _ := skillVersionKey(binary)
+	return semver.Compare(i, b) > 0
+}
+
+// maybeAutoUpgradeSkill refreshes each harness's skill + hooks when the
+// running binary is strictly newer than the version recorded in that
+// harness's sidecar. It runs on every flow invocation so a user who
+// replaced the binary gets a self-healing upgrade.
 //
 // The check is intentionally conservative — per harness, it does
 // nothing when:
-//   - The binary is a "dev" build (Version == "dev"). Local devs use
-//     `make install` and shouldn't fight an auto-installer.
+//   - FLOW_NO_AUTO_UPGRADE is set. It stops every implicit upgrade:
+//     the binary self-upgrade and this skill + hook refresh.
 //   - The skill isn't installed for that harness (SKILL.md missing).
 //     Treat this as an explicit per-harness opt-out; never re-install.
-//   - That harness's sidecar already matches Version. The common path.
+//   - The binary is not strictly newer than the installed skill — see
+//     skillRefreshWanted. It never downgrades, never touches a dev
+//     install, and a dev binary never refreshes.
 //
 // All errors are silent — auto-upgrade is best-effort plumbing, not a
 // command. A user-visible failure here would be far more annoying
 // than the eventual symptom of a stale skill.
 func maybeAutoUpgradeSkill() {
-	if Version == "" || Version == "dev" {
+	if os.Getenv(selfUpgradeEnv) != "" {
+		return
+	}
+	if _, ok := skillVersionKey(Version); !ok {
 		return
 	}
 	for _, h := range allHarnesses() {
 		if !skillInstalled(h) {
 			continue // opted out; don't reinstall behind their back
 		}
-		if readSkillVersion(h) == Version {
+		if !skillRefreshWanted(readSkillVersion(h), Version) {
 			continue
 		}
 		if err := h.InstallSkill(skillFiles()); err != nil {
@@ -264,6 +324,9 @@ func installSkillFor(h harness.Harness, force, skipHook bool) bool {
 	} else if err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "error: %s: stat %s: %v\n", name, dest, err)
 		return false
+	}
+	if prev := readSkillVersion(h); installedIsNewer(prev, Version) {
+		fmt.Fprintf(os.Stderr, "warning: %s: replacing the installed skill + hooks from %s (newer) with this older flow %s\n", name, prev, Version)
 	}
 	if err := h.InstallSkill(skillFiles()); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s: %v\n", name, err)

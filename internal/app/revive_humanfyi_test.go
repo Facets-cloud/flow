@@ -86,6 +86,7 @@ func TestReviveRevivedWithUnreadReportsFYIsHuman(t *testing.T) {
 	for _, id := range []string{"u1", "u2"} {
 		insertQuiet(t, db, &flowdb.BusMessage{ID: id, CreatedAt: start.Format(time.RFC3339), Kind: "message",
 			FromAssignee: "user", FromTaskSlug: "c", ToAssignee: "user", ToTaskSlug: "d", Body: "report"})
+		_ = flowdb.MarkChildReport(db, "d", id) // judged a child report when sent
 	}
 	task, _ := flowdb.GetTask(db, "d")
 	finishRevive(db, task, reviveStatus, start.Format(time.RFC3339))

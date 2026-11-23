@@ -41,7 +41,7 @@ func TestHookSessionStartUnboundEmitsAmbientHint(t *testing.T) {
 		"knowledge base",
 		"AskUserQuestion",
 		"existing flow task",
-		"create a new one",
+		"start a task via flow FIRST",
 		// Hint substitutes the actual flowRoot() so paths reflect
 		// $FLOW_ROOT (default ~/.flow). Match the suffix only.
 		"/kb/ holds durable facts",

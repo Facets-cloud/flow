@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,7 +131,121 @@ func (c *claude) BackgroundAgents() ([]harness.BackgroundAgent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claude agents --json --all: %w", err)
 	}
-	return parseBackgroundAgents(out)
+	agents, err := parseBackgroundAgents(out)
+	if err != nil {
+		return nil, err
+	}
+	for i := range agents {
+		if agents[i].State != "failed" && agents[i].PID <= 0 {
+			continue
+		}
+		st, ok := readJobState(agents[i].ShortID)
+		if !ok {
+			continue
+		}
+		if agents[i].State == "failed" {
+			agents[i].Detail = st.Detail
+		}
+		if agents[i].PID > 0 {
+			agents[i].Activity = st.activity()
+		}
+	}
+	return agents, nil
+}
+
+// jobState mirrors the parts of ~/.claude/jobs/<shortID>/state.json flow
+// reads. `claude agents --json` omits all of them.
+type jobState struct {
+	State    string          `json:"state"`
+	Tempo    string          `json:"tempo"`
+	Detail   string          `json:"detail"` // why a failed job died ("source session … not found")
+	Needs    json.RawMessage `json:"needs"`
+	NeedsAsk json.RawMessage `json:"needsAsk"`
+	InFlight *struct {
+		Tasks             int `json:"tasks"`
+		Queued            int `json:"queued"`
+		DrainableMonitors int `json:"drainableMonitors"`
+	} `json:"inFlight"`
+}
+
+// activity reports what the live job is doing between turns. Verified on
+// 2.1.325: a session waiting on the user is state/tempo "blocked" with
+// needs/needsAsk set (its registry status is still "idle"); background
+// shells and monitors are counted under inFlight. A state file with no
+// inFlight record is treated as unknown (nil).
+func (st jobState) activity() *harness.BackgroundActivity {
+	if st.InFlight == nil {
+		return nil
+	}
+	return &harness.BackgroundActivity{
+		NeedsInput: st.State == "blocked" || st.Tempo == "blocked" ||
+			jsonSet(st.Needs) || jsonSet(st.NeedsAsk),
+		InFlight: st.InFlight.Tasks + st.InFlight.Queued + st.InFlight.DrainableMonitors,
+	}
+}
+
+// jsonSet reports whether a raw JSON field is present and not null/"".
+func jsonSet(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s != "" && s != "null" && s != `""`
+}
+
+// readJobState reads ~/.claude/jobs/<shortID>/state.json.
+func readJobState(shortID string) (jobState, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || shortID == "" {
+		return jobState{}, false
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".claude", "jobs", filepath.Base(shortID), "state.json"))
+	if err != nil {
+		return jobState{}, false
+	}
+	var st jobState
+	if json.Unmarshal(raw, &st) != nil {
+		return jobState{}, false
+	}
+	return st, true
+}
+
+// StopBackground runs `claude stop <shortID>`.
+func (c *claude) StopBackground(shortID string) error {
+	out, err := BGCommandRunner("", []string{"stop", shortID})
+	if err != nil {
+		return fmt.Errorf("claude stop %s: %w (output: %s)", shortID, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// BackgroundForkSource reads the live agent's command line: `claude --bg
+// --resume <src>` runs as `… --session-id <new> --fork-session --resume
+// <src> …`, so <src> is where the conversation's history lives.
+func (c *claude) BackgroundForkSource(a harness.BackgroundAgent) (string, bool) {
+	if a.PID <= 0 {
+		return "", false
+	}
+	out, err := PSRunner()
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != strconv.Itoa(a.PID) {
+			continue
+		}
+		fork := false
+		for _, arg := range f[1:] {
+			if arg == "--fork-session" {
+				fork = true
+			}
+		}
+		for i := 1; fork && i+1 < len(f); i++ {
+			if f[i] == "--resume" {
+				return f[i+1], true
+			}
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // launchAndCapture runs a `claude --bg …` command in workDir, parses the
@@ -136,7 +253,7 @@ func (c *claude) BackgroundAgents() ([]harness.BackgroundAgent, error) {
 // that short id in the agent registry. One deterministic lookup — no
 // polling, no race — because `--bg` only prints the banner after the
 // session is registered. Shared by SpawnBackground and ResumeBackground
-// (which differ only in their argv; --bg mints a fresh id either way).
+// (which differ only in their argv; a resume may keep the id or start a copy).
 func (c *claude) launchAndCapture(workDir string, args []string, what string) (harness.BackgroundAgent, error) {
 	out, err := BGCommandRunner(workDir, args)
 	if err != nil {
@@ -164,31 +281,47 @@ func (c *claude) launchAndCapture(workDir string, args []string, what string) (h
 // opts.Inject is appended to the prompt behind InjectionMarker, mirroring
 // LaunchCmd.
 func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
-	if opts.Inject != "" {
-		prompt = prompt + "\n\n" + harness.InjectionMarker + "\n" + opts.Inject
-	}
-	args := []string{"--bg", "--name", name, prompt}
+	args := []string{"--bg", "--name", name, harness.WithInjection(prompt, opts.Inject)}
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
+	args = append(args, modelArgv(opts)...)
 	return c.launchAndCapture(workDir, args, "spawn")
 }
 
-// ResumeBackground runs `claude --bg --name <name> --resume <sessionID>
-// [<injection>] [--dangerously-skip-permissions]`. --name keeps the same
-// display name SpawnBackground used; without it claude names the new
-// background session after the injected prompt. `--bg` does not honor
-// `--resume`'s id — it starts a fresh background process that *inherits
-// the prior conversation* under a NEW id (verified against the CLI). So
-// this captures and returns the new id exactly like SpawnBackground; the
-// caller re-records it on the task.
-func (c *claude) ResumeBackground(workDir, name, sessionID string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
-	args := []string{"--bg", "--name", name, "--resume", sessionID}
-	if opts.Inject != "" {
-		args = append(args, harness.InjectionMarker+"\n"+opts.Inject)
+// ResumeBackground runs `claude --bg [--name <name>] --resume <sessionID>
+// [<prompt>] [--dangerously-skip-permissions]`. opts.Inject is appended to
+// prompt behind InjectionMarker, as in SpawnBackground.
+//
+// When claude keeps the id vs starts a copy (verified live, 2.1.325):
+//
+//	session                              flags   result
+//	alive (busy or idle)                 any     copy, new id ("already running")
+//	registered in Agent View, exited     none    SAME id, saved options reapplied
+//	registered in Agent View, exited     some    copy ("keeps its own saved options")
+//	unregistered (rm'd / never bg)       any     SAME id
+//
+// So with opts.ResumeRegistered no flags are passed: the registry's saved
+// --name and permission mode come back with the same session. Otherwise
+// --name keeps the display name SpawnBackground used (without it claude
+// names the session after the prompt). Either way the id that came up is
+// captured from the banner and returned; the caller records it.
+func (c *claude) ResumeBackground(workDir, name, sessionID, prompt string, opts harness.LaunchOpts) (harness.BackgroundAgent, error) {
+	args := []string{"--bg"}
+	if !opts.ResumeRegistered {
+		args = append(args, "--name", name)
 	}
-	if opts.SkipPermissions {
+	args = append(args, "--resume", sessionID)
+	if p := harness.WithInjection(prompt, opts.Inject); p != "" {
+		args = append(args, p)
+	}
+	if opts.SkipPermissions && !opts.ResumeRegistered {
 		args = append(args, "--dangerously-skip-permissions")
+	}
+	// A registered session keeps its id only without launch flags, so
+	// --model/--effort apply to it no more than --name does.
+	if !opts.ResumeRegistered {
+		args = append(args, modelArgv(opts)...)
 	}
 	return c.launchAndCapture(workDir, args, "resume")
 }

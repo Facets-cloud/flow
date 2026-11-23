@@ -21,8 +21,8 @@ func reviveSetup(t *testing.T) (*sql.DB, *[][]string) {
 	mkBusTask(t, db, "d", "sid-d")
 	mkBusTask(t, db, "c", "sid-c")
 	mkBusTask(t, db, "o", "sid-o")
-	// c is an auto child: it has an auto-run record (only those may revive d).
-	if _, err := db.Exec(`UPDATE tasks SET parent_slug='d', auto_run_status='completed' WHERE slug='c'`); err != nil {
+	// c is an auto child whose run is running now (only those may revive d).
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='d', auto_run_status='running', auto_run_pid=1 WHERE slug='c'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := flowdb.AddTaskTag(db, "d", driverTag); err != nil {
@@ -201,7 +201,7 @@ func TestReviveSupervisorEndsRevived(t *testing.T) {
 		prompt = p
 		return nil
 	})
-	if rc := cmdAutoExec([]string{"drv"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "drv")); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	for _, want := range []string{"DRIVER", "resumed HEADLESSLY", "flow inbox pop"} {
@@ -241,21 +241,17 @@ func TestReviveSupervisorRevivesMailLandedMidRun(t *testing.T) {
 	if out := mail(t, db, "m0", "c", "d", false); !strings.Contains(out, "revived") {
 		t.Fatalf("first report not revived: %q", out)
 	}
-	oldPID := supervisorPID
-	supervisorPID = func() int { return 9101 }
-	t.Cleanup(func() { supervisorPID = oldPID })
 	t.Setenv(reviveEnvVar, "d")
 	// A real revive runs for seconds: mail in its start second is taken
 	// for the trigger, so start it earlier than the mid-run report.
 	_, _ = db.Exec(`UPDATE tasks SET auto_run_started=? WHERE slug='d'`,
 		time.Now().Add(-5*time.Second).Format(time.RFC3339))
 	stubAutoRunner(t, func(h harness.Harness, sessionID, p string, opts harness.LaunchOpts) error {
-		_ = flowdb.TouchSessionActivity(db, "d", time.Now())
 		_, _ = db.Exec(`DELETE FROM bus_messages WHERE id='m0'`) // the session popped it
 		mail(t, db, "m1", "c", "d", false)                       // lands mid-run: held
 		return nil
 	})
-	if rc := cmdAutoExec([]string{"d"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "d")); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	if len(*envs) != 2 {
