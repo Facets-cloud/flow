@@ -11,6 +11,10 @@
 
 ## Unreleased
 
+- **Onboarding can be declined for good.** On Skip, run `flow onboard
+  dismiss`: it writes `$FLOW_ROOT/.onboarding-dismissed`, and the
+  fresh-install SessionStart nudge stays off. Imported tasks from `flow
+  onboard scan` now get a project (one question per scan directory).
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
   `flow run playbook` take `--model <m>` and `--effort <e>`, passed to the
   harness as given. The task keeps them, so resumes reuse them; `flow show

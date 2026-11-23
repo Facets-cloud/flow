@@ -308,15 +308,20 @@ func emitAmbientSkillHint() int {
 }
 
 // onboardingHint returns the fresh-install block for the unbound
-// SessionStart hint, or "" once flow holds anything. Fresh = flow.db is
-// missing, or it has no projects and no tasks AND no kb file has an
-// entry yet. Either signal of use (a task, or one kb fact) ends the nudge,
-// so a user who declines onboarding is not re-asked every session.
+// SessionStart hint, or "" once flow holds anything. Cheapest checks first:
+// the dismissal marker, then the kb files, and flow.db is opened only when
+// the kb is empty. Fresh = the kb is empty AND (flow.db is missing, or it
+// has no projects and no tasks). Either signal of use (a task, or one kb
+// fact) ends the nudge; `flow onboard dismiss` ends it for a user who
+// declines, so they are not re-asked every session.
 func onboardingHint(root string) string {
+	if onboardingDismissed(root) || kbHasEntries(root) {
+		return ""
+	}
 	setup := ""
-	if _, err := flowDBPath(); err != nil {
-		setup = "flow is installed but not initialized: with the user's yes, run `flow init` first. "
-	} else if !flowIsEmpty(root) {
+	if dbPath, err := flowDBPath(); err != nil {
+		setup = "no flow.db at " + root + " — flow is installed but not initialized: with the user's yes, run `flow init` first. "
+	} else if dbHasWork(dbPath) {
 		return ""
 	}
 	return "\n\nflow-onboarding: this is a FRESH flow install — no projects, no tasks, and " +
@@ -329,27 +334,13 @@ func onboardingHint(root string) string {
 		"appending each answer to the matching kb file (user/org/products/processes/business) " +
 		"per §4.10 — then offer to import recent work from past sessions via `flow onboard scan` " +
 		"(bounded output; never read transcript files directly), then capture their first project " +
-		"and task. If they decline, proceed and " +
-		"keep scooping facts passively."
+		"and task. If they decline, run `flow onboard dismiss` (stops this nudge), then proceed " +
+		"and keep scooping facts passively."
 }
 
-// flowIsEmpty reports whether flow.db has no projects and no tasks and no
-// kb file under root holds an entry ("- " line). Errors count as
-// non-empty: a hook must never nag on a guess.
-func flowIsEmpty(root string) bool {
-	dbPath, err := flowDBPath()
-	if err != nil {
-		return false
-	}
-	db, err := flowdb.OpenDB(dbPath)
-	if err != nil {
-		return false
-	}
-	defer db.Close()
-	var n int
-	if err := db.QueryRow(`SELECT (SELECT COUNT(*) FROM projects) + (SELECT COUNT(*) FROM tasks)`).Scan(&n); err != nil || n > 0 {
-		return false
-	}
+// kbHasEntries reports whether any kb file under root holds an entry ("- "
+// line). Errors count as entries: a hook must never nag on a guess.
+func kbHasEntries(root string) bool {
 	// Not kbFiles: it drops every stat failure, so an unreadable kb/ would
 	// look empty. Only a missing file is empty.
 	for _, kb := range kbSeeds() {
@@ -358,15 +349,30 @@ func flowIsEmpty(root string) bool {
 			continue
 		}
 		if err != nil {
-			return false
+			return true
 		}
 		for _, line := range strings.Split(string(b), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "- ") {
-				return false
+				return true
 			}
 		}
 	}
-	return true
+	return false
+}
+
+// dbHasWork reports whether flow.db holds a project or a task. Errors count
+// as work: a hook must never nag on a guess.
+func dbHasWork(dbPath string) bool {
+	db, err := flowdb.OpenDB(dbPath)
+	if err != nil {
+		return true
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT (SELECT COUNT(*) FROM projects) + (SELECT COUNT(*) FROM tasks)`).Scan(&n); err != nil {
+		return true
+	}
+	return n > 0
 }
 
 // emitSessionStartContext is a thin wrapper around emitHookContext for

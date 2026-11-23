@@ -23,8 +23,8 @@ Run this after `flow init` succeeds for a brand-new user, AND whenever
 the SessionStart hook emits a `flow-onboarding:` block (fresh install:
 no projects, no tasks, empty KB) — in Claude Code, Codex and prx alike.
 Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
-"Skip for now"); on Skip, do the user's request and keep scooping
-(§4.10). Walk them through the basics in this order:
+"Skip for now"); on Skip, run `flow onboard dismiss` (silences this
+nudge), then do the user's request and keep scooping (§4.10). Walk them through the basics in this order:
 
 1. **Explain what just happened.** "`flow init` created `~/.flow/` with
    an empty database and 5 knowledge-base files."
@@ -44,6 +44,7 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
    (AskUserQuestion "Import past sessions?": "Yes — small ($20 plan,
    Recommended)" / "Yes — large ($100–200 plan)" / "Skip"). Never read
    transcript files yourself — that is what burns a small plan.
+   - Say first: this shows the first lines of your past sessions here.
    - Run `flow onboard scan --budget small|large` ONCE. Go reads every
      past Claude/Codex/prx session locally and prints a bounded list
      (~1.5k tokens): one block per directory with sample prompts and
@@ -62,7 +63,10 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
      last reply). If the digests
      show the work finished, do NOT make a task (an imported task has no
      session, so it can't be closed) — just record its durable facts per
-     §4.10. Otherwise `flow add task` with
+     §4.10. Otherwise `flow add task` with `--project <slug>` (every
+     imported task needs a project, §4.2 step 2: ask ONE project question
+     per scan directory, offering the existing projects plus "New project"
+     via §4.3, and reuse the answer for that directory's tasks) and
      `--work-dir <dir from scan>` — if scan marked it `(dir no longer
      exists)`, never `--mkdir` it: ask (AskUserQuestion "Floating task" /
      "Other path"), default floating (omit `--work-dir`) — a brief built ONLY from the digest
@@ -73,9 +77,10 @@ Offer it first (AskUserQuestion, header "Onboard?", "Yes, set me up" /
      per §4.10. Digest nothing the user didn't pick.
 
 4. **Create their first project.** "Let's set up a project — what's the
-   main thing you're working on right now?" Then enter the §5.3
-   add-project interview. This gets them a project and at least one task
-   immediately.
+   main thing you're working on right now?" Then enter the §4.3
+   add-project interview. Their first task is a driver: take it through
+   §4.2 "Start a driver" (goal, then the project question). This gets them
+   a project and at least one task immediately.
 
 5. **Show how to start work.** After the first task exists, use
    `AskUserQuestion` (header: "Open it now?", options:

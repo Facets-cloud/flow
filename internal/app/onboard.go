@@ -50,11 +50,29 @@ type sessionSummary struct {
 	machinery bool // first prompt was flow's own (close-out sweep, auto run)
 }
 
-// flowMachinery marks sessions flow itself launched headlessly; their
-// work is already tracked (or was a sweep), so they are never candidates.
-var flowMachinery = []string{
-	"You are running an automated close-out sweep",
-	"You are an AUTONOMOUS, headless",
+// onboardingDismissedFile sits under the flow root once the user declines
+// onboarding (`flow onboard dismiss`); the SessionStart nudge then stays off.
+const onboardingDismissedFile = ".onboarding-dismissed"
+
+func onboardingDismissed(root string) bool {
+	_, err := os.Stat(filepath.Join(root, onboardingDismissedFile))
+	return err == nil
+}
+
+func cmdOnboardDismiss() int {
+	root, err := flowRoot()
+	if err == nil {
+		err = os.MkdirAll(root, 0o755)
+	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(root, onboardingDismissedFile), []byte(time.Now().Format(time.RFC3339)+"\n"), 0o644)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Println("onboarding dismissed: the fresh-install nudge is off")
+	return 0
 }
 
 func scratchDir(cwd string) bool {
@@ -68,7 +86,7 @@ func scratchDir(cwd string) bool {
 
 func cmdOnboard(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: flow onboard scan [--budget small|large] [--days N] [--max N]\n       flow onboard digest <harness:session-id> [--budget small|large] [--chars N]")
+		fmt.Fprintln(os.Stderr, "usage: flow onboard scan [--budget small|large] [--days N] [--max N]\n       flow onboard digest <harness:session-id> [--budget small|large] [--chars N]\n       flow onboard dismiss")
 		return 2
 	}
 	switch args[0] {
@@ -76,8 +94,10 @@ func cmdOnboard(args []string) int {
 		return cmdOnboardScan(args[1:])
 	case "digest":
 		return cmdOnboardDigest(args[1:])
+	case "dismiss":
+		return cmdOnboardDismiss()
 	}
-	fmt.Fprintf(os.Stderr, "error: unknown onboard subcommand %q (want scan|digest)\n", args[0])
+	fmt.Fprintf(os.Stderr, "error: unknown onboard subcommand %q (want scan|digest|dismiss)\n", args[0])
 	return 2
 }
 
@@ -122,9 +142,13 @@ func cmdOnboardScan(args []string) int {
 		if s.mod.Before(since) || skip[s.id] {
 			continue
 		}
-		sum, err := summarizeSession(s)
-		if err != nil || len(sum.prompts) == 0 || sum.machinery || scratchDir(sum.cwd) {
-			continue // unreadable, empty, flow's own headless runs, or temp dirs: nothing to import
+		cwd := sessionCwd(s.path)
+		if scratchDir(cwd) {
+			continue // temp dirs: nothing to import, checked before any rendering
+		}
+		sum, err := summarizeSession(s, cwd)
+		if err != nil || len(sum.prompts) == 0 || sum.machinery {
+			continue // unreadable, empty, or flow's own headless runs: nothing to import
 		}
 		total++
 		c := byCwd[sum.cwd]
@@ -198,7 +222,7 @@ func cmdOnboardDigest(args []string) int {
 		if s.harness != h || s.id != id {
 			continue
 		}
-		sum, err := summarizeSession(s)
+		sum, err := summarizeSession(s, sessionCwd(s.path))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -325,16 +349,22 @@ func boundSessionIDs() map[string]bool {
 		return skip
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT session_id FROM tasks WHERE session_id IS NOT NULL AND session_id != ''`)
-	if err != nil {
-		return skip
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		if rows.Scan(&id) == nil {
-			skip[id] = true
+	// Sessions forked from a tracked one are that same work.
+	for _, q := range []string{
+		`SELECT session_id FROM tasks WHERE session_id IS NOT NULL AND session_id != ''`,
+		`SELECT source_session_id FROM session_lineage`,
+	} {
+		rows, err := db.Query(q)
+		if err != nil {
+			continue
 		}
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				skip[id] = true
+			}
+		}
+		rows.Close()
 	}
 	return skip
 }
@@ -355,25 +385,51 @@ func openTranscript(p string) (io.ReadCloser, error) {
 	}{gz, f}, nil
 }
 
+// haltReader ends a render early: once *halt is set the renderer sees EOF.
+type haltReader struct {
+	r    io.Reader
+	halt *bool
+}
+
+func (h haltReader) Read(p []byte) (int, error) {
+	if *h.halt {
+		return 0, io.EOF
+	}
+	return h.r.Read(p)
+}
+
+// hasFlowPrefix reports whether a prompt opens with one of the prompts flow
+// itself feeds sessions (bootstrap, auto run, owner tick, sweep).
+func hasFlowPrefix(p string) bool {
+	for _, pre := range flowPromptPrefixes {
+		if strings.HasPrefix(p, pre) {
+			return true
+		}
+	}
+	return false
+}
+
 // summarizeSession renders the transcript with the harness's own compact
 // renderer (no tool results, no thinking) and keeps only user prompts and
-// the final assistant reply.
-func summarizeSession(s onboardSession) (*sessionSummary, error) {
-	sum := &sessionSummary{onboardSession: s, cwd: sessionCwd(s.path)}
+// the final assistant reply. cwd is the session's already-read cwd. Once a
+// prompt marks the session as flow's machinery, the render stops.
+func summarizeSession(s onboardSession, cwd string) (*sessionSummary, error) {
+	sum := &sessionSummary{onboardSession: s, cwd: cwd}
 	r, err := openTranscript(s.path)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
+	halted := false
 	col := &sectionCollector{on: func(label, body string) {
+		if halted {
+			return
+		}
 		switch label {
 		case "User":
-			if first := strings.TrimSpace(body); len(sum.prompts) == 0 && !sum.machinery {
-				for _, m := range flowMachinery {
-					if strings.HasPrefix(first, m) {
-						sum.machinery = true
-					}
-				}
+			if first := strings.TrimSpace(body); len(sum.prompts) == 0 && hasFlowPrefix(first) {
+				sum.machinery, halted = true, true
+				return
 			}
 			if p := userPrompt(body); p != "" {
 				sum.prompts = append(sum.prompts, p)
@@ -387,7 +443,7 @@ func summarizeSession(s onboardSession) (*sessionSummary, error) {
 	render := map[string]func(io.Reader, bool, io.Writer) error{
 		"claude": claude.RenderJSONL, "codex": codex.RenderJSONL, "prx": prx.RenderJSONL,
 	}[s.harness]
-	if err := render(r, true, col); err != nil {
+	if err := render(haltReader{r, &halted}, true, col); err != nil {
 		return nil, err
 	}
 	col.close()

@@ -283,3 +283,40 @@ func TestHookBindsFromStdinSessionID(t *testing.T) {
 		t.Errorf("user-prompt-submit should emit the bound anchor; got:\n%s", prompt)
 	}
 }
+
+// Declining onboarding (`flow onboard dismiss`) writes the marker that
+// silences the nudge, even on an empty install with no flow.db.
+func TestOnboardingDismissedStaysQuiet(t *testing.T) {
+	root := setupFlowRoot(t)
+	os.Remove(filepath.Join(root, "flow.db"))
+	if ctx := onboardingHint(root); !strings.Contains(ctx, "flow-onboarding:") {
+		t.Fatalf("precondition: fresh install should nudge:\n%s", ctx)
+	}
+	captureStdout(t, func() {
+		if rc := cmdOnboard([]string{"dismiss"}); rc != 0 {
+			t.Fatalf("dismiss rc=%d", rc)
+		}
+	})
+	if ctx := onboardingHint(root); ctx != "" {
+		t.Errorf("dismissed install still nudges:\n%s", ctx)
+	}
+}
+
+// A missing flow.db is named by its path, and a kb fact still ends the
+// nudge without a database.
+func TestOnboardingMissingDBNamesRootAndChecksKB(t *testing.T) {
+	root := setupFlowRoot(t)
+	os.Remove(filepath.Join(root, "flow.db"))
+	if ctx := onboardingHint(root); !strings.Contains(ctx, "no flow.db at "+root) {
+		t.Errorf("missing flow.db not named by root:\n%s", ctx)
+	}
+	f, err := os.OpenFile(filepath.Join(root, "kb", "user.md"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("- 2026-11-23 — I prefer async\n")
+	f.Close()
+	if ctx := onboardingHint(root); ctx != "" {
+		t.Errorf("kb entry should end the nudge even without flow.db:\n%s", ctx)
+	}
+}

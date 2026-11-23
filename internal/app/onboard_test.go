@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"flow/internal/flowdb"
 )
 
 // Scan reads claude + prx transcripts from disk, drops noise, flow's own
@@ -147,5 +149,64 @@ func TestWriteDigestCapsMiddle(t *testing.T) {
 	}
 	if !strings.Contains(out, s.prompts[49]) || len(out) > 1400 {
 		t.Errorf("digest missing newest prompt or over cap (%d):\n%s", len(out), out)
+	}
+}
+
+// Owner-tick and playbook prompts are flow's own, like the sweep and auto
+// run; a session forked from a tracked one is that same work. Neither is
+// a candidate, and the machinery session is never rendered past its prompt.
+func TestOnboardSkipsFlowPromptsAndForkSources(t *testing.T) {
+	root := setupFlowRoot(t)
+	home := os.Getenv("HOME")
+	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "PRAXIS_SESSION_ID"} {
+		t.Setenv(v, "")
+	}
+	proj := filepath.Join(home, ".claude", "projects", "-repo")
+	os.MkdirAll(proj, 0o755)
+	line := func(prompt string) string {
+		return `{"type":"user","cwd":"/repo","message":{"role":"user","content":"` + prompt + `"}}` + "\n"
+	}
+	os.WriteFile(filepath.Join(proj, "tick.jsonl"), []byte(line("You are running ONE tick of the flow OWNER for repo-x")), 0o644)
+	os.WriteFile(filepath.Join(proj, "playbook.jsonl"), []byte(line("You are running playbook `nightly` for x")), 0o644)
+	os.WriteFile(filepath.Join(proj, "forked-src.jsonl"), []byte(line("rework the cache layer")), 0o644)
+	os.WriteFile(filepath.Join(proj, "real.jsonl"), []byte(line("add oauth login")), 0o644)
+
+	db, err := flowdb.OpenDB(filepath.Join(root, "flow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := flowdb.RecordSessionSource(db, "fork-child", "forked-src", ""); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	out := captureStdout(t, func() {
+		if rc := cmdOnboard([]string{"scan"}); rc != 0 {
+			t.Fatalf("scan rc=%d", rc)
+		}
+	})
+	for _, bad := range []string{"ONE tick", "playbook `nightly`", "rework the cache layer", "(claude:forked-src)"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("scan leaked %q:\n%s", bad, out)
+		}
+	}
+	if !strings.Contains(out, "add oauth login  (claude:real)") {
+		t.Errorf("real session missing:\n%s", out)
+	}
+}
+
+// A machinery session stops rendering at its first prompt: nothing after
+// it is collected, and the session is flagged.
+func TestSummarizeSessionHaltsOnMachinery(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sweep.jsonl")
+	body := `{"type":"user","cwd":"/repo","message":{"role":"user","content":"You are running an automated close-out sweep for x"}}` + "\n" +
+		`{"type":"user","cwd":"/repo","message":{"role":"user","content":"later real prompt"}}` + "\n"
+	os.WriteFile(p, []byte(body), 0o644)
+	sum, err := summarizeSession(onboardSession{harness: "claude", id: "sweep", path: p}, "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sum.machinery || len(sum.prompts) != 0 {
+		t.Errorf("machinery=%v prompts=%q, want machinery with nothing collected", sum.machinery, sum.prompts)
 	}
 }
