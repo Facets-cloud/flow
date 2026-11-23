@@ -828,3 +828,38 @@ func TestCmdDoAutoTabResumeKeepsModel(t *testing.T) {
 		t.Errorf("resumed tab command should carry the stored model; got:\n%s", s)
 	}
 }
+
+// FLOW_AUTO_TAB is a human's interactive preference. Detached supervisors
+// and owner ticks are unattended, so their env drops it: anything they
+// dispatch with --auto stays headless instead of opening tabs.
+func TestAutoChildEnvStripsAutoTab(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv(autoTabEnvVar, "1") // setupFlowRoot clears it; set it here
+	for _, kv := range autoChildEnv() {
+		if strings.HasPrefix(kv, autoTabEnvVar+"=") {
+			t.Fatalf("autoChildEnv kept %q", kv)
+		}
+	}
+
+	db := openFlowDB(t)
+	if err := flowdb.CreateOwner(db, &flowdb.Owner{
+		Slug: "tabby-owner", Name: "O", WorkDir: t.TempDir(), Every: "30m", Status: "active",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	old := ownerTickLauncher
+	ownerTickLauncher = func(slug, workDir, logPath string, env []string) (int, error) { got = env; return 9, nil }
+	t.Cleanup(func() { ownerTickLauncher = old })
+	if rc := ownerTickManual([]string{"tabby-owner", "--auto"}); rc != 0 {
+		t.Fatalf("owner tick --auto rc=%d", rc)
+	}
+	if got == nil {
+		t.Fatal("owner tick launcher not called")
+	}
+	for _, kv := range got {
+		if strings.HasPrefix(kv, autoTabEnvVar+"=") {
+			t.Errorf("owner tick env kept %q: a tick could open tabs", kv)
+		}
+	}
+}

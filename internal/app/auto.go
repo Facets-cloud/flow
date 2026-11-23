@@ -143,15 +143,17 @@ var processAlive = func(pid int) bool {
 // autoChildEnv builds the environment for the detached supervisor. It
 // inherits the parent's environment (so PATH finds the selected harness and
 // FLOW_ROOT points at the same store) but strips every registered harness
-// session id. Those ids belong to the dispatch session, not the headless run,
+// session id and flow's auto markers (FLOW_AUTO_RUN, FLOW_AUTO_TAB). Those ids belong to the dispatch session, not the headless run,
 // and leaking one would confuse reverse-lookups inside the autonomous session.
 func autoChildEnv() []string {
 	in := os.Environ()
 	out := make([]string, 0, len(in))
 	for _, kv := range in {
 		// A stale auto marker from an enclosing auto run never leaks: the
-		// launcher re-adds the right one for the run it starts.
-		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=")
+		// launcher re-adds the right one for the run it starts. Nor does
+		// $FLOW_AUTO_TAB: it is a human's interactive preference, and an
+		// unattended supervisor or owner tick must never open tabs.
+		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, autoTabEnvVar+"=")
 		for _, h := range allHarnesses() {
 			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
 				isSessionEnv = true
