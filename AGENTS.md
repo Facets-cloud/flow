@@ -125,7 +125,7 @@ flow.db's schema version is `PRAGMA user_version`. `OpenDB` reads it; at the lat
 Rules for a schema change:
 
 - **Append a `Migration` to `migrations`.** Never edit, reorder or remove a shipped one, including the baseline.
-- **Additive is non-breaking.** New tables, nullable or defaulted columns, and indexes keep older binaries working, because queries name their columns explicitly. Set `Breaking: true` only when an older binary would misread or corrupt the new shape. That raises `schema_meta.min_binary_schema`, and older binaries then refuse the DB with "run `flow upgrade`". Hooks treat that as unbound.
+- **Additive is non-breaking.** New tables, nullable or defaulted columns, and indexes keep older binaries working, because queries name their columns explicitly. Set `Breaking: true` only when an older binary would misread or corrupt the new shape. That raises `schema_meta.min_binary_schema`, and older versioned binaries (the release that introduced the migrator and later) then refuse the DB with "run `flow upgrade`". Hooks treat that as unbound. Pre-versioning binaries never read the floor and will still open the DB, so a breaking change can't rely on the floor alone to keep them out.
 - **Rebuild tables dynamically.** A rebuild (CREATE new, copy, DROP, RENAME) takes its copy list from `pragma_table_info`, never a hard-coded list, so unknown or legacy columns (`tasks.deleted_at`) survive.
 - **Data fixes go in the same migration as their schema change.**
 - **No DDL anywhere else.** `ALTER/CREATE/DROP TABLE|INDEX`, `PRAGMA user_version`/`foreign_keys` and `columnExists(` outside `migrate.go`/`baseline.go` fail `TestNoSchemaWritesOutsideMigrations`.
