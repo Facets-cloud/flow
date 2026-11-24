@@ -1353,12 +1353,26 @@ func buildBootstrapPrompt(slug string) string {
 	return buildTaskBootstrapPrompt(slug)
 }
 
-// buildTabTitle returns a short iTerm tab title. Project-scoped tasks get
-// "<project-slug>/<task-slug>"; floating tasks get just "<task-slug>".
-// Titles longer than 30 runes are truncated with a trailing ellipsis.
+// buildTabTitle returns a short tab title, shaped by FLOW_TAB_TITLE:
+//
+//	project/task (default)  "<project-slug>/<task-slug>"
+//	task                    "<task-slug>", for terminals that already
+//	                        group tabs by area (e.g. Rex sessions via
+//	                        terminal groups)
+//
+// Floating tasks are always "<task-slug>". An unknown value warns and
+// falls back to the default. Titles longer than 30 runes are truncated
+// with a trailing ellipsis.
 func buildTabTitle(project *flowdb.Project, task *flowdb.Task) string {
+	format := os.Getenv("FLOW_TAB_TITLE")
+	switch format {
+	case "", "project/task", "task":
+	default:
+		fmt.Fprintf(os.Stderr, "warning: FLOW_TAB_TITLE=%q is not task or project/task; using project/task\n", format)
+		format = "project/task"
+	}
 	raw := task.Slug
-	if project != nil {
+	if project != nil && format != "task" {
 		raw = project.Slug + "/" + task.Slug
 	}
 	const maxLen = 30

@@ -200,3 +200,58 @@ func TestCmdDoWithoutTerminalGroupUsesCurrentSession(t *testing.T) {
 		}
 	}
 }
+
+// TestCmdDoTabTitleDefaultKeepsProject — by default (Rex included) the
+// tab is "<project>/<task>"; FLOW_TAB_TITLE=task opts into the bare slug;
+// project/task names the default; an unknown value falls back to it.
+func TestCmdDoTabTitleDefaultKeepsProject(t *testing.T) {
+	setupFlowRoot(t)
+	seedProject(t, "tekion-modules")
+	if rc := cmdAdd([]string{"task", "tk-task", "--project", "tekion-modules"}); rc != 0 {
+		t.Fatalf("add task rc=%d", rc)
+	}
+	for _, tc := range []struct{ env, want string }{
+		{"", "tekion-modules/tk-task"},
+		{"project/task", "tekion-modules/tk-task"},
+		{"task", "tk-task"},
+		{"bogus", "tekion-modules/tk-task"},
+	} {
+		t.Setenv("FLOW_TAB_TITLE", tc.env)
+		calls := stubRex(t)
+		if rc := cmdDo([]string{"tk-task"}); rc != 0 {
+			t.Fatalf("do rc=%d", rc)
+		}
+		got := "<no window new>"
+		for _, c := range *calls {
+			if len(c) > 2 && c[0] == "window" && c[1] == "new" {
+				got = c[2]
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("FLOW_TAB_TITLE=%q: tab title = %q; want %q", tc.env, got, tc.want)
+		}
+	}
+}
+
+// TestBuildTabTitle — the project prefix stays unless FLOW_TAB_TITLE=task;
+// floating tasks are always the bare slug; long titles are truncated.
+func TestBuildTabTitle(t *testing.T) {
+	task := &flowdb.Task{Slug: "tk-task"}
+	proj := &flowdb.Project{Slug: "tekion-modules"}
+	t.Setenv("FLOW_TAB_TITLE", "")
+	if got := buildTabTitle(proj, task); got != "tekion-modules/tk-task" {
+		t.Errorf("with project = %q", got)
+	}
+	if got := buildTabTitle(nil, task); got != "tk-task" {
+		t.Errorf("floating = %q", got)
+	}
+	t.Setenv("FLOW_TAB_TITLE", "task")
+	if got := buildTabTitle(proj, task); got != "tk-task" {
+		t.Errorf("FLOW_TAB_TITLE=task = %q", got)
+	}
+	long := &flowdb.Task{Slug: "tenant-level-aws-resources-blueprint-import"}
+	if got := buildTabTitle(proj, long); got != "tenant-level-aws-resources-bl…" {
+		t.Errorf("truncated = %q", got)
+	}
+}

@@ -99,6 +99,9 @@ When to use which flag:
   group tabs. Today that's Rex: the name is a Rex session label,
   created if missing (e.g. all `tekion-*` projects → `tekion`). Unset
   = the tab opens wherever `flow do` ran. Other terminals ignore it.
+  Tab titles follow `FLOW_TAB_TITLE` in the user's shell:
+  `project/task` (default) or `task` (no project prefix; handy when
+  groups already separate areas).
 - **`--assignee <name>` / `--clear-assignee`** — set or clear the task
   assignee. Convention: NULL = "self" (default); any other value =
   "assigned to that name". The list/show output surfaces the assignee

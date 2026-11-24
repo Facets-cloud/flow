@@ -7,6 +7,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`FLOW_TAB_TITLE` picks the tab title format: `project/task` or `task`.**
+  `flow do` names tabs `<project>/<task>` (the default, `project/task`);
+  `FLOW_TAB_TITLE=task` makes them just `<task>`, useful when the terminal
+  already groups tabs by area (Rex sessions via `--terminal-group`). An
+  unknown value warns and uses the default.
+
 ## [0.1.0-alpha.40] — 2026-11-23
 
 ### Added
