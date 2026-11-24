@@ -11,6 +11,12 @@
 
 ## Unreleased
 
+- **Driver and child contract.** An auto child ends with `flow done` or a
+  single final `BLOCKED: <reason>` line; prose blockers count as dead runs.
+  Drivers push status unprompted, make no code edits, and own CI and review
+  threads on their children's PRs (references/driver.md, delegation.md).
+  `--options` and `--fyi` are for bare `user` only.
+
 ## v0.1.0-alpha.40
 
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and

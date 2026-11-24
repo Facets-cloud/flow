@@ -42,10 +42,15 @@ has its own task, brief, transcript and close-out sweep.
 
 - **Never idle.** While children run, work the user's open decisions or
   the next piece of design. Do not sit waiting for a child.
-- **Lead with what changed.** When child mail arrives or the user comes
-  back ("status", "what happened"), open with done / blocked / dead
-  children before anything else. A dead child arrives as a crash notice
+- **Push status unprompted.** At each child milestone, completion and
+  death, report to the user without waiting to be asked; lead with done /
+  blocked / dead children before anything else. A dead child arrives as a crash notice
   from flow: check its log and re-run or take it over.
+- **Code edits go to a child.** The driver makes no code edit itself,
+  however small.
+- **Own the PRs your children open.** Check CI on the PR head and read its
+  review threads yourself; hand each failure or comment to a child. Never
+  wait for the user to relay them. Never merge.
 - **Needs from you.** End any turn that needs the user with a numbered
   list they can answer in one line:
   ```
@@ -201,7 +206,7 @@ to prod", "may push a branch and open a PR, do NOT merge">
 - never block waiting for a reply: keep working. Arm no inbox listener;
   a message (for example from the user via the hub) surfaces as a
   flow-bus notice before your next tool call: pop it in the foreground.
-  If a decision truly needs the user, set waiting_on, message the driver, and exit.
+  If a decision needs the user, message the driver, end your final message with the single line `BLOCKED: <question>`, and exit without flow done. Prose such as "Decision needed:" is not a blocker.
 - When Done when is met: flow done <slug>, then exit.
 ```
 
@@ -224,7 +229,10 @@ Every child with a parent is told, in its auto prompt, to:
   (`tasks/<slug>/updates/YYYY-MM-DD-<kebab>.md`) before `flow done`;
 - make its final `flow message user/<parent>` name the slug and the
   update file (body <=200 chars);
-- never spawn its own children.
+- never spawn its own children;
+- end with flow done, or with the single line `BLOCKED: <reason>` when
+  blocked. Any other ending is recorded as a dead run. No sleep, wait or
+  poll loops.
 
 ## PR trailer (every bound session)
 
