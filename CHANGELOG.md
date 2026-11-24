@@ -11,7 +11,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - **`flow show task <slug> --json`.** One stable JSON object (`schema: 1`)
   for tools: harness, pinned `session_id`, `live` (the harness's own
-  process probe), `bg` (background registry entry), `auto_run`, work_dir,
+  process probe sees the session, or its background session's pid is alive), `bg` (background registry entry), `auto_run`, work_dir,
   identity, files and `previous_sessions`. Every key is always present;
   unknown values are `null`.
 - **`flow transcript <slug> --json`.** Harness-neutral entries

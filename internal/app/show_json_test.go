@@ -142,3 +142,33 @@ func TestShowTaskJSONPreviousSessions(t *testing.T) {
 		t.Errorf("previous session = %#v", p)
 	}
 }
+
+// A background Claude session (claude --bg) is not visible to the ps-based
+// LiveSessionIDs probe, so live also holds when the bg registry entry's pid
+// is alive. A registry entry whose pid is dead (or 0) does not count.
+func TestShowTaskJSONLiveFromBackgroundPID(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "bg-live", "BG", "in-progress", "medium", filepath.Join(root, "repo"), nil)
+	sid := fakeSessionID("bg-live")
+	if _, err := db.Exec(`UPDATE tasks SET harness='claude' WHERE slug='bg-live'`); err != nil {
+		t.Fatal(err)
+	}
+	stubPS(t, "  PID COMMAND\n") // ps sees nothing
+	stubClaudeAgents(t, `[{"kind":"background","id":"abcd1234","sessionId":"`+sid+`","pid":777,"status":"idle","state":"idle"}]`)
+
+	for _, tc := range []struct {
+		alive bool
+		want  bool
+	}{{true, true}, {false, false}} {
+		oldAlive := processAlive
+		processAlive = func(pid int) bool { return pid == 777 && tc.alive }
+		m := decodeShowJSON(t, "bg-live", "--json")
+		processAlive = oldAlive
+		if m["live"] != tc.want {
+			t.Errorf("pid alive=%v: live = %v, want %v", tc.alive, m["live"], tc.want)
+		}
+		if bg, _ := m["bg"].(map[string]any); bg == nil || bg["pid"] != float64(777) {
+			t.Errorf("bg = %#v", m["bg"])
+		}
+	}
+}

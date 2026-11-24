@@ -31,7 +31,8 @@ ever added, never removed or retyped without a schema bump):
 - `flow show task <slug> --json` — identity (`slug`, `name`, `kind`,
   `project`, `parent`, `status`, `priority`, `work_dir`, `archived`,
   `driver`, `tags`), the session (`harness` — null until the first
-  `flow do`; `session_id`; `live` from the harness's own process probe;
+  `flow do`; `session_id`; `live` — true when the harness's own process probe sees the session OR
+  its background-registry entry's pid is alive;
   `session_started`, `session_last_resumed`, `model`, `effort`), run
   state (`bg`: `{short_id,pid,status,state}` from the harness's
   background registry, or null; `auto_run`:

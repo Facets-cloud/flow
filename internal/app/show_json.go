@@ -79,6 +79,11 @@ func nullStr(n sql.NullString) *string {
 // Unlike the human view, the background-agent registry is consulted on
 // every call (not only under $FLOW_TERM=bg): a machine consumer probing
 // liveness must see a background session whichever env it runs in.
+//
+// live rule: true when the pinned harness's process probe
+// (LiveSessionIDs) sees the session, OR the session has a background
+// registry entry whose pid is alive. Otherwise false (including tasks
+// with no session).
 func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 	doc := taskJSON{
 		Schema:             showTaskJSONSchema,
@@ -139,6 +144,12 @@ func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 			if bg, ok := h.(harness.BackgroundLauncher); ok {
 				if a := bgAgentInRegistry(bg, t.SessionID.String); a != nil {
 					doc.BG = &bgJSON{ShortID: a.ShortID, PID: a.PID, Status: a.Status, State: a.State}
+					// A background session's process is not always visible
+					// to the ps-based probe; its registry pid being alive
+					// also makes the session live.
+					if a.PID > 0 && processAlive(a.PID) {
+						doc.Live = true
+					}
 				}
 			}
 		}
