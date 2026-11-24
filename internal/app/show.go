@@ -312,6 +312,12 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 		slast = t.SessionLastResumed.String
 	}
 	fmt.Printf("session_last_resumed:  %s\n", slast)
+	if t.Model.Valid && t.Model.String != "" {
+		fmt.Printf("model:                 %s\n", t.Model.String)
+	}
+	if t.Effort.Valid && t.Effort.String != "" {
+		fmt.Printf("effort:                %s\n", t.Effort.String)
+	}
 
 	// Live background-agent status (claude --bg): a per-render
 	// `claude agents --json` lookup. Only prints when the bound session

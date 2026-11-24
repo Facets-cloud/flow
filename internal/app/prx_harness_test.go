@@ -143,7 +143,7 @@ func TestDonePrxAutoRunOwnTaskDefersSweep(t *testing.T) {
 	seedHarnessTask(t, "px", "prx")
 	old := prx.SkipPermissionsRunner
 	calls := 0
-	prx.SkipPermissionsRunner = func(string) error { calls++; return nil }
+	prx.SkipPermissionsRunner = func(string, harness.LaunchOpts) error { calls++; return nil }
 	t.Cleanup(func() { prx.SkipPermissionsRunner = old })
 	t.Setenv(autoRunEnvVar, "px")
 

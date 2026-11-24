@@ -32,7 +32,7 @@ func TestAutoRunArgvBypassesHookTrust(t *testing.T) {
 }
 
 func TestSkipPermissionsRunArgvBypassesHookTrust(t *testing.T) {
-	got := skipPermissionsArgv("sweep")
+	got := skipPermissionsArgv("sweep", harness.LaunchOpts{})
 	want := []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "sweep"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("skipPermissionsArgv=%q, want %q", got, want)
