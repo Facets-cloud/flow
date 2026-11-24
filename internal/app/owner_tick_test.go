@@ -151,7 +151,7 @@ func TestCmdOwnerTickSkipClearsTickPID(t *testing.T) {
 	}
 	ran := false
 	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error { ran = true; return nil }
+	ownerTickRunner = func(h harness.Harness, prompt string, _ harness.LaunchOpts) error { ran = true; return nil }
 	t.Cleanup(func() { ownerTickRunner = old })
 
 	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
@@ -360,7 +360,7 @@ func TestCmdOwnerTickPreservesSelfPacedNextWake(t *testing.T) {
 	selfPaced := time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
 
 	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error {
+	ownerTickRunner = func(h harness.Harness, prompt string, _ harness.LaunchOpts) error {
 		// Simulate the tick calling `flow owner next o1 --in 5m`.
 		if _, err := db.Exec(`UPDATE owners SET next_wake_at=? WHERE slug=?`, selfPaced, "o1"); err != nil {
 			t.Fatal(err)
@@ -397,7 +397,7 @@ func TestCmdOwnerTickDetachedSkipsNonActive(t *testing.T) {
 	}
 	ran := false
 	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error { ran = true; return nil }
+	ownerTickRunner = func(h harness.Harness, prompt string, _ harness.LaunchOpts) error { ran = true; return nil }
 	t.Cleanup(func() { ownerTickRunner = old })
 
 	cmdOwnerTick([]string{"o1"})
@@ -447,7 +447,7 @@ func TestCmdOwnerTickClearsTickPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error { return nil }
+	ownerTickRunner = func(h harness.Harness, prompt string, _ harness.LaunchOpts) error { return nil }
 	t.Cleanup(func() { ownerTickRunner = old })
 
 	if rc := cmdOwnerTick([]string{"o1"}); rc != 0 {
@@ -582,7 +582,7 @@ func TestCmdOwnerTickRecordsOkStatus(t *testing.T) {
 
 	var gotPrompt string
 	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error {
+	ownerTickRunner = func(h harness.Harness, prompt string, _ harness.LaunchOpts) error {
 		gotPrompt = prompt
 		return nil
 	}
@@ -615,7 +615,7 @@ func TestCmdOwnerTickRecordsErrorStatus(t *testing.T) {
 	}
 
 	old := ownerTickRunner
-	ownerTickRunner = func(h harness.Harness, prompt string) error {
+	ownerTickRunner = func(h harness.Harness, prompt string, _ harness.LaunchOpts) error {
 		return errTickBoom
 	}
 	t.Cleanup(func() { ownerTickRunner = old })

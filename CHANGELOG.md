@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex spawns took minutes.** `flow do` minted a Codex session (a real
+  `codex exec` probe) while holding its flow.db write transaction, so the
+  user's Codex hooks, which call flow, each waited out the 30 s busy
+  timeout: about 220 s per spawn. The id is now minted before the
+  transaction, and the probe runs with `--disable hooks`. A Codex spawn
+  takes about 7 s.
+
+## [0.1.0-alpha.40] — 2026-11-23
+
 ### Added
 
 - **prx (praxis-harness) is a third harness.** `flow do --harness prx`,
@@ -18,6 +29,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   turn end) and pops it in the foreground. `FLOW_TERM=bg` runs a
   task in a detached prx host and needs prx v0.6.56 or later; resuming
   it keeps the session id.
+
+### Changed
+
+- **Just tell flow the goal.** Stating work starts a driver task in one
+  interaction: the goal (if unstated) and which project it belongs in
+  (best matches + "New project"; never none, never picked silently). The
+  task interview and the "driver or not?" question are gone.
+- **Every interactive task is a driver.** The driver rules now live in the
+  skill's `references/driver.md`; SessionStart and `flow do --here` print
+  one line pointing at it for any bound, human-driven session (no tag
+  needed; auto and playbook runs get nothing), and new briefs carry a
+  `Role: driver` line. While a brief's Done when is still the placeholder
+  (or on a task's first bind), flow prints an `INTAKE TURN` line so the
+  first turn ends at the proposal instead of building.
 
 ### Fixed
 

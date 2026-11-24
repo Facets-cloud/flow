@@ -121,6 +121,12 @@ func ownerShow(args []string) int {
 		fmt.Printf("project:      %s\n", o.ProjectSlug.String)
 	}
 	fmt.Printf("work_dir:     %s\n", o.WorkDir)
+	if o.Model.Valid && o.Model.String != "" {
+		fmt.Printf("model:        %s\n", o.Model.String)
+	}
+	if o.Effort.Valid && o.Effort.String != "" {
+		fmt.Printf("effort:       %s\n", o.Effort.String)
+	}
 	if o.TickPID.Valid {
 		since := ""
 		if o.TickStarted.Valid && o.TickStarted.String != "" {
@@ -349,12 +355,46 @@ func parseOwnerWhen(s string) (time.Time, error) {
 
 // ownerStart marks an owner active and schedules its first tick now, so
 // the next scheduler pass picks it up. Then it ticks every Every.
+//
+// --model/--effort change the model and effort level every later tick
+// runs on; a flag that isn't given keeps the stored value.
 func ownerStart(args []string) int {
-	o, db, rc := loadOwnerArg(args, "owner start")
+	fs := flagSet("owner start")
+	model, effort := ownerModelFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	// Accept flags after the slug too (`owner start <slug> --model m`):
+	// flag parsing stops at the first positional, so parse the rest again.
+	rest := fs.Args()
+	if len(rest) > 0 {
+		if err := fs.Parse(rest[1:]); err != nil {
+			return 2
+		}
+		rest = append([]string{rest[0]}, fs.Args()...)
+	}
+	o, db, rc := loadOwnerArg(rest, "owner start")
 	if rc != 0 {
 		return rc
 	}
 	defer db.Close()
+	if *model != "" || *effort != "" {
+		m, e := o.Model.String, o.Effort.String
+		if *model != "" {
+			m = *model
+		}
+		if *effort != "" {
+			e = *effort
+		}
+		if rc := checkOwnerModel(o.Harness.String, m, e); rc != 0 {
+			return rc
+		}
+		if err := flowdb.SetOwnerModel(db, o.Slug, *model, *effort); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Owner %q ticks on model %q, effort %q (empty = harness default)\n", o.Slug, m, e)
+	}
 	// Targeted write that also clears archived_at — so `start` un-retires a
 	// retired owner (else DueOwners' archived_at filter would leave it
 	// active-but-never-ticking and hidden from the list).
@@ -478,8 +518,12 @@ func addOwner(args []string) int {
 	project := fs.String("project", "", "parent project slug (optional)")
 	every := fs.String("every", "", "fallback/max tick interval (heartbeat floor), e.g. 1h, 24h; default 24h — ticks self-pace via `flow owner next`")
 	mkdir := fs.Bool("mkdir", false, "create --work-dir if it does not exist")
+	model, effort := ownerModelFlags(fs)
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
+	}
+	if rc := checkOwnerModel("", *model, *effort); rc != 0 {
+		return rc
 	}
 
 	if *workDir == "" {
@@ -560,6 +604,8 @@ func addOwner(args []string) int {
 		WorkDir:     abs,
 		ProjectSlug: projectSlug,
 		Every:       everyVal,
+		Model:       sql.NullString{String: *model, Valid: *model != ""},
+		Effort:      sql.NullString{String: *effort, Valid: *effort != ""},
 	}
 	if err := flowdb.CreateOwner(db, o); err != nil {
 		fmt.Fprintf(os.Stderr, "error: create owner: %v\n", err)

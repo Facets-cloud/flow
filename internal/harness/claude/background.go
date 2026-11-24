@@ -285,6 +285,7 @@ func (c *claude) SpawnBackground(workDir, name, prompt string, opts harness.Laun
 	if opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
+	args = append(args, modelArgv(opts)...)
 	return c.launchAndCapture(workDir, args, "spawn")
 }
 
@@ -316,6 +317,11 @@ func (c *claude) ResumeBackground(workDir, name, sessionID, prompt string, opts 
 	}
 	if opts.SkipPermissions && !opts.ResumeRegistered {
 		args = append(args, "--dangerously-skip-permissions")
+	}
+	// A registered session keeps its id only without launch flags, so
+	// --model/--effort apply to it no more than --name does.
+	if !opts.ResumeRegistered {
+		args = append(args, modelArgv(opts)...)
 	}
 	return c.launchAndCapture(workDir, args, "resume")
 }

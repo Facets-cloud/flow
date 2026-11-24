@@ -109,6 +109,7 @@ func cmdDo(args []string) int {
 	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
+	model, effort := modelFlags(fs)
 	// Two-pass parse so the slug positional may appear before OR after
 	// the flags: first absorb any leading flags, then take the next
 	// non-flag as the slug, then absorb any trailing flags.
@@ -139,6 +140,9 @@ func cmdDo(args []string) int {
 
 	if *auto && *here {
 		fmt.Fprintln(os.Stderr, "error: --auto cannot be used with --here (--auto launches its own detached session; --here binds the current one)")
+		return 2
+	}
+	if *here && rejectModelWithHere(*model, *effort) {
 		return 2
 	}
 	// --auto + --with IS allowed: the instruction is forwarded to the
@@ -195,6 +199,13 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	// --model/--effort: refuse what h can't honour now, before any guard.
+	// The flag values are stored only once a launch proceeds (inside the
+	// allocation tx below, or in cmdDoBackground), so resumes and wakes
+	// keep the same model but a refused command changes nothing.
+	if rc := checkModelFlags(task, h, *model, *effort); rc != 0 {
+		return rc
+	}
 	// A task can be bound to the thread that is running this very flow
 	// command (for example after `flow do --here`). Starting `codex resume`
 	// for that thread opens a second writer and Codex rejects it during TUI
@@ -219,7 +230,10 @@ func cmdDo(args []string) int {
 			fmt.Fprintln(os.Stderr, "error: $FLOW_TERM=bg cannot be combined with --auto (both spawn their own session; pick one)")
 			return 2
 		}
-		return cmdDoBackground(db, task, h, *fresh, *dangerSkip, injectionText)
+		return cmdDoBackground(db, task, h, bgLaunch{
+			fresh: *fresh, skipPerms: *dangerSkip, inject: injectionText,
+			model: *model, effort: *effort,
+		})
 	}
 
 	// The focus-an-existing-tab behavior only makes sense for the
@@ -264,6 +278,30 @@ func cmdDo(args []string) int {
 		}
 	}
 
+	// Mint a new session id BEFORE the write transaction. A probing harness
+	// (codex) runs a real `codex exec` to mint it; holding flow.db's write
+	// lock across that made every hook that calls flow wait out
+	// busy_timeout (minutes per spawn, #75). The tx below re-checks whether
+	// a bootstrap is still needed and only then uses this id (a concurrent
+	// bind just leaves an unused thread behind).
+	preMinted := ""
+	if (!task.SessionID.Valid || task.SessionID.String == "" || *fresh) &&
+		(task.Status != "done" || injectionText != "") {
+		mintOpts := harness.LaunchOpts{Model: task.Model.String, Effort: task.Effort.String}
+		if *model != "" {
+			mintOpts.Model = *model
+		}
+		if *effort != "" {
+			mintOpts.Effort = *effort
+		}
+		id, err := h.NewSessionID(task.WorkDir, mintOpts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
+			return 1
+		}
+		preMinted = id
+	}
+
 	// Step 2: atomic status flip inside a transaction. Captures preSessionID
 	// and other fields for later steps. Per spec §6 this commit is the
 	// durability boundary — even if bootstrap or iTerm spawn fails below,
@@ -302,15 +340,35 @@ func cmdDo(args []string) int {
 	// was passed. In both cases we allocate a new UUID here and claim it
 	// in the DB via the status-flip UPDATE below — so the jsonl file claude
 	// writes is identified deterministically by us, not scraped afterwards.
+	// The launch proceeds from here, so store the --model/--effort flags
+	// now, then read model/effort back in this tx: the probe below and the
+	// launch (from the re-select) both use this one snapshot.
+	if err := storeModelFlags(tx, task, *model, *effort); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
 	var curSessionID sql.NullString
-	if err := tx.QueryRow(`SELECT session_id FROM tasks WHERE slug=?`, task.Slug).Scan(&curSessionID); err != nil {
+	if err := tx.QueryRow(`SELECT session_id, model, effort FROM tasks WHERE slug=?`, task.Slug).
+		Scan(&curSessionID, &task.Model, &task.Effort); err != nil {
 		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
 	}
+	// Another command may have stored model/effort after checkModelFlags.
+	if err := harness.CheckModelOpts(h, task.Model.String, task.Effort.String); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
-	if needsBootstrap {
-		id, err := h.NewSessionID(task.WorkDir)
+	if needsBootstrap && preMinted != "" {
+		sessionID = preMinted
+	} else if needsBootstrap {
+		// Rare: a concurrent command cleared the session after the
+		// pre-mint check. Mint here (the codex probe runs on the task's
+		// model too).
+		var mintOpts harness.LaunchOpts
+		applyTaskModel(task, &mintOpts)
+		id, err := h.NewSessionID(task.WorkDir, mintOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
 			return 1
@@ -462,6 +520,7 @@ func cmdDo(args []string) int {
 		SkipPermissions: *dangerSkip,
 		Inject:          injectionText,
 	}
+	applyTaskModel(task, &launchOpts)
 	applyWorkspaceTrust(h, cwd, &launchOpts)
 	// bootstrapCmd builds the first-start command. For pre-allocating
 	// harnesses (claude), PrepareSpawn already minted the sessionID and
@@ -750,6 +809,14 @@ func bgStateLabel(a *harness.BackgroundAgent) string {
 	}
 }
 
+// bgLaunch is cmdDo's per-invocation input to cmdDoBackground. model and
+// effort are the raw flag values, stored once a spawn or resume proceeds.
+type bgLaunch struct {
+	fresh, skipPerms bool
+	inject           string
+	model, effort    string
+}
+
 // cmdDoBackground is the $FLOW_TERM=bg branch of `flow do`. It spawns (or
 // resumes) a terminal-free background agent via the harness's
 // BackgroundLauncher and captures the harness-minted session id. Unlike
@@ -767,7 +834,8 @@ func bgStateLabel(a *harness.BackgroundAgent) string {
 //   - session not running (exited or removed) → resume under the SAME id
 //     (no launch flags for a registered session; a copy is the last
 //     resort and gets lineage + its original stopped)
-func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, skipPerms bool, inject string) int {
+func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaunch) int {
+	fresh, skipPerms, inject := in.fresh, in.skipPerms, in.inject
 	bg, err := backgroundLauncherFor(h)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -796,6 +864,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 	}
 	title := buildTabTitle(project, task)
 	opts := harness.LaunchOpts{SkipPermissions: skipPerms, Inject: inject}
+	applyTaskModel(task, &opts)
 	// claude --bg has no TTY for the trust dialog: an untrusted flow
 	// workspace dies with "Workspace not trusted". Pre-trust it.
 	applyWorkspaceTrust(h, task.WorkDir, &opts)
@@ -972,6 +1041,16 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 				"note: --dangerously-skip-permissions not applied: %s's session is resumed with its saved permission mode (a registered background session takes no launch flags; `flow do --fresh %s` starts over with the flag)\n",
 				task.Slug, task.Slug)
 		}
+		if resumeOpts.ResumeRegistered && (in.model != "" || in.effort != "") {
+			fmt.Fprintf(os.Stderr,
+				"note: --model/--effort not applied now: %s's session is resumed with its saved settings (a registered background session takes no launch flags); they are stored for the next fresh launch\n",
+				task.Slug)
+		}
+		if err := storeModelFlags(db, task, in.model, in.effort); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		applyTaskModel(task, &resumeOpts)
 		agent, err := bg.ResumeBackground(resumeCwd, title, resumeFrom, kickoff, resumeOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -1021,6 +1100,11 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, fresh, sk
 		prompt += "\n" + bgUnreadMailLine(unread)
 	}
 
+	if err := storeModelFlags(db, task, in.model, in.effort); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	applyTaskModel(task, &opts)
 	agent, err := bg.SpawnBackground(task.WorkDir, title, prompt, opts)
 	if err != nil {
 		// Nothing was written to the DB yet — clean failure, next attempt retries.
@@ -1440,6 +1524,15 @@ func cmdDoHere(query string, force bool) int {
 		}
 	}
 
+	// A never-bound task has no transcript keyed on its work_dir yet:
+	// adopt this session's start dir instead of refusing the bind.
+	adopted := ""
+	if !task.SessionID.Valid || task.SessionID.String == "" {
+		if start := sessionStartDir(h, sid); start != "" && start != task.WorkDir {
+			task.WorkDir, adopted = start, start
+		}
+	}
+
 	// Invariant validation. Any task with session_id has work_dir
 	// == the cwd that session was created at — because the
 	// harness's on-disk transcript path is keyed by (cwd, sid),
@@ -1476,9 +1569,10 @@ func cmdDoHere(query string, force bool) int {
 			status          = 'in-progress',
 			status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			harness         = ?,
+			work_dir        = ?,
 			updated_at      = ?
 		WHERE slug = ?`,
-		sid, now, now, string(h.Name()), now, task.Slug,
+		sid, now, now, string(h.Name()), task.WorkDir, now, task.Slug,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: bind session: %v\n", err)
@@ -1489,9 +1583,15 @@ func cmdDoHere(query string, force bool) int {
 		return 1
 	}
 	fmt.Printf("Bound %s to this session (%s)\n", task.Slug, sid)
+	if adopted != "" {
+		fmt.Printf("work_dir → %s (this session's folder)\n", adopted)
+	}
 	// A session bound mid-flight missed SessionStart, so hand it the
-	// role block now (driver or light delegation).
-	if blk := roleBlockFor(db, task); blk != "" {
+	// driver block now. task was loaded before the bind: no
+	// session_started = first bind = intake turn.
+	first := !task.SessionStarted.Valid
+	task.Harness = sql.NullString{String: string(h.Name()), Valid: true} // post-bind harness (--force may switch it)
+	if blk := roleBlockFor(task, first); blk != "" {
 		fmt.Println(strings.TrimSpace(blk))
 	}
 	return 0

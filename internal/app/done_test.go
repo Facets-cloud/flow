@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"flow/internal/harness/claude"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func stubClaudeRunner(t *testing.T, retErr error) *[]capturedClaudeCall {
 	t.Helper()
 	old := claude.SkipPermissionsRunner
 	calls := &[]capturedClaudeCall{}
-	claude.SkipPermissionsRunner = func(prompt string) error {
+	claude.SkipPermissionsRunner = func(prompt string, _ harness.LaunchOpts) error {
 		*calls = append(*calls, capturedClaudeCall{prompt: prompt})
 		return retErr
 	}

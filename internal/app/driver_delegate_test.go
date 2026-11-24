@@ -10,9 +10,10 @@ import (
 	"flow/internal/flowdb"
 )
 
-// delegationMarker is the heading the SessionStart hook prints in a bound
-// driver session. Tests key on it so wording around it can evolve.
-const delegationMarker = "flow driver delegation"
+// delegationMarker is the one-line driver pointer the SessionStart hook
+// prints in every bound, human-driven session (the light delegation block
+// is no longer injected; the rules live in references/driver.md).
+const delegationMarker = "You are the DRIVER for this task: follow references/driver.md"
 
 func sessionStartOutput(t *testing.T) string {
 	t.Helper()
@@ -35,10 +36,9 @@ func TestSessionStartBoundDriverGetsDelegationBlock(t *testing.T) {
 	if !strings.Contains(out, delegationMarker) {
 		t.Fatalf("bound driver session should get the delegation block, got:\n%s", out)
 	}
-	for _, want := range []string{"flow auto", "spawning auto child:", "inline", "prod"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("delegation block missing %q", want)
-		}
+	// The marker and the full parenthesized driver.md path share one line.
+	if line := busHookContextLine(busHookContext(t, out), delegationMarker); !strings.Contains(line, "driver.md).") {
+		t.Errorf("the driver pointer and its path must be one line, got %q", line)
 	}
 }
 

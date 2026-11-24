@@ -16,53 +16,27 @@ user -> flow do <task>              (interactive, unchanged)
         `- live/prod change: child plans + gates, driver applies with the user
 ```
 
-The SessionStart hook prints a `flow driver delegation` block in bound,
-human-driven sessions only. Unbound sessions and auto children never get
-it.
+The SessionStart hook points every bound, human-driven session at
+references/driver.md (the driver rules). Unbound sessions, auto children
+and playbook runs never get it.
 
-## Driver tasks (tag `driver`)
+## Driver tasks
 
-A **driver task** is the explicit, stronger form of the above. It owns its
-outcome end to end and is the single place the user talks to; ANY
-self-contained unit of work goes to a `flow auto` child, not just scans
-or "grunt work" (implementation, research, debugging, fix + PR + test
-all qualify). Never use the harness's built-in Agent/subagent tool for
-it: a flow child has its own task, brief, transcript and close-out sweep.
+Every interactive task is a driver (the `driver` tag is optional and
+changes nothing). It owns its outcome end to end and is the single place
+the user talks to; ANY self-contained unit of work goes to a `flow auto`
+child (implementation, research, debugging, fix + PR + test all qualify).
+Never use the harness's built-in Agent/subagent tool for it: a flow child
+has its own task, brief, transcript and close-out sweep.
 
 ```
- user ◀──▶ DRIVER (tag driver)            regular bound task
-           ├─ talk, design, decisions      ├─ same, plus light delegation
-           ├─ verify every child result    │  (scans, audits, fix+PR)
-           ├─ live/prod applies            └─ no "own it end to end" prompt
+ user ◀──▶ DRIVER (every interactive task)
+           ├─ talk, design, decisions
+           ├─ verify every child result
+           ├─ live/prod applies
            └─ everything else → flow auto children
                   child dead → driver inbox gets a crash notice
 ```
-
-Flow marks it everywhere: `flow list` shows `◆driver` (json
-`"driver": true`), `flow show task` prints `role: driver`, the per-prompt
-anchor says `[driver]`, and SessionStart / `flow do --here` print the
-`flow DRIVER task` block. Auto children never get it, even if tagged.
-
-### Intake question (§4.2 step 5)
-
-After Priority, AskUserQuestion (header "Driver?"):
-
-> "How should this task run?"
-> - **Driver (owns it end to end)**: "I keep design and decisions with
->   you and hand self-contained work to background flow auto tasks."
-> - **Regular (just this session)**
-
-Mark **Driver (Recommended)** when the brief has several workstreams or
-the user describes a big goal; else Regular first. On Driver, add
-`--tag driver` to `flow add task`. Skip if the user already said.
-
-### Mid-session switch
-
-"make this a driver", "drive this", "you own this end to end" → run
-`flow update task <bound-slug> --tag driver`. Its output prints the
-driver block: follow it from that turn on. To step back, `--remove-tag
-driver` (output says it is no longer a driver). Tell the user in one
-line; no confirmation needed when they asked.
 
 ### Driver habits
 
@@ -172,6 +146,34 @@ under a new slug (e.g. `<slug>-codex`): the old task is pinned to its
 harness. No DB edits, no re-pinning. The same applies to the driver
 itself: if its own harness hits its limit, the user can open
 the work in the other harness (references/harness-transfer.md).
+
+## Choosing the child's model
+
+`flow auto` takes `--model <m>` and `--effort <e>` and passes them to the
+child's harness as given (claude `--model`/`--effort`, codex `-m` and
+`model_reasoning_effort`, prx `-model`/`-thinking`). The task keeps them,
+so a resumed or woken child stays on the same model. Leave both off and
+the child gets the harness default.
+
+Routine or CLI-heavy children (run these commands, check this output,
+apply this known fix) can run on a cheaper model. A cheaper model can't
+look things up as well, so prepare the brief first and put in it
+everything the child would otherwise have to discover:
+
+- real ids: project, environment, resource names, paths
+- the exact `--help` text of each subcommand it will run, not just the
+  top-level help
+- 2-3 example commands in the right shape
+- the steps, in order
+
+Keep the brief small. Pasting a whole skill doesn't help. In the
+2026-11-15 raptor benchmark a 4B model scored 14/24 with only top-level
+help, 20/24 with the exact subcommand help, and 19/24 when handed the
+whole skill.
+
+For a tiny job (a skill wording change, a one-line fix) the prep pass
+costs more than it saves. Skip it and give the child the normal brief,
+or ask the user which model they want.
 
 ## Child brief template
 
