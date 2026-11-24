@@ -158,3 +158,31 @@ func TestNotifyParentOfStalledChild(t *testing.T) {
 }
 
 func nullStr(v string) sql.NullString { return sql.NullString{String: v, Valid: true} }
+
+// An override too large for a Duration is clamped, never wrapped negative:
+// a negative threshold would report every run as stalled on its first sample.
+func TestAutoStallThresholdClampsHugeOverride(t *testing.T) {
+	t.Setenv(autoStallEnvVar, "99999999999999")
+	if got := autoStallThreshold(); got <= 0 {
+		t.Fatalf("threshold = %v, want positive", got)
+	}
+	t.Setenv(autoStallEnvVar, "0")
+	if got := autoStallThreshold(); got != autoStallDefault {
+		t.Fatalf("zero override = %v, want default %v", got, autoStallDefault)
+	}
+}
+
+// The watchdog counts silence from the last recorded activity, so an
+// already-silent run is reported on the first check, matching `flow list`.
+func TestStallWatchdogSeedsFromRecordedActivity(t *testing.T) {
+	var fired atomic.Int32
+	old := time.Now().Add(-time.Hour)
+	stop := startStallWatchdog(time.Minute, time.Millisecond,
+		func() time.Time { return old },
+		func(time.Duration) { fired.Add(1) })
+	time.Sleep(30 * time.Millisecond)
+	stop()
+	if fired.Load() != 1 {
+		t.Fatalf("fired = %d, want 1 on the first check", fired.Load())
+	}
+}

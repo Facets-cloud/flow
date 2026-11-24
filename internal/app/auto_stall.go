@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -30,11 +31,17 @@ const autoStallEnvVar = "FLOW_AUTO_STALL_MINUTES"
 // autoStallInterval is how often the supervisor samples the run's activity.
 var autoStallInterval = 30 * time.Second
 
+// maxStallMinutes is the largest whole-minute count that still fits a Duration.
+// A larger override is clamped to it, so it cannot wrap negative.
+const maxStallMinutes = int64(math.MaxInt64 / int64(time.Minute))
+
 func autoStallThreshold() time.Duration {
-	if n, err := strconv.Atoi(os.Getenv(autoStallEnvVar)); err == nil && n > 0 {
-		return time.Duration(n) * time.Minute
+	n, err := strconv.ParseInt(os.Getenv(autoStallEnvVar), 10, 64)
+	if err != nil || n <= 0 {
+		return autoStallDefault
 	}
-	return autoStallDefault
+	n = min(n, maxStallMinutes)
+	return time.Duration(n) * time.Minute
 }
 
 // stallWatch decides when a run has stalled. A run is stalled once it has been
@@ -64,12 +71,19 @@ func (w *stallWatch) observe(activity, now time.Time) bool {
 // is called. onStall runs at most once per stall episode, with the silence so
 // far. stop returns only after the sampler has exited, so no notice can
 // follow it. The supervisor calls stop before it finalizes the run.
+// Silence counts from the newest activity already on record (the same reading
+// `flow list` uses), so a run that was silent before the sampler started is
+// reported on the first stall check, not a full threshold later.
 func startStallWatchdog(threshold, interval time.Duration, activity func() time.Time, onStall func(idle time.Duration)) (stop func()) {
 	quit := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		w := stallWatch{threshold: threshold, seen: time.Now()}
+		seen := activity()
+		if seen.IsZero() {
+			seen = time.Now()
+		}
+		w := stallWatch{threshold: threshold, seen: seen}
 		tick := time.NewTicker(interval)
 		defer tick.Stop()
 		for {

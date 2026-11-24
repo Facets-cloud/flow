@@ -385,7 +385,9 @@ func cmdAutoExec(args []string) int {
 			return autoRunLastActivity(fresh)
 		},
 		func(idle time.Duration) {
-			if fresh, err := flowdb.GetTask(db, slug); err == nil {
+			// A run whose session already called `flow done` is finishing, not
+			// stalled: no notice for it.
+			if fresh, err := flowdb.GetTask(db, slug); err == nil && fresh.Status != "done" {
 				notifyParentOfStalledChild(db, fresh, idle)
 			}
 		})

@@ -34,7 +34,11 @@ func resolveTranscriptPath(root, sessionID string) (string, error) {
 	var matches []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			// One unreadable entry must not hide every other rollout: skip it.
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if !d.IsDir() && strings.HasSuffix(path, "-"+sessionID+".jsonl") {
 			matches = append(matches, path)
