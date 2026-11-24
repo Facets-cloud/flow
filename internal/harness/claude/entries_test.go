@@ -63,3 +63,19 @@ func TestDecodeJSONLToolResultNameAndError(t *testing.T) {
 }
 
 var _ harness.TranscriptDecoder = (*claude)(nil)
+
+// CodeRabbit #200 (3rd review): like the text view, each text block of a
+// multi-block tool result is truncated on its own, so JSON never drops a
+// later block the text view shows.
+func TestDecodeJSONLMultiBlockResultTruncatedPerBlock(t *testing.T) {
+	a, b := strings.Repeat("a", 400), strings.Repeat("b", 400)
+	in := `{"type":"user","timestamp":"t","message":{"role":"user","content":[{"tool_use_id":"x","type":"tool_result","content":[{"type":"text","text":"` + a + `"},{"type":"text","text":"` + b + `"}]}]}}
+`
+	got, err := DecodeJSONL(strings.NewReader(in), false)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("entries = %+v err = %v", got, err)
+	}
+	if got[0].Text != a+"\n"+b {
+		t.Errorf("text has len %d, want both 400-byte blocks", len(got[0].Text))
+	}
+}

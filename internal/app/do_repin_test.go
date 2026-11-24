@@ -372,3 +372,37 @@ func TestCmdDoBackgroundRefusesPinChangedConcurrently(t *testing.T) {
 		t.Errorf("row = %q/%q", task.Harness.String, task.SessionID.String)
 	}
 }
+
+// CodeRabbit #200 (3rd review): an explicit --harness without --fresh only
+// picks the FIRST session. If another command binds a session under a
+// different pin while the background spawn is starting, the binding is
+// refused (not silently re-pinned) and the new agent stopped.
+func TestCmdDoBackgroundExplicitHarnessNeedsFreshToRepin(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bg-first")
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+	const otherPrx = "019f8f30-194b-7c83-8564-bff77c5e0147"
+	old := doBeforeTxHook
+	doBeforeTxHook = func(slug string) {
+		d := openFlowDB(t)
+		d.Exec(`UPDATE tasks SET status='in-progress', harness='prx', session_id=? WHERE slug=?`, otherPrx, slug)
+	}
+	t.Cleanup(func() { doBeforeTxHook = old })
+	if rc := cmdDo([]string{"bg-first", "--harness", "claude"}); rc == 0 {
+		t.Fatal("want refusal")
+	}
+	if c.stop != 1 {
+		t.Errorf("stops = %d, want the new agent stopped", c.stop)
+	}
+	db := openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "bg-first")
+	if task.Harness.String != "prx" || task.SessionID.String != otherPrx {
+		t.Errorf("row = %q/%q", task.Harness.String, task.SessionID.String)
+	}
+	if prev, _ := flowdb.PriorSessions(db, "bg-first"); len(prev) != 0 {
+		t.Errorf("history written on refusal: %+v", prev)
+	}
+}

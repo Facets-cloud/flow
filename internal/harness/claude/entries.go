@@ -75,7 +75,7 @@ func DecodeJSONL(r io.Reader, compact bool) ([]harness.TranscriptEntry, error) {
 				}
 				e.Role, e.Kind, e.IsError = harness.RoleTool, harness.KindToolResult, b.IsError
 				e.Tool = toolNames[b.ToolUseID]
-				e.Text = truncate(toolResultText(b.Content), maxToolResultLen)
+				e.Text = toolResultText(b.Content)
 			case rec.Type == "assistant" && b.Type == "text" && b.Text != "":
 				e.Role, e.Kind, e.Text = harness.RoleAssistant, harness.KindText, b.Text
 			case rec.Type == "assistant" && b.Type == "thinking" && b.Thinking != "":
@@ -101,12 +101,13 @@ func DecodeJSONL(r io.Reader, compact bool) ([]harness.TranscriptEntry, error) {
 	return out, nil
 }
 
-// toolResultText flattens a tool_result's content (a string, or an array
-// of content blocks whose text parts are joined by newlines).
+// toolResultText flattens a tool_result's content: a string, or an array
+// of content blocks whose text parts are joined by newlines. Like the text
+// view, each part is truncated to maxToolResultLen on its own.
 func toolResultText(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s
+		return truncate(s, maxToolResultLen)
 	}
 	var inner []contentBlock
 	if json.Unmarshal(raw, &inner) != nil {
@@ -118,7 +119,7 @@ func toolResultText(raw json.RawMessage) string {
 			if text != "" {
 				text += "\n"
 			}
-			text += ib.Text
+			text += truncate(ib.Text, maxToolResultLen)
 		}
 	}
 	return text

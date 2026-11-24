@@ -1213,7 +1213,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 	// pair either loses the displaced session or leaves the new agent
 	// unbound. On any failure the old binding stays and the agent that was
 	// just started is stopped, since nothing would ever reach it.
-	if err := recordBgSpawn(db, task, h, agent.SessionID, in.explicitHarness); err != nil {
+	if err := recordBgSpawn(db, task, h, agent.SessionID, in.explicitHarness, fresh); err != nil {
 		fmt.Fprintf(os.Stderr, "error: record background session: %v\n", err)
 		if stopper, ok := bg.(harness.BackgroundStopper); ok {
 			if serr := stopper.StopBackground(agent.ShortID); serr != nil {
@@ -1239,10 +1239,11 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 // tx (the caller's snapshot predates the spawn, and another command may
 // have bound or re-pinned the task meanwhile): the session the tx actually
 // replaces goes to the task's history, then the binding is written. A pin
-// that differs from h is overwritten only for an explicit --harness (a
-// re-pin); otherwise the binding is refused, so a session never lands
-// under another harness's pin.
-func recordBgSpawn(db *sql.DB, task *flowdb.Task, h harness.Harness, sessionID string, explicitHarness bool) error {
+// that differs from h is overwritten only for an explicit --harness, and
+// on a row that already has a session only with --fresh (a re-pin);
+// otherwise the binding is refused, so a session never lands under
+// another harness's pin.
+func recordBgSpawn(db *sql.DB, task *flowdb.Task, h harness.Harness, sessionID string, explicitHarness, fresh bool) error {
 	doBeforeTxHook(task.Slug)
 	tx, err := db.Begin()
 	if err != nil {
@@ -1259,8 +1260,11 @@ func recordBgSpawn(db *sql.DB, task *flowdb.Task, h harness.Harness, sessionID s
 		rowPin = string(harness.NameClaude) // NULL pin on a bootstrapped row
 	}
 	repin := false
+	started := curSID.Valid && curSID.String != ""
 	if rowPin != "" && rowPin != string(h.Name()) {
-		if !explicitHarness {
+		// An explicit --harness re-pins a started task only with --fresh;
+		// without it, --harness just picks an unstarted task's first session.
+		if !explicitHarness || (started && !fresh) {
 			return fmt.Errorf("task %q's harness changed to %s while the background session was starting; re-run (pass --harness <h> --fresh to re-pin)", task.Slug, rowPin)
 		}
 		repin = true
