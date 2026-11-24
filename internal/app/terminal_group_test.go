@@ -201,24 +201,27 @@ func TestCmdDoWithoutTerminalGroupUsesCurrentSession(t *testing.T) {
 	}
 }
 
-// TestCmdDoTabTitleDefaultKeepsProject — by default (Rex included) the
-// tab is "<project>/<task>"; FLOW_TAB_TITLE=task opts into the bare slug;
-// project/task names the default; an unknown value falls back to it.
-func TestCmdDoTabTitleDefaultKeepsProject(t *testing.T) {
+// TestCmdDoTabTitleFormat — `flow do` titles the tab per FLOW_TAB_TITLE:
+// project/task by default (Rex included), the bare slug with "task" (any
+// case, surrounding space ignored), and project/task for unknown values.
+// Each case uses its own task so every run takes the fresh-spawn path.
+func TestCmdDoTabTitleFormat(t *testing.T) {
 	setupFlowRoot(t)
 	seedProject(t, "tekion-modules")
-	if rc := cmdAdd([]string{"task", "tk-task", "--project", "tekion-modules"}); rc != 0 {
-		t.Fatalf("add task rc=%d", rc)
-	}
-	for _, tc := range []struct{ env, want string }{
-		{"", "tekion-modules/tk-task"},
-		{"project/task", "tekion-modules/tk-task"},
-		{"task", "tk-task"},
-		{"bogus", "tekion-modules/tk-task"},
+	for i, tc := range []struct{ env, want string }{
+		{"", "tekion-modules/tk-%d"},
+		{"project/task", "tekion-modules/tk-%d"},
+		{"task", "tk-%d"},
+		{" Task ", "tk-%d"},
+		{"bogus", "tekion-modules/tk-%d"},
 	} {
+		slug := fmt.Sprintf("tk-%d", i)
+		if rc := cmdAdd([]string{"task", slug, "--project", "tekion-modules"}); rc != 0 {
+			t.Fatalf("add task rc=%d", rc)
+		}
 		t.Setenv("FLOW_TAB_TITLE", tc.env)
 		calls := stubRex(t)
-		if rc := cmdDo([]string{"tk-task"}); rc != 0 {
+		if rc := cmdDo([]string{slug}); rc != 0 {
 			t.Fatalf("do rc=%d", rc)
 		}
 		got := "<no window new>"
@@ -228,30 +231,39 @@ func TestCmdDoTabTitleDefaultKeepsProject(t *testing.T) {
 				break
 			}
 		}
-		if got != tc.want {
-			t.Errorf("FLOW_TAB_TITLE=%q: tab title = %q; want %q", tc.env, got, tc.want)
+		if want := fmt.Sprintf(tc.want, i); got != want {
+			t.Errorf("FLOW_TAB_TITLE=%q: tab title = %q; want %q", tc.env, got, want)
 		}
 	}
 }
 
-// TestBuildTabTitle — the project prefix stays unless FLOW_TAB_TITLE=task;
-// floating tasks are always the bare slug; long titles are truncated.
+// TestBuildTabTitle — formats, floating tasks, and truncation that
+// shortens the project part first so the task stays visible.
 func TestBuildTabTitle(t *testing.T) {
 	task := &flowdb.Task{Slug: "tk-task"}
 	proj := &flowdb.Project{Slug: "tekion-modules"}
-	t.Setenv("FLOW_TAB_TITLE", "")
-	if got := buildTabTitle(proj, task); got != "tekion-modules/tk-task" {
-		t.Errorf("with project = %q", got)
-	}
-	if got := buildTabTitle(nil, task); got != "tk-task" {
-		t.Errorf("floating = %q", got)
-	}
-	t.Setenv("FLOW_TAB_TITLE", "task")
-	if got := buildTabTitle(proj, task); got != "tk-task" {
-		t.Errorf("FLOW_TAB_TITLE=task = %q", got)
-	}
-	long := &flowdb.Task{Slug: "tenant-level-aws-resources-blueprint-import"}
-	if got := buildTabTitle(proj, long); got != "tenant-level-aws-resources-bl…" {
-		t.Errorf("truncated = %q", got)
+	longProj := &flowdb.Project{Slug: "tenant-level-aws-resources-xyz"}
+	longTask := &flowdb.Task{Slug: "tenant-level-aws-resources-blueprint-import"}
+	for _, tc := range []struct {
+		name   string
+		p      *flowdb.Project
+		t      *flowdb.Task
+		format tabTitleFormat
+		want   string
+	}{
+		{"project/task", proj, task, titleProjectTask, "tekion-modules/tk-task"},
+		{"task format", proj, task, titleTask, "tk-task"},
+		{"floating", nil, task, titleProjectTask, "tk-task"},
+		{"long project keeps task", longProj, &flowdb.Task{Slug: "fix-db"}, titleProjectTask, "tenant-level-aws-resou…/fix-db"},
+		{"long task drops project", proj, longTask, titleProjectTask, "tenant-level-aws-resources-bl…"},
+		{"long task, task format", proj, longTask, titleTask, "tenant-level-aws-resources-bl…"},
+	} {
+		got := buildTabTitle(tc.p, tc.t, tc.format)
+		if got != tc.want {
+			t.Errorf("%s: got %q; want %q", tc.name, got, tc.want)
+		}
+		if n := len([]rune(got)); n > tabTitleMaxLen {
+			t.Errorf("%s: %d runes > %d", tc.name, n, tabTitleMaxLen)
+		}
 	}
 }

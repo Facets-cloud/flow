@@ -545,7 +545,7 @@ func cmdDo(args []string) int {
 		group = project.TerminalGroup.String
 	}
 	handedOff := false
-	if err := spawner.SpawnTabIn(group, buildTabTitle(project, task), cwd, command, spawnEnv); err != nil {
+	if err := spawner.SpawnTabIn(group, buildTabTitle(project, task, tabTitleFormatFromEnv()), cwd, command, spawnEnv); err != nil {
 		if errors.Is(err, spawner.ErrNoTerminal) {
 			// No supported terminal on this host (Linux outside
 			// tmux/zellij/kitty). Not a failure: the binding above
@@ -834,7 +834,9 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 		}
 		project = p
 	}
-	title := buildTabTitle(project, task)
+	// Background agents keep the project prefix: the Agent View has no
+	// terminal groups to tell same-slug tasks in different projects apart.
+	title := buildTabTitle(project, task, titleProjectTask)
 	opts := harness.LaunchOpts{SkipPermissions: skipPerms, Inject: inject}
 	applyTaskModel(task, &opts)
 	// claude --bg has no TTY for the trust dialog: an untrusted flow
@@ -1353,34 +1355,63 @@ func buildBootstrapPrompt(slug string) string {
 	return buildTaskBootstrapPrompt(slug)
 }
 
-// buildTabTitle returns a short tab title, shaped by FLOW_TAB_TITLE:
-//
-//	project/task (default)  "<project-slug>/<task-slug>"
-//	task                    "<task-slug>", for terminals that already
-//	                        group tabs by area (e.g. Rex sessions via
-//	                        terminal groups)
-//
-// Floating tasks are always "<task-slug>". An unknown value warns and
-// falls back to the default. Titles longer than 30 runes are truncated
-// with a trailing ellipsis.
-func buildTabTitle(project *flowdb.Project, task *flowdb.Task) string {
-	format := os.Getenv("FLOW_TAB_TITLE")
-	switch format {
-	case "", "project/task", "task":
+// tabTitleFormat picks how buildTabTitle names a task's tab.
+type tabTitleFormat string
+
+const (
+	// titleProjectTask is "<project-slug>/<task-slug>" (the default).
+	titleProjectTask tabTitleFormat = "project/task"
+	// titleTask is the bare "<task-slug>", for terminals that already
+	// group tabs by area (e.g. Rex sessions via terminal groups).
+	titleTask tabTitleFormat = "task"
+)
+
+// tabTitleFormatFromEnv reads FLOW_TAB_TITLE (case and surrounding space
+// ignored). Unset means project/task; an unknown value warns and falls
+// back to it. Call it once per command, on the tab-spawning path only.
+func tabTitleFormatFromEnv() tabTitleFormat {
+	raw := os.Getenv("FLOW_TAB_TITLE")
+	switch v := tabTitleFormat(strings.ToLower(strings.TrimSpace(raw))); v {
+	case "":
+		return titleProjectTask
+	case titleProjectTask, titleTask:
+		return v
 	default:
-		fmt.Fprintf(os.Stderr, "warning: FLOW_TAB_TITLE=%q is not task or project/task; using project/task\n", format)
-		format = "project/task"
+		fmt.Fprintf(os.Stderr, "warning: FLOW_TAB_TITLE=%q is not task or project/task; using project/task\n", raw)
+		return titleProjectTask
 	}
-	raw := task.Slug
-	if project != nil && format != "task" {
-		raw = project.Slug + "/" + task.Slug
+}
+
+// tabTitleMaxLen caps tab titles; longer ones end in an ellipsis.
+const tabTitleMaxLen = 30
+
+// buildTabTitle returns a short tab title. In project/task format a
+// project-scoped task is "<project-slug>/<task-slug>"; in task format, or
+// for a floating task, it is "<task-slug>". Titles longer than
+// tabTitleMaxLen runes are truncated with an ellipsis, shortening the
+// project part first so the task stays visible.
+func buildTabTitle(project *flowdb.Project, task *flowdb.Task, format tabTitleFormat) string {
+	slug := []rune(task.Slug)
+	if project == nil || format == titleTask {
+		return truncateRunes(slug, tabTitleMaxLen)
 	}
-	const maxLen = 30
-	runes := []rune(raw)
-	if len(runes) > maxLen {
-		return string(runes[:maxLen-1]) + "…"
+	proj := []rune(project.Slug)
+	if len(proj)+1+len(slug) <= tabTitleMaxLen {
+		return string(proj) + "/" + string(slug)
 	}
-	return raw
+	// Room left for the project after "/<task>"; keep at least one rune
+	// of it plus the ellipsis, else the task alone is the clearest title.
+	if budget := tabTitleMaxLen - 1 - len(slug); budget >= 2 && budget < len(proj) {
+		return string(proj[:budget-1]) + "…/" + string(slug)
+	}
+	return truncateRunes(slug, tabTitleMaxLen)
+}
+
+func truncateRunes(r []rune, max int) string {
+	if len(r) > max {
+		return string(r[:max-1]) + "…"
+	}
+	return string(r)
 }
 
 // findTask resolves a user-supplied ref to exactly one non-archived task.
