@@ -19,6 +19,8 @@ import (
 //	  ├─ flow add task      (parent + project inheritance + auto-watch)
 //	  ├─ write brief.md     (replaces the stub)
 //	  └─ flow do --auto     (detached headless run)
+//	     or flow do --bg --dangerously-skip-permissions   (with --bg: a
+//	        persistent background session that mail wakes, claude/prx)
 func cmdAuto(args []string) int {
 	if len(args) == 0 || args[0] == "" || strings.HasPrefix(args[0], "-") {
 		fmt.Fprintln(os.Stderr, "error: auto requires a task name: flow auto \"<name>\" --brief <file|->")
@@ -31,6 +33,7 @@ func cmdAuto(args []string) int {
 	priority := fs.String("priority", "medium", "high|medium|low")
 	workDir := fs.String("work-dir", "", "work directory (default: inherited like flow add task)")
 	mkdir := fs.Bool("mkdir", false, "same as flow add task --mkdir")
+	bg := fs.Bool("bg", false, "start the child as a persistent background session (stays alive on a blocker; flow mail wakes it) instead of an --auto run; implies --dangerously-skip-permissions")
 	harnessName := fs.String("harness", "", "harness for the child session (one of: "+registeredHarnessNames()+")")
 	model, effort := modelFlags(fs)
 	if err := fs.Parse(args[1:]); err != nil {
@@ -83,6 +86,22 @@ func cmdAuto(args []string) int {
 		return rc
 	}
 
+	// --bg needs a harness that can host a background session; refuse
+	// before the task exists so a refusal leaves nothing behind.
+	if *bg {
+		h, err := harnessForSpawn(nil)
+		if *harnessName != "" {
+			h, err = harnessByName(*harnessName)
+		}
+		if err == nil {
+			_, err = backgroundLauncherFor(h)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 2
+		}
+	}
+
 	slug := *slugFlag
 	if slug == "" {
 		base, err := Slugify(name)
@@ -123,16 +142,27 @@ func cmdAuto(args []string) int {
 		return 1
 	}
 
-	doArgs := []string{slug, "--auto"}
+	mode, label := "--auto", "auto"
+	if *bg {
+		mode, label = "--bg", "bg"
+	}
+	doArgs := []string{slug, mode}
+	if *bg {
+		doArgs = append(doArgs, "--dangerously-skip-permissions")
+	}
 	if *harnessName != "" {
 		doArgs = append(doArgs, "--harness", *harnessName)
 	}
 	doArgs = append(doArgs, modelFlagArgs(*model, *effort)...)
 	if rc := cmdDo(doArgs); rc != 0 {
-		fmt.Fprintf(os.Stderr, "error: task %q was created but its auto run did not launch; retry with: flow do --auto %s\n", slug, slug)
+		retry := "flow do --auto " + slug
+		if *bg {
+			retry = "flow do " + slug + " --bg --dangerously-skip-permissions"
+		}
+		fmt.Fprintf(os.Stderr, "error: task %q was created but its %s session did not launch; retry with: %s\n", slug, label, retry)
 		return rc
 	}
-	fmt.Printf("spawning auto child: %s (brief: %s)\n", slug, briefPath)
+	fmt.Printf("spawning %s child: %s (brief: %s)\n", label, slug, briefPath)
 	return 0
 }
 

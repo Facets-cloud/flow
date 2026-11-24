@@ -7,6 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`flow do <slug> --bg`**: start or resume a task as a persistent
+  background session (Claude Code, prx) without setting `FLOW_TERM=bg`, so
+  the env never leaks into child commands. Refused with `--auto` or
+  `--here`.
+- **`flow auto "<name>" --brief <f> --bg`**: a driver's child as a
+  persistent background session instead of an `--auto` run (implies
+  `--dangerously-skip-permissions`; refused up front on a harness without
+  background support).
+
+### Changed
+
+- **Background spawns no longer die on a blocker.** The bootstrap prompt
+  of every background session (`--bg`, `flow auto --bg`, `FLOW_TERM=bg`)
+  adds persistence rules: no prompts nobody can answer, a blocker is mailed
+  to the parent (else the human) and the turn ended, never the session;
+  flow mail wakes it. A background resume restates the rule.
+
 ## [0.1.0-alpha.40] — 2026-11-23
 
 ### Added

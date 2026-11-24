@@ -11,6 +11,16 @@
 
 ## Unreleased
 
+- **Background sessions that survive blockers.** `flow do <slug> --bg`
+  (Claude, prx) starts or resumes the task as a persistent background
+  session — `$FLOW_TERM=bg` for one command, so children never inherit
+  the env. `flow auto "<name>" --brief <f> --bg` does the same for a
+  driver's child (skip-permissions implied). Every background spawn's
+  bootstrap now carries persistence rules: on a blocker, mail the ask
+  (parent, else the human) and END THE TURN — never exit; the reply
+  wakes you. If you are a background session, follow them. Drivers: see
+  references/delegation.md for when to pick `--bg` over an auto child.
+
 ## v0.1.0-alpha.40
 
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and

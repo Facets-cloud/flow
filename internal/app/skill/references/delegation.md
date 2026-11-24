@@ -89,8 +89,16 @@ judgment calls from the user mid-way:
    session auto-watches it), writes brief.md, and launches
    `flow do --auto`. Optional: `--priority`, `--work-dir`, `--mkdir`,
    `--harness`. It refuses with no brief, or a blank one.
-3. Tell the user in one line: `spawning auto child: <slug>`. Do not ask
-   permission first, and keep working on the main thread.
+   **`--bg`** starts the child as a persistent background session
+   (Claude, prx) instead of an `--auto` run: it stays alive on a
+   blocker (mails you the ask and ends its turn), and your reply wakes
+   it, where an `--auto` child would exit. Use it when the child will
+   likely need a decision mid-way; it implies
+   `--dangerously-skip-permissions`. It refuses up front on a harness
+   with no background support (Codex today).
+3. Tell the user in one line: `spawning auto child: <slug>` (`spawning bg
+   child: <slug>` with `--bg`). Do not ask permission first, and keep
+   working on the main thread.
 4. The child reports with `flow message user/<driver>`; harness wake
    brings each report to you (§4.18): pop in the foreground when a
    flow-bus notice says mail landed. No listener to arm.

@@ -140,7 +140,10 @@ Create:
 Sessions:
   flow do                <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--model <m>] [--effort <e>]
   flow do --auto         <ref> [--harness claude|codex|prx] [--model <m>] [--effort <e>] (run headlessly in the background; self-completes via flow done)
-  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx] [--model <m>] [--effort <e>]
+  flow do --bg           <ref> [--harness claude|prx] [--fresh] [--dangerously-skip-permissions] [--with "<i>"]
+                         (persistent background session: no tab, stays alive on a blocker, flow mail wakes it;
+                          same as FLOW_TERM=bg for one command; re-run to resume or wake it)
+  flow auto "<name>" --brief <file|-> [--slug <s>] [--priority h|m|l] [--work-dir <path>] [--mkdir] [--harness claude|codex|prx] [--model <m>] [--effort <e>] [--bg]
                          (one-shot: add task + write brief + do --auto; from a driver session the child
                           gets it as parent and is auto-watched; refused inside an auto run)
   flow done              <ref>

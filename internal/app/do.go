@@ -106,6 +106,7 @@ func cmdDo(args []string) int {
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
 	force := fs.Bool("force", false, "open even if the task's harness session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires a supported harness session")
+	bgFlag := fs.Bool("bg", false, "start or resume the task as a persistent BACKGROUND session (claude, prx): no tab, stays alive between turns, flow mail wakes it. Same as $FLOW_TERM=bg for this one command")
 	auto := fs.Bool("auto", false, "run headlessly in the background (no tab, no human); the session self-completes via `flow done`. Implies --dangerously-skip-permissions")
 	withInstr := fs.String("with", "", "inject `<instruction>` as the first user message after the bootstrap/resume")
 	withFile := fs.String("with-file", "", "inject 'read instructions at <path>' (mutually exclusive with --with)")
@@ -138,6 +139,14 @@ func cmdDo(args []string) int {
 		return 2
 	}
 
+	if *bgFlag && *auto {
+		fmt.Fprintln(os.Stderr, "error: --bg cannot be used with --auto (--bg keeps a persistent background session; --auto runs one headless session to completion — pick one)")
+		return 2
+	}
+	if *bgFlag && *here {
+		fmt.Fprintln(os.Stderr, "error: --bg cannot be used with --here (--bg spawns its own background session; --here binds the current one)")
+		return 2
+	}
 	if *auto && *here {
 		fmt.Fprintln(os.Stderr, "error: --auto cannot be used with --here (--auto launches its own detached session; --here binds the current one)")
 		return 2
@@ -225,7 +234,7 @@ func cmdDo(args []string) int {
 	// opening a tab. Checked BEFORE the spawn machinery (parallel to the
 	// --auto branch). bg can't combine with --auto (different spawn
 	// shapes) or --here (binds the current session, no spawn).
-	if spawner.IsBackground() {
+	if *bgFlag || spawner.IsBackground() {
 		if *auto {
 			fmt.Fprintln(os.Stderr, "error: $FLOW_TERM=bg cannot be combined with --auto (both spawn their own session; pick one)")
 			return 2
@@ -726,7 +735,7 @@ func backgroundLauncherFor(h harness.Harness) (harness.BackgroundLauncher, error
 	bg, ok := h.(harness.BackgroundLauncher)
 	if !ok {
 		return nil, fmt.Errorf(
-			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (claude and prx do) — unset FLOW_TERM to open a terminal tab instead",
+			"a background session was requested (--bg or $FLOW_TERM=bg), but harness %q has no background-session support (claude and prx do) — drop --bg / unset FLOW_TERM to open a terminal tab instead",
 			h.Name())
 	}
 	return bg, nil
@@ -1067,7 +1076,8 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 		fmt.Printf("--fresh: discarding old session %s\n", task.SessionID.String)
 	}
 	playbookSlug, isFirstRun := bgPlaybookContext(db, task)
-	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
+	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun) +
+		"\n\n" + buildBgPersistenceRules(task.Slug, task.ParentSlug.String)
 	if unread > 0 {
 		prompt += "\n" + bgUnreadMailLine(unread)
 	}
@@ -1289,8 +1299,39 @@ func buildBgResumeKickoff(slug string, unread int) string {
 	return fmt.Sprintf(
 		"You were resumed in the background by flow for task %s. "+
 			"Re-load your task context first: run flow show task %s and re-read the brief and any update files you have not seen, since they may have changed while you were stopped. "+
-			"%s Then continue the task where you left off.",
+			"%s Then continue the task where you left off. "+bgPersistReminder,
 		slug, slug, mail,
+	)
+}
+
+// bgPersistReminder restates the one rule a resumed background session
+// must not lose: a blocker ends the turn, never the session.
+const bgPersistReminder = "You are a BACKGROUND session: on a blocker, report it by flow message and END YOUR TURN. Never exit; flow mail wakes you."
+
+// buildBgPersistenceRules is appended to the bootstrap prompt of every
+// fresh background spawn (`flow do --bg`, `flow auto --bg`, $FLOW_TERM=bg).
+// A background session has no terminal and nobody watching it live, but
+// unlike an --auto run it stays alive between turns and flow mail wakes
+// it, so a blocker must end the TURN (mail the ask, wait to be woken),
+// never the session. Reports go to the parent task when there is one,
+// else to the human. Shell-safe like the bootstrap prompts.
+func buildBgPersistenceRules(slug, parentSlug string) string {
+	report := "- Blocked, or need a decision only a human can make: run flow message user <one-line ask> (add --options A|B for a choice), then END YOUR TURN. Message the human only for blockers and when done, never for routine progress.\n"
+	if parentSlug != "" {
+		report = fmt.Sprintf(
+			"- Your parent task %[1]s is listening. Report to it (authorized even if the brief is silent): flow message user/%[1]s <one line, at most 200 chars> at each milestone, when blocked, and when done. Blocked, or need a decision: send the ask to user/%[1]s, then END YOUR TURN. If flow rejects it because the parent is closed, send it to the human instead: flow message user <ask> --fyi.\n",
+			parentSlug,
+		)
+	}
+	return fmt.Sprintf(
+		"You run as a flow BACKGROUND session: no terminal, and nobody is watching live, but you stay alive between turns and flow mail wakes you. These rules override any step above that says to ask:\n"+
+			"- Do NOT use AskUserQuestion and do NOT wait at a prompt: nobody can answer it. Where you would ask, decide on best engineering judgment and proceed.\n"+
+			report+
+			"- Never exit, and never give up on the task because you are blocked: end the turn instead. The reply arrives as flow mail and wakes this session, which then continues.\n"+
+			"- Mail: when a flow-bus notice says mail landed, and before each report, run flow inbox pop in the foreground (one-shot, never --wait) and repeat until it is empty, acting on each message. Do NOT arm a listener (no Monitor, no background pop --wait, no flow watch): flow wakes you.\n"+
+			"- Be conservative with irreversible or outward-facing actions (push, PR, deploy, messaging others): do them only when the brief explicitly authorizes them.\n"+
+			"- Done: when the brief Done-when criteria are met and verified, write your result as an update note on your task (tasks/%[1]s/updates/YYYY-MM-DD-kebab.md), report it, then run flow done %[1]s and end your turn.",
+		slug,
 	)
 }
 
