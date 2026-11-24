@@ -11,6 +11,13 @@
 
 ## Unreleased
 
+- **Codex background sessions.** `FLOW_TERM=bg flow do <slug>` now works
+  for Codex: the Codex TUI runs in a detached tmux session named
+  `flow-codex-<thread>` (tmux required), is live to flow, and wakes on
+  flow mail via `codex queue`. Watch it with `tmux attach -t
+  flow-codex-<thread>`. See "Background sessions" in
+  references/do-advanced.md.
+
 ## v0.1.0-alpha.40
 
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and

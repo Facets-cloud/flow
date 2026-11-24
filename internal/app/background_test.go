@@ -11,6 +11,7 @@ import (
 	"flow/internal/flowdb"
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"flow/internal/harness/codex"
 	"flow/internal/spawner"
 )
 
@@ -35,6 +36,12 @@ func TestMain(m *testing.M) {
 	// $CODEX_HOME never points at the developer's real Codex state, so
 	// install tests only see harnesses their sandbox creates.
 	harnessLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	// Never touch the developer's real tmux server: no tmux unless a
+	// test stubs it in.
+	codex.TmuxLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	codex.TmuxRunner = func(args []string) ([]byte, error) {
+		return nil, fmt.Errorf("codex.TmuxRunner not stubbed for args %v", args)
+	}
 	os.Unsetenv("CODEX_HOME")
 	// Workspace pre-trust writes Claude's config; never let an ambient
 	// $CLAUDE_CONFIG_DIR point it at the developer's real one.

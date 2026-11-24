@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **Codex background sessions.** `FLOW_TERM=bg flow do <slug>` (and
+  `--bg` once it lands) now hosts the interactive Codex TUI in a detached
+  tmux session `flow-codex-<thread>`, so a Codex task stays alive between
+  turns and flow mail wakes it (`codex queue`). The launch carries
+  `FLOW_ROOT`/`PATH`/`CODEX_HOME`, clears other harnesses' session ids
+  inherited from the tmux server, and bypasses hook trust (nobody is at
+  the TUI). Watch or drive it with `tmux attach -t flow-codex-<thread>`.
+  Requires tmux.
+
 ## [0.1.0-alpha.40] — 2026-11-23
 
 ### Added
