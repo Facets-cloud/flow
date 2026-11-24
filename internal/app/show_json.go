@@ -52,10 +52,10 @@ type taskJSON struct {
 }
 
 type bgJSON struct {
-	ShortID string `json:"short_id"`
-	PID     int    `json:"pid"`
-	Status  string `json:"status"`
-	State   string `json:"state"`
+	ShortID string  `json:"short_id"`
+	PID     int     `json:"pid"`
+	Status  *string `json:"status"` // null when the harness reports none
+	State   *string `json:"state"`  // null when the harness reports none
 }
 
 type autoRunJSON struct {
@@ -152,7 +152,7 @@ func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 			}
 			if bg, ok := h.(harness.BackgroundLauncher); ok {
 				if a := bgAgentInRegistry(bg, t.SessionID.String); a != nil {
-					doc.BG = &bgJSON{ShortID: a.ShortID, PID: a.PID, Status: a.Status, State: a.State}
+					doc.BG = &bgJSON{ShortID: a.ShortID, PID: a.PID, Status: optString(a.Status), State: optString(a.State)}
 					// A background session's process is not always visible
 					// to the ps-based probe; its registry pid being alive
 					// also makes the session live.
@@ -188,4 +188,12 @@ func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// optString returns nil for an unknown (empty) value.
+func optString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

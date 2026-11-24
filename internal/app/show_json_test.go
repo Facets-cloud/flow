@@ -244,3 +244,23 @@ func TestShowTaskJSONPreviousSessionNullStart(t *testing.T) {
 		t.Errorf("session_started = %#v (present=%v), want null", v, ok)
 	}
 }
+
+// CodeRabbit #200 (2nd review): an unknown background status/state is JSON
+// null, not "".
+func TestShowTaskJSONBgUnknownStateNull(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "bg-nostate", "B", "in-progress", "low", filepath.Join(root, "repo"), nil)
+	sid := fakeSessionID("bg-nostate")
+	stubPS(t, "  PID COMMAND\n")
+	stubClaudeAgents(t, `[{"kind":"background","id":"abcd1234","sessionId":"`+sid+`","pid":0}]`)
+	m := decodeShowJSON(t, "bg-nostate", "--json")
+	bg, _ := m["bg"].(map[string]any)
+	if bg == nil {
+		t.Fatalf("bg = %#v", m["bg"])
+	}
+	for _, k := range []string{"status", "state"} {
+		if v, ok := bg[k]; !ok || v != nil {
+			t.Errorf("bg.%s = %#v (present=%v), want null", k, v, ok)
+		}
+	}
+}

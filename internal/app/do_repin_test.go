@@ -272,3 +272,103 @@ func TestCmdDoBackgroundRepinAtomic(t *testing.T) {
 		t.Errorf("binding changed despite failure: %q/%q", task.Harness.String, task.SessionID.String)
 	}
 }
+
+// CodeRabbit #200 (2nd review): a plain resume must also refuse a pin that
+// changed between flow do's snapshot and its transaction (it would resume
+// the other harness's session with the stale adapter).
+func TestCmdDoResumeRefusesPinChangedConcurrently(t *testing.T) {
+	setupFlowRoot(t)
+	seedClaudeBoundTask(t, "race-resume")
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	stubPS(t, "  PID COMMAND\n")
+	stubClaudeStatOK(t)
+	count, _ := stubITerm(t)
+	old := doBeforeTxHook
+	doBeforeTxHook = func(slug string) {
+		db := openFlowDB(t)
+		db.Exec(`UPDATE tasks SET harness='codex', session_id='019ff4b1-6162-7263-974f-f5f1866ad0fe' WHERE slug=?`, slug)
+	}
+	t.Cleanup(func() { doBeforeTxHook = old })
+	stderr := captureStderr(t)
+	if rc := cmdDo([]string{"race-resume"}); rc == 0 {
+		t.Fatal("want refusal")
+	}
+	if got := stderr(); !strings.Contains(got, "changed") {
+		t.Errorf("stderr = %q", got)
+	}
+	if *count != 0 {
+		t.Errorf("opened %d tabs, want none", *count)
+	}
+}
+
+// CodeRabbit #200 (2nd review): the background binding tx re-reads the row.
+// Another command bound the task to a claude session after this one's
+// snapshot (prx); `--harness prx --fresh` must re-pin to prx and record the
+// session it actually replaces (the claude one), not the stale snapshot's.
+func TestCmdDoBackgroundBindRereadsRow(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bg-reread")
+	db := openFlowDB(t)
+	const oldPrx = "019f8f30-194b-7c83-8564-bff77c5e0147"
+	const otherClaude = "55555555-2222-3333-4444-555555555555"
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', harness='prx', session_id=?, session_started='2026-11-02T00:00:00Z' WHERE slug='bg-reread'`, oldPrx); err != nil {
+		t.Fatal(err)
+	}
+	stubBGMode(t)
+	stubITerm(t)
+	// The snapshot says prx, so this command's re-pin flag was computed
+	// as a prx->claude re-pin; the row it actually replaces is claude.
+	reg := bgAgentsJSON(bgFullSID)
+	stubBGCommand(t, &reg)
+	old := doBeforeTxHook
+	doBeforeTxHook = func(slug string) {
+		d := openFlowDB(t)
+		d.Exec(`UPDATE tasks SET harness='claude', session_id=?, session_started='2026-11-03T00:00:00Z' WHERE slug=?`, otherClaude, slug)
+	}
+	t.Cleanup(func() { doBeforeTxHook = old })
+
+	if rc := cmdDo([]string{"bg-reread", "--harness", "claude", "--fresh"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	task, _ := flowdb.GetTask(db, "bg-reread")
+	if task.Harness.String != "claude" || task.SessionID.String != bgFullSID {
+		t.Errorf("task = %q/%q", task.Harness.String, task.SessionID.String)
+	}
+	prev, _ := flowdb.PriorSessions(db, "bg-reread")
+	if len(prev) != 1 || prev[0].SessionID != otherClaude || prev[0].Harness != "claude" || prev[0].Reason != "fresh" {
+		t.Errorf("prior sessions = %+v, want the session the tx replaced (claude, fresh)", prev)
+	}
+}
+
+// Without --harness, a background spawn whose pin changed concurrently is
+// refused at binding time: the old binding stays and the agent is stopped.
+func TestCmdDoBackgroundRefusesPinChangedConcurrently(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bg-race")
+	db := openFlowDB(t)
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', harness='claude', session_id=? WHERE slug='bg-race'`, repinOldSID); err != nil {
+		t.Fatal(err)
+	}
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+	old := doBeforeTxHook
+	doBeforeTxHook = func(slug string) {
+		d := openFlowDB(t)
+		d.Exec(`UPDATE tasks SET harness='prx' WHERE slug=?`, slug)
+	}
+	t.Cleanup(func() { doBeforeTxHook = old })
+	if rc := cmdDo([]string{"bg-race", "--fresh"}); rc == 0 {
+		t.Fatal("want refusal")
+	}
+	if c.stop != 1 {
+		t.Errorf("stops = %d, want the new agent stopped", c.stop)
+	}
+	task, _ := flowdb.GetTask(db, "bg-race")
+	if task.Harness.String != "prx" || task.SessionID.String != repinOldSID {
+		t.Errorf("row = %q/%q", task.Harness.String, task.SessionID.String)
+	}
+}
