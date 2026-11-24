@@ -95,12 +95,12 @@ func TestModelEffortSkipPermissionsArgv(t *testing.T) {
 // argv is what it was before.
 func TestModelEffortProbeArgv(t *testing.T) {
 	const ask = "Reply exactly with OK. Do not make any changes."
-	plain := []string{"exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", ask}
+	plain := []string{"exec", "--disable", "hooks", "--json", "--sandbox", "read-only", "--skip-git-repo-check", ask}
 	if got := probeArgv(harness.LaunchOpts{}); !reflect.DeepEqual(got, plain) {
 		t.Errorf("plain: got %q, want %q", got, plain)
 	}
 	want := []string{"exec", "-m", "gpt-5", "-c", `model_reasoning_effort="high"`,
-		"--json", "--sandbox", "read-only", "--skip-git-repo-check", ask}
+		"--disable", "hooks", "--json", "--sandbox", "read-only", "--skip-git-repo-check", ask}
 	if got := probeArgv(harness.LaunchOpts{Model: "gpt-5", Effort: "high"}); !reflect.DeepEqual(got, want) {
 		t.Errorf("model: got %q, want %q", got, want)
 	}
