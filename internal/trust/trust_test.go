@@ -266,3 +266,20 @@ func TestEnsureWorkspaceTrusted(t *testing.T) {
 		t.Fatal("trusted something other than the tasks root")
 	}
 }
+
+func TestInGitRepo(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(repo, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !InGitRepo(sub) {
+		t.Error("dir under a .git ancestor should be in a repo")
+	}
+	if InGitRepo(t.TempDir()) {
+		t.Error("a bare temp dir should not be in a repo")
+	}
+}

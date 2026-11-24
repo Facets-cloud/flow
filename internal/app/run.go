@@ -193,7 +193,8 @@ func cmdRunPlaybook(args []string) int {
 	// or to launch a detached headless supervisor when --auto is set.
 	doArgs := []string{runSlug}
 	if *auto {
-		doArgs = append(doArgs, "--auto")
+		// Playbook runs are unattended: never a tab, whatever $FLOW_AUTO_TAB says.
+		doArgs = append(doArgs, "--auto", "--tab=false")
 	}
 	if *dangerSkip {
 		doArgs = append(doArgs, "--dangerously-skip-permissions")

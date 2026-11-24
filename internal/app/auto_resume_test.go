@@ -38,7 +38,7 @@ func TestAutoExecResumesWhenTranscriptExists(t *testing.T) {
 			got, gotPrompt = opts, prompt
 			return nil
 		})
-		if rc := cmdAutoExec([]string{"auto-task"}); rc != 0 {
+		if rc := cmdAutoExec(autoExecArgv(t, "auto-task")); rc != 0 {
 			t.Fatalf("cmdAutoExec rc=%d", rc)
 		}
 		if got.Resume != withTranscript {

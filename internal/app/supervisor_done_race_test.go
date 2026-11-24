@@ -42,7 +42,7 @@ func TestAutoExecDoneAfterStatusReadIsPickedUp(t *testing.T) {
 				}
 			})
 			captureStdout(t, func() {
-				if rc := cmdAutoExec([]string{"cx"}); rc != 0 {
+				if rc := cmdAutoExec(autoExecArgv(t, "cx")); rc != 0 {
 					t.Fatalf("cmdAutoExec rc=%d", rc)
 				}
 			})
@@ -79,7 +79,7 @@ func TestDoneAfterSupervisorFinalizedSweepsInline(t *testing.T) {
 	stubBeforeDoneFlip(t, func() {
 		db := openFlowDB(t)
 		defer db.Close()
-		if _, err := finalizeAutoRun(db, "cx", "dead"); err != nil {
+		if _, err := finalizeAutoRun(db, "cx", autoTestLog(t, "cx"), "dead"); err != nil {
 			t.Fatal(err)
 		}
 	})

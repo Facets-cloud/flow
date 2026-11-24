@@ -34,6 +34,8 @@ var (
 	PIDAlive = pidAlive
 	// Hostname is this machine's name, compared against owner records.
 	Hostname = os.Hostname
+	// PSRunner lists the process table (pid + command). Tests replace it.
+	PSRunner = runPS
 )
 
 const (
@@ -105,6 +107,13 @@ func interactive(sessionID string, opts harness.LaunchOpts) string {
 	a := modelArgv(opts)
 	for i := 0; i+1 < len(a); i += 2 {
 		cmd += " " + a[i] + " " + spawner.ShellQuote(a[i+1])
+	}
+	// A flow-created work dir is trusted for this launch only (nothing is
+	// saved), mirroring codex's per-launch override: the TUI would
+	// otherwise stop at its trust prompt, which hangs a tab auto run.
+	// User repos (no TrustDir) keep the prompt for a human to answer.
+	if opts.TrustDir != "" {
+		cmd += " -trust-workspace"
 	}
 	return cmd
 }
@@ -184,8 +193,48 @@ func (p *prx) LiveSessionIDs() (map[string]int, error) {
 			live[strings.ToLower(o.SessionID)]++
 		}
 	}
+	addUnrecordedProcesses(live)
 	return live, nil
 }
+
+// addUnrecordedProcesses counts interactive `prx -session-id <id>`
+// processes whose session has no live owner record yet. prx writes the
+// owner record only once the session starts, so a TUI still waiting at its
+// workspace trust prompt (a human has not answered) would otherwise look
+// gone — and a tab auto run would be reconciled dead while it waits. A
+// session already counted from its record is not counted again. ps
+// failures are ignored: the owner records remain the answer.
+func addUnrecordedProcesses(live map[string]int) {
+	out, err := PSRunner()
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	for id := range live {
+		seen[id] = true
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if id := interactiveSessionID(strings.Fields(line)); id != "" && !seen[id] {
+			live[id]++
+		}
+	}
+}
+
+// interactiveSessionID returns the session id of a `<pid> prx -session-id
+// <id> …` ps line (lowercased), or "" for anything else.
+func interactiveSessionID(fields []string) string {
+	if len(fields) < 4 || filepath.Base(fields[1]) != "prx" {
+		return ""
+	}
+	for i := 2; i+1 < len(fields); i++ {
+		if fields[i] == "-session-id" {
+			return strings.ToLower(fields[i+1])
+		}
+	}
+	return ""
+}
+
+func runPS() ([]byte, error) { return exec.Command("ps", "-axo", "pid,command").Output() }
 
 // ownerRecord is the part of prx's <sessionDir>/.owner/<id>.json flow reads.
 type ownerRecord struct {

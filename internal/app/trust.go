@@ -30,6 +30,7 @@ func applyWorkspaceTrust(h harness.Harness, workDir string, opts *harness.Launch
 		return
 	}
 	if _, ok := trust.FlowOwnedRoot(root, workDir); !ok {
+		trustMkdirCreated(workDir, opts)
 		return
 	}
 	if opts != nil {
@@ -41,6 +42,29 @@ func applyWorkspaceTrust(h harness.Harness, workDir string, opts *harness.Launch
 		if _, err := wt.TrustWorkspace(root, workDir); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s: could not pre-trust flow workspace: %v\n", h.Name(), err)
 		}
+	}
+}
+
+// mkdirCreatedWorkDir is the resolved work dir that this process's
+// `flow auto --mkdir` itself just created (it did not exist before), or "".
+// flow made it seconds ago and it holds nothing but what flow put there, so
+// it is as safe to trust as a flow workspace. Set only by cmdAuto, for the
+// one in-process launch that follows.
+var mkdirCreatedWorkDir string
+
+// trustMkdirCreated sets the per-launch opts.TrustDir (never persistent
+// trust) when workDir is the dir `flow auto --mkdir` just created, so a
+// per-launch harness (prx -trust-workspace, codex) does not stall on its
+// trust prompt in an unattended tab.
+func trustMkdirCreated(workDir string, opts *harness.LaunchOpts) {
+	if opts == nil || mkdirCreatedWorkDir == "" {
+		return
+	}
+	// Only a dir flow created that is NOT inside a git repo (FlowOwnedRoot's
+	// rule): a new folder inside someone's repo would load that repo's
+	// hooks, so it keeps the trust prompt for a human.
+	if resolved, err := filepath.EvalSymlinks(workDir); err == nil && resolved == mkdirCreatedWorkDir && !trust.InGitRepo(resolved) {
+		opts.TrustDir = resolved
 	}
 }
 

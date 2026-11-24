@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,9 +96,11 @@ var autoLauncher = func(slug, workDir, logPath, injection string, env []string) 
 	return pid, nil
 }
 
-// autoExecArgs builds the `flow __auto-exec` argv for the supervisor.
+// autoExecArgs builds the `flow __auto-exec` argv for the supervisor. The
+// log path is the launch's identity: the supervisor finalizes only the row
+// that records this log, and derives the last-message path from it.
 func autoExecArgs(slug, logPath, injection string) []string {
-	exArgs := []string{"__auto-exec", slug, "--last-message", autoRunLastMessagePath(logPath)}
+	exArgs := []string{"__auto-exec", slug, "--log", logPath}
 	if injection != "" {
 		// Forward the one-off instruction to the supervisor, which appends
 		// it (behind withMarker) to the autonomous prompt. Passed as a
@@ -112,12 +115,6 @@ func autoExecArgs(slug, logPath, injection string) []string {
 func autoRunLastMessagePath(logPath string) string {
 	return strings.TrimSuffix(logPath, filepath.Ext(logPath)) + ".last.txt"
 }
-
-// supervisorPID is this supervisor's own pid: the launcher records the pid
-// of the process it started, which is the `flow __auto-exec` process
-// itself (no shell in between), so the row's auto_run_pid equals it.
-// Overridable in tests, where the test process plays the supervisor.
-var supervisorPID = os.Getpid
 
 // afterAutoRunStatusRead is a test seam: it runs right after the
 // supervisor's post-exit status read, where a late `flow done` can land.
@@ -146,15 +143,17 @@ var processAlive = func(pid int) bool {
 // autoChildEnv builds the environment for the detached supervisor. It
 // inherits the parent's environment (so PATH finds the selected harness and
 // FLOW_ROOT points at the same store) but strips every registered harness
-// session id. Those ids belong to the dispatch session, not the headless run,
+// session id and flow's auto markers (FLOW_AUTO_RUN, FLOW_AUTO_TAB). Those ids belong to the dispatch session, not the headless run,
 // and leaking one would confuse reverse-lookups inside the autonomous session.
 func autoChildEnv() []string {
 	in := os.Environ()
 	out := make([]string, 0, len(in))
 	for _, kv := range in {
 		// A stale auto marker from an enclosing auto run never leaks: the
-		// launcher re-adds the right one for the run it starts.
-		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=")
+		// launcher re-adds the right one for the run it starts. Nor does
+		// $FLOW_AUTO_TAB: it is a human's interactive preference, and an
+		// unattended supervisor or owner tick must never open tabs.
+		isSessionEnv := strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, autoTabEnvVar+"=")
 		for _, h := range allHarnesses() {
 			if strings.HasPrefix(kv, h.SessionIDEnvVar()+"=") {
 				isSessionEnv = true
@@ -185,20 +184,20 @@ func isAutoRunSession(bound *flowdb.Task) bool {
 	return bound != nil && bound.AutoRunStatus.Valid && bound.AutoRunStatus.String == "running"
 }
 
-// launchAutoRun creates the per-run log directory, starts the detached
-// supervisor via autoLauncher, and returns (pid, logPath). It does NOT
-// touch the DB — the caller records the auto_run_* fields so the write is
-// part of the same bookkeeping flow as the interactive path's post-spawn
-// updates.
+// launchAutoRun creates the per-run log directory, reserves a log path no
+// other launch uses, starts the detached supervisor via autoLauncher, and
+// returns (pid, logPath). It does NOT touch the DB — the caller records the
+// auto_run_* fields so the write is part of the same bookkeeping flow as the
+// interactive path's post-spawn updates.
 func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, error) {
 	runsDir := filepath.Join(root, "tasks", task.Slug, "auto-runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return 0, "", fmt.Errorf("mkdir %s: %w", runsDir, err)
 	}
-	// Timestamped filename (UTC) keeps a per-run log history. time.Now is
-	// fine here — this is a filename, not a slug or a stored timestamp.
-	logName := time.Now().UTC().Format("2006-01-02-150405") + ".log"
-	logPath := filepath.Join(runsDir, logName)
+	logPath, err := reserveAutoRunLog(runsDir)
+	if err != nil {
+		return 0, "", err
+	}
 
 	env := append(autoChildEnv(), autoRunEnvVar+"="+task.Slug)
 	pid, err := autoLauncher(task.Slug, task.WorkDir, logPath, injection, env)
@@ -208,55 +207,279 @@ func launchAutoRun(task *flowdb.Task, root, injection string) (int, string, erro
 	return pid, logPath, nil
 }
 
+// maxAutoRunLogAttempts bounds the -N suffix search in reserveAutoRunLog.
+const maxAutoRunLogAttempts = 1000
+
+// reserveAutoRunLog creates an empty log file named by the UTC second, with
+// a -2, -3, ... suffix when that second is taken. O_EXCL makes the name a
+// reservation: a second `flow do --auto --force` in the same second gets its
+// own log, so its last-message file and its launch identity never collide.
+func reserveAutoRunLog(runsDir string) (string, error) {
+	base := time.Now().UTC().Format("2006-01-02-150405")
+	for n := 1; n <= maxAutoRunLogAttempts; n++ {
+		name := base + ".log"
+		if n > 1 {
+			name = fmt.Sprintf("%s-%d.log", base, n)
+		}
+		path := filepath.Join(runsDir, name)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("create log %s: %w", path, err)
+		}
+		if err := f.Close(); err != nil {
+			return "", fmt.Errorf("close log %s: %w", path, err)
+		}
+		return path, nil
+	}
+	return "", fmt.Errorf("no free auto-run log name under %s for %s", runsDir, base)
+}
+
 // recordAutoRunLaunched writes the 'running' bookkeeping after a
 // successful launch.
 func recordAutoRunLaunched(db *sql.DB, slug string, pid int, logPath string) error {
 	now := flowdb.NowISO()
 	_, err := db.Exec(
 		`UPDATE tasks SET auto_run_status='running', auto_run_pid=?, auto_run_started=?,
-		 auto_run_finished=NULL, auto_run_log=?, updated_at=? WHERE slug=?`,
+		 auto_run_finished=NULL, auto_run_log=?, auto_run_mode=NULL, updated_at=? WHERE slug=?`,
 		pid, now, logPath, now, slug,
 	)
 	return err
 }
 
-// finalizeAutoRun records a terminal auto-run status ('completed' or
-// 'dead') and clears the supervisor pid — but only while the row still
-// belongs to THIS supervisor (auto_run_pid = supervisorPID(), or no pid
-// recorded yet). If `flow do --auto --force` launched a newer run in the
-// meantime, the row carries the newer pid and finalize is a no-op:
-// owned=false tells the caller a newer run took over. Best-effort: errors
-// are returned for the caller to log, but the run is over regardless.
-func finalizeAutoRun(db *sql.DB, slug, status string) (owned bool, err error) {
+// autoRunModeTab marks an auto run that executes as an interactive harness
+// session in a terminal tab (`flow do --auto --tab`) instead of under a
+// detached headless supervisor.
+const autoRunModeTab = "tab"
+
+// autoTabEnvVar, when set to 1/true, makes `--auto` open a tab by default
+// for this user; `--tab=false` still forces headless for one run.
+const autoTabEnvVar = "FLOW_AUTO_TAB"
+
+// autoTabStartupGrace is how long a fresh tab run counts as running even
+// though its harness is not in the process table yet: the terminal has to
+// open the tab, start a shell, and exec the harness first.
+const autoTabStartupGrace = 90 * time.Second
+
+// autoTabDefault reports whether $FLOW_AUTO_TAB opts this user into tab
+// auto runs by default.
+func autoTabDefault() bool {
+	if os.Getenv(autoRunEnvVar) != "" {
+		return false // an unattended run (owner tick, auto child) never opens tabs
+	}
+	v := strings.TrimSpace(os.Getenv(autoTabEnvVar))
+	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+}
+
+// isTabAutoRun reports whether t's auto run executes in a terminal tab.
+func isTabAutoRun(t *flowdb.Task) bool {
+	return t.AutoRunMode.Valid && t.AutoRunMode.String == autoRunModeTab
+}
+
+// recordAutoTabLaunched writes the 'running' bookkeeping for a tab run.
+// There is no supervisor, so no pid and no log: liveness is the harness
+// session itself (tabSessionLive) and the transcript is the record.
+func recordAutoTabLaunched(db *sql.DB, slug string) error {
 	now := flowdb.NowISO()
-	res, err := db.Exec(
-		`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
-		 WHERE slug=? AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
-		status, now, now, slug, supervisorPID(),
+	_, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='running', auto_run_pid=NULL, auto_run_started=?,
+		 auto_run_finished=NULL, auto_run_log=NULL, auto_run_mode=?, updated_at=? WHERE slug=?`,
+		now, autoRunModeTab, now, slug,
 	)
+	return err
+}
+
+// completeTabAutoRunOnDone records 'completed' for a running tab run the
+// moment its task flips to done. The tab (and harness) stay open for
+// review, so liveness can no longer tell finished from running. A run
+// already reconciled 'dead' completes too: flow done is the run's success
+// signal, so a false death (a probe that missed the harness) is undone.
+func completeTabAutoRunOnDone(db *sql.DB, slug string) error {
+	now := flowdb.NowISO()
+	_, err := db.Exec(
+		`UPDATE tasks SET auto_run_status='completed', auto_run_finished=?
+		 WHERE slug=? AND auto_run_mode=? AND auto_run_status IN ('running','dead') AND status='done'`,
+		now, slug, autoRunModeTab,
+	)
+	return err
+}
+
+// tabSessionLive reports whether t's harness session is running in some
+// process. A test seam over the harness's LiveSessionIDs probe.
+var tabSessionLive = func(t *flowdb.Task) (bool, error) {
+	if !t.SessionID.Valid || t.SessionID.String == "" {
+		return false, nil
+	}
+	h, err := harnessForTask(t)
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+	live, err := h.LiveSessionIDs()
+	if err != nil {
+		return false, err
+	}
+	return live[strings.ToLower(t.SessionID.String)] > 0, nil
 }
 
-// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, "dead") gated on
+// tabAutoRunAlive reports whether a running tab run should stay 'running':
+// not done, and either still inside the startup grace, the liveness probe
+// failed (unknown is not dead), or its harness session is live.
+func tabAutoRunAlive(t *flowdb.Task) bool {
+	if t.Status == "done" {
+		return false
+	}
+	if started, err := time.Parse(time.RFC3339, t.AutoRunStarted.String); err == nil &&
+		time.Since(started) < autoTabStartupGrace {
+		return true
+	}
+	live, err := tabSessionLive(t)
+	return err != nil || live
+}
+
+// finalizeAutoRun records a terminal auto-run status ('completed' or
+// 'dead') and clears the pid — but only on the row that records THIS
+// launch's log (auto_run_log). The log path is the launch identity: it is
+// reserved exclusively and never reused, so a retry from an earlier launch
+// can never match a later one, whatever pid or status the later launch
+// left. If `flow do --auto --force` launched a newer run in the meantime,
+// the row records the newer log and finalize is a no-op: owned=false tells
+// the caller a newer run took over. Best-effort: errors are returned for
+// the caller to log, but the run is over regardless.
+func finalizeAutoRun(db *sql.DB, slug, logPath, status string) (owned bool, err error) {
+	now := flowdb.NowISO()
+	err = retryTransientDB(func() error {
+		res, e := db.Exec(
+			`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
+			 WHERE slug=? AND auto_run_log=?`,
+			status, now, now, slug, logPath,
+		)
+		if e != nil {
+			return e
+		}
+		n, e := res.RowsAffected()
+		owned = n > 0
+		return e
+	})
+	return owned, err
+}
+
+// finalizeAutoRunUnlessDone is finalizeAutoRun(db, slug, status) gated on
 // the task still not being done, in the same statement. owned=false means
 // either a newer run owns the row or a `flow done` landed first; the caller
 // re-reads the task to tell which.
-func finalizeAutoRunUnlessDone(db *sql.DB, slug string) (owned bool, err error) {
+func finalizeAutoRunUnlessDone(db *sql.DB, slug, logPath, status string) (owned bool, err error) {
 	now := flowdb.NowISO()
-	res, err := db.Exec(
-		`UPDATE tasks SET auto_run_status='dead', auto_run_finished=?, auto_run_pid=NULL, updated_at=?
-		 WHERE slug=? AND status != 'done' AND (auto_run_pid=? OR auto_run_pid IS NULL)`,
-		now, now, slug, supervisorPID(),
-	)
-	if err != nil {
-		return false, err
+	err = retryTransientDB(func() error {
+		res, e := db.Exec(
+			`UPDATE tasks SET auto_run_status=?, auto_run_finished=?, auto_run_pid=NULL, updated_at=?
+			 WHERE slug=? AND auto_run_log=? AND status != 'done'`,
+			status, now, now, slug, logPath,
+		)
+		if e != nil {
+			return e
+		}
+		n, e := res.RowsAffected()
+		owned = n > 0
+		return e
+	})
+	return owned, err
+}
+
+// dbRetryBudget and dbRetryBackoff bound retryTransientDB. A finalize that
+// hits a transient SQLite error (SQLITE_BUSY, SQLITE_CANTOPEN, seen when a
+// supervisor races a concurrent flow process) is retried with doubling
+// backoff rather than leaving the row stuck in 'running'. The budget is one
+// shared deadline across all attempts; an attempt already in flight may
+// still run to its own busy timeout (30s, see openConcurrentDB).
+var (
+	dbRetryBudget  = 10 * time.Second
+	dbRetryBackoff = 200 * time.Millisecond
+)
+
+// retryTransientDB runs fn, retrying only transient SQLite errors until the
+// shared dbRetryBudget deadline. Any other error returns immediately.
+func retryTransientDB(fn func() error) error {
+	deadline := time.Now().Add(dbRetryBudget)
+	backoff := dbRetryBackoff
+	for {
+		err := fn()
+		if err == nil || !isTransientDBErr(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		wait := backoff
+		if remaining := time.Until(deadline); wait > remaining {
+			wait = remaining
+		}
+		time.Sleep(wait)
+		backoff *= 2
 	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+}
+
+// SQLite primary result codes (sqlite3.h) that mean "try again": another
+// connection holds the database (BUSY, LOCKED) or a concurrent process made
+// the file momentarily unopenable (CANTOPEN, seen in the field).
+const (
+	sqliteBusy    = 5
+	sqliteLocked  = 6
+	sqliteCantOpn = 14
+)
+
+// isTransientDBErr classifies by SQLite result code, not message text. The
+// low byte of a code is its primary code; extended codes carry it there.
+func isTransientDBErr(err error) bool {
+	// Any error carrying an SQLite result code (*sqlite.Error does).
+	var se interface{ Code() int }
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqliteBusy, sqliteLocked, sqliteCantOpn:
+		return true
+	}
+	return false
+}
+
+// getTaskRetry reads a task, retrying transient SQLite errors.
+func getTaskRetry(db *sql.DB, slug string) (*flowdb.Task, error) {
+	var t *flowdb.Task
+	err := retryTransientDB(func() error {
+		var e error
+		t, e = flowdb.GetTask(db, slug)
+		return e
+	})
+	return t, err
+}
+
+// autoRunBlocked reports whether a run that did not finish says it is stuck
+// rather than crashed. The signal is the run's authoritative final message:
+// the file the harness wrote for --last-message when it exists (codex -o),
+// otherwise the run's own log (claude -p prints only the final message to
+// stdout, and the log is exclusive to this launch). The message is blocked
+// only if its LAST nonblank line starts with BLOCKED: — a quoted BLOCKED:
+// earlier in the message does not count, and neither does a waiting_on
+// field: a human may set that while the run is live.
+func autoRunBlocked(lastMsg, logPath string) bool {
+	path := lastMsg
+	if path == "" || !statOK(path) {
+		path = logPath
+	}
+	return path != "" && finalMessageEndsBlocked(path)
+}
+
+func finalMessageEndsBlocked(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	last := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			last = t
+		}
+	}
+	return strings.HasPrefix(last, "BLOCKED:")
 }
 
 // reconcileAutoRun settles a stale 'running' row whose supervisor pid is
@@ -270,7 +493,12 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	if !t.AutoRunStatus.Valid || t.AutoRunStatus.String != "running" {
 		return
 	}
-	if t.AutoRunPID.Valid && processAlive(int(t.AutoRunPID.Int64)) {
+	tab := isTabAutoRun(t)
+	if tab {
+		if tabAutoRunAlive(t) {
+			return
+		}
+	} else if t.AutoRunPID.Valid && processAlive(int(t.AutoRunPID.Int64)) {
 		return
 	}
 	now := flowdb.NowISO()
@@ -291,7 +519,14 @@ func reconcileAutoRun(db *sql.DB, t *flowdb.Task) {
 	// dead notice. This UPDATE matched exactly once, so this is the single
 	// running→dead transition: tell the human about a parentless run.
 	// (Parented reconcile is unchanged: no parent notice here.)
+	//
+	// A tab run has no supervisor at all, so this reconcile is the only
+	// place its death is noticed: tell the parent driver too, exactly as a
+	// headless supervisor does when its harness exits without flow done.
 	if status == "dead" {
+		if tab {
+			notifyParentOfDeadChild(db, t)
+		}
 		notifyHumanOfDeadOrphan(db, t)
 	}
 }
@@ -308,10 +543,15 @@ func cmdAutoExec(args []string) int {
 	slug := args[0]
 	fs := flagSet("__auto-exec")
 	withInstr := fs.String("with", "", "one-off instruction to append to the autonomous prompt")
-	lastMsg := fs.String("last-message", "", "file the harness writes the run's final message to")
+	logPath := fs.String("log", "", "this launch's log path (its identity; the last-message file sits beside it)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
+	if *logPath == "" {
+		fmt.Fprintln(os.Stderr, "error: __auto-exec requires --log <path>")
+		return 2
+	}
+	lastMsg := autoRunLastMessagePath(*logPath)
 
 	dbPath, err := flowDBPath()
 	if err != nil {
@@ -332,7 +572,7 @@ func cmdAutoExec(args []string) int {
 	}
 	if !task.SessionID.Valid || task.SessionID.String == "" {
 		fmt.Fprintf(os.Stderr, "error: task %q has no session_id; cannot run headlessly\n", slug)
-		if owned, _ := finalizeAutoRun(db, slug, "dead"); owned {
+		if owned, _ := finalizeAutoRun(db, slug, *logPath, "dead"); owned {
 			notifyHumanOfDeadOrphan(db, task)
 		}
 		return 1
@@ -355,12 +595,12 @@ func cmdAutoExec(args []string) int {
 	h, herr := harnessForSpawn(task)
 	if herr != nil {
 		fmt.Fprintf(os.Stderr, "error: resolve harness for %q: %v\n", slug, herr)
-		if owned, _ := finalizeAutoRun(db, slug, "dead"); owned {
+		if owned, _ := finalizeAutoRun(db, slug, *logPath, "dead"); owned {
 			notifyHumanOfDeadOrphan(db, task)
 		}
 		return 1
 	}
-	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: *lastMsg}
+	opts := harness.LaunchOpts{SkipPermissions: true, Inject: *withInstr, LastMessagePath: lastMsg}
 	applyTaskModel(task, &opts)
 	// A re-run on a session that already ran must resume it, from the
 	// directory it lives in. This process was launched in work_dir and the
@@ -377,8 +617,9 @@ func cmdAutoExec(args []string) int {
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
 
 	// Re-read status: the session may have called `flow done` on itself.
-	// The self-done is the authoritative success signal.
-	final, gerr := flowdb.GetTask(db, slug)
+	// The self-done is the authoritative success signal. Retried: a
+	// transient read error here would otherwise skip the blocked check.
+	final, gerr := getTaskRetry(db, slug)
 	isDone := gerr == nil && final.Status == "done"
 	afterAutoRunStatusRead()
 	// Not done at the read? Finalize 'dead' atomically — only while the
@@ -389,11 +630,14 @@ func cmdAutoExec(args []string) int {
 	// the finalize came first (done then sees a finalized row and sweeps
 	// inline). No window where a done is neither swept nor counted.
 	status := "dead"
+	if !isDone && autoRunBlocked(lastMsg, *logPath) {
+		status = "blocked"
+	}
 	var owned bool
 	var ferr error
 	finalized := false
 	if !isDone {
-		owned, ferr = finalizeAutoRunUnlessDone(db, slug)
+		owned, ferr = finalizeAutoRunUnlessDone(db, slug, *logPath, status)
 		if ferr != nil || owned {
 			finalized = true
 		} else if late, lerr := flowdb.GetTask(db, slug); lerr == nil && late.Status == "done" {
@@ -425,10 +669,16 @@ func cmdAutoExec(args []string) int {
 		}
 	}
 	if !finalized {
-		owned, ferr = finalizeAutoRun(db, slug, status)
+		owned, ferr = finalizeAutoRun(db, slug, *logPath, status)
 	}
 	if ferr != nil {
 		fmt.Fprintf(os.Stderr, "warning: finalize auto run %q: %v\n", slug, ferr)
+		// A blocked run whose status did not land is not a blocked run we can
+		// report: say so and fail, rather than claiming "finished: blocked".
+		if status == "blocked" {
+			fmt.Fprintf(os.Stderr, "auto run for %q is blocked but its status could not be recorded\n", slug)
+			return 1
+		}
 	} else if !owned {
 		// A newer run (flow do --auto --force) owns the row now; it
 		// reports its own outcome, so this one neither stamps a status
@@ -440,7 +690,7 @@ func cmdAutoExec(args []string) int {
 		notifyHumanOfDeadOrphan(db, task)
 	}
 
-	if runErr != nil {
+	if runErr != nil && status != "blocked" {
 		fmt.Fprintf(os.Stderr, "auto run for %q failed: %v\n", slug, runErr)
 		return 1
 	}
@@ -469,6 +719,41 @@ func autoResultContract(parentSlug string) string {
 // (the task was spawned from a bound session) adds a standing
 // authorization to report milestones to that parent's inbox.
 func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) string {
+	return buildAutoPrompt(slug, kind, playbookSlug, parentSlug, headlessAutoWording)
+}
+
+// buildAutoTabBootstrapPrompt is the autonomous prompt for a tab run
+// (`flow do --auto --tab`): the same contract as the headless prompt —
+// work end to end, report to the parent, close yourself out — but the
+// session is a visible interactive tab, so it is told a human may be
+// watching and that anything they type is an instruction to follow.
+func buildAutoTabBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) string {
+	return buildAutoPrompt(slug, kind, playbookSlug, parentSlug, tabAutoWording)
+}
+
+// autoWording holds the lines that differ between a headless and a tab
+// auto run; everything else in the autonomous prompt is shared.
+type autoWording struct {
+	intro, noAsk, listener, stop, closing string
+}
+
+var headlessAutoWording = autoWording{
+	intro:    "You are an AUTONOMOUS, headless execution session for flow task %s. NO HUMAN IS WATCHING and there is no terminal to prompt. Work end to end on your own and then close yourself out.",
+	noAsk:    "- Do NOT use AskUserQuestion and do NOT wait for user input — there is no one to answer.",
+	listener: "nobody reads a listener's output in a headless run, so it would ack and lose your mail; flow refuses pop --wait here",
+	stop:     ". End your final message with a line starting `BLOCKED:` naming what is blocking, and exit WITHOUT marking the task done. flow records a run that ends this way as blocked (not dead, and no dead-child alarm is sent).",
+	closing:  "Do this yourself; no human will.",
+}
+
+var tabAutoWording = autoWording{
+	intro:    "You are an AUTONOMOUS execution session for flow task %s, running in a visible terminal tab. A human may be watching and may type into this session: treat anything they type as instructions from the user and follow it. Otherwise work end to end on your own and then close yourself out.",
+	noAsk:    "- Do NOT use AskUserQuestion and do NOT block waiting for user input — nobody is required to answer.",
+	listener: "a listener would ack your mail into output nobody acts on; flow refuses pop --wait here",
+	stop:     ", and stop WITHOUT marking the task done (the run will surface as dead once this tab closes, and the human can take over here).",
+	closing:  "Do this yourself; do not wait for the human. Leave this tab open afterwards for review.",
+}
+
+func buildAutoPrompt(slug, kind, playbookSlug, parentSlug string, w autoWording) string {
 	showStep := "2. Run: flow show task. Read the file at the brief: path AND every file under updates:. Files under other: are on-demand references."
 	if kind == "playbook_run" {
 		showStep = fmt.Sprintf(
@@ -488,21 +773,21 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 	}
 
 	return fmt.Sprintf(
-		"You are an AUTONOMOUS, headless execution session for flow task %s. NO HUMAN IS WATCHING and there is no terminal to prompt. Work end to end on your own and then close yourself out.\n\n"+
+		fmt.Sprintf(w.intro, slug)+"\n\n"+
 			"Bootstrap (do these in order before any work):\n"+
 			"1. "+flowSkillStep()+" — it governs workflows, the bootstrap contract, KB discipline, and scope-creep detection.\n"+
 			showStep+"\n"+
 			"3. If a project is listed on the task, run: flow show project <slug> and read its brief + updates.\n"+
 			"4. Read "+repoInstructionFiles+" in your work_dir and any nested ones under subtrees you will modify — they override the brief.\n\n"+
 			"Operating rules for autonomous mode:\n"+
-			"- Do NOT use AskUserQuestion and do NOT wait for user input — there is no one to answer. Where the interactive workflow would ask, decide using best engineering judgment and proceed. Resolve any deferred/unclear brief sections yourself rather than stopping.\n"+
+			w.noAsk+" Where the interactive workflow would ask, decide using best engineering judgment and proceed. Resolve any deferred/unclear brief sections yourself rather than stopping.\n"+
 			"- Follow the repo's conventions (build/test commands, TDD if the repo expects it). Verify your work by running the tests before considering the task complete.\n"+
 			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone beyond the reporting rule below unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
 			parentRule+
-			"- Do NOT arm an inbox listener: no Monitor, no background flow inbox pop --wait loop, no flow watch (nobody reads a listener's output in a headless run, so it would ack and lose your mail; flow refuses pop --wait here). When a flow-bus notice says mail landed, and before each report and before flow done, run flow inbox pop in the foreground (one-shot, never --wait): it shows you one message; repeat until empty and act on what it says.\n"+
-			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried, and exit WITHOUT marking the task done (it will surface as a failed autonomous run).\n\n"+
+			"- Do NOT arm an inbox listener: no Monitor, no background flow inbox pop --wait loop, no flow watch ("+w.listener+"). When a flow-bus notice says mail landed, and before each report and before flow done, run flow inbox pop in the foreground (one-shot, never --wait): it shows you one message; repeat until empty and act on what it says.\n"+
+			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried"+w.stop+"\n\n"+
 			"Closing out:\n"+
-			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
-		slug, slug,
+			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. "+w.closing+"\n",
+		slug,
 	)
 }

@@ -11,6 +11,22 @@
 
 ## Unreleased
 
+- **Auto children can run in a visible tab.** `flow auto … --tab` and
+  `flow do --auto <slug> --tab` (or `FLOW_AUTO_TAB=1` as the default) run
+  the child as an interactive claude/codex/prx session in a terminal tab
+  instead of headless. Same contract: it reports to `user/<parent>` and
+  self-closes with `flow done`. If you ARE such a tab child, a human may
+  type into your session — treat it as instructions. `flow show task`
+  reads `auto_run: running (tab, …)`; closing the tab before `flow done`
+  marks the run dead.
+- **Tabs run the flow that launched them.** Every flow-spawned tab gets
+  the launcher's binary dir prepended to its own `PATH` and the binary as `$FLOW_BIN`, so another
+  `flow` on your login-shell PATH no longer handles your hooks or your
+  `flow done`. If `flow` in your shell still resolves elsewhere, call
+  `"$FLOW_BIN"`. A tab run marked dead still completes on its own
+  `flow done`, and `flow auto --mkdir` trusts the dir it just created
+  unless that dir is inside a git repo.
+
 ## v0.1.0-alpha.40
 
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
@@ -29,6 +45,11 @@
   (never "no project"), create, bind, announce "Created driver task …".
   Never ask "driver or not?". While flow prints `INTAKE TURN`, end the turn
   at the goal + proposed Done when + "Needs from you:".
+- **A headless child that stops on a blocker is `blocked`, not `dead`.** Its
+  final message's last nonblank line starts with `BLOCKED:`. A `waiting_on`
+  set during the run does not count: it may be a human's note. `flow show
+  task` and `flow list` report `blocked`, and no dead-child alarm is sent. A
+  stuck child should end with that line.
 - **`flow do --here` needs the directory the session STARTED in.** If you
   `cd` into a worktree, `$PWD` is not that directory. When the bind is
   refused, run the `flow update task … --work-dir` command only if it shows
