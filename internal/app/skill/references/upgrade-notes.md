@@ -11,8 +11,10 @@
 
 ## Unreleased
 
-- **Driver and child contract.** An auto child ends with `flow done` or a
-  single final `BLOCKED: <reason>` line; prose blockers count as dead runs.
+- **Driver and child contract.** An auto child ends with `flow done` when
+  done, or with a single final `BLOCKED: <reason>` line when blocked. The
+  BLOCKED line is the child's report, not yet a verdict: flow still records
+  a run without `flow done` as dead. Prose blockers are not blockers.
   Drivers push status unprompted, make no code edits, and own CI and review
   threads on their children's PRs (references/driver.md, delegation.md).
   `--options` and `--fyi` are for bare `user` only.

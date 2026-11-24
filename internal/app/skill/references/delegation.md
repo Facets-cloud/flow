@@ -206,7 +206,7 @@ to prod", "may push a branch and open a PR, do NOT merge">
 - never block waiting for a reply: keep working. Arm no inbox listener;
   a message (for example from the user via the hub) surfaces as a
   flow-bus notice before your next tool call: pop it in the foreground.
-  If a decision needs the user, message the driver, end your final message with the single line `BLOCKED: <question>`, and exit without flow done. Prose such as "Decision needed:" is not a blocker.
+  If a decision needs the user, set waiting_on, message the driver, end your final message with the single line `BLOCKED: <question>`, and exit without flow done. Prose such as "Decision needed:" is not a blocker.
 - When Done when is met: flow done <slug>, then exit.
 ```
 
@@ -230,9 +230,8 @@ Every child with a parent is told, in its auto prompt, to:
 - make its final `flow message user/<parent>` name the slug and the
   update file (body <=200 chars);
 - never spawn its own children;
-- end with flow done, or with the single line `BLOCKED: <reason>` when
-  blocked. Any other ending is recorded as a dead run. No sleep, wait or
-  poll loops.
+- end with flow done when done, or with the single line `BLOCKED: <reason>`
+  when blocked. No sleep, wait or poll loops.
 
 ## PR trailer (every bound session)
 
