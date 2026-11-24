@@ -402,10 +402,10 @@ Read **references/do-advanced.md** when any of these apply:
 #### Transfer a task to the other harness
 
 **Triggers:** "move X to codex", "switch X to claude", "reopen X in the
-other harness" — for a task that ALREADY has a session (harness pinned, so
-`--harness` is rejected). Read **references/harness-transfer.md** and follow
-it: progress note → `flow transcript` handoff file → un-pin via the scoped
-sqlite UPDATE → `flow do --harness <h> --with-file <handoff>`.
+other harness" — for a task that ALREADY has a session (harness pinned; a
+bare `--harness` is rejected). Read **references/harness-transfer.md** and
+follow it: progress note → `flow transcript` handoff file → re-pin with
+`flow do <slug> --harness <h> --fresh --with-file <handoff>`.
 ### 4.4a Driver tasks & delegation (auto children)
 
 Every interactive task is a driver: flow points each bound, human-driven

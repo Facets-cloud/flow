@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"flow/internal/flowdb"
+	"flow/internal/harness"
 	"fmt"
 	"os"
 	"strings"
@@ -23,6 +25,7 @@ func cmdTranscript(args []string) int {
 
 	fs := flagSet("transcript")
 	compact := fs.Bool("compact", false, "omit tool results and thinking blocks")
+	asJSON := fs.Bool("json", false, "emit harness-neutral JSON entries (role, kind, text, ts, tool) instead of text")
 	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
@@ -80,6 +83,13 @@ func cmdTranscript(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	if *asJSON {
+		if err := printTranscriptJSON(h, task, *compact); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if err := h.RenderTranscript(task.WorkDir, task.SessionID.String, *compact, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		fmt.Fprintf(os.Stderr,
@@ -91,4 +101,42 @@ func cmdTranscript(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// transcriptJSONSchema versions the `flow transcript --json` contract
+// (bump only on a breaking change).
+const transcriptJSONSchema = 1
+
+// transcriptJSON is the `flow transcript --json` document: the task, the
+// harness and session the entries came from, and the normalised entries
+// (see harness.TranscriptEntry for the per-entry contract).
+type transcriptJSON struct {
+	Schema    int                       `json:"schema"`
+	Task      string                    `json:"task"`
+	Harness   string                    `json:"harness"`
+	SessionID string                    `json:"session_id"`
+	Entries   []harness.TranscriptEntry `json:"entries"`
+}
+
+func printTranscriptJSON(h harness.Harness, task *flowdb.Task, compact bool) error {
+	dec, ok := h.(harness.TranscriptDecoder)
+	if !ok {
+		return fmt.Errorf("harness %s has no structured transcript; run without --json", h.Name())
+	}
+	entries, err := dec.TranscriptEntries(task.WorkDir, task.SessionID.String, compact)
+	if err != nil {
+		return err
+	}
+	if entries == nil {
+		entries = []harness.TranscriptEntry{}
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(transcriptJSON{
+		Schema:    transcriptJSONSchema,
+		Task:      task.Slug,
+		Harness:   string(h.Name()),
+		SessionID: task.SessionID.String,
+		Entries:   entries,
+	})
 }

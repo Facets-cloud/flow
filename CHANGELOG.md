@@ -7,6 +7,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- **`flow show task <slug> --json`.** One stable JSON object (`schema: 1`)
+  for tools: harness, pinned `session_id`, `live` (the harness's own
+  process probe), `bg` (background registry entry), `auto_run`, work_dir,
+  identity, files and `previous_sessions`. Every key is always present;
+  unknown values are `null`.
+- **`flow transcript <slug> --json`.** Harness-neutral entries
+  (`ts`, `role`, `kind`, `text`, `tool`, `is_error`) decoded from Claude
+  Code, Codex and prx transcripts; `--compact` applies.
+- **Re-pin a started task to another harness:** `flow do <slug> --harness
+  <h> --fresh` starts a new session on `<h>` and switches the task's pin.
+  The replaced session is kept in the task's session history (every
+  `--fresh` records it), so the harness-transfer recipe no longer edits
+  flow.db.
+
 ## [0.1.0-alpha.40] — 2026-11-23
 
 ### Added

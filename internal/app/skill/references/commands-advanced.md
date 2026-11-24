@@ -22,6 +22,30 @@ long to read at once.
 give you enough context, or when you need to understand specific
 implementation decisions made during that task's session.
 
+### Machine-readable views (`--json`)
+
+For tools and scripts (not for reading yourself), two commands emit one
+stable, harness-neutral JSON document (`"schema": 1`; fields are only
+ever added, never removed or retyped without a schema bump):
+
+- `flow show task <slug> --json` — identity (`slug`, `name`, `kind`,
+  `project`, `parent`, `status`, `priority`, `work_dir`, `archived`,
+  `driver`, `tags`), the session (`harness` — null until the first
+  `flow do`; `session_id`; `live` from the harness's own process probe;
+  `session_started`, `session_last_resumed`, `model`, `effort`), run
+  state (`bg`: `{short_id,pid,status,state}` from the harness's
+  background registry, or null; `auto_run`:
+  `{status,pid,started,finished,log,last_message}`, or null),
+  `previous_sessions` (sessions replaced by `--fresh` / a re-pin:
+  `{harness,session_id,session_started,ended_at,reason}`), and the files
+  (`brief`, `updates`, `other`). Every key is always present; unknown
+  values are `null`.
+- `flow transcript <slug> --json [--compact]` — `{schema, task, harness,
+  session_id, entries}`; each entry is `{ts, role, kind, text, tool?,
+  is_error?}` with `role` user|assistant|tool and `kind`
+  text|thinking|tool_call|tool_result. Tool calls carry a one-line input
+  summary; tool results are truncated like the text view.
+
 ### Parent links: tasks spun off from a session
 
 `flow add task` run from a session bound to a task records that task

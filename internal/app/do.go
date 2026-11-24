@@ -102,7 +102,7 @@ func cmdDo(args []string) int {
 	}
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
-	harnessName := fs.String("harness", "", "harness for a new task session (one of: "+registeredHarnessNames()+")")
+	harnessName := fs.String("harness", "", "harness for a new task session (one of: "+registeredHarnessNames()+"); with --fresh, re-pins a started task to this harness")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
 	force := fs.Bool("force", false, "open even if the task's harness session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires a supported harness session")
@@ -194,10 +194,13 @@ func cmdDo(args []string) int {
 	// before, task.harness is set and binding; otherwise detect from
 	// the current process's ambient harness env (so `flow do` from
 	// inside codex picks codex), falling back to claude.
-	h, err := harnessForExplicitSpawn(task, *harnessName)
+	h, repin, err := harnessForExplicitSpawn(task, *harnessName, *fresh)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if repin {
+		warnOldSessionStillLive(task)
 	}
 	// --model/--effort: refuse what h can't honour now, before any guard.
 	// The flag values are stored only once a launch proceeds (inside the
@@ -231,7 +234,7 @@ func cmdDo(args []string) int {
 			return 2
 		}
 		return cmdDoBackground(db, task, h, bgLaunch{
-			fresh: *fresh, skipPerms: *dangerSkip, inject: injectionText,
+			fresh: *fresh, repin: repin, skipPerms: *dangerSkip, inject: injectionText,
 			model: *model, effort: *effort,
 		})
 	}
@@ -323,9 +326,9 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	var curSessionID sql.NullString
-	if err := tx.QueryRow(`SELECT session_id, model, effort FROM tasks WHERE slug=?`, task.Slug).
-		Scan(&curSessionID, &task.Model, &task.Effort); err != nil {
+	var curSessionID, curHarness, curSessionStarted sql.NullString
+	if err := tx.QueryRow(`SELECT session_id, harness, session_started, model, effort FROM tasks WHERE slug=?`, task.Slug).
+		Scan(&curSessionID, &curHarness, &curSessionStarted, &task.Model, &task.Effort); err != nil {
 		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
 	}
@@ -372,11 +375,27 @@ func cmdDo(args []string) int {
 		// work_dir" invariant holds by construction here — no
 		// extra column needed; future resumes spawn at work_dir
 		// and the transcript will be found.
+		// A --fresh that replaces a session keeps the old one in the
+		// task's session history (re-pins included), so its transcript
+		// stays findable via `flow show task --json`.
+		if curSessionID.Valid && curSessionID.String != "" {
+			if err := flowdb.RecordPriorSession(tx, task.Slug, curHarness.String,
+				curSessionID.String, curSessionStarted.String, priorSessionReason(repin)); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+		}
+		// A re-pin (`--harness <other> --fresh`) is the one explicit lane
+		// that overwrites the pinned harness here.
+		harnessSQL := `harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END`
+		if repin {
+			harnessSQL = `harness = ?`
+		}
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			 session_id=?, session_started=?,
-			 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
+			 `+harnessSQL+`,
 			 updated_at=?
 			 WHERE slug=? AND `+statusFilter,
 			now, sessionID, now, string(h.Name()), now, task.Slug,
@@ -411,7 +430,7 @@ func cmdDo(args []string) int {
 	committed = true
 
 	if *fresh && curSessionID.Valid {
-		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
+		printFreshReplaced(task.Slug, curHarness.String, curSessionID.String, string(h.Name()), repin)
 	}
 
 	// --auto: instead of spawning an interactive tab, launch a detached
@@ -691,30 +710,79 @@ func printNoTerminalHandoff(slug, cwd, command string, envVars map[string]string
 	fmt.Printf("Tabs open automatically inside tmux, zellij or kitty (or set FLOW_TERM=tmux|zellij|kitty).\n")
 }
 
-// harnessForExplicitSpawn applies `flow do --harness <name>` to an
-// unbootstrapped task. Harness is intentionally a first-session choice: once
-// a task has a session id, its stored harness owns its transcript and resume
-// path. Changing it here would silently transfer an in-flight task, so the
-// explicit `--harness` selector refuses instead of acting like --force.
-func harnessForExplicitSpawn(task *flowdb.Task, requested string) (harness.Harness, error) {
+// harnessForExplicitSpawn applies `flow do --harness <name>`. On an
+// unbootstrapped task it picks the first session's harness. Once a task has
+// a session id, its stored harness owns its transcript and resume path, so a
+// bare `--harness` refuses instead of silently transferring an in-flight
+// task. `--harness <name> --fresh` is the explicit re-pin: a NEW session on
+// <name> (the old one is kept in the task's session history). repin reports
+// whether the pinned harness changes; `--harness <same> --fresh` is just a
+// fresh session.
+func harnessForExplicitSpawn(task *flowdb.Task, requested string, fresh bool) (h harness.Harness, repin bool, err error) {
 	if requested == "" {
-		return harnessForSpawn(task)
+		h, err = harnessForSpawn(task)
+		return h, false, err
 	}
-	if task != nil && task.SessionID.Valid && task.SessionID.String != "" {
+	started := task != nil && task.SessionID.Valid && task.SessionID.String != ""
+	if started && !fresh {
 		current, err := harnessForTask(task)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return nil, fmt.Errorf(
-			"task %q already has a %s session; --harness only selects the first session for an unbootstrapped task",
-			task.Slug, current.Name(),
+		return nil, false, fmt.Errorf(
+			"task %q already has a %s session; --harness only selects the first session for an unbootstrapped task (add --fresh to re-pin it: a new %s session, the old one kept in history)",
+			task.Slug, current.Name(), requested,
 		)
 	}
-	h, err := harnessByName(requested)
+	h, err = harnessByName(requested)
 	if err != nil {
-		return nil, fmt.Errorf("invalid --harness %q (available: %s)", requested, registeredHarnessNames())
+		return nil, false, fmt.Errorf("invalid --harness %q (available: %s)", requested, registeredHarnessNames())
 	}
-	return h, nil
+	if started {
+		// An unknown stored pin can still be re-pinned away from.
+		current := "claude"
+		if task.Harness.Valid && task.Harness.String != "" {
+			current = task.Harness.String
+		}
+		repin = current != string(h.Name())
+	}
+	return h, repin, nil
+}
+
+// priorSessionReason labels a replaced session in the task's history.
+func priorSessionReason(repin bool) string {
+	if repin {
+		return "repin"
+	}
+	return "fresh"
+}
+
+// printFreshReplaced announces that --fresh replaced a session, naming
+// the harness switch on a re-pin.
+func printFreshReplaced(slug, oldHarness, oldSID, newHarness string, repin bool) {
+	if oldHarness == "" {
+		oldHarness = "claude"
+	}
+	if repin {
+		fmt.Printf("--fresh: re-pinned %s from %s to %s; old %s session %s kept in history\n",
+			slug, oldHarness, newHarness, oldHarness, oldSID)
+		return
+	}
+	fmt.Printf("--fresh: discarding old session %s (kept in history)\n", oldSID)
+}
+
+// warnOldSessionStillLive warns when a re-pin leaves the task's old
+// session running: it keeps running but is no longer bound to the task.
+func warnOldSessionStillLive(task *flowdb.Task) {
+	old, err := harnessForTask(task)
+	if err != nil {
+		return
+	}
+	if live, err := old.LiveSessionIDs(); err == nil && live[strings.ToLower(task.SessionID.String)] > 0 {
+		fmt.Fprintf(os.Stderr,
+			"warning: %s's old %s session %s is still running; after the re-pin it is no longer bound to the task — close it when done\n",
+			task.Slug, old.Name(), task.SessionID.String)
+	}
 }
 
 // backgroundLauncherFor returns the harness's BackgroundLauncher
@@ -785,6 +853,7 @@ func bgStateLabel(a *harness.BackgroundAgent) string {
 // effort are the raw flag values, stored once a spawn or resume proceeds.
 type bgLaunch struct {
 	fresh, skipPerms bool
+	repin            bool // --harness <other> --fresh: overwrite the pinned harness
 	inject           string
 	model, effort    string
 }
@@ -1064,7 +1133,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 
 	// Fresh spawn (no session, or --fresh discards the old one).
 	if fresh && hasSession {
-		fmt.Printf("--fresh: discarding old session %s\n", task.SessionID.String)
+		printFreshReplaced(task.Slug, task.Harness.String, task.SessionID.String, string(h.Name()), in.repin)
 	}
 	playbookSlug, isFirstRun := bgPlaybookContext(db, task)
 	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
@@ -1085,12 +1154,23 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 	}
 
 	now := flowdb.NowISO()
+	if fresh && hasSession {
+		if err := flowdb.RecordPriorSession(db, task.Slug, task.Harness.String,
+			task.SessionID.String, task.SessionStarted.String, priorSessionReason(in.repin)); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	}
 	// Record the harness-minted REAL session id alongside status + harness.
-	// COALESCE on harness mirrors the interactive bootstrap: set-once.
+	// COALESCE on harness mirrors the interactive bootstrap: set-once,
+	// except on an explicit re-pin.
+	harnessSQL := `harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END`
+	if in.repin {
+		harnessSQL = `harness = ?`
+	}
 	if _, err := db.Exec(
 		`UPDATE tasks SET `+bgKeepConcurrentDoneSQL+`,
 		 session_id=?, session_started=?,
-		 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
+		 `+harnessSQL+`,
 		 updated_at=? WHERE slug=?`,
 		now, agent.SessionID, now, string(h.Name()), now, task.Slug,
 	); err != nil {
