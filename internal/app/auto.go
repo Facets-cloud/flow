@@ -175,7 +175,8 @@ var harnessSessionEnv = []string{
 func isSessionEnv(kv string) bool {
 	// A stale auto marker from an enclosing auto run never leaks: the
 	// launcher re-adds the right one for the run it starts.
-	if strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, reviveEnvVar+"=") {
+	if strings.HasPrefix(kv, autoRunEnvVar+"=") || strings.HasPrefix(kv, reviveEnvVar+"=") ||
+		strings.HasPrefix(kv, reviveTriggerEnv+"=") {
 		return true
 	}
 	for _, h := range allHarnesses() {

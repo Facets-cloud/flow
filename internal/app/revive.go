@@ -50,6 +50,10 @@ const (
 	// the driver, not a child) and tells the supervisor which prompt and
 	// final status to use. autoChildEnv strips it.
 	reviveEnvVar = "FLOW_AUTO_REVIVE"
+	// reviveTriggerEnv carries the id of the child report that started a
+	// revive run, so its supervisor skips exactly that message. autoChildEnv
+	// strips it.
+	reviveTriggerEnv = "FLOW_AUTO_REVIVE_TRIGGER"
 	// reviveStatus is the auto_run_status a revive ends with when the
 	// driver did not close itself (the normal case).
 	reviveStatus = "revived"
@@ -135,12 +139,12 @@ func maybeRevive(db *sql.DB, m *flowdb.BusMessage, r wakeResult) wakeResult {
 		return r
 	}
 	_ = flowdb.MarkChildReport(db, m.ToTaskSlug, m.ID)
-	return reviveDriver(db, m.ToTaskSlug, r)
+	return reviveDriver(db, m.ToTaskSlug, m.ID, r)
 }
 
 // reviveDriver runs the revive gates for driver slug, which has an
-// eligible child report waiting.
-func reviveDriver(db *sql.DB, slug string, r wakeResult) wakeResult {
+// eligible child report (trigger, its message id) waiting.
+func reviveDriver(db *sql.DB, slug, trigger string, r wakeResult) wakeResult {
 	if !r.notLive {
 		noteBacklogDriver(db, slug)
 		return r
@@ -174,7 +178,7 @@ func reviveDriver(db *sql.DB, slug string, r wakeResult) wakeResult {
 	case !onDisk:
 		return refuseRevive(db, t, r, "no transcript to resume")
 	}
-	return launchRevive(db, t, r)
+	return launchRevive(db, t, trigger, r)
 }
 
 // refuseRevive reports why t was not revived, to the sender and (once
@@ -206,7 +210,7 @@ func noteBacklogDriver(db *sql.DB, slug string) {
 
 // launchRevive claims and starts the headless resume. The claim stamps
 // the reserved log as the run's owner, the same as `flow do --auto`.
-func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
+func launchRevive(db *sql.DB, t *flowdb.Task, trigger string, r wakeResult) wakeResult {
 	root, err := flowRoot()
 	var logPath string
 	if err == nil {
@@ -232,8 +236,9 @@ func launchRevive(db *sql.DB, t *flowdb.Task, r wakeResult) wakeResult {
 	case claim != flowdb.ReviveClaimed:
 		return r
 	}
-	pid, err := launchClaimedRun(db, t, autoLaunch{logPath: logPath, extraEnv: []string{reviveEnvVar + "=" + t.Slug},
-		release: func() error { return flowdb.ReleaseRevive(db, t.Slug, logPath, now, prev) }})
+	pid, err := launchClaimedRun(db, t, autoLaunch{logPath: logPath,
+		extraEnv: []string{reviveEnvVar + "=" + t.Slug, reviveTriggerEnv + "=" + trigger},
+		release:  func() error { return flowdb.ReleaseRevive(db, t.Slug, logPath, now, prev) }})
 	if err != nil {
 		r.Reason += "; revive failed: " + err.Error()
 		noteReviveLaunchFailed(db, t.Slug, err)
@@ -274,15 +279,23 @@ func reviveIfMailLanded(db *sql.DB, slug, startedAt string) bool {
 	if err != nil {
 		return false
 	}
+	// The report that started this run is known exactly. The start second is
+	// only the fallback for a run that carries no trigger id.
+	trigger := os.Getenv(reviveTriggerEnv)
 	for i := len(ms) - 1; i >= 0; i-- {
 		m := ms[i]
 		c, err := time.Parse(time.RFC3339, m.CreatedAt)
-		// Second precision: a report stamped in the start second is the one
-		// that triggered this revive, not mail that landed mid-run.
-		if err != nil || !c.After(start) || !wasChildReport(db, m) {
+		if err != nil || !wasChildReport(db, m) {
 			continue
 		}
-		res := reviveDriver(db, slug, wakeResult{Slug: slug, notLive: true})
+		if trigger != "" {
+			if m.ID == trigger || c.Before(start) {
+				continue
+			}
+		} else if !c.After(start) {
+			continue // second precision: the start second may hold the trigger
+		}
+		res := reviveDriver(db, slug, m.ID, wakeResult{Slug: slug, notLive: true})
 		fmt.Printf("flow: mail landed during the revive: %s\n", res)
 		return true
 	}
@@ -302,6 +315,10 @@ func finishRevive(db *sql.DB, t *flowdb.Task, status, startedAt string) {
 		if !reviveIfMailLanded(db, t.Slug, startedAt) && !noteUnreadAfterRevive(db, t.Slug) {
 			retractStaleReviveFYIs(db, t.Slug)
 		}
+	case "completed":
+		// The driver closed itself, so a revive FYI saying its mail is still
+		// waiting is stale.
+		retractStaleReviveFYIs(db, t.Slug)
 	}
 }
 
