@@ -1,55 +1,44 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 46,
-    "dead": 7,
-    "done": 40,
-    "messages_between_tasks": 155,
-    "notes": 165,
-    "refs": 33,
-    "running": 2,
-    "tasks": 54
+    "children": 27,
+    "dead": 1,
+    "done": 26,
+    "messages_between_tasks": 12,
+    "notes": 184,
+    "refs": 15,
+    "running": 5,
+    "tasks": 34
   },
   "dead_reasons": {
-    "exited without closing": 3,
-    "no log written": 4
+    "exited without closing": 1
   },
-  "generated_at": "2026-11-23T11:30:17+05:30",
+  "generated_at": "2026-11-24T11:30:23+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 54
+      "tasks": 34
     },
     {
-      "items": 169,
+      "items": 200,
       "name": "updates/",
-      "tasks": 54
+      "tasks": 34
     },
     {
-      "items": 132,
+      "items": 142,
       "name": "auto-runs/",
-      "tasks": 44
+      "tasks": 30
     },
     {
-      "items": 31,
+      "items": 14,
       "name": "other files",
       "tasks": 11
     },
     {
-      "items": 1,
+      "items": 9,
       "name": "workspace/",
-      "tasks": 6
-    },
-    {
-      "items": 25,
-      "name": "artifacts/",
-      "tasks": 1
-    },
-    {
-      "items": 17,
-      "name": "e2e/",
-      "tasks": 1
+      "tasks": 7
     },
     {
       "items": 15,
@@ -77,13 +66,13 @@
       "tasks": 1
     },
     {
-      "items": 6,
-      "name": "sbx-503/",
+      "items": 2,
+      "name": "review-payloads/",
       "tasks": 1
     },
     {
-      "items": 6,
-      "name": "sbx-503x/",
+      "items": 1,
+      "name": "shots/",
       "tasks": 1
     }
   ],
@@ -101,8 +90,75 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-23-06-00",
+      "slug": "site-daily--2026-11-24-06-00",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "hud-typing-guard",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "running",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-harness-json",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        38,
+        41,
+        50,
+        193
+      ],
+      "shown": true,
+      "slug": "operator-pr-design",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 6,
+      "refs": [],
+      "shown": false,
+      "slug": "flow-pr-explain",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 4,
+      "refs": [],
+      "shown": false,
+      "slug": "operator-remote-research",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-23-06-00",
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -144,14 +200,9 @@
       "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 13,
-      "refs": [
-        9,
-        20,
-        21,
-        35
-      ],
-      "shown": true,
+      "notes": 27,
+      "refs": [],
+      "shown": false,
       "slug": "operator-alpha-driver",
       "status": "done"
     },
@@ -236,7 +287,7 @@
       "refs": [
         185
       ],
-      "shown": false,
+      "shown": true,
       "slug": "site-daily--2026-11-20-06-00",
       "status": "done"
     },
@@ -257,7 +308,6 @@
       "notes": 12,
       "refs": [
         12,
-        18,
         115
       ],
       "shown": true,
@@ -325,12 +375,12 @@
       "status": "done"
     },
     {
-      "auto_run_status": "dead",
+      "auto_run_status": "running",
       "child": true,
-      "dead_reason": "exited without closing",
-      "notes": 23,
+      "dead_reason": null,
+      "notes": 58,
       "refs": [],
-      "shown": true,
+      "shown": false,
       "slug": "flow-hud-go",
       "status": "in-progress"
     },
@@ -342,7 +392,7 @@
       "refs": [
         185
       ],
-      "shown": false,
+      "shown": true,
       "slug": "site-daily--2026-11-19-06-00",
       "status": "done"
     },
@@ -366,7 +416,7 @@
         187,
         188
       ],
-      "shown": false,
+      "shown": true,
       "slug": "flow-plugin-build",
       "status": "done"
     },
@@ -379,7 +429,7 @@
         157,
         188
       ],
-      "shown": false,
+      "shown": true,
       "slug": "flow-plugin",
       "status": "done"
     },
@@ -395,7 +445,7 @@
         187,
         188
       ],
-      "shown": false,
+      "shown": true,
       "slug": "driver-first-upgrade-test",
       "status": "done"
     },
@@ -410,307 +460,6 @@
       ],
       "shown": false,
       "slug": "site-daily--2026-11-18-06-00",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": false,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        182
-      ],
-      "shown": false,
-      "slug": "site-daily--2026-11-17-06-00",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": false,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        138,
-        182
-      ],
-      "shown": false,
-      "slug": "site-daily--2026-11-16-19-49",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "viral-research",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        132,
-        170,
-        178,
-        179,
-        180
-      ],
-      "shown": false,
-      "slug": "pr132-remerge",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 4,
-      "refs": [],
-      "shown": false,
-      "slug": "driver-first-impl",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "role-smoke-m165",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        170,
-        180
-      ],
-      "shown": false,
-      "slug": "bg-resume-review-followups",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "exited without closing",
-      "notes": 1,
-      "refs": [
-        179
-      ],
-      "shown": true,
-      "slug": "skill-refresh-no-downgrade",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "role-smoke-r4",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        6,
-        7,
-        8,
-        10,
-        97,
-        120,
-        126,
-        130,
-        136
-      ],
-      "shown": false,
-      "slug": "mt-stale-own",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        132
-      ],
-      "shown": false,
-      "slug": "pr132-coderabbit",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        170,
-        171,
-        172
-      ],
-      "shown": false,
-      "slug": "pr170-coderabbit",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "no log written",
-      "notes": 0,
-      "refs": [],
-      "shown": true,
-      "slug": "mt-review-wake",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "no log written",
-      "notes": 0,
-      "refs": [],
-      "shown": true,
-      "slug": "mt-review-small",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "no log written",
-      "notes": 0,
-      "refs": [],
-      "shown": true,
-      "slug": "mt-review-175",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "no log written",
-      "notes": 0,
-      "refs": [],
-      "shown": true,
-      "slug": "mt-stale-triage",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 7,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-merge-train",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "auto-waiter-exit",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "role-smoke",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        132,
-        143
-      ],
-      "shown": false,
-      "slug": "pr132-drop-f1",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 18,
-      "refs": [
-        187
-      ],
-      "shown": false,
-      "slug": "driver-first-ux",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        132
-      ],
-      "shown": false,
-      "slug": "ab-validate-132",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        172
-      ],
-      "shown": false,
-      "slug": "bg-resume-no-fork",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "claude-doorbell-pr",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "doorbell-probe",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "desk-lazy-restart",
       "status": "done"
     }
   ],
