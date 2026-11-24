@@ -34,6 +34,11 @@
   refused, run the `flow update task … --work-dir` command only if it shows
   a real path. If it shows `<real-cwd>`, or says the task is still bound to
   another session, open the task in a new tab with `flow do <slug>`.
+- **Mail wakes idle prx sessions.** A flow-bus message to a task bound to a
+  live prx session now starts a turn in that session, the same as for Claude
+  Code and Codex. It needs a Praxis that has `prx peer send`, with peer
+  messaging on (`peers.enabled`). Without either, the mail waits for the
+  session's next turn, as before.
 
 ## v0.1.0-alpha.38
 

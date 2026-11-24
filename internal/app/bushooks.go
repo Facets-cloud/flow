@@ -104,10 +104,12 @@ const wakeNoListenerRule = " flow-bus: mail reaches you automatically — don't 
 // session. prx's `monitor` tool polls a command on an interval instead of
 // streaming, and its shell carries no PRAXIS_SESSION_ID, so it can't run
 // flow's inbox loop; a backgrounded `pop --wait` would ack mail into job
-// output nobody reads. Mail arrives as flow-bus hook notices instead.
+// output nobody reads. Mail arrives as flow-bus notices instead: pushed into
+// an idle session via `prx peer send` (harness wake), and from the hooks.
 const prxNoListenerRule = " flow-bus, prx session: do NOT arm an inbox listener (no `monitor`, no " +
 	"background `flow inbox pop --wait`; flow refuses `pop --wait` here). Mail reaches you as flow-bus " +
-	"notices before your tool calls and when the user types. When a notice says mail landed or is pending, " +
+	"notices: pushed into this session when it is idle (needs a prx with `prx peer send` and peers on), and otherwise " +
+	"before your next tool call and when the user types. When a notice says mail landed or is pending, " +
 	"run `flow inbox pop` in the foreground (one-shot, never --wait): it shows you one message; repeat until " +
 	"empty and act on what it says. Still subscribe to what this task depends on: `flow watch " +
 	"<task-or-project-slug>` (tasks you create from this session are watched automatically); their reports " +

@@ -536,6 +536,15 @@ type Waker interface {
 	Wake(req WakeRequest) (detail string, err error)
 }
 
+// ChatOnlyWaker is an OPTIONAL marker on a Waker whose push reaches the session
+// as chat from another session, not as an instruction from the user (prx peer
+// messages are framed that way). A `flow do --with` instruction must not ride
+// such a push: the caller stops and resumes the same session with it as the
+// prompt instead. Mail notices are not instructions and may still use the push.
+type ChatOnlyWaker interface {
+	ChatOnly() bool
+}
+
 // TurnStateChecker is an OPTIONAL cross-check of a session's turn state
 // from the harness itself (Claude: `claude agents --json`). known=false
 // when the harness cannot tell.

@@ -1178,6 +1178,11 @@ func deliverToIdleBg(db *sql.DB, task *flowdb.Task, sessionID, inject string, un
 	if w == nil {
 		return false
 	}
+	// A --with instruction is the user's. A chat-only push would reach the
+	// agent as another session's message, so it takes the stop + same-id resume.
+	if c, ok := w.(harness.ChatOnlyWaker); ok && c.ChatOnly() && inject != "" {
+		return false
+	}
 	req := harness.WakeRequest{SessionID: sessionID, StateDir: wakeStateDir(), Timeout: wakePushTimeout}
 	if !w.WakeLive(req) {
 		return false
@@ -1670,8 +1675,9 @@ func printParentListenerReminder(db *sql.DB, task *flowdb.Task) {
 // parent with wake off (FLOW_NO_WAKE) still arms a Monitor.
 func parentListenerReminder() string {
 	if sessionHarness(nil) == harness.NamePrx {
-		return "  prx parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
-			"next tool call or prompt; then run a one-shot `flow inbox pop` in the foreground."
+		return "  prx parent: no inbox listener — the child's reports surface as flow-bus notices: pushed into " +
+			"your session when it is idle (needs a prx with `prx peer send` and peers on; wake on), otherwise at your next tool " +
+			"call or prompt; then run a one-shot `flow inbox pop` in the foreground."
 	}
 	if sessionHarness(nil) == harness.NameCodex {
 		return "  Codex parent: no inbox listener — the child's reports surface as flow-bus notices at your " +
