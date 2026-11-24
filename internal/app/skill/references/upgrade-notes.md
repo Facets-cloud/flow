@@ -22,6 +22,33 @@
   sweep runs on its stored model too. Owners take the same flags on `flow
   add owner` and `flow owner start`; every tick runs on them, and the tasks
   an owner dispatches keep their own (references/owners.md).
+- **Claude Code: flow's hooks now come from the flow plugin** inside the
+  skill folder (`~/.claude/skills/flow/`, `flow@skills-dir`), not from
+  `~/.claude/settings.json`; flow no longer writes that file. A session
+  started before the upgrade keeps its old hooks until it restarts
+  (`/reload-plugins` or a restart switches it over); nothing fires twice
+  meanwhile. flow removes its old `settings.json` entries by itself only
+  when the plugin's own SessionStart runs (proof the plugin loads) and no
+  other Claude session flow can see is live; that session needs no
+  restart. The strip leaves an FYI in the user's inbox. `flow skill update
+  --strip-legacy` forces it (and prints a stderr line). If the plugin never
+  loads (older Claude Code, a policy that blocks plugins, the plugin
+  disabled), the old entries stay and keep working. A plain `claude`
+  started outside flow before the strip is invisible to the live check and
+  may lose flow hooks until restarted. The skill is still named `flow`. If
+  the user disabled the plugin, the plugin's hooks stay off — leave that
+  choice to them; any old `settings.json` entries still run until the user
+  runs `flow skill update --strip-legacy` (or uninstalls the skill).
+- **Rolling flow back** to a version without the plugin re-adds the
+  `settings.json` entries while the plugin stays in the skill folder. The
+  newer binary's hooks re-read `settings.json` on every invocation and
+  claim again, so nothing doubles while a plugin-aware flow runs the hooks.
+  An older binary has no claim guard: until the user upgrades again, every
+  flow hook can fire twice per event (doubled SessionStart context or
+  nudges; harmless but noisy). To roll back cleanly, run `flow skill
+  uninstall --harness claude` with the newer binary first, then install
+  the older one.
+
 - Restart running Codex sessions after upgrading, then review the pending hooks (`/hooks`) and trust flow's hooks.
 - **Every interactive task is a driver.** Rules: references/driver.md
   (flow's session line and a brief's `Role: driver` line point there).

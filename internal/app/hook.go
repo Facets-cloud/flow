@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flow/internal/flowdb"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -43,7 +44,7 @@ func cmdHook(args []string) int {
 	case "post-tool-use":
 		// Retired: per-tool-call delivery was removed in favor of the
 		// `flow inbox pop --wait` listener discipline. Kept as a silent
-		// no-op so stale settings.json entries never error.
+		// no-op so stale settings.json / hooks.json entries never error.
 		return 0
 	case "stop":
 		return cmdHookStop(rest)
@@ -72,7 +73,14 @@ type hookPayload struct {
 	Source         string `json:"source"`
 	StopHookActive bool   `json:"stop_hook_active"`
 	Prompt         string `json:"prompt"`
+	HookEventName  string `json:"hook_event_name"`
+	PromptID       string `json:"prompt_id"`
+	ToolUseID      string `json:"tool_use_id"`
 }
+
+// hookRawPayload is the hook's raw stdin bytes (nil outside a hook). The
+// duplicate-copy claim (hookguard.go) hashes it.
+var hookRawPayload []byte
 
 // readHookPayload decodes the hook's stdin payload and records its
 // session_id for currentSessionID. Codex exports $CODEX_THREAD_ID only to
@@ -84,16 +92,20 @@ func readHookPayload() (p hookPayload, ok bool) {
 	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice != 0 {
 		return p, false
 	}
-	if err := json.NewDecoder(os.Stdin).Decode(&p); err != nil {
+	hookRawPayload = nil
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil || json.Unmarshal(raw, &p) != nil {
 		return p, false
 	}
+	hookRawPayload = raw
 	hookSessionID = p.SessionID
 	hookPrompt, hookPromptKnown = p.Prompt, true
 	return p, true
 }
 
 // cmdHookSessionStart emits a Claude Code SessionStart hook response.
-// Wired via ~/.claude/settings.json with a matcher of
+// Wired via the Claude flow plugin's hooks/hooks.json (legacy installs:
+// ~/.claude/settings.json; see hookguard.go) with a matcher of
 // "startup|resume|compact|fork" so it fires for fresh spawns, `claude
 // --resume`, `claude --bg --resume` (a `--fork-session` under a new id —
 // the wake endpoint must be recorded under that id), AND after
@@ -113,10 +125,22 @@ func readHookPayload() (p hookPayload, ok bool) {
 //     ambient skill hint so Claude knows the flow skill is available.
 func cmdHookSessionStart(args []string) int {
 	fs := flagSet("hook session-start")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	payload, _ := readHookPayload()
+	loses := hookLoses("session-start", *src, payload)
+	// The plugin copy proves the plugin loads here: it may strip the
+	// legacy settings.json copies, whichever copy won the claim.
+	hookSrc := *src
+	if hookSrc == "" {
+		hookSrc = os.Getenv(hookSrcEnv)
+	}
+	maybeAutoStripLegacy(hookSrc, currentSessionID())
+	if loses {
+		return 0
+	}
 	// Claude socket push: only this hook process sees the session's
 	// socket token, so record it on every start/resume/compaction.
 	recordClaudeEndpoint(currentSessionID())
@@ -342,10 +366,14 @@ func emitHookContext(event, ctx string) int {
 // the prompt has drifted or signals completion is Claude's call.
 func cmdHookUserPromptSubmit(args []string) int {
 	fs := flagSet("hook user-prompt-submit")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	readHookPayload()
+	p, _ := readHookPayload()
+	if hookLoses("user-prompt-submit", *src, p) {
+		return 0
+	}
 	t := lookupBoundTask()
 	if t != nil && !isAutoRunSession(t) {
 		markSessionState(t.Slug, flowdb.SessionBusy)
@@ -388,10 +416,14 @@ func cmdHookUserPromptSubmit(args []string) int {
 // here once. Inform-only — it never consumes.
 func cmdHookPreToolUse(args []string) int {
 	fs := flagSet("hook pre-tool-use")
+	src := hookSrcFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	readHookPayload()
+	p, _ := readHookPayload()
+	if hookLoses("pre-tool-use", *src, p) {
+		return 0
+	}
 	ctx := busPreToolUseContext() + upgradeNoticeContext(nil)
 	if ctx == "" {
 		return 0

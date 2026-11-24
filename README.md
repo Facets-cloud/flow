@@ -308,8 +308,17 @@ flow init
 ```
 
 Or open [INSTALL.md](INSTALL.md) in Claude Code or Codex and let the agent
-install it. `flow init` installs a skill and a session-start hook into your
-harness. That is how the agent knows what "pick up the billing migration"
+install it. `flow init` installs a skill and its hooks into your
+harness. In Claude Code they ship as a small plugin inside the skill folder
+(`~/.claude/skills/flow/`, shown as `flow@skills-dir` in `/plugin`), so flow
+never adds to your `~/.claude/settings.json`. It only removes the hook
+entries older flow versions put there, and only after the plugin has
+actually loaded in a Claude session while no other session was running.
+`claude plugin disable flow@skills-dir` turns the plugin's hooks off and
+flow leaves that choice alone; if an older flow's entries are still in
+`settings.json`, those keep running until you remove them with `flow skill
+uninstall --harness claude` (all flow hooks) or `flow skill update
+--strip-legacy` (just the old entries). That is how the agent knows what "pick up the billing migration"
 means. Those two commands are the last ones you need to type. In Codex,
 review the pending hooks when asked (first run in a folder, and after an
 upgrade changes a flow hook): check each command and trust flow's hooks,
@@ -330,7 +339,8 @@ background (checksum-verified). `flow upgrade` does it now;
 follows an upgrade). That refresh only ever moves forward: an older or source
 build never rewrites a newer install's skill or hooks. Source builds, CI, root and a binary
 folder flow cannot write are skipped; the same install command works there.
-Uninstall by deleting the binary and `~/.flow`.
+Uninstall with `flow skill uninstall` (removes the skill and its hooks from
+every harness), then delete the binary and `~/.flow`.
 
 ## Numbers, for the record
 

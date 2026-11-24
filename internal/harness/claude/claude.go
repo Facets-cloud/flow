@@ -1,7 +1,10 @@
 // Package claude implements harness.Harness for Anthropic's Claude
 // Code CLI. It pre-allocates session UUIDs (claude accepts
 // --session-id), runs `claude -p` for headless sweeps, and wires
-// SessionStart hooks into ~/.claude/settings.json.
+// its hooks through a skills-dir plugin (plugin.go): ~/.claude/skills/flow/
+// carries .claude-plugin/plugin.json + hooks/hooks.json, so flow never
+// writes hooks into ~/.claude/settings.json. The settings.json hook code
+// below is kept only to strip entries older flow versions wrote.
 package claude
 
 import (
@@ -47,6 +50,10 @@ const (
 	// on the command, not the matcher, and migrates an older matcher
 	// (e.g. "startup|resume") in place, so changing it is safe.
 	hookMatcher = "startup|resume|compact|fork"
+
+	// toolMatcher is the Pre/PostToolUse matcher: the tools after which a
+	// just-arrived message should surface.
+	toolMatcher = "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch"
 )
 
 // New returns a fresh claude harness. The struct is stateless; we
@@ -417,7 +424,7 @@ func (c *claude) UninstallUserPromptSubmitHook(command string) (bool, error) {
 func (c *claude) InstallPostToolUseHook(command string) (bool, error) {
 	// Aggressive by design: fires on every tool call. The handler's
 	// fast path (no bound task / empty inbox) exits without output.
-	return installHook("PostToolUse", "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch", command)
+	return installHook("PostToolUse", toolMatcher, command)
 }
 
 func (c *claude) UninstallPostToolUseHook(command string) (bool, error) {
@@ -428,7 +435,7 @@ func (c *claude) InstallPreToolUseHook(command string) (bool, error) {
 	// Fires before every tool call. The handler delta-gates the inbox and
 	// exits without output on the fast path (no bound task / nothing new),
 	// so a given message is surfaced at most once despite the frequency.
-	return installHook("PreToolUse", "Bash|Edit|Write|Read|Glob|Grep|Agent|WebFetch|WebSearch", command)
+	return installHook("PreToolUse", toolMatcher, command)
 }
 
 func (c *claude) UninstallPreToolUseHook(command string) (bool, error) {
@@ -545,15 +552,13 @@ func writeSettings(path string, settings map[string]any) error {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
+	return writeFileAtomic(path, out, 0o644)
 }
 
 // uninstallHook removes any entry under hooks.<event> whose inner
 // hook list contains a command matching `command`. Returns
-// (removed=true) iff the file changed.
+// (removed=true) iff the file changed. The rewrite keeps the user's key
+// order and number literals (settingsio.go) and is atomic.
 func uninstallHook(event, command string) (bool, error) {
 	path, err := settingsPath()
 	if err != nil {
@@ -566,15 +571,21 @@ func uninstallHook(event, command string) (bool, error) {
 		}
 		return false, fmt.Errorf("read %s: %w", path, err)
 	}
-	var settings map[string]any
-	if err := json.Unmarshal(raw, &settings); err != nil {
+	doc, err := decodeOrdered(raw)
+	if err != nil {
 		return false, fmt.Errorf("parse %s: %w", path, err)
 	}
-	hooks, _ := settings["hooks"].(map[string]any)
+	settings, ok := doc.(*ordObj)
+	if !ok {
+		return false, fmt.Errorf("parse %s: top level is not a JSON object", path)
+	}
+	hv, _ := settings.get("hooks")
+	hooks, _ := hv.(*ordObj)
 	if hooks == nil {
 		return false, nil
 	}
-	entries, _ := hooks[event].([]any)
+	ev, _ := hooks.get(event)
+	entries, _ := ev.([]any)
 	if len(entries) == 0 {
 		return false, nil
 	}
@@ -582,31 +593,38 @@ func uninstallHook(event, command string) (bool, error) {
 	changed := false
 	kept := make([]any, 0, len(entries))
 	for _, entry := range entries {
-		m, ok := entry.(map[string]any)
+		m, ok := entry.(*ordObj)
 		if !ok {
 			kept = append(kept, entry)
 			continue
 		}
-		inner, _ := m["hooks"].([]any)
+		iv, _ := m.get("hooks")
+		inner, _ := iv.([]any)
 		filteredInner := make([]any, 0, len(inner))
+		removedHere := false
 		for _, h := range inner {
-			hm, ok := h.(map[string]any)
+			hm, ok := h.(*ordObj)
 			if !ok {
 				filteredInner = append(filteredInner, h)
 				continue
 			}
-			cmd, _ := hm["command"].(string)
+			cv, _ := hm.get("command")
+			cmd, _ := cv.(string)
 			if strings.TrimSpace(cmd) == command {
-				changed = true
+				removedHere = true
 				continue
 			}
 			filteredInner = append(filteredInner, h)
 		}
-		if len(filteredInner) == 0 {
-			changed = true
+		if !removedHere {
+			kept = append(kept, m)
 			continue
 		}
-		m["hooks"] = filteredInner
+		changed = true
+		if len(filteredInner) == 0 {
+			continue // the entry held only flow's command
+		}
+		m.set("hooks", filteredInner)
 		kept = append(kept, m)
 	}
 
@@ -614,23 +632,20 @@ func uninstallHook(event, command string) (bool, error) {
 		return false, nil
 	}
 	if len(kept) == 0 {
-		delete(hooks, event)
+		hooks.del(event)
 	} else {
-		hooks[event] = kept
+		hooks.set(event, kept)
 	}
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	} else {
-		settings["hooks"] = hooks
+	if hooks.len() == 0 {
+		settings.del("hooks")
 	}
 
-	out, err := json.MarshalIndent(settings, "", "  ")
+	out, err := encodeOrdered(settings)
 	if err != nil {
 		return false, fmt.Errorf("marshal settings: %w", err)
 	}
-	out = append(out, '\n')
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
+	if err := writeFileAtomic(path, out, 0o644); err != nil {
+		return false, err
 	}
 	return true, nil
 }

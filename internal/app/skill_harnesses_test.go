@@ -23,7 +23,10 @@ func (e harnessEnv) codexSkill() string {
 	return filepath.Join(e.codexHome, "skills", "flow", "SKILL.md")
 }
 func (e harnessEnv) claudeSettings() string { return filepath.Join(e.home, ".claude", "settings.json") }
-func (e harnessEnv) codexHooks() string     { return filepath.Join(e.codexHome, "hooks.json") }
+func (e harnessEnv) claudePluginHooks() string {
+	return filepath.Join(e.home, ".claude", "skills", "flow", "hooks", "hooks.json")
+}
+func (e harnessEnv) codexHooks() string { return filepath.Join(e.codexHome, "hooks.json") }
 
 // withHarnessEnv sets up the sandbox. onPath names the harness binaries
 // the stubbed lookup reports as installed; every other name is "not
@@ -61,10 +64,25 @@ func fileExists(p string) bool {
 // the given settings/hooks file.
 func assertAllFlowHooks(t *testing.T, path string) {
 	t.Helper()
+	assertFlowHooksWith(t, path, func(c string) string { return c })
+}
+
+// assertClaudePluginHooks checks the Claude plugin's hooks.json carries the
+// four live hooks (with --src plugin) and that settings.json was not created.
+func assertClaudePluginHooks(t *testing.T, e harnessEnv) {
+	t.Helper()
+	assertFlowHooksWith(t, e.claudePluginHooks(), pluginCommand)
+	if fileExists(e.claudeSettings()) {
+		t.Errorf("claude: %s must not be written", e.claudeSettings())
+	}
+}
+
+func assertFlowHooksWith(t *testing.T, path string, form func(string) string) {
+	t.Helper()
 	settings := readSettings(t, path)
 	hooks, _ := settings["hooks"].(map[string]any)
 	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"} {
-		if !hookEventReferencesCommand(hooks, ev, expectedCommand(ev)) {
+		if !hookEventReferencesCommand(hooks, ev, form(expectedCommand(ev))) {
 			t.Errorf("%s: %s hook missing; hooks=%#v", path, ev, hooks[ev])
 		}
 	}
@@ -82,7 +100,7 @@ func TestSkillInstallAllPresentHarnesses(t *testing.T) {
 			t.Errorf("missing %s", p)
 		}
 	}
-	assertAllFlowHooks(t, e.claudeSettings())
+	assertClaudePluginHooks(t, e)
 	assertAllFlowHooks(t, e.codexHooks())
 	if !strings.Contains(out, "claude: installed flow skill") || !strings.Contains(out, "codex: installed flow skill") {
 		t.Errorf("want per-harness lines, got:\n%s", out)
@@ -218,11 +236,12 @@ func TestSkillUninstallAllInstalled(t *testing.T) {
 	if fileExists(filepath.Dir(e.claudeSkill())) || fileExists(filepath.Dir(e.codexSkill())) {
 		t.Error("uninstall should remove the skill from every harness")
 	}
-	for _, p := range []string{e.claudeSettings(), e.codexHooks()} {
-		hooks, _ := readSettings(t, p)["hooks"].(map[string]any)
-		if len(hooks) != 0 {
-			t.Errorf("%s: hooks left after uninstall: %#v", p, hooks)
-		}
+	if fileExists(e.claudeSettings()) || fileExists(e.claudePluginHooks()) {
+		t.Error("claude: no hooks may be left after uninstall")
+	}
+	hooks, _ := readSettings(t, e.codexHooks())["hooks"].(map[string]any)
+	if len(hooks) != 0 {
+		t.Errorf("%s: hooks left after uninstall: %#v", e.codexHooks(), hooks)
 	}
 }
 
@@ -254,7 +273,7 @@ func TestCmdInitInstallsAllPresentHarnesses(t *testing.T) {
 			t.Errorf("missing %s", p)
 		}
 	}
-	assertAllFlowHooks(t, e.claudeSettings())
+	assertClaudePluginHooks(t, e)
 	assertAllFlowHooks(t, e.codexHooks())
 }
 
