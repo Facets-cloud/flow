@@ -354,9 +354,6 @@ func listTasksCmd(args []string) int {
 			// Reconcile a crashed 'running' supervisor to 'dead' before display.
 			reconcileAutoRun(db, t)
 			r.AutoRun = t.AutoRunStatus.String
-			if _, stalled := autoRunStalledFor(t, time.Now()); stalled {
-				r.AutoRun = "stalled"
-			}
 			if t.AutoRunPID.Valid {
 				r.AutoRunPID = int(t.AutoRunPID.Int64)
 			}
@@ -508,8 +505,6 @@ func autoRunColor(status string) string {
 	switch status {
 	case "running":
 		return listfmt.Cyan
-	case "stalled":
-		return listfmt.Yellow
 	case "completed":
 		return listfmt.Green
 	case "dead":
