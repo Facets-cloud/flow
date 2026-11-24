@@ -55,7 +55,7 @@ func TestCmdDoHarnessFreshRepins(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(prev) != 1 || prev[0].Harness != "claude" || prev[0].SessionID != repinOldSID ||
-		prev[0].Reason != "repin" || prev[0].SessionStarted != "2026-11-01T00:00:00Z" {
+		prev[0].Reason != "repin" || prev[0].SessionStarted == nil || *prev[0].SessionStarted != "2026-11-01T00:00:00Z" {
 		t.Errorf("prior sessions = %+v", prev)
 	}
 }
@@ -171,5 +171,104 @@ func TestCmdDoBackgroundRepin(t *testing.T) {
 	prev, _ := flowdb.PriorSessions(db, "bg-repin")
 	if len(prev) != 1 || prev[0].Harness != "prx" || prev[0].SessionID != oldPrx || prev[0].Reason != "repin" {
 		t.Errorf("prior sessions = %+v", prev)
+	}
+}
+
+// CodeRabbit #200: the re-pin decision must come from the row read inside
+// the transaction. If another command re-pins the task to codex between
+// flow do's snapshot and its transaction, `--harness claude --fresh` must
+// still leave a claude session under a claude pin (never a claude session
+// under a codex pin).
+func TestCmdDoRepinDecidedFromRowInTx(t *testing.T) {
+	setupFlowRoot(t)
+	seedClaudeBoundTask(t, "race-pin")
+	stubPS(t, "  PID COMMAND\n")
+	const newSID = "33333333-2222-3333-4444-555555555555"
+	stubNewUUID(t, newSID)
+	_, _ = stubITerm(t)
+	old := doBeforeTxHook
+	doBeforeTxHook = func(slug string) {
+		db := openFlowDB(t)
+		if _, err := db.Exec(`UPDATE tasks SET harness='codex' WHERE slug=?`, slug); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { doBeforeTxHook = old })
+
+	if rc := cmdDo([]string{"race-pin", "--harness", "claude", "--fresh"}); rc != 0 {
+		t.Fatalf("rc=%d", rc)
+	}
+	db := openFlowDB(t)
+	task, _ := flowdb.GetTask(db, "race-pin")
+	if task.Harness.String != "claude" || task.SessionID.String != newSID {
+		t.Errorf("task = harness %q session %q, want claude/%s", task.Harness.String, task.SessionID.String, newSID)
+	}
+	prev, _ := flowdb.PriorSessions(db, "race-pin")
+	if len(prev) != 1 || prev[0].Harness != "codex" || prev[0].Reason != "repin" {
+		t.Errorf("prior sessions = %+v, want the codex-pinned session recorded as a repin", prev)
+	}
+}
+
+// Without --harness, a pin changed by another command between the snapshot
+// and the transaction is refused (the session would be minted by the
+// wrong adapter), leaving the row as the other command left it.
+func TestCmdDoFreshRefusesPinChangedConcurrently(t *testing.T) {
+	setupFlowRoot(t)
+	seedClaudeBoundTask(t, "race-fresh")
+	for _, h := range allHarnesses() {
+		t.Setenv(h.SessionIDEnvVar(), "")
+	}
+	stubPS(t, "  PID COMMAND\n")
+	stubNewUUID(t, "44444444-2222-3333-4444-555555555555")
+	_, _ = stubITerm(t)
+	old := doBeforeTxHook
+	doBeforeTxHook = func(slug string) {
+		db := openFlowDB(t)
+		db.Exec(`UPDATE tasks SET harness='codex' WHERE slug=?`, slug)
+	}
+	t.Cleanup(func() { doBeforeTxHook = old })
+	stderr := captureStderr(t)
+	if rc := cmdDo([]string{"race-fresh", "--fresh"}); rc == 0 {
+		t.Fatal("want refusal")
+	}
+	if got := stderr(); !strings.Contains(got, "changed") {
+		t.Errorf("stderr = %q", got)
+	}
+	task, _ := flowdb.GetTask(openFlowDB(t), "race-fresh")
+	if task.Harness.String != "codex" || task.SessionID.String != repinOldSID {
+		t.Errorf("row changed: %q/%q", task.Harness.String, task.SessionID.String)
+	}
+}
+
+// CodeRabbit #200: in background mode the history row and the new binding
+// are written in one transaction. If either write fails, flow keeps the
+// old binding, stops the agent it just started (it would otherwise run
+// unbound), and fails.
+func TestCmdDoBackgroundRepinAtomic(t *testing.T) {
+	setupFlowRoot(t)
+	seedTask(t, "bg-atomic")
+	db := openFlowDB(t)
+	const oldPrx = "019f8f30-194b-7c83-8564-bff77c5e0147"
+	if _, err := db.Exec(`UPDATE tasks SET status='in-progress', harness='prx', session_id=?, session_started='2026-11-02T00:00:00Z' WHERE slug='bg-atomic'`, oldPrx); err != nil {
+		t.Fatal(err)
+	}
+	// Make the history insert fail.
+	if _, err := db.Exec(`CREATE TRIGGER fail_hist BEFORE INSERT ON task_session_history BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	stubBGMode(t)
+	stubITerm(t)
+	reg := bgAgentsJSON(bgFullSID)
+	c := stubBGCommand(t, &reg)
+
+	if rc := cmdDo([]string{"bg-atomic", "--harness", "claude", "--fresh"}); rc == 0 {
+		t.Fatal("want failure when the history write fails")
+	}
+	if c.spawn != 1 || c.stop != 1 {
+		t.Errorf("spawns=%d stops=%d, want the started agent stopped", c.spawn, c.stop)
+	}
+	task, _ := flowdb.GetTask(db, "bg-atomic")
+	if task.Harness.String != "prx" || task.SessionID.String != oldPrx {
+		t.Errorf("binding changed despite failure: %q/%q", task.Harness.String, task.SessionID.String)
 	}
 }

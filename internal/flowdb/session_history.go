@@ -23,11 +23,11 @@ CREATE INDEX IF NOT EXISTS idx_task_session_history_task ON task_session_history
 
 // PriorSession is one replaced session of a task.
 type PriorSession struct {
-	Harness        string `json:"harness"`
-	SessionID      string `json:"session_id"`
-	SessionStarted string `json:"session_started"`
-	EndedAt        string `json:"ended_at"`
-	Reason         string `json:"reason"` // "fresh" | "repin"
+	Harness        string  `json:"harness"`
+	SessionID      string  `json:"session_id"`
+	SessionStarted *string `json:"session_started"` // null when unknown
+	EndedAt        string  `json:"ended_at"`
+	Reason         string  `json:"reason"` // "fresh" | "repin"
 }
 
 // execer is satisfied by *sql.DB and *sql.Tx.
@@ -57,7 +57,7 @@ func RecordPriorSession(db execer, taskSlug, harness, sessionID, sessionStarted,
 // PriorSessions lists a task's replaced sessions, oldest first. Never nil.
 func PriorSessions(db *sql.DB, taskSlug string) ([]PriorSession, error) {
 	rows, err := db.Query(
-		`SELECT harness, session_id, COALESCE(session_started, ''), ended_at, reason
+		`SELECT harness, session_id, session_started, ended_at, reason
 		 FROM task_session_history WHERE task_slug = ? ORDER BY id`, taskSlug)
 	if err != nil {
 		return nil, err
@@ -66,8 +66,13 @@ func PriorSessions(db *sql.DB, taskSlug string) ([]PriorSession, error) {
 	out := []PriorSession{}
 	for rows.Next() {
 		var p PriorSession
-		if err := rows.Scan(&p.Harness, &p.SessionID, &p.SessionStarted, &p.EndedAt, &p.Reason); err != nil {
+		var started sql.NullString
+		if err := rows.Scan(&p.Harness, &p.SessionID, &started, &p.EndedAt, &p.Reason); err != nil {
 			return nil, err
+		}
+		if started.Valid && started.String != "" {
+			s := started.String
+			p.SessionStarted = &s
 		}
 		out = append(out, p)
 	}

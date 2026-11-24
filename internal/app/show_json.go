@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flow/internal/flowdb"
 	"flow/internal/harness"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ type taskJSON struct {
 	Tags               []string              `json:"tags"`
 	Harness            *string               `json:"harness"`
 	SessionID          *string               `json:"session_id"`
-	Live               bool                  `json:"live"`
+	Live               *bool                 `json:"live"` // null when the probe failed
 	SessionStarted     *string               `json:"session_started"`
 	SessionLastResumed *string               `json:"session_last_resumed"`
 	Model              *string               `json:"model"`
@@ -82,8 +83,8 @@ func nullStr(n sql.NullString) *string {
 //
 // live rule: true when the pinned harness's process probe
 // (LiveSessionIDs) sees the session, OR the session has a background
-// registry entry whose pid is alive. Otherwise false (including tasks
-// with no session).
+// registry entry whose pid is alive. false for a task with no session or
+// a successful negative probe; null when the probe failed (unknown).
 func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 	doc := taskJSON{
 		Schema:             showTaskJSONSchema,
@@ -117,7 +118,11 @@ func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 	if doc.Updates == nil {
 		doc.Updates = []string{}
 	}
-	doc.Other, _ = enumerateAuxFiles(filepath.Join(root, "tasks", t.Slug))
+	other, err := enumerateAuxFiles(filepath.Join(root, "tasks", t.Slug))
+	if err != nil {
+		return fmt.Errorf("list auxiliary files: %w", err)
+	}
+	doc.Other = other
 	if doc.Other == nil {
 		doc.Other = []string{}
 	}
@@ -136,10 +141,14 @@ func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 		c := string(harness.NameClaude)
 		doc.Harness = &c
 	}
+	no := false
+	doc.Live = &no // unbootstrapped: not live
 	if doc.SessionID != nil {
+		doc.Live = nil // unknown until a probe answers
 		if h, err := harnessForTask(t); err == nil {
 			if live, err := h.LiveSessionIDs(); err == nil {
-				doc.Live = live[strings.ToLower(t.SessionID.String)] > 0
+				v := live[strings.ToLower(t.SessionID.String)] > 0
+				doc.Live = &v
 			}
 			if bg, ok := h.(harness.BackgroundLauncher); ok {
 				if a := bgAgentInRegistry(bg, t.SessionID.String); a != nil {
@@ -148,7 +157,8 @@ func printTaskJSON(db *sql.DB, t *flowdb.Task, root string) error {
 					// to the ps-based probe; its registry pid being alive
 					// also makes the session live.
 					if a.PID > 0 && processAlive(a.PID) {
-						doc.Live = true
+						yes := true
+						doc.Live = &yes
 					}
 				}
 			}

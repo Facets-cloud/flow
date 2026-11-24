@@ -2,8 +2,11 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"flow/internal/flowdb"
 	"flow/internal/harness/claude"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -154,21 +157,90 @@ func TestShowTaskJSONLiveFromBackgroundPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	stubPS(t, "  PID COMMAND\n") // ps sees nothing
-	stubClaudeAgents(t, `[{"kind":"background","id":"abcd1234","sessionId":"`+sid+`","pid":777,"status":"idle","state":"idle"}]`)
 
+	oldAlive := processAlive
+	t.Cleanup(func() { processAlive = oldAlive })
 	for _, tc := range []struct {
+		name  string
+		pid   int
 		alive bool
 		want  bool
-	}{{true, true}, {false, false}} {
-		oldAlive := processAlive
-		processAlive = func(pid int) bool { return pid == 777 && tc.alive }
-		m := decodeShowJSON(t, "bg-live", "--json")
-		processAlive = oldAlive
-		if m["live"] != tc.want {
-			t.Errorf("pid alive=%v: live = %v, want %v", tc.alive, m["live"], tc.want)
-		}
-		if bg, _ := m["bg"].(map[string]any); bg == nil || bg["pid"] != float64(777) {
-			t.Errorf("bg = %#v", m["bg"])
-		}
+	}{
+		{"bg pid alive", 777, true, true},
+		{"bg pid dead", 777, false, false},
+		{"bg pid 0 (exited)", 0, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubClaudeAgents(t, fmt.Sprintf(`[{"kind":"background","id":"abcd1234","sessionId":"%s","pid":%d,"status":"idle","state":"idle"}]`, sid, tc.pid))
+			alive := tc.alive
+			processAlive = func(pid int) bool { return pid == tc.pid && alive }
+			m := decodeShowJSON(t, "bg-live", "--json")
+			if m["live"] != tc.want {
+				t.Errorf("live = %v, want %v", m["live"], tc.want)
+			}
+			if bg, _ := m["bg"].(map[string]any); bg == nil || bg["pid"] != float64(tc.pid) {
+				t.Errorf("bg = %#v", m["bg"])
+			}
+		})
+	}
+}
+
+// CodeRabbit #200: a failed liveness probe is unknown, not stopped: live is
+// JSON null. An unbootstrapped task stays false.
+func TestShowTaskJSONLiveNullWhenProbeFails(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "probe-err", "P", "in-progress", "low", filepath.Join(root, "repo"), nil)
+	stubClaudeAgents(t, "[]")
+	old := claude.PSRunner
+	claude.PSRunner = func() ([]byte, error) { return nil, errors.New("ps failed") }
+	t.Cleanup(func() { claude.PSRunner = old })
+	m := decodeShowJSON(t, "probe-err", "--json")
+	if v, ok := m["live"]; !ok || v != nil {
+		t.Errorf("live = %#v (present=%v), want null", v, ok)
+	}
+}
+
+// CodeRabbit #200: an unreadable task directory is an error, not "other": [].
+func TestShowTaskJSONAuxDiscoveryErrorFails(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "aux-err", "A", "backlog", "low", filepath.Join(root, "repo"), nil)
+	dir := filepath.Join(root, "tasks", "aux-err")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if f, err := os.Open(dir); err == nil {
+		f.Close()
+		t.Skip("directory still readable (running as root?)")
+	}
+	stubPS(t, "  PID COMMAND\n")
+	stubClaudeAgents(t, "[]")
+	var rc int
+	_ = captureStdout(t, func() { rc = cmdShow([]string{"task", "aux-err", "--json"}) })
+	if rc == 0 {
+		t.Error("rc=0, want an error when aux-file discovery fails")
+	}
+}
+
+// CodeRabbit #200: a replaced session with no recorded start time reports
+// session_started as JSON null, not "".
+func TestShowTaskJSONPreviousSessionNullStart(t *testing.T) {
+	root, db := showListEditDB(t)
+	insertTask(t, db, "nostart", "N", "in-progress", "low", filepath.Join(root, "repo"), nil)
+	if err := flowdb.RecordPriorSession(db, "nostart", "claude", "old-sid", "", "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	stubPS(t, "  PID COMMAND\n")
+	stubClaudeAgents(t, "[]")
+	m := decodeShowJSON(t, "nostart", "--json")
+	ps, _ := m["previous_sessions"].([]any)
+	if len(ps) != 1 {
+		t.Fatalf("previous_sessions = %#v", m["previous_sessions"])
+	}
+	if v, ok := ps[0].(map[string]any)["session_started"]; !ok || v != nil {
+		t.Errorf("session_started = %#v (present=%v), want null", v, ok)
 	}
 }

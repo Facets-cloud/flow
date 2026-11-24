@@ -309,6 +309,7 @@ func cmdDo(args []string) int {
 	// and other fields for later steps. Per spec §6 this commit is the
 	// durability boundary — even if bootstrap or iTerm spawn fails below,
 	// the task is already in 'in-progress'.
+	doBeforeTxHook(task.Slug)
 	tx, err := db.Begin()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: begin tx: %v\n", err)
@@ -362,6 +363,28 @@ func cmdDo(args []string) int {
 		return 2
 	}
 	needsBootstrap := !curSessionID.Valid || *fresh
+	// The pin this bootstrap commits must match the adapter (h) that
+	// minted its session. Decide it from the row read inside this tx, not
+	// from the snapshot taken before it: another command may have re-pinned
+	// the task in between. An explicit --harness overwrites a differing pin
+	// (a re-pin); without one, a pin that changed under us is refused, since
+	// h was chosen from the stale snapshot.
+	if needsBootstrap {
+		rowPin := curHarness.String
+		if rowPin == "" && curSessionID.Valid {
+			rowPin = string(harness.NameClaude) // NULL pin on a bootstrapped row
+		}
+		repin = false
+		if rowPin != "" && rowPin != string(h.Name()) {
+			if *harnessName == "" {
+				fmt.Fprintf(os.Stderr,
+					"error: task %q's harness changed to %s while flow do was starting; re-run it (pass --harness <h> --fresh to re-pin)\n",
+					task.Slug, rowPin)
+				return 1
+			}
+			repin = true
+		}
+	}
 	var sessionID string
 	if needsBootstrap && preMinted != "" {
 		sessionID = preMinted
@@ -737,6 +760,10 @@ func printNoTerminalHandoff(slug, cwd, command string, envVars map[string]string
 	fmt.Printf("  flow do --auto %s   run it headless in the background\n", slug)
 	fmt.Printf("Tabs open automatically inside tmux, zellij or kitty (or set FLOW_TERM=tmux|zellij|kitty).\n")
 }
+
+// doBeforeTxHook runs right before cmdDo opens its write transaction.
+// Tests use it to change the row concurrently; production leaves it a no-op.
+var doBeforeTxHook = func(slug string) {}
 
 // harnessForExplicitSpawn applies `flow do --harness <name>`. On an
 // unbootstrapped task it picks the first session's harness. Once a task has
@@ -1181,34 +1208,62 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 		return 1
 	}
 
-	now := flowdb.NowISO()
-	if fresh && hasSession {
-		if err := flowdb.RecordPriorSession(db, task.Slug, task.Harness.String,
-			task.SessionID.String, task.SessionStarted.String, priorSessionReason(in.repin)); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	// The history row and the new binding commit together: a half-written
+	// pair either loses the displaced session or leaves the new agent
+	// unbound. On any failure the old binding stays and the agent that was
+	// just started is stopped, since nothing would ever reach it.
+	if err := recordBgSpawn(db, task, h, agent.SessionID, fresh && hasSession, in.repin); err != nil {
+		fmt.Fprintf(os.Stderr, "error: record background session: %v\n", err)
+		if stopper, ok := bg.(harness.BackgroundStopper); ok {
+			if serr := stopper.StopBackground(agent.ShortID); serr != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not stop the unbound background session %s: %v; stop it by hand (%s)\n",
+					agent.ShortID, serr, bgAttachHint(h, &agent))
+			} else {
+				fmt.Fprintf(os.Stderr, "note: stopped the new background session %s; %s keeps its previous binding\n", agent.ShortID, task.Slug)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: background session %s is running unbound; stop it by hand (%s)\n",
+				agent.ShortID, bgAttachHint(h, &agent))
 		}
-	}
-	// Record the harness-minted REAL session id alongside status + harness.
-	// COALESCE on harness mirrors the interactive bootstrap: set-once,
-	// except on an explicit re-pin.
-	harnessSQL := `harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END`
-	if in.repin {
-		harnessSQL = `harness = ?`
-	}
-	if _, err := db.Exec(
-		`UPDATE tasks SET `+bgKeepConcurrentDoneSQL+`,
-		 session_id=?, session_started=?,
-		 `+harnessSQL+`,
-		 updated_at=? WHERE slug=?`,
-		now, agent.SessionID, now, string(h.Name()), now, task.Slug,
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "error: record session: %v\n", err)
 		return 1
 	}
 	bumpWorkdirUsed(db, task.WorkDir)
 	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  %s\n",
 		task.Slug, agent.SessionID, agent.ShortID, title, bgViewHint(h, agent.SessionID))
 	return 0
+}
+
+// recordBgSpawn binds the task to a freshly spawned background session
+// in one transaction: the replaced session (when replacing) goes to the
+// task's history, then the binding is written. repin overwrites the pinned
+// harness; otherwise the pin is set only when empty (set-once).
+func recordBgSpawn(db *sql.DB, task *flowdb.Task, h harness.Harness, sessionID string, replacing, repin bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if replacing {
+		if err := flowdb.RecordPriorSession(tx, task.Slug, task.Harness.String,
+			task.SessionID.String, task.SessionStarted.String, priorSessionReason(repin)); err != nil {
+			return err
+		}
+	}
+	harnessSQL := `harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END`
+	if repin {
+		harnessSQL = `harness = ?`
+	}
+	now := flowdb.NowISO()
+	if _, err := tx.Exec(
+		`UPDATE tasks SET `+bgKeepConcurrentDoneSQL+`,
+		 session_id=?, session_started=?,
+		 `+harnessSQL+`,
+		 updated_at=? WHERE slug=?`,
+		now, sessionID, now, string(h.Name()), now, task.Slug,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // bgKeepConcurrentDoneSQL is the status half of a background spawn/resume

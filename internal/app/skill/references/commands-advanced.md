@@ -32,13 +32,15 @@ ever added, never removed or retyped without a schema bump):
   `project`, `parent`, `status`, `priority`, `work_dir`, `archived`,
   `driver`, `tags`), the session (`harness` — null until the first
   `flow do`; `session_id`; `live` — true when the harness's own process probe sees the session OR
-  its background-registry entry's pid is alive;
+  its background-registry entry's pid is alive, false when it does not
+  (or there is no session), null when the probe failed;
   `session_started`, `session_last_resumed`, `model`, `effort`), run
   state (`bg`: `{short_id,pid,status,state}` from the harness's
   background registry, or null; `auto_run`:
   `{status,pid,started,finished,log,last_message}`, or null),
   `previous_sessions` (sessions replaced by `--fresh` / a re-pin:
-  `{harness,session_id,session_started,ended_at,reason}`), and the files
+  `{harness,session_id,session_started,ended_at,reason}`, with
+  `session_started` null when unknown), and the files
   (`brief`, `updates`, `other`). Every key is always present; unknown
   values are `null`.
 - `flow transcript <slug> --json [--compact]` — `{schema, task, harness,
