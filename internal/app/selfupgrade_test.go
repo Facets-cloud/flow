@@ -256,9 +256,18 @@ func TestCmdSelfUpgradeReplacesBinary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, selfUpgradeClaimFile), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.Stat(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if rc := cmdSelfUpgrade(); rc != 0 {
 		t.Fatalf("cmdSelfUpgrade rc = %d, want 0", rc)
+	}
+	// A running process maps the old inode; rewriting it in place gets the
+	// process killed on macOS, so the upgrade must install a new file.
+	if after, err := os.Stat(bin); err != nil || os.SameFile(before, after) {
+		t.Errorf("binary was rewritten in place (same inode); want a rename over a new file (stat err %v)", err)
 	}
 	if got, _ := os.ReadFile(bin); string(got) != fakeFlowBuild("v0.1.0-alpha.29") {
 		t.Errorf("binary = %q, want the new build", got)

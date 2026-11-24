@@ -25,7 +25,12 @@ install: build
 	@# Place the binary in $(INSTALL_DIR) so the user's repo dir stays
 	@# clean and `rm -rf` of this clone won't break their shell.
 	@mkdir -p $(INSTALL_DIR)
-	@cp $(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@# Never write the target in place: a running flow process maps the old
+	@# inode, and macOS kills processes whose mapped pages change under them
+	@# (AMFI / CODE SIGNING rejects the page). Copy to a temp file in the same
+	@# directory, then rename it over the target, so the install is a new inode.
+	@tmp="$(INSTALL_DIR)/.$(BINARY).$$$$.tmp"; \
+	cp $(BINARY) "$$tmp" && chmod 755 "$$tmp" && mv -f "$$tmp" "$(INSTALL_DIR)/$(BINARY)" || { rm -f "$$tmp"; exit 1; }
 	@echo "Installed $(BINARY) -> $(INSTALL_DIR)/$(BINARY)"
 	@# Offer to add $(INSTALL_DIR) to PATH if it isn't already there.
 	@case ":$$PATH:" in \
