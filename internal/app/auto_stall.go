@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -37,7 +38,8 @@ const maxStallMinutes = int64(math.MaxInt64 / int64(time.Minute))
 
 func autoStallThreshold() time.Duration {
 	n, err := strconv.ParseInt(os.Getenv(autoStallEnvVar), 10, 64)
-	if err != nil || n <= 0 {
+	// A positive overflow comes back saturated with ErrRange: clamp it, do not default.
+	if (err != nil && !errors.Is(err, strconv.ErrRange)) || n <= 0 {
 		return autoStallDefault
 	}
 	n = min(n, maxStallMinutes)
@@ -68,13 +70,14 @@ func (w *stallWatch) observe(activity, now time.Time) bool {
 }
 
 // startStallWatchdog samples activity every interval until the returned stop
-// is called. onStall runs at most once per stall episode, with the silence so
-// far. stop returns only after the sampler has exited, so no notice can
-// follow it. The supervisor calls stop before it finalizes the run.
+// is called. onStall runs once per stall episode, with the silence so far. It
+// returns false when the notice was not delivered; the episode then stays open
+// and onStall is retried on a later sample. stop returns only after the sampler
+// has exited, so no notice can follow it. The supervisor calls stop before it finalizes the run.
 // Silence counts from the newest activity already on record (the same reading
 // `flow list` uses), so a run that was silent before the sampler started is
 // reported on the first stall check, not a full threshold later.
-func startStallWatchdog(threshold, interval time.Duration, activity func() time.Time, onStall func(idle time.Duration)) (stop func()) {
+func startStallWatchdog(threshold, interval time.Duration, activity func() time.Time, onStall func(idle time.Duration) bool) (stop func()) {
 	quit := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
@@ -96,8 +99,8 @@ func startStallWatchdog(threshold, interval time.Duration, activity func() time.
 					return
 				default:
 				}
-				if w.observe(activity(), now) {
-					onStall(now.Sub(w.seen))
+				if w.observe(activity(), now) && !onStall(now.Sub(w.seen)) {
+					w.notified = false
 				}
 			}
 		}
@@ -199,12 +202,13 @@ func lastLogLine(path string) string {
 	return line
 }
 
-// notifyParentOfStalledChild tells the parent that a run has gone silent. A
-// parentless run is not messaged: the human hears only at done or blocked,
-// and a stall is visible in `flow list` and `flow show`.
-func notifyParentOfStalledChild(db *sql.DB, child *flowdb.Task, idle time.Duration) {
+// notifyParentOfStalledChild tells the parent that a run has gone silent and
+// reports whether the notice is settled. A parentless run is not messaged: the
+// human hears only at done or blocked, and a stall is visible in `flow list`
+// and `flow show`, so that counts as settled.
+func notifyParentOfStalledChild(db *sql.DB, child *flowdb.Task, idle time.Duration) bool {
 	if !child.ParentSlug.Valid || child.ParentSlug.String == "" {
-		return
+		return true
 	}
 	last := "no log output"
 	if l := lastLogLine(child.AutoRunLog.String); l != "" {
@@ -214,5 +218,5 @@ func notifyParentOfStalledChild(db *sql.DB, child *flowdb.Task, idle time.Durati
 		child.Slug, int(idle.Minutes()), last, child.Slug)
 	closedBody := fmt.Sprintf("FYI: auto child %s of closed task %s stalled: no progress for %d min; check `flow show task %s`",
 		child.Slug, child.ParentSlug.String, int(idle.Minutes()), child.Slug)
-	notifyParentOfChild(db, child, body, closedBody)
+	return notifyParentOfChild(db, child, body, closedBody)
 }

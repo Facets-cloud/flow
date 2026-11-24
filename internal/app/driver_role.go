@@ -153,8 +153,9 @@ func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 }
 
 // notifyParentOfChild sends body to the child's parent. When the parent is
-// missing or closed, it sends closedBody to the human as an FYI instead.
-func notifyParentOfChild(db *sql.DB, child *flowdb.Task, body, closedBody string) {
+// missing or closed, it sends closedBody to the human as an FYI instead. It
+// reports whether the message was stored.
+func notifyParentOfChild(db *sql.DB, child *flowdb.Task, body, closedBody string) bool {
 	toSlug := child.ParentSlug.String
 	if p, err := flowdb.GetTask(db, toSlug); err != nil || p == nil || deliverableTask(p) != nil {
 		toSlug = ""
@@ -167,7 +168,8 @@ func notifyParentOfChild(db *sql.DB, child *flowdb.Task, body, closedBody string
 		Body: body, FYI: toSlug == "", // an FYI to the human never pings a connector
 	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
-		return
+		return false
 	}
 	_ = flowdb.SweepBus(db, time.Now())
+	return true
 }

@@ -72,7 +72,7 @@ func TestStallWatchdogStopSilencesSampler(t *testing.T) {
 	var fired atomic.Int32
 	stop := startStallWatchdog(time.Nanosecond, time.Millisecond,
 		func() time.Time { return time.Time{} },
-		func(time.Duration) { fired.Add(1) })
+		func(time.Duration) bool { fired.Add(1); return true })
 	time.Sleep(20 * time.Millisecond)
 	stop()
 	at := fired.Load()
@@ -175,14 +175,18 @@ func TestAutoStallThresholdClampsHugeOverride(t *testing.T) {
 // The watchdog counts silence from the last recorded activity, so an
 // already-silent run is reported on the first check, matching `flow list`.
 func TestStallWatchdogSeedsFromRecordedActivity(t *testing.T) {
-	var fired atomic.Int32
+	fired := make(chan struct{}, 8)
 	old := time.Now().Add(-time.Hour)
 	stop := startStallWatchdog(time.Minute, time.Millisecond,
 		func() time.Time { return old },
-		func(time.Duration) { fired.Add(1) })
-	time.Sleep(30 * time.Millisecond)
+		func(time.Duration) bool { fired <- struct{}{}; return true })
+	select {
+	case <-fired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no stall notice on the first check")
+	}
 	stop()
-	if fired.Load() != 1 {
-		t.Fatalf("fired = %d, want 1 on the first check", fired.Load())
+	if n := len(fired); n != 0 {
+		t.Fatalf("fired again after the first episode: %d extra", n)
 	}
 }

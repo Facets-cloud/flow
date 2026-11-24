@@ -60,13 +60,7 @@ func resolveTranscriptPath(home, cwd, sessionID string) (string, error) {
 		// plain `claude --resume <id>` from a different cwd writes a second
 		// copy). Prefer the most recently modified — the live transcript,
 		// not a stale one.
-		newest, newestMod := matches[0], int64(-1)
-		for _, m := range matches {
-			if fi, err := os.Stat(m); err == nil && fi.ModTime().UnixNano() > newestMod {
-				newest, newestMod = m, fi.ModTime().UnixNano()
-			}
-		}
-		return newest, nil
+		return newestFile(matches), nil
 	}
 	return "", fmt.Errorf(
 		"claude transcript not found: no %s.jsonl under %s (tried cwd-encoded path %s and a glob on the session id)",
@@ -330,14 +324,27 @@ func truncate(s string, max int) string {
 }
 
 // TranscriptPath implements harness.TranscriptLocator.
+//
+// It returns the newest copy of the session across project dirs. The
+// cwd-encoded path can be a stale copy while a resumed session writes a newer
+// one elsewhere, so the exact-hit shortcut of resolveTranscriptPath is not used.
 func (c *claude) TranscriptPath(cwd, sessionID string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	p, err := resolveTranscriptPath(home, cwd, sessionID)
-	if err != nil {
-		return ""
+	matches, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", sessionID+".jsonl"))
+	return newestFile(matches)
+}
+
+// newestFile returns the path with the most recent mtime, or "" when none can
+// be stat'ed.
+func newestFile(paths []string) string {
+	newest, newestMod := "", int64(-1)
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && fi.ModTime().UnixNano() > newestMod {
+			newest, newestMod = p, fi.ModTime().UnixNano()
+		}
 	}
-	return p
+	return newest
 }
