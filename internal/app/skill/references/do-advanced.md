@@ -132,3 +132,21 @@ Acme deal status").
 in it themselves. `--with` is for fire-and-forget nudges, not for
 "open the tab with this prompt pre-typed for me". When the user will
 be at the keyboard, run plain `flow do <slug>`.
+
+## Background sessions (`FLOW_TERM=bg`)
+
+`FLOW_TERM=bg flow do <slug>` runs the task as a background session with
+no tab. The session stays alive between turns, and flow mail wakes it.
+Running the same command again resumes the session or delivers to it.
+
+| Harness | Where the session lives | How to watch or drive it |
+|---|---|---|
+| Claude Code | `claude --bg` (Agent View) | `claude agents` / `claude attach <id>` |
+| prx | prx background host | `prx -resume <id>` / `prx agents` |
+| Codex | Codex TUI in a detached tmux session `flow-codex-<thread>` | `tmux attach -t flow-codex-<thread>` |
+
+Codex needs `tmux` installed. flow carries `FLOW_ROOT`, `PATH` and
+`CODEX_HOME` into the tmux session, and clears other harnesses' session
+ids that it would otherwise inherit from the tmux server. flow's wake
+pushes mail with `codex queue`, and the session runs it as its next turn.
+`flow show task --json` reports the session under `bg`.

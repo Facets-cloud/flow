@@ -6,6 +6,7 @@ import (
 	"flag"
 	"flow/internal/flowdb"
 	"flow/internal/harness"
+	"flow/internal/harness/codex"
 	"flow/internal/spawner"
 	"fmt"
 	"net/url"
@@ -726,7 +727,7 @@ func backgroundLauncherFor(h harness.Harness) (harness.BackgroundLauncher, error
 	bg, ok := h.(harness.BackgroundLauncher)
 	if !ok {
 		return nil, fmt.Errorf(
-			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (claude and prx do) — unset FLOW_TERM to open a terminal tab instead",
+			"$FLOW_TERM=bg requested a background agent, but harness %q has no background-session support (claude, codex and prx do) — unset FLOW_TERM to open a terminal tab instead",
 			h.Name())
 	}
 	return bg, nil
@@ -752,6 +753,9 @@ func bgAgentInRegistry(bg harness.BackgroundLauncher, sessionID string) *harness
 
 // bgViewHint tells the user how to see or reply to a background session.
 func bgViewHint(h harness.Harness, sessionID string) string {
+	if h.Name() == harness.NameCodex {
+		return "watch or drive it with `tmux attach -t " + codex.TmuxSessionName(sessionID) + "`"
+	}
 	if h.Name() == harness.NamePrx {
 		return "attach with `prx -resume " + sessionID + "`, or list them with `prx agents`"
 	}
@@ -760,6 +764,9 @@ func bgViewHint(h harness.Harness, sessionID string) string {
 
 // bgAttachHint names the command that opens a live background session.
 func bgAttachHint(h harness.Harness, a *harness.BackgroundAgent) string {
+	if h.Name() == harness.NameCodex {
+		return "tmux attach -t " + codex.TmuxSessionName(a.SessionID)
+	}
 	if h.Name() == harness.NamePrx {
 		return "prx -resume " + a.SessionID
 	}
