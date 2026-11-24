@@ -327,16 +327,3 @@ func truncate(s string, max int) string {
 	}
 	return s[:max] + "..."
 }
-
-// TranscriptPath implements harness.TranscriptLocator.
-func (c *claude) TranscriptPath(cwd, sessionID string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	p, err := resolveTranscriptPath(home, cwd, sessionID)
-	if err != nil {
-		return ""
-	}
-	return p
-}

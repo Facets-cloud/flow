@@ -11,8 +11,6 @@
 
 ## Unreleased
 
-- Auto runs get a stall watchdog. A run whose log and session transcript have been silent for 10 min (override with `FLOW_AUTO_STALL_MINUTES`) messages its parent once per stall; `flow show task` and the `flow list` AUTO column show `stalled`. It reports only and never kills the run.
-
 ## v0.1.0-alpha.40
 
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and

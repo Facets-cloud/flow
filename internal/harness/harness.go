@@ -572,11 +572,3 @@ type SessionLocator interface {
 	// start directory can't be established from the transcript.
 	LocateSession(sessionID string) (cwd string, found bool)
 }
-
-// TranscriptLocator is an OPTIONAL capability: the on-disk transcript of a
-// session. Its mtime moves while the session works, so flow reads it as an
-// auto run's activity signal — a headless run's stdout can stay silent for a
-// whole turn. "" when the transcript cannot be found.
-type TranscriptLocator interface {
-	TranscriptPath(cwd, sessionID string) string
-}
