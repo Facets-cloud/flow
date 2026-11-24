@@ -23,6 +23,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `--fresh` records it), so the harness-transfer recipe no longer edits
   flow.db.
 
+### Fixed
+
+- **Codex spawns took minutes.** `flow do` minted a Codex session (a real
+  `codex exec` probe) while holding its flow.db write transaction, so the
+  user's Codex hooks, which call flow, each waited out the 30 s busy
+  timeout: about 220 s per spawn. The id is now minted before the
+  transaction, and the probe runs with `--disable hooks`. A Codex spawn
+  takes about 7 s.
+
 ## [0.1.0-alpha.40] — 2026-11-23
 
 ### Added

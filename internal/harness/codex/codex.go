@@ -194,7 +194,10 @@ func (c *codex) AutoRunArgv(sessionID, prompt string, opts harness.LaunchOpts) [
 // session's model; with none set the argv is unchanged.
 func probeArgv(opts harness.LaunchOpts) []string {
 	argv := append([]string{"exec"}, modelArgv(opts)...)
-	return append(argv, "--json", "--sandbox", "read-only", "--skip-git-repo-check",
+	// Hooks off: the probe only mints a thread, and the user's Codex hooks
+	// (flow's included) have no job in it. Running them made each spawn
+	// wait on flow.db and cost ~5 s of hook startup even unlocked (#75).
+	return append(argv, "--disable", "hooks", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
 		"Reply exactly with OK. Do not make any changes.")
 }
 

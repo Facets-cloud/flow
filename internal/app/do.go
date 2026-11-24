@@ -281,6 +281,30 @@ func cmdDo(args []string) int {
 		}
 	}
 
+	// Mint a new session id BEFORE the write transaction. A probing harness
+	// (codex) runs a real `codex exec` to mint it; holding flow.db's write
+	// lock across that made every hook that calls flow wait out
+	// busy_timeout (minutes per spawn, #75). The tx below re-checks whether
+	// a bootstrap is still needed and only then uses this id (a concurrent
+	// bind just leaves an unused thread behind).
+	preMinted := ""
+	if (!task.SessionID.Valid || task.SessionID.String == "" || *fresh) &&
+		(task.Status != "done" || injectionText != "") {
+		mintOpts := harness.LaunchOpts{Model: task.Model.String, Effort: task.Effort.String}
+		if *model != "" {
+			mintOpts.Model = *model
+		}
+		if *effort != "" {
+			mintOpts.Effort = *effort
+		}
+		id, err := h.NewSessionID(task.WorkDir, mintOpts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: allocate session id: %v\n", err)
+			return 1
+		}
+		preMinted = id
+	}
+
 	// Step 2: atomic status flip inside a transaction. Captures preSessionID
 	// and other fields for later steps. Per spec §6 this commit is the
 	// durability boundary — even if bootstrap or iTerm spawn fails below,
@@ -339,8 +363,12 @@ func cmdDo(args []string) int {
 	}
 	needsBootstrap := !curSessionID.Valid || *fresh
 	var sessionID string
-	if needsBootstrap {
-		// The codex probe that mints the id runs on the task's model too.
+	if needsBootstrap && preMinted != "" {
+		sessionID = preMinted
+	} else if needsBootstrap {
+		// Rare: a concurrent command cleared the session after the
+		// pre-mint check. Mint here (the codex probe runs on the task's
+		// model too).
 		var mintOpts harness.LaunchOpts
 		applyTaskModel(task, &mintOpts)
 		id, err := h.NewSessionID(task.WorkDir, mintOpts)
