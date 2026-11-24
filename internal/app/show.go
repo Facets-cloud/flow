@@ -348,6 +348,9 @@ func printTaskMetadata(db *sql.DB, t *flowdb.Task, root string) {
 				if t.AutoRunStarted.Valid && t.AutoRunStarted.String != "" {
 					line += ", since " + t.AutoRunStarted.String
 				}
+				if idle, stalled := autoRunStalledFor(t, time.Now()); stalled {
+					line += fmt.Sprintf(", stalled: no activity for %d min", int(idle.Minutes()))
+				}
 				line += ")"
 			}
 		case "completed", "dead":

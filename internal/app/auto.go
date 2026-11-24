@@ -374,7 +374,23 @@ func cmdAutoExec(args []string) int {
 	}
 	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
+	// Stall watchdog: reports (never kills) a run that goes silent. It is
+	// stopped before the run is finalized, so no notice follows the run's end.
+	stopWatch := startStallWatchdog(autoStallThreshold(), autoStallInterval,
+		func() time.Time {
+			fresh, err := flowdb.GetTask(db, slug)
+			if err != nil {
+				return time.Time{}
+			}
+			return autoRunLastActivity(fresh)
+		},
+		func(idle time.Duration) {
+			if fresh, err := flowdb.GetTask(db, slug); err == nil {
+				notifyParentOfStalledChild(db, fresh, idle)
+			}
+		})
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
+	stopWatch()
 
 	// Re-read status: the session may have called `flow done` on itself.
 	// The self-done is the authoritative success signal.
