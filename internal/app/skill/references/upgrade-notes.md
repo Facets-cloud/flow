@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+## v0.1.0-alpha.41
+
 - **Re-pin a task to another harness with the CLI.** `flow do <slug>
   --harness <h> --fresh` starts a new session on `<h>` for a task that
   already has one and keeps the old session in history. The harness

@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.41] — 2026-11-25
+
 ### Added
 
 - **`flow show task <slug> --json`.** One stable JSON object (`schema: 1`)
