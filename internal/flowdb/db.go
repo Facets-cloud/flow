@@ -175,7 +175,7 @@ type Task struct {
 	Harness sql.NullString
 	// Autonomous-run bookkeeping (set by `flow do --auto`). AutoRunStatus
 	// is NULL for tasks that were never run in --auto mode; otherwise one
-	// of 'running' | 'completed' | 'dead'. AutoRunPID is the detached
+	// of 'running' | 'completed' | 'dead' | 'blocked'. AutoRunPID is the detached
 	// supervisor process's PID (used for read-time liveness reconciliation
 	// while status='running'); cleared on finalize.
 	AutoRunStatus   sql.NullString

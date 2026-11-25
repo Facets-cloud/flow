@@ -461,34 +461,41 @@ func getTaskRetry(db *sql.DB, slug string) (*flowdb.Task, error) {
 	return t, err
 }
 
-// autoRunBlocked reports whether a run that did not finish says it is stuck
-// rather than crashed. The signal is the run's authoritative final message:
-// the file the harness wrote for --last-message when it exists (codex -o),
-// otherwise the run's own log (claude -p prints only the final message to
-// stdout, and the log is exclusive to this launch). The message is blocked
-// only if its LAST nonblank line starts with BLOCKED: — a quoted BLOCKED:
-// earlier in the message does not count, and neither does a waiting_on
-// field: a human may set that while the run is live.
-func autoRunBlocked(lastMsg, logPath string) bool {
+// autoRunBlockedLine returns the BLOCKED: line that says a run that did not
+// finish is stuck rather than crashed, or "" if there is none. The signal is
+// the run's authoritative final message: the file the harness wrote for
+// --last-message when it exists (codex -o), otherwise the run's own log
+// (claude -p prints only the final message to stdout, and the log is
+// exclusive to this launch). A line counts if it starts with BLOCKED:
+// (leading whitespace ignored), so a closing line after the blocker does not
+// hide it. A BLOCKED: that is not at the start of a line does not count, and
+// neither does a waiting_on field: a human may set that while the run is live.
+func autoRunBlockedLine(lastMsg, logPath string) string {
 	path := lastMsg
 	if path == "" || !statOK(path) {
 		path = logPath
 	}
-	return path != "" && finalMessageEndsBlocked(path)
+	if path == "" {
+		return ""
+	}
+	return finalMessageBlockedLine(path)
 }
 
-func finalMessageEndsBlocked(path string) bool {
+// finalMessageBlockedLine returns the last BLOCKED: line in path, trimmed.
+// Last, not first: a prx log holds the whole stream, so an earlier quoted
+// line can precede the final declaration.
+func finalMessageBlockedLine(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return ""
 	}
-	last := ""
+	blocked := ""
 	for _, line := range strings.Split(string(data), "\n") {
-		if t := strings.TrimSpace(line); t != "" {
-			last = t
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "BLOCKED:") {
+			blocked = t
 		}
 	}
-	return strings.HasPrefix(last, "BLOCKED:")
+	return blocked
 }
 
 // reconcileAutoRun settles a stale 'running' row whose supervisor pid is
@@ -658,11 +665,15 @@ func cmdAutoExec(args []string) int {
 	// finalize is a no-op and we re-read and take the done path below), or
 	// the finalize came first (done then sees a finalized row and sweeps
 	// inline). No window where a done is neither swept nor counted.
+	blockedLine := ""
+	if !isDone {
+		blockedLine = autoRunBlockedLine(lastMsg, *logPath)
+	}
 	status := "dead"
 	switch {
 	case revive && runErr == nil:
 		status = reviveStatus
-	case !isDone && autoRunBlocked(lastMsg, *logPath):
+	case blockedLine != "":
 		status = "blocked"
 	}
 	var owned bool
@@ -723,6 +734,9 @@ func cmdAutoExec(args []string) int {
 	case status == "dead" && owned:
 		notifyParentOfDeadChild(db, task)
 		notifyHumanOfDeadOrphan(db, task)
+	}
+	if status == "blocked" && owned {
+		notifyOfBlockedRun(db, task, blockedLine)
 	}
 
 	if runErr != nil && status != "blocked" {
@@ -821,7 +835,7 @@ func buildAutoBootstrapPrompt(slug, kind, playbookSlug, parentSlug string) strin
 			"- Be conservative with irreversible or outward-facing actions: do NOT push branches, open PRs, deploy, or message anyone beyond the reporting rule below unless the brief EXPLICITLY authorizes it. Make and verify the local changes; leave publishing to the user.\n"+
 			parentRule+
 			"- Do NOT arm an inbox listener: no Monitor, no background flow inbox pop --wait loop, no flow watch (nobody reads a listener's output in a headless run, so it would ack and lose your mail; flow refuses pop --wait here). When a flow-bus notice says mail landed, and before each report and before flow done, run flow inbox pop in the foreground (one-shot, never --wait): it shows you one message; repeat until empty and act on what it says.\n"+
-			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried. End your final message with a line starting `BLOCKED:` naming what is blocking, and exit WITHOUT marking the task done. flow records a run that ends this way as blocked (not dead, and no dead-child alarm is sent).\n\n"+
+			"- Your objective is to reach a state where you can run `flow done`. PERSIST toward it. Keep going through transient errors, and before declaring a blocker, EXHAUST reasonable avenues: try alternative approaches, re-read the brief and "+repoInstructionFiles+", search the codebase, retry flaky steps. Only stop as a LAST RESORT — when you have genuinely tried everything and truly cannot proceed without a human decision or external access you do not have. If you must stop, write a precise progress note to the task's updates/ directory stating exactly what is blocking and what you already tried. Put a line starting `BLOCKED:` naming what is blocking in your final message, and exit WITHOUT marking the task done. flow records a run that ends this way as blocked (not dead, and no dead-child alarm is sent).\n\n"+
 			"Closing out:\n"+
 			"- When the brief's \"Done when\" criteria are met and your changes are verified, run: flow done %s. That flips the task to done and triggers the close-out sweep (KB + project update) — it is how this autonomous run is recorded as successful. Do this yourself; no human will.\n",
 		slug, slug,

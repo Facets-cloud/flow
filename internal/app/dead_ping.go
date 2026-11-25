@@ -100,3 +100,66 @@ func isOwnerManaged(db *sql.DB, slug string) bool {
 	}
 	return false
 }
+
+// notifyOfBlockedRun tells whoever must act that a run ended blocked on its
+// BLOCKED: line. It goes to the same recipient as the dead-run alert: the
+// parent task when it is deliverable, otherwise the human (an FYI when the
+// parent is closed, nothing for an owner-managed parentless task). It is not
+// worded as a crash, and it is skipped when the child already told that
+// recipient it was blocked during this run.
+func notifyOfBlockedRun(db *sql.DB, child *flowdb.Task, blockedLine string) {
+	reason := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(blockedLine), "BLOCKED:"))
+	if r := []rune(reason); len(r) > 160 {
+		reason = string(r[:157]) + "..."
+	}
+	if reason == "" {
+		reason = "no reason given"
+	}
+	m := &flowdb.BusMessage{
+		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+		FromAssignee: busUser, FromTaskSlug: child.Slug,
+		ToAssignee: busUser,
+	}
+	if child.ParentSlug.Valid && child.ParentSlug.String != "" {
+		parent := child.ParentSlug.String
+		if p, err := flowdb.GetTask(db, parent); err == nil && p != nil && deliverableTask(p) == nil {
+			if childReportedBlocked(db, child, parent) {
+				return
+			}
+			m.ToTaskSlug = parent
+			m.Body = fmt.Sprintf("%s is blocked: %s; it's waiting on you", child.Slug, reason)
+		} else {
+			m.Body = fmt.Sprintf("FYI: %s is blocked: %s; it's waiting on you (parent %s closed)", child.Slug, reason, parent)
+			m.FYI = true
+		}
+	} else {
+		if isOwnerManaged(db, child.Slug) || childReportedBlocked(db, child, "") {
+			return
+		}
+		m.Body = fmt.Sprintf("%s is blocked: %s; it's waiting on you", child.Slug, reason)
+	}
+	if err := flowdb.InsertBusMessage(db, m); err != nil {
+		return
+	}
+	if m.ToTaskSlug == "" {
+		maybeDispatch(m)
+	}
+	_ = flowdb.SweepBus(db, time.Now())
+}
+
+// childReportedBlocked reports whether child already sent a message this run
+// whose body mentions "blocked" to toTask (to the human when toTask is "").
+func childReportedBlocked(db *sql.DB, child *flowdb.Task, toTask string) bool {
+	since := ""
+	if child.AutoRunStarted.Valid {
+		since = child.AutoRunStarted.String
+	}
+	var n int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM bus_messages WHERE from_task_slug=? AND kind='message'
+		 AND to_assignee=? AND COALESCE(to_task_slug,'')=? AND created_at>=?
+		 AND LOWER(body) LIKE '%blocked%'`,
+		child.Slug, busUser, toTask, since,
+	).Scan(&n)
+	return err == nil && n > 0
+}

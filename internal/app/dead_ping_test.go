@@ -189,3 +189,89 @@ func TestReconciledCompletedRunSendsNothing(t *testing.T) {
 		t.Errorf("completed reconcile sent %+v", rows)
 	}
 }
+
+func TestBlockedParentedRunNotifiesParentOnly(t *testing.T) {
+	root := setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "papa", "sid-papa")
+	logPath := seedDeadPingTask(t, root, "kid")
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='papa' WHERE slug='kid'`); err != nil {
+		t.Fatal(err)
+	}
+	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(logPath, []byte("BLOCKED: need the DB password\n"), 0o644); err != nil {
+			return err
+		}
+		return errors.New("exit status 1")
+	})
+	cmdAutoExec(autoExecArgv(t, "kid"))
+	rows := deadPingRows(t)
+	if len(rows) != 1 || rows[0].toS != "papa" || rows[0].fyi {
+		t.Fatalf("want one non-FYI parent notice, got %+v", rows)
+	}
+	if want := "kid is blocked: need the DB password; it's waiting on you"; rows[0].body != want {
+		t.Errorf("body = %q, want %q", rows[0].body, want)
+	}
+}
+
+func TestBlockedRunSkipsNoticeWhenChildAlreadyReported(t *testing.T) {
+	root := setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "papa", "sid-papa")
+	logPath := seedDeadPingTask(t, root, "kid")
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='papa' WHERE slug='kid'`); err != nil {
+		t.Fatal(err)
+	}
+	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(logPath, []byte("BLOCKED: need the DB password\n"), 0o644); err != nil {
+			return err
+		}
+		// The child already messaged its parent that it is blocked.
+		if err := flowdb.InsertBusMessage(db, &flowdb.BusMessage{
+			ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
+			FromAssignee: busUser, FromTaskSlug: "kid",
+			ToAssignee: busUser, ToTaskSlug: "papa",
+			Body: "kid: blocked on the DB password",
+		}); err != nil {
+			return err
+		}
+		return errors.New("exit status 1")
+	})
+	cmdAutoExec(autoExecArgv(t, "kid"))
+	if rows := deadPingRows(t); len(rows) != 1 || rows[0].body != "kid: blocked on the DB password" {
+		t.Fatalf("want only the child's own message, got %+v", rows)
+	}
+}
+
+func TestBlockedParentClosedFYIsHuman(t *testing.T) {
+	root := setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "papa", "sid-papa")
+	if _, err := db.Exec(`UPDATE tasks SET status='done' WHERE slug='papa'`); err != nil {
+		t.Fatal(err)
+	}
+	logPath := seedDeadPingTask(t, root, "kid")
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='papa' WHERE slug='kid'`); err != nil {
+		t.Fatal(err)
+	}
+	stubAutoRunner(t, func(h harness.Harness, sessionID, prompt string, opts harness.LaunchOpts) error {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(logPath, []byte("BLOCKED: need a decision\n"), 0o644); err != nil {
+			return err
+		}
+		return errors.New("exit status 1")
+	})
+	cmdAutoExec(autoExecArgv(t, "kid"))
+	rows := deadPingRows(t)
+	if len(rows) != 1 || rows[0].toA != "user" || !rows[0].fyi || !strings.Contains(rows[0].body, "parent papa closed") {
+		t.Fatalf("want one FYI to the human, got %+v", rows)
+	}
+}
