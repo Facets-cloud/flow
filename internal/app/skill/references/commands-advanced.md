@@ -22,6 +22,39 @@ long to read at once.
 give you enough context, or when you need to understand specific
 implementation decisions made during that task's session.
 
+### Machine-readable views (`--json`)
+
+For tools and scripts (not for reading yourself), two commands emit one
+stable, harness-neutral JSON document (`"schema": 1`; fields are only
+ever added, never removed or retyped without a schema bump):
+
+- `flow show task <slug> --json` — identity (`slug`, `name`, `kind`,
+  `project`, `parent`, `status`, `priority`, `work_dir`, `archived`,
+  `driver`, `tags`), the session (`harness` — null until the first
+  `flow do`; `session_id`; `live` — true when the harness's own process
+  probe sees the session OR its background-registry entry's pid is alive
+  (a live registry pid wins even when the probe failed), false when
+  neither does or there is no session, null only when the probe failed
+  and no live registry pid settles it;
+  `session_started`, `session_last_resumed`, `model`, `effort`), run
+  state (`bg`: `{short_id,pid,status,state}` from the harness's
+  background registry, or null; `status`/`state` are null when the
+  harness reports none; `auto_run`:
+  `{status,pid,started,finished,log,last_message}`, or null),
+  `previous_sessions` (sessions replaced by `--fresh` / a re-pin:
+  `{harness,session_id,session_started,ended_at,reason}`, with
+  `session_started` null when unknown), and the files
+  (`brief`, `updates`, `other`). Every key is always present; unknown
+  values are `null`.
+- `flow transcript <slug> --json [--compact]` — `{schema, task, harness,
+  session_id, entries}`; each entry is `{ts, role, kind, text, tool?,
+  is_error?}` with `role` user|assistant|tool and `kind`
+  text|thinking|tool_call|tool_result. A tool call's `text` summarises
+  its input: Claude Code calls get the text view's summary (e.g.
+  `$ <command>`, a file path); Codex and prx calls carry the raw
+  arguments truncated to 500 bytes. Either may span lines. Tool results
+  are truncated like the text view.
+
 ### Parent links: tasks spun off from a session
 
 `flow add task` run from a session bound to a task records that task

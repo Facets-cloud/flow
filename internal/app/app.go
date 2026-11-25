@@ -147,9 +147,9 @@ Sessions:
   flow hook session-start                      (SessionStart hook handler — wire via ~/.claude/settings.json)
 
 Read:
-  flow show task       [<ref>]
+  flow show task       [<ref>] [--json]              (--json: stable machine-readable view — harness, session, live, bg/auto run)
   flow show project    [<ref>]
-  flow transcript      [<ref>] [--compact]           (readable transcript from session jsonl)
+  flow transcript      [<ref>] [--compact] [--json]  (readable transcript; --json: harness-neutral entries)
   flow stats           [--since all|<N>d] [--project <slug>] [--card] [--out <path>]
   flow list tasks    [--status ...] [--project ...] [--priority ...] [--tag <t>] [--since ...] [--include-archived]
   flow list projects [--status ...] [--include-archived]
@@ -165,7 +165,7 @@ Edit / mutate:
                             [--tag <t> ...] [--remove-tag <t> ...] [--clear-tags]
                             [--project <slug>] [--clear-project]
   flow update project <ref> [--priority h|m|l] [--terminal-group <name>] [--clear-terminal-group]
-  flow do        <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--force]   (choose harness only for a new task session; --force overrides the live-session guard)
+  flow do        <ref> [--harness claude|codex|prx] [--fresh] [--dangerously-skip-permissions] [--force]   (--harness picks a new task's harness; with --fresh it re-pins a started task, old session kept in history; --force overrides the live-session guard)
   flow do --here <ref> [--force]                                              (bind THIS harness session to the task; --force overwrites a prior binding)
   flow archive   <ref>
   flow unarchive <ref>
