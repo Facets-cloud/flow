@@ -166,9 +166,14 @@ func (c *claude) SessionBusy(sessionID string, timeout time.Duration) (busy, kno
 		out []byte
 		err error
 	}
+	// Read the runner on this goroutine: after a timeout the query goroutine
+	// outlives this call, and must not read the package global later (a
+	// test or caller may reassign it). The buffered channel lets it finish
+	// and exit even though nobody receives.
+	run := BGCommandRunner
 	ch := make(chan res, 1)
 	go func() {
-		out, err := BGCommandRunner("", []string{"agents", "--json"})
+		out, err := run("", []string{"agents", "--json"})
 		ch <- res{out, err}
 	}()
 	var r res
