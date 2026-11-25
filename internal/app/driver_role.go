@@ -82,9 +82,8 @@ func childHarnessesLine() string {
 }
 
 // roleBlockFor is what a bound session gets: every human-driven session
-// is a driver (no tag needed) and gets ONE short reminder line
-// (driverReminderFmt) ordering a read of the skill's references/driver.md,
-// where the rules live, and stating delegate-by-default; auto runs (so
+// is a driver (no tag needed) and gets ONE line pointing at the skill's
+// references/driver.md (the rules live there, not in Go); auto runs (so
 // delegation never recurses) and playbook runs (frozen brief) get
 // nothing. The INTAKE TURN line follows on the first bind/start (first)
 // or while the brief still holds the Done-when placeholder.
@@ -98,22 +97,12 @@ func roleBlockFor(t *flowdb.Task, first bool) string {
 			path = filepath.Join(filepath.Dir(skillMD), "references", "driver.md") // the session's own install
 		}
 	}
-	blk := fmt.Sprintf(driverReminderFmt, path) + childHarnessesLine()
+	blk := " You are the DRIVER for this task: follow references/driver.md (" + path + ")." + childHarnessesLine()
 	if first {
 		return blk + "\n" + intakeTurnLine
 	}
 	return blk + intakeTurnBlock(t.Slug)
 }
-
-// driverReminderFmt is the driver line (%s = the installed driver.md).
-// Sessions read driver.md once at bootstrap and not again after compaction
-// or resume, and treated "small work may stay inline" as a reason not to
-// delegate, so the line orders the read and states delegate-by-default;
-// driver.md stays the source for everything else. It is printed on every
-// start/resume/compaction: keep it short.
-const driverReminderFmt = " Reminder: you are the DRIVER for this task. Read driver.md (%s) now to know the driver SOP." +
-	" Default: self-contained work goes to a flow auto child, not the built-in subagent tool;" +
-	" keep it inline only when it is trivial single-step work, and say why."
 
 // doneWhenPlaceholder is the driver brief's "Done when" body until the
 // user agrees the criteria (skill references/templates.md).

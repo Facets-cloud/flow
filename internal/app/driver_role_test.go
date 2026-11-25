@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -14,7 +13,7 @@ import (
 // driverRoleMarker is the heading of the stronger block a task tagged
 // `driver` gets. Regular bound tasks keep the light delegation block
 // (delegationMarker); tests key on the markers so wording can evolve.
-const driverRoleMarker = "Reminder: you are the DRIVER for this task. Read driver.md ("
+const driverRoleMarker = "You are the DRIVER for this task: follow references/driver.md"
 
 func tagTask(t *testing.T, slug, tag string) {
 	t.Helper()
@@ -245,46 +244,5 @@ func TestNoBlockWordingIsConsistent(t *testing.T) {
 	if !strings.Contains(string(ref), "Arm no inbox listener") ||
 		!strings.Contains(string(ref), "pop it in the foreground") {
 		t.Error("delegation.md template should say the child arms no listener and pops in the foreground")
-	}
-}
-
-// The driver line is a short reminder: it orders the driver.md read and
-// states delegate-by-default on one line; auto runs and playbook runs
-// still get nothing.
-func TestDriverBlockOrdersReadAndDelegateByDefault(t *testing.T) {
-	setupFlowRoot(t)
-	clearSessionEnv(t)
-	t.Setenv(autoRunEnvVar, "")
-	seedTask(t, "core")
-	writeTaskBriefDM(t, "core", agreedBrief)
-	db := openFlowDB(t)
-	tk, _ := flowdb.GetTask(db, "core")
-	db.Close()
-	blk := roleBlockFor(tk, false)
-	if strings.Contains(strings.TrimSpace(blk), "\n") {
-		t.Errorf("driver block must stay one line: %q", blk)
-	}
-	for _, want := range []string{
-		driverRoleMarker,
-		"driver.md) now to know the driver SOP.",
-		"Default: self-contained work goes to a flow auto child, not the built-in subagent tool;",
-		"keep it inline only when it is trivial single-step work, and say why.",
-	} {
-		if !strings.Contains(blk, want) {
-			t.Errorf("driver block missing %q:\n%s", want, blk)
-		}
-	}
-	if n := len(fmt.Sprintf(driverReminderFmt, "")); n > 600 {
-		t.Errorf("driver reminder is %d chars without the path; keep it under 600 (printed every start/resume)", n)
-	}
-
-	pb := *tk
-	pb.Kind = "playbook_run"
-	if got := roleBlockFor(&pb, false); got != "" {
-		t.Errorf("playbook run must get no driver block, got %q", got)
-	}
-	t.Setenv(autoRunEnvVar, "core")
-	if got := roleBlockFor(tk, true); got != "" {
-		t.Errorf("auto run must get no driver block, got %q", got)
 	}
 }

@@ -9,17 +9,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
-- **The driver line is now a short reminder, and delegating is the
-  default.** The SessionStart / `flow do --here` line for a driver session
-  now reads "Reminder: you are the DRIVER for this task. Read driver.md
-  (<path>) now to know the driver SOP." and states the default: self-contained
-  work goes to a `flow auto` child, not the built-in subagent tool, and stays
-  inline only when it is trivial single-step work, with a reason. It is printed
-  on every start, resume and compaction. `references/driver.md` drops "small
-  work may stay inline" for the same delegate-by-default rule. Transcripts
-  showed drivers read driver.md once at bootstrap and never after compaction,
-  and Codex drivers cited "small work may stay inline" to spawn no children.
-  Auto runs and playbook runs still get no driver line.
+- **Drivers delegate by default.** `references/driver.md` drops "small
+  work may stay inline": self-contained work goes to a `flow auto` child by
+  default, and stays inline only for trivial single-step work (one or two
+  tool calls), with a stated reason. `references/delegation.md` "What stays
+  inline" matches. Codex drivers had read driver.md and spawned no children,
+  citing the old wording. The SessionStart driver line is unchanged.
 
 ## [0.1.0-alpha.41] — 2026-11-25
 

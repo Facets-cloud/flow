@@ -11,12 +11,10 @@
 
 ## Unreleased
 
-- **Delegate by default; re-read driver.md on every reminder.** The driver
-  line is now a short reminder printed on every start, resume and compaction:
-  read driver.md then. Self-contained work goes to a `flow auto` child, not
-  the built-in subagent tool; keep it inline only for trivial single-step
-  work (one or two tool calls), and say why. "Small work may stay inline" is
-  gone.
+- **Delegate by default.** Self-contained work goes to a `flow auto`
+  child by default; keep it inline only for trivial single-step work (one
+  or two tool calls), and say why when you do. "Small work may stay
+  inline" is gone from driver.md.
 
 ## v0.1.0-alpha.41
 
