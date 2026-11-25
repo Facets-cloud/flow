@@ -1,32 +1,32 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 27,
-    "dead": 1,
-    "done": 26,
-    "messages_between_tasks": 12,
-    "notes": 184,
-    "refs": 15,
-    "running": 5,
-    "tasks": 34
+    "children": 29,
+    "dead": 2,
+    "done": 27,
+    "messages_between_tasks": 3,
+    "notes": 203,
+    "refs": 17,
+    "running": 1,
+    "tasks": 36
   },
   "dead_reasons": {
-    "exited without closing": 1
+    "exited without closing": 2
   },
-  "generated_at": "2026-11-24T11:30:23+05:30",
+  "generated_at": "2026-11-25T11:30:29+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 34
+      "tasks": 36
     },
     {
-      "items": 200,
+      "items": 223,
       "name": "updates/",
-      "tasks": 34
+      "tasks": 36
     },
     {
-      "items": 142,
+      "items": 148,
       "name": "auto-runs/",
       "tasks": 30
     },
@@ -36,7 +36,7 @@
       "tasks": 11
     },
     {
-      "items": 9,
+      "items": 13,
       "name": "workspace/",
       "tasks": 7
     },
@@ -71,7 +71,7 @@
       "tasks": 1
     },
     {
-      "items": 1,
+      "items": 4,
       "name": "shots/",
       "tasks": 1
     }
@@ -90,26 +90,62 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-24-06-00",
+      "slug": "site-daily--2026-11-25-06-00",
       "status": "in-progress"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": null,
       "child": true,
       "dead_reason": null,
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "hud-typing-guard",
-      "status": "in-progress"
+      "slug": "help-23",
+      "status": "backlog"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "help-22",
+      "status": "backlog"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-24-06-00",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
       "notes": 1,
       "refs": [],
       "shown": false,
+      "slug": "hud-typing-guard",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 7,
+      "refs": [
+        200,
+        201,
+        202
+      ],
+      "shown": true,
       "slug": "flow-harness-json",
       "status": "in-progress"
     },
@@ -200,7 +236,7 @@
       "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 27,
+      "notes": 30,
       "refs": [],
       "shown": false,
       "slug": "operator-alpha-driver",
@@ -365,7 +401,7 @@
       "status": "done"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
       "notes": 0,
@@ -375,12 +411,12 @@
       "status": "done"
     },
     {
-      "auto_run_status": "running",
+      "auto_run_status": "dead",
       "child": true,
-      "dead_reason": null,
-      "notes": 58,
+      "dead_reason": "exited without closing",
+      "notes": 67,
       "refs": [],
-      "shown": false,
+      "shown": true,
       "slug": "flow-hud-go",
       "status": "in-progress"
     },
@@ -416,7 +452,7 @@
         187,
         188
       ],
-      "shown": true,
+      "shown": false,
       "slug": "flow-plugin-build",
       "status": "done"
     },
@@ -429,7 +465,7 @@
         157,
         188
       ],
-      "shown": true,
+      "shown": false,
       "slug": "flow-plugin",
       "status": "done"
     },
@@ -445,21 +481,8 @@
         187,
         188
       ],
-      "shown": true,
-      "slug": "driver-first-upgrade-test",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": false,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        182,
-        185
-      ],
       "shown": false,
-      "slug": "site-daily--2026-11-18-06-00",
+      "slug": "driver-first-upgrade-test",
       "status": "done"
     }
   ],
