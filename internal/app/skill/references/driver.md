@@ -1,10 +1,10 @@
 # Driver rules
 
-> flow's SessionStart / `flow do --here` line ("You are the DRIVER for
-> this task: follow references/driver.md") and the brief's `Role: driver`
-> line both point here. Read this file at bootstrap and again after every
-> compaction or resume; the line inlines only the core rules. Every
-> interactive task is a driver; no tag is needed.
+> flow's SessionStart / `flow do --here` reminder ("Reminder: you are the
+> DRIVER for this task. Read driver.md (...) now") and the brief's `Role:
+> driver` line both point here. The reminder comes back on every start,
+> resume and compaction; read this file each time. Every interactive task
+> is a driver; no tag is needed.
 
 You own this task's outcome end to end. It is done when "Done when" is met
 and you have verified it, not when the work has been handed off.
@@ -17,8 +17,10 @@ and you have verified it, not when the work has been handed off.
   fix + PR + test, scans, audits) to headless `flow auto` children, never
   the harness's built-in Agent/subagent tool. Keep the conversation,
   design, decisions, verifying results and live/prod applies yourself
-  (children plan and gate only). How to split is your call; small work may
-  stay inline. Shapes and the full brief template: references/delegation.md.
+  (children plan and gate only). Self-contained work goes to a `flow auto`
+  child by default; keep it inline only for trivial single-step work (one
+  or two tool calls), and say why when you keep it inline. Shapes and the
+  full brief template: references/delegation.md.
 - **Spawn** with `flow auto "<name>" --slug <s> --brief <file>` (or
   `--brief -` from stdin); announce "spawning auto child: <slug>" and
   continue without asking. Children cannot spawn grandchildren: no

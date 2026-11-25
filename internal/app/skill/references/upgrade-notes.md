@@ -11,12 +11,12 @@
 
 ## Unreleased
 
-- **Re-read driver.md after every compaction or resume.** The driver line
-  now says so and inlines the core rules: self-contained work goes to a
-  `flow auto` child, never the built-in Agent/subagent tool; keep design,
-  decisions, verifying child results and live applies yourself; outward
-  actions (push, merge, deploy, messages to people) only after the user
-  approves the exact text or action.
+- **Delegate by default; re-read driver.md on every reminder.** The driver
+  line is now a short reminder printed on every start, resume and compaction:
+  read driver.md then. Self-contained work goes to a `flow auto` child, not
+  the built-in subagent tool; keep it inline only for trivial single-step
+  work (one or two tool calls), and say why. "Small work may stay inline" is
+  gone.
 
 ## v0.1.0-alpha.41
 

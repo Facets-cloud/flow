@@ -77,7 +77,9 @@ judgment calls from the user mid-way:
 
 - Design, architecture, ASCII diagrams, trade-off discussion.
 - Decisions only the user can make; anything ambiguous.
-- Quick answers (one or two tool calls; spawning costs more than doing).
+- Quick answers and trivial single-step work (one or two tool calls;
+  spawning costs more than doing). Say why when you keep work inline;
+  anything bigger and self-contained goes to a child by default.
 - **Live / prod changes**: the child may plan, dry-run and prepare, then
   stop at the gate. The driver applies with the user watching.
 

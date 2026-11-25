@@ -9,16 +9,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
-- **The driver line now orders the read and inlines the core rules.** The
-  SessionStart / `flow do --here` line for a driver session still points at
-  `references/driver.md`, and now tells the session to read it now and
-  again after every compaction or resume, plus the three rules that drift
-  first: hand self-contained work to a `flow auto` child (never the
-  harness's built-in subagent tool), keep design, decisions, verification
-  and live applies yourself, and take outward actions only after the user
-  approves the exact text or action. Session transcripts showed drivers
-  read driver.md once at bootstrap and never again after compaction. Auto
-  runs and playbook runs still get no driver line.
+- **The driver line is now a short reminder, and delegating is the
+  default.** The SessionStart / `flow do --here` line for a driver session
+  now reads "Reminder: you are the DRIVER for this task. Read driver.md
+  (<path>) now to know the driver SOP." and states the default: self-contained
+  work goes to a `flow auto` child, not the built-in subagent tool, and stays
+  inline only when it is trivial single-step work, with a reason. It is printed
+  on every start, resume and compaction. `references/driver.md` drops "small
+  work may stay inline" for the same delegate-by-default rule. Transcripts
+  showed drivers read driver.md once at bootstrap and never after compaction,
+  and Codex drivers cited "small work may stay inline" to spawn no children.
+  Auto runs and playbook runs still get no driver line.
 
 ## [0.1.0-alpha.41] — 2026-11-25
 

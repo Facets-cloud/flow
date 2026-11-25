@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ import (
 // driverRoleMarker is the heading of the stronger block a task tagged
 // `driver` gets. Regular bound tasks keep the light delegation block
 // (delegationMarker); tests key on the markers so wording can evolve.
-const driverRoleMarker = "You are the DRIVER for this task: follow references/driver.md"
+const driverRoleMarker = "Reminder: you are the DRIVER for this task. Read driver.md ("
 
 func tagTask(t *testing.T, slug, tag string) {
 	t.Helper()
@@ -247,10 +248,10 @@ func TestNoBlockWordingIsConsistent(t *testing.T) {
 	}
 }
 
-// The driver line orders the driver.md re-read and inlines the core rules
-// on the same line as the pointer (sessions skip driver.md after
-// compaction/resume); auto runs and playbook runs still get nothing.
-func TestDriverBlockOrdersReadAndInlinesCoreRules(t *testing.T) {
+// The driver line is a short reminder: it orders the driver.md read and
+// states delegate-by-default on one line; auto runs and playbook runs
+// still get nothing.
+func TestDriverBlockOrdersReadAndDelegateByDefault(t *testing.T) {
 	setupFlowRoot(t)
 	clearSessionEnv(t)
 	t.Setenv(autoRunEnvVar, "")
@@ -265,17 +266,16 @@ func TestDriverBlockOrdersReadAndInlinesCoreRules(t *testing.T) {
 	}
 	for _, want := range []string{
 		driverRoleMarker,
-		"Read it now, before replying, and again after every compaction or resume.",
-		"to a `flow auto` child, never the harness's built-in Agent/subagent tool",
-		"keep the conversation, design, decisions, verifying child results and live/prod applies yourself",
-		"outward actions (push, merge, deploy, messages to people) only after the user approves the exact text or action",
+		"driver.md) now to know the driver SOP.",
+		"Default: self-contained work goes to a flow auto child, not the built-in subagent tool;",
+		"keep it inline only when it is trivial single-step work, and say why.",
 	} {
 		if !strings.Contains(blk, want) {
 			t.Errorf("driver block missing %q:\n%s", want, blk)
 		}
 	}
-	if n := len(driverCoreRules); n > 600 {
-		t.Errorf("inlined core rules are %d chars; keep them under 600 (printed every start/resume)", n)
+	if n := len(fmt.Sprintf(driverReminderFmt, "")); n > 600 {
+		t.Errorf("driver reminder is %d chars without the path; keep it under 600 (printed every start/resume)", n)
 	}
 
 	pb := *tk

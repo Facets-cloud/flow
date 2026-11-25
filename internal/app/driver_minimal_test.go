@@ -197,10 +197,10 @@ func TestDriverPointerNamesInstalledDriverMD(t *testing.T) {
 		tk, _ := flowdb.GetTask(db, "p-"+name)
 		db.Close()
 		blk := strings.TrimSpace(roleBlockFor(tk, false))
-		const head = "You are the DRIVER for this task: follow references/driver.md ("
-		end := strings.Index(blk, ").")
+		const head = "Reminder: you are the DRIVER for this task. Read driver.md ("
+		end := strings.Index(blk, ") now")
 		if !strings.HasPrefix(blk, head) || end < 0 || strings.Contains(blk, "\n") {
-			t.Fatalf("%s: pointer must be one line %q<path>).; got %q", name, head, blk)
+			t.Fatalf("%s: pointer must be one line %q<path>) now; got %q", name, head, blk)
 		}
 		path := blk[len(head):end]
 		if wantPath := filepath.Join(filepath.Dir(skillMD), "references", "driver.md"); path != wantPath {
@@ -315,7 +315,7 @@ func TestDoHereForceSwitchPointsAtNewHarness(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "cdcdcdcd-1111-4111-8111-111111111111")
 	out := captureStdout(t, func() { cmdDo([]string{"sw", "--here", "--force"}) })
 	want := filepath.Join(filepath.Dir(env.claudeSkill()), "references", "driver.md")
-	if !strings.Contains(out, "("+want+").") {
+	if !strings.Contains(out, "("+want+") now") {
 		t.Errorf("pointer must name the Claude install %q:\n%s", want, out)
 	}
 }
