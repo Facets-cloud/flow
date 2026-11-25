@@ -245,3 +245,68 @@ func TestAutoRunStalledForToolCallPolicy(t *testing.T) {
 		})
 	}
 }
+
+// writeJobTranscript writes a prx session transcript under a temp session dir
+// and returns the task pointing at it. silent sets how long ago it was written.
+func writeJobTranscript(t *testing.T, rows string, silent time.Duration) *flowdb.Task {
+	t.Helper()
+	sessDir := t.TempDir()
+	t.Setenv("PRAXIS_CODING_AGENT_SESSION_DIR", sessDir)
+	const sid = "9ea0762f-604a-42fb-a446-be591e1c18b9"
+	dir := filepath.Join(sessDir, sid)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-silent)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return &flowdb.Task{
+		Slug:           "kid",
+		Harness:        validNullStr("prx"),
+		SessionID:      validNullStr(sid),
+		AutoRunStatus:  validNullStr("running"),
+		AutoRunLog:     validNullStr(filepath.Join(dir, "run.log")),
+		AutoRunStarted: validNullStr(time.Now().Add(-2 * time.Hour).Format(time.RFC3339)),
+	}
+}
+
+const jobStarted = `{"type":"job","jobId":"job-x-1@abc","state":"started","what":"bash: sleep 90"}` + "\n"
+const jobFinished = `{"type":"job","jobId":"job-x-1@abc","state":"finished","what":"bash: sleep 90"}` + "\n"
+
+func TestAutoRunStalledForBackgroundJob(t *testing.T) {
+	t.Setenv(autoStallEnvVar, "5")
+	cases := []struct {
+		name   string
+		rows   string
+		silent time.Duration
+		want   bool
+	}{
+		{"job running within ceiling", jobStarted, 30 * time.Minute, false},
+		{"job running past ceiling", jobStarted, 61 * time.Minute, true},
+		{"job finished then silent", jobStarted + jobFinished, 30 * time.Minute, true},
+		{"job killed then silent", jobStarted + `{"type":"job","jobId":"job-x-1@abc","state":"killed"}` + "\n", 30 * time.Minute, true},
+		{"second job still open", jobStarted + jobFinished + `{"type":"job","jobId":"job-x-2@abc","state":"started"}` + "\n", 30 * time.Minute, false},
+		{"no job rows, silent", `{"type":"message"}` + "\n", 30 * time.Minute, true},
+		{"oversized line is skipped, job still tracked", strings.Repeat("x", 200<<10) + "\n" + jobStarted, 30 * time.Minute, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			task := writeJobTranscript(t, c.rows, c.silent)
+			if err := os.WriteFile(task.AutoRunLog.String, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().Add(-c.silent)
+			if err := os.Chtimes(task.AutoRunLog.String, old, old); err != nil {
+				t.Fatal(err)
+			}
+			if _, stalled := autoRunStalledFor(task, time.Now()); stalled != c.want {
+				t.Fatalf("stalled = %v, want %v", stalled, c.want)
+			}
+		})
+	}
+}

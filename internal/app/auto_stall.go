@@ -1,8 +1,10 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,10 +29,11 @@ import (
 // FLOW_AUTO_STALL_MINUTES is unset or not a positive integer.
 const autoStallDefault = 10 * time.Minute
 
-// autoToolCeiling is the silence tolerated while a tool call is in flight. A
+// autoInFlightCeiling is the silence tolerated while a tool call or background
+// job is in flight. A
 // call writes nothing until it returns, so this is the longest one call may run
 // before it counts as hung. FLOW_AUTO_STALL_MINUTES does not change it.
-const autoToolCeiling = 60 * time.Minute
+const autoInFlightCeiling = 60 * time.Minute
 
 // autoLogTail bounds how much of a run log is scanned for tool calls in flight.
 // An in-flight call's start line is the last write before it returns, so the
@@ -146,14 +149,74 @@ func autoRunActivity(t *flowdb.Task) (last time.Time, inFlight bool) {
 		}
 	}
 	consider(fileMTime(t.AutoRunLog.String))
+	inFlight = autoRunToolInFlight(t.AutoRunLog.String)
 	if t.SessionID.Valid && t.SessionID.String != "" {
 		if h, err := harnessForSpawn(t); err == nil {
 			if loc, ok := h.(harness.TranscriptLocator); ok {
-				consider(fileMTime(loc.TranscriptPath(t.WorkDir, t.SessionID.String)))
+				path := loc.TranscriptPath(t.WorkDir, t.SessionID.String)
+				consider(fileMTime(path))
+				inFlight = inFlight || autoRunJobOpen(path)
 			}
 		}
 	}
-	return last, autoRunToolInFlight(t.AutoRunLog.String)
+	return last, inFlight
+}
+
+// autoRunJobOpen reports whether a prx transcript holds a background job that
+// has started and not yet finished or been killed. The run log cannot pair a
+// job's start with its end: the start line cuts the job id short and the
+// completion is never logged, so the transcript's job rows are the source.
+// Claude and Codex transcripts carry no such rows and report false.
+func autoRunJobOpen(path string) bool {
+	if path == "" {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	open := map[string]struct{}{}
+	r := bufio.NewReaderSize(f, 64<<10)
+	for {
+		line, err := r.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			// Longer than the buffer: never a job row, so skip to its end.
+			for err == bufio.ErrBufferFull {
+				_, err = r.ReadSlice('\n')
+			}
+		} else if bytes.Contains(line, []byte(`"type":"job"`)) {
+			applyJobRow(open, line)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return len(open) > 0
+}
+
+// applyJobRow records one transcript job row: a "started" row opens its job,
+// a "finished" or "killed" row closes it. jobId carries a "@<session>" suffix
+// that is not part of the job's identity.
+func applyJobRow(open map[string]struct{}, line []byte) {
+	var row struct {
+		Type  string `json:"type"`
+		JobID string `json:"jobId"`
+		State string `json:"state"`
+	}
+	if json.Unmarshal(line, &row) != nil || row.Type != "job" {
+		return
+	}
+	id, _, _ := strings.Cut(row.JobID, "@")
+	if id == "" {
+		return
+	}
+	switch row.State {
+	case "started":
+		open[id] = struct{}{}
+	case "finished", "killed":
+		delete(open, id)
+	}
 }
 
 // autoRunToolInFlight reports whether the newest tool call in the run log has
@@ -245,7 +308,7 @@ func autoRunStalledFor(t *flowdb.Task, now time.Time) (time.Duration, bool) {
 	idle := now.Sub(last)
 	limit := autoStallThreshold()
 	if inFlight {
-		limit = autoToolCeiling
+		limit = autoInFlightCeiling
 	}
 	return idle, idle >= limit
 }
