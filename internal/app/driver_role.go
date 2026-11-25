@@ -2,7 +2,6 @@ package app
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,13 +157,7 @@ func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 // reports whether the message was stored.
 func notifyParentOfChild(db *sql.DB, child *flowdb.Task, body, closedBody string) bool {
 	toSlug := child.ParentSlug.String
-	p, err := flowdb.GetTask(db, toSlug)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		// An operational lookup failure is not a closed parent: report it as not
-		// stored so the caller retries instead of routing the notice to the human.
-		return false
-	}
-	if err != nil || p == nil || deliverableTask(p) != nil {
+	if p, err := flowdb.GetTask(db, toSlug); err != nil || p == nil || deliverableTask(p) != nil {
 		toSlug = ""
 		body = closedBody
 	}

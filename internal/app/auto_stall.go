@@ -210,6 +210,11 @@ func notifyParentOfStalledChild(db *sql.DB, child *flowdb.Task, idle time.Durati
 	if !child.ParentSlug.Valid || child.ParentSlug.String == "" {
 		return true
 	}
+	// A transient lookup failure is not a closed parent: report the notice as
+	// not stored so the watchdog retries, instead of sending a human FYI now.
+	if _, err := flowdb.GetTask(db, child.ParentSlug.String); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
 	last := "no log output"
 	if l := lastLogLine(child.AutoRunLog.String); l != "" {
 		last = "last log: " + l
