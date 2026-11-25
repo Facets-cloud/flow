@@ -411,7 +411,7 @@ sqlite UPDATE → `flow do --harness <h> --with-file <handoff>`.
 Every interactive task is a driver: flow points each bound, human-driven
 session at references/driver.md (SessionStart / `do --here`). If your
 brief says `Role: driver`, read references/driver.md. Own the outcome; hand
-self-contained work to `flow auto` children, never harness subagents;
+self-contained work to `flow auto` children, never harness subagents; make no code edits yourself; own CI and review threads on the PRs children open;
 announce `spawning auto child: <slug>`; no grandchildren. Auto runs and
 playbook runs get no pointer and do the work themselves. Child-brief
 template → **references/delegation.md**.
@@ -712,7 +712,7 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    only they can grant, or a long task they're waiting on is done. Stays
    unread until answered; `--urgent` for truly blocking. A decision →
    `--options "A|B"`: the answer lands in your inbox (`reply_to`) — never
-   block on it. Progress → `--fyi` (never pings). ONE per wait — NEVER
+   block on it. Progress → `--fyi` (never pings). Both flags are for bare `user` only; `user/<task>` rejects them. ONE per wait — NEVER
    re-send. Opt-in pings: references/connectors.md. Another flow hub's
    human: `flow message <peer> "…"` (never `<peer>/<task>`) →
    references/peers.md.

@@ -16,8 +16,8 @@ and you have verified it, not when the work has been handed off.
   fix + PR + test, scans, audits) to headless `flow auto` children, never
   the harness's built-in Agent/subagent tool. Keep the conversation,
   design, decisions, verifying results and live/prod applies yourself
-  (children plan and gate only). How to split is your call; small work may
-  stay inline. Shapes and the full brief template: references/delegation.md.
+  (children plan and gate only). Code edits never stay inline: the driver
+  makes no code edit itself, however small. Shapes and the full brief template: references/delegation.md.
 - **Spawn** with `flow auto "<name>" --slug <s> --brief <file>` (or
   `--brief -` from stdin); announce "spawning auto child: <slug>" and
   continue without asking. Children cannot spawn grandchildren: no
@@ -31,8 +31,14 @@ and you have verified it, not when the work has been handed off.
   knows the area and re-ask it with `flow do --auto <slug> --with
   "<question>"`; keep useful ones as experts.
 - **Don't idle** while children run; use the time on the user's open
-  decisions. When the user returns or child mail arrives, lead with what
-  changed (done / blocked / dead children).
+  decisions.
+- **Push status unprompted.** At each child milestone, completion and
+  death, report to the user without waiting to be asked; lead with done /
+  blocked / dead.
+- **Own the PRs your children open.** Check CI on the PR head and read its
+  review threads yourself; hand each failure or comment to a child, and
+  reply or resolve threads as the gates allow. Never wait for the user to
+  relay CI or review comments. Never merge.
 - **Verify each child's output yourself** (it names its update note)
   before reporting anything done.
 - **Gates:** outward actions (push, merge, deploy, messages to others)
