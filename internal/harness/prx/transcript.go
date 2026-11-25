@@ -159,3 +159,12 @@ func truncate(s string, max int) string {
 	}
 	return harness.CutUTF8(s, max) + "…"
 }
+
+// TranscriptPath implements harness.TranscriptLocator.
+func (p *prx) TranscriptPath(_ string, sessionID string) string {
+	path, err := transcriptPath(sessionID)
+	if err != nil {
+		return ""
+	}
+	return path
+}

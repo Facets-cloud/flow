@@ -374,7 +374,32 @@ func cmdAutoExec(args []string) int {
 	}
 	applyWorkspaceTrust(h, task.WorkDir, &opts)
 
+	// Stall watchdog: reports (never kills) a run that goes silent. It is
+	// stopped before the run is finalized, so no notice follows the run's end.
+	stopWatch := startStallWatchdog(autoStallThreshold(), autoInFlightCeiling, autoStallInterval,
+		func() (time.Time, bool) {
+			fresh, err := flowdb.GetTask(db, slug)
+			if err != nil {
+				return time.Time{}, false
+			}
+			return autoRunActivity(fresh)
+		},
+		func(idle time.Duration) bool {
+			fresh, err := flowdb.GetTask(db, slug)
+			if err != nil {
+				return false
+			}
+			// A run whose session already called `flow done` is finishing, not
+			// stalled. A superseded supervisor (a later --force launch replaced
+			// its pid on the row) must not speak for the run it no longer owns.
+			// Neither gets a notice, and neither is retried.
+			if fresh.Status == "done" || !fresh.AutoRunPID.Valid || fresh.AutoRunPID.Int64 != int64(supervisorPID()) {
+				return true
+			}
+			return notifyParentOfStalledChild(db, fresh, idle)
+		})
 	runErr := autoRunner(h, task.SessionID.String, prompt, opts)
+	stopWatch()
 
 	// Re-read status: the session may have called `flow done` on itself.
 	// The self-done is the authoritative success signal.

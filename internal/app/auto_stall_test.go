@@ -1,0 +1,312 @@
+package app
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"flow/internal/flowdb"
+)
+
+// The stall fires once the run has been silent for the threshold, and not before.
+func TestStallWatchFiresAfterThreshold(t *testing.T) {
+	start := time.Unix(1000, 0)
+	w := stallWatch{threshold: 10 * time.Minute, seen: start}
+	if w.observe(time.Time{}, false, start.Add(9*time.Minute)) {
+		t.Fatal("fired before threshold")
+	}
+	if !w.observe(time.Time{}, false, start.Add(10*time.Minute)) {
+		t.Fatal("did not fire at threshold")
+	}
+}
+
+// One message per stall episode: repeated silent samples stay quiet.
+func TestStallWatchOncePerEpisode(t *testing.T) {
+	start := time.Unix(1000, 0)
+	w := stallWatch{threshold: time.Minute, seen: start}
+	fired := 0
+	for i := 1; i <= 10; i++ {
+		if w.observe(time.Time{}, false, start.Add(time.Duration(i)*time.Minute)) {
+			fired++
+		}
+	}
+	if fired != 1 {
+		t.Fatalf("fired %d times in one episode, want 1", fired)
+	}
+}
+
+// Activity resets the episode: after it moves, a new silence can fire again.
+func TestStallWatchResetsOnActivity(t *testing.T) {
+	start := time.Unix(1000, 0)
+	w := stallWatch{threshold: time.Minute, seen: start}
+	if !w.observe(time.Time{}, false, start.Add(time.Minute)) {
+		t.Fatal("first stall did not fire")
+	}
+	resumed := start.Add(90 * time.Second)
+	if w.observe(resumed, false, resumed) {
+		t.Fatal("fired on the sample that carried activity")
+	}
+	if !w.observe(resumed, false, resumed.Add(time.Minute)) {
+		t.Fatal("second stall after activity did not fire")
+	}
+}
+
+// An activity time at or before the last seen one is no news and does not reset.
+func TestStallWatchOldActivityIsNoNews(t *testing.T) {
+	start := time.Unix(1000, 0)
+	w := stallWatch{threshold: time.Minute, seen: start}
+	if !w.observe(time.Time{}, false, start.Add(time.Minute)) {
+		t.Fatal("stall did not fire")
+	}
+	if w.observe(start, false, start.Add(2*time.Minute)) {
+		t.Fatal("stale activity re-armed the episode")
+	}
+}
+
+// After stop returns, the sampler is gone: no stall fires for a finished run.
+func TestStallWatchdogStopSilencesSampler(t *testing.T) {
+	var fired atomic.Int32
+	stop := startStallWatchdog(time.Nanosecond, time.Minute, time.Millisecond,
+		func() (time.Time, bool) { return time.Time{}, false },
+		func(time.Duration) bool { fired.Add(1); return true })
+	time.Sleep(20 * time.Millisecond)
+	stop()
+	at := fired.Load()
+	time.Sleep(30 * time.Millisecond)
+	if got := fired.Load(); got != at {
+		t.Fatalf("notice fired after stop: %d then %d", at, got)
+	}
+}
+
+// Activity is read from the log mtime and the stall reports the silence; a
+// fresh log means the run is not stalled, an old one is, and a finished run
+// never is.
+func TestAutoRunStalledForUsesLogActivity(t *testing.T) {
+	t.Setenv(autoStallEnvVar, "5")
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+	if err := os.WriteFile(logPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * time.Minute)
+	if err := os.Chtimes(logPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	task := &flowdb.Task{
+		Slug:           "kid",
+		AutoRunStatus:  validNullStr("running"),
+		AutoRunLog:     validNullStr(logPath),
+		AutoRunStarted: validNullStr(time.Now().Add(-time.Hour).Format(time.RFC3339)),
+	}
+	if _, stalled := autoRunStalledFor(task, time.Now()); !stalled {
+		t.Fatal("silent running run not reported stalled")
+	}
+	if err := os.Chtimes(logPath, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, stalled := autoRunStalledFor(task, time.Now()); stalled {
+		t.Fatal("run with fresh activity reported stalled")
+	}
+	task.AutoRunStatus = validNullStr("completed")
+	if _, stalled := autoRunStalledFor(task, time.Now().Add(time.Hour)); stalled {
+		t.Fatal("completed run reported stalled")
+	}
+}
+
+// A parented stalled run messages the parent once with slug, minutes and the
+// last log line; a parentless run messages nobody.
+func TestNotifyParentOfStalledChild(t *testing.T) {
+	root := setupFlowRoot(t)
+	db := openFlowDB(t)
+	mkBusTask(t, db, "papa", "sid-papa")
+	seedDeadPingTask(t, root, "kid")
+	if _, err := db.Exec(`UPDATE tasks SET parent_slug='papa' WHERE slug='kid'`); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(root, "tasks", "kid", "auto-runs", "2026-11-09-120000.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("earlier\nopened the browser tab\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child, err := flowdb.GetTask(db, "kid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifyParentOfStalledChild(db, child, 18*time.Minute)
+	rows := deadPingRows(t)
+	if len(rows) != 1 || rows[0].toS != "papa" {
+		t.Fatalf("want one parent notice, got %+v", rows)
+	}
+	for _, want := range []string{"kid", "stalled", "18 min", "opened the browser tab"} {
+		if !strings.Contains(rows[0].body, want) {
+			t.Errorf("body missing %q: %s", want, rows[0].body)
+		}
+	}
+
+	seedDeadPingTask(t, root, "orphan")
+	orphan, _ := flowdb.GetTask(db, "orphan")
+	notifyParentOfStalledChild(db, orphan, 18*time.Minute)
+	if n := len(deadPingRows(t)); n != 1 {
+		t.Fatalf("parentless stall messaged someone: %d rows", n)
+	}
+}
+
+func validNullStr(v string) sql.NullString { return sql.NullString{String: v, Valid: true} }
+
+// An override too large for a Duration is clamped, never wrapped negative:
+// a negative threshold would report every run as stalled on its first sample.
+func TestAutoStallThresholdClampsHugeOverride(t *testing.T) {
+	t.Setenv(autoStallEnvVar, "99999999999999")
+	if got := autoStallThreshold(); got <= 0 {
+		t.Fatalf("threshold = %v, want positive", got)
+	}
+	t.Setenv(autoStallEnvVar, "0")
+	if got := autoStallThreshold(); got != autoStallDefault {
+		t.Fatalf("zero override = %v, want default %v", got, autoStallDefault)
+	}
+}
+
+// The watchdog counts silence from the last recorded activity, so an
+// already-silent run is reported on the first check, matching `flow list`.
+func TestStallWatchdogSeedsFromRecordedActivity(t *testing.T) {
+	fired := make(chan struct{}, 8)
+	old := time.Now().Add(-time.Hour)
+	stop := startStallWatchdog(time.Minute, time.Hour, time.Millisecond,
+		func() (time.Time, bool) { return old, false },
+		func(time.Duration) bool { fired <- struct{}{}; return true })
+	select {
+	case <-fired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no stall notice on the first check")
+	}
+	stop()
+	if n := len(fired); n != 0 {
+		t.Fatalf("fired again after the first episode: %d extra", n)
+	}
+}
+
+// A tool call in flight is silence only up to the ceiling: the threshold does
+// not apply while the call runs, and the ceiling still fires once passed.
+func TestStallWatchToolInFlightUsesCeiling(t *testing.T) {
+	start := time.Unix(1000, 0)
+	w := stallWatch{threshold: 10 * time.Minute, ceiling: time.Hour, seen: start}
+	if w.observe(start, true, start.Add(30*time.Minute)) {
+		t.Fatal("in-flight call fired at the threshold, before the ceiling")
+	}
+	if !w.observe(start, true, start.Add(time.Hour)) {
+		t.Fatal("in-flight call past the ceiling did not fire")
+	}
+}
+
+// Stall policy on a real run log, exercised through autoRunStalledFor:
+// in flight within the ceiling is not stalled; in flight past it is; a run
+// with no tool call in flight is stalled at the threshold, as before.
+func TestAutoRunStalledForToolCallPolicy(t *testing.T) {
+	t.Setenv(autoStallEnvVar, "5")
+	cases := []struct {
+		name string
+		log  string
+		age  time.Duration
+		want bool
+	}{
+		{"in flight within ceiling", "[tool] bash({\"command\":\"go test -race ./...\"})\n", 30 * time.Minute, false},
+		{"in flight past ceiling", "[tool] bash({\"command\":\"go test -race ./...\"})\n", 61 * time.Minute, true},
+		{"in flight after assistant text", "running the suite now.[tool] bash({\"command\":\"go test\"})", 30 * time.Minute, false},
+		{"call returned, silent", "[tool] bash({\"command\":\"ls\"})\n[tool] bash -> {\"content\":[]} (ok)\n", 30 * time.Minute, true},
+		{"in flight, earlier call returned", "[tool] read({\"path\":\"a\"})\n[tool] read -> ok\n[tool] bash({\"command\":\"go test\"})\n", 30 * time.Minute, false},
+		{"result without start is not in flight", "[tool] bash -> {\"ok\":true}\n", 30 * time.Minute, true},
+		{"no tool lines, silent", "assistant text only\n", 30 * time.Minute, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "run.log")
+			if err := os.WriteFile(logPath, []byte(c.log), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().Add(-c.age)
+			if err := os.Chtimes(logPath, old, old); err != nil {
+				t.Fatal(err)
+			}
+			task := &flowdb.Task{
+				Slug:           "kid",
+				AutoRunStatus:  validNullStr("running"),
+				AutoRunLog:     validNullStr(logPath),
+				AutoRunStarted: validNullStr(time.Now().Add(-2 * time.Hour).Format(time.RFC3339)),
+			}
+			if _, stalled := autoRunStalledFor(task, time.Now()); stalled != c.want {
+				t.Fatalf("stalled = %v, want %v", stalled, c.want)
+			}
+		})
+	}
+}
+
+// writeJobTranscript writes a prx session transcript under a temp session dir
+// and returns the task pointing at it. silent sets how long ago it was written.
+func writeJobTranscript(t *testing.T, rows string, silent time.Duration) *flowdb.Task {
+	t.Helper()
+	sessDir := t.TempDir()
+	t.Setenv("PRAXIS_CODING_AGENT_SESSION_DIR", sessDir)
+	const sid = "9ea0762f-604a-42fb-a446-be591e1c18b9"
+	dir := filepath.Join(sessDir, sid)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-silent)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return &flowdb.Task{
+		Slug:           "kid",
+		Harness:        validNullStr("prx"),
+		SessionID:      validNullStr(sid),
+		AutoRunStatus:  validNullStr("running"),
+		AutoRunLog:     validNullStr(filepath.Join(dir, "run.log")),
+		AutoRunStarted: validNullStr(time.Now().Add(-2 * time.Hour).Format(time.RFC3339)),
+	}
+}
+
+const jobStarted = `{"type":"job","jobId":"job-x-1@abc","state":"started","what":"bash: sleep 90"}` + "\n"
+const jobFinished = `{"type":"job","jobId":"job-x-1@abc","state":"finished","what":"bash: sleep 90"}` + "\n"
+
+func TestAutoRunStalledForBackgroundJob(t *testing.T) {
+	t.Setenv(autoStallEnvVar, "5")
+	cases := []struct {
+		name   string
+		rows   string
+		silent time.Duration
+		want   bool
+	}{
+		{"job running within ceiling", jobStarted, 30 * time.Minute, false},
+		{"job running past ceiling", jobStarted, 61 * time.Minute, true},
+		{"job finished then silent", jobStarted + jobFinished, 30 * time.Minute, true},
+		{"job killed then silent", jobStarted + `{"type":"job","jobId":"job-x-1@abc","state":"killed"}` + "\n", 30 * time.Minute, true},
+		{"second job still open", jobStarted + jobFinished + `{"type":"job","jobId":"job-x-2@abc","state":"started"}` + "\n", 30 * time.Minute, false},
+		{"no job rows, silent", `{"type":"message"}` + "\n", 30 * time.Minute, true},
+		{"oversized line is skipped, job still tracked", strings.Repeat("x", 200<<10) + "\n" + jobStarted, 30 * time.Minute, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			task := writeJobTranscript(t, c.rows, c.silent)
+			if err := os.WriteFile(task.AutoRunLog.String, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().Add(-c.silent)
+			if err := os.Chtimes(task.AutoRunLog.String, old, old); err != nil {
+				t.Fatal(err)
+			}
+			if _, stalled := autoRunStalledFor(task, time.Now()); stalled != c.want {
+				t.Fatalf("stalled = %v, want %v", stalled, c.want)
+			}
+		})
+	}
+}

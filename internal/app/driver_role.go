@@ -147,11 +147,19 @@ func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 	parent := child.ParentSlug.String
 	body := fmt.Sprintf("auto child %s ended dead without closing itself; check `flow show task %s` "+
 		"and its auto-run log, then re-run or take it over", child.Slug, child.Slug)
-	toSlug := parent
-	if p, err := flowdb.GetTask(db, parent); err != nil || p == nil || deliverableTask(p) != nil {
+	closedBody := fmt.Sprintf("FYI: auto child %s of closed task %s ended dead without closing itself; "+
+		"check `flow show task %s` and its auto-run log", child.Slug, parent, child.Slug)
+	notifyParentOfChild(db, child, body, closedBody)
+}
+
+// notifyParentOfChild sends body to the child's parent. When the parent is
+// missing or closed, it sends closedBody to the human as an FYI instead. It
+// reports whether the message was stored.
+func notifyParentOfChild(db *sql.DB, child *flowdb.Task, body, closedBody string) bool {
+	toSlug := child.ParentSlug.String
+	if p, err := flowdb.GetTask(db, toSlug); err != nil || p == nil || deliverableTask(p) != nil {
 		toSlug = ""
-		body = fmt.Sprintf("FYI: auto child %s of closed task %s ended dead without closing itself; "+
-			"check `flow show task %s` and its auto-run log", child.Slug, parent, child.Slug)
+		body = closedBody
 	}
 	m := &flowdb.BusMessage{
 		ID: newBusID(), CreatedAt: flowdb.NowISO(), Kind: "message",
@@ -160,7 +168,8 @@ func notifyParentOfDeadChild(db *sql.DB, child *flowdb.Task) {
 		Body: body, FYI: toSlug == "", // an FYI to the human never pings a connector
 	}
 	if err := flowdb.InsertBusMessage(db, m); err != nil {
-		return
+		return false
 	}
 	_ = flowdb.SweepBus(db, time.Now())
+	return true
 }

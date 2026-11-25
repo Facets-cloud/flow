@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sampleSessionJSONL is a minimal but representative session jsonl
@@ -197,5 +198,32 @@ func TestResolveTranscriptPathNotFound(t *testing.T) {
 	_, err := resolveTranscriptPath(home, "/Users/x/code/app", "ffffffff-0000-4000-8000-000000000000")
 	if err == nil {
 		t.Fatalf("resolveTranscriptPath: want error when no jsonl exists")
+	}
+}
+
+// The watchdog must see the live copy: when the cwd-encoded transcript is
+// stale and a resumed session wrote a newer copy elsewhere, the newer one wins.
+func TestTranscriptPathPrefersNewestCopy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	const sid = "11111111-2222-3333-4444-555555555555"
+	cwd := "/work/repo"
+	stale := filepath.Join(home, ".claude", "projects", EncodeCwd(cwd), sid+".jsonl")
+	fresh := filepath.Join(home, ".claude", "projects", "-other-dir", sid+".jsonl")
+	for _, p := range []string{stale, fresh} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	got := (&claude{}).TranscriptPath(cwd, sid)
+	if got != fresh {
+		t.Fatalf("TranscriptPath = %q, want newest copy %q", got, fresh)
 	}
 }

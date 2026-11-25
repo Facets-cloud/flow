@@ -34,7 +34,11 @@ func resolveTranscriptPath(root, sessionID string) (string, error) {
 	var matches []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			// One unreadable entry must not hide every other rollout: skip it.
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if !d.IsDir() && strings.HasSuffix(path, "-"+sessionID+".jsonl") {
 			matches = append(matches, path)
@@ -159,4 +163,17 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return harness.CutUTF8(s, max) + "…"
+}
+
+// TranscriptPath implements harness.TranscriptLocator.
+func (c *codex) TranscriptPath(_ string, sessionID string) string {
+	root, err := codexHome()
+	if err != nil {
+		return ""
+	}
+	p, err := resolveTranscriptPath(filepath.Join(root, "sessions"), sessionID)
+	if err != nil {
+		return ""
+	}
+	return p
 }
