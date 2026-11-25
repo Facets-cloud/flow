@@ -3,6 +3,7 @@ package claude
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"flow/internal/harness"
 )
@@ -77,5 +78,17 @@ func TestDecodeJSONLMultiBlockResultTruncatedPerBlock(t *testing.T) {
 	}
 	if got[0].Text != a+"\n"+b {
 		t.Errorf("text has len %d, want both 400-byte blocks", len(got[0].Text))
+	}
+}
+
+// CodeRabbit #200 (4th review): truncation never splits a UTF-8 rune.
+func TestTruncateKeepsUTF8Boundary(t *testing.T) {
+	s := strings.Repeat("a", 499) + "€" + "tail"
+	got := truncate(s, 500)
+	if !utf8.ValidString(got) {
+		t.Errorf("truncate produced invalid UTF-8: %q", got[len(got)-8:])
+	}
+	if !strings.HasPrefix(got, strings.Repeat("a", 499)) {
+		t.Errorf("lost the ASCII prefix: %q", got)
 	}
 }

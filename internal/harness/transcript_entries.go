@@ -1,5 +1,7 @@
 package harness
 
+import "unicode/utf8"
+
 // TranscriptEntry is one harness-neutral transcript event, the unit of
 // `flow transcript --json`. Every adapter decodes its own on-disk format
 // into this shape, so a consumer never reads harness-specific bytes.
@@ -41,4 +43,21 @@ const (
 // RenderTranscript; compact drops thinking and tool results.
 type TranscriptDecoder interface {
 	TranscriptEntries(cwd, sessionID string, compact bool) ([]TranscriptEntry, error)
+}
+
+// CutUTF8 returns the longest prefix of s that is at most max bytes and
+// ends on a UTF-8 rune boundary, so a byte-length truncation never splits
+// a multi-byte character (JSON would encode the broken byte as U+FFFD).
+func CutUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 0 {
+		return ""
+	}
+	i := max
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
 }
