@@ -90,7 +90,7 @@ func TestAutoExecDoneChildWithRunErrIsNotReportedDead(t *testing.T) {
 		setTaskDone(t, "child")
 		return errors.New("harness exited 1 after done")
 	})
-	cmdAutoExec([]string{"child"})
+	cmdAutoExec(autoExecArgv(t, "child"))
 
 	if got := taskStatus(t, "child").AutoRunStatus.String; got != "completed" {
 		t.Errorf("auto_run=%q, want completed for a done child", got)
@@ -213,8 +213,9 @@ func TestAutoExecHumanDoneMidRunSweepsOnce(t *testing.T) {
 		harnessExited = true
 		return nil
 	})
+	argv := autoExecArgv(t, "cx") // before capture: a Fatal here must not leave stdout redirected
 	captureStdout(t, func() {
-		if rc := cmdAutoExec([]string{"cx"}); rc != 0 {
+		if rc := cmdAutoExec(argv); rc != 0 {
 			t.Fatalf("cmdAutoExec rc=%d", rc)
 		}
 	})
@@ -243,7 +244,7 @@ func TestAutoExecStaleFinalizeLeavesNewerRunAlone(t *testing.T) {
 		defer db.Close()
 		return recordAutoRunLaunched(db, "auto-task", 5555, "/runs/new.log")
 	})
-	out := captureStdout(t, func() { cmdAutoExec([]string{"auto-task"}) })
+	out := captureStdout(t, func() { cmdAutoExec(autoExecArgv(t, "auto-task")) })
 
 	got := taskStatus(t, "auto-task")
 	if got.AutoRunStatus.String != "running" || got.AutoRunPID.Int64 != 5555 {
@@ -273,7 +274,7 @@ func TestAutoExecSupersededRunSendsNoDeadNotice(t *testing.T) {
 		defer db.Close()
 		return recordAutoRunLaunched(db, "child", 5555, "/runs/new.log")
 	})
-	captureStdout(t, func() { cmdAutoExec([]string{"child"}) })
+	captureStdout(t, func() { cmdAutoExec(autoExecArgv(t, "child")) })
 
 	got := taskStatus(t, "child")
 	if got.AutoRunStatus.String != "running" || got.AutoRunPID.Int64 != 5555 {

@@ -185,6 +185,10 @@ or ask the user which model they want.
 
 ## Where
 <repo / work_dir, branch or worktree rules, files that matter>
+If the work is in a git repo, work in your own git worktree on your own
+branch, never in another child's or the driver's checkout: shared worktrees
+caused cross-child edits. A task with no git repo (a fresh `--mkdir`
+workspace) has no worktree to create: use your own workspace directory.
 
 ## Done when
 <checkable criteria: file written, tests green, PR open with URL>
