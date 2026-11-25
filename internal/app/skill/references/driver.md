@@ -16,8 +16,11 @@ and you have verified it, not when the work has been handed off.
   fix + PR + test, scans, audits) to headless `flow auto` children, never
   the harness's built-in Agent/subagent tool. Keep the conversation,
   design, decisions, verifying results and live/prod applies yourself
-  (children plan and gate only). How to split is your call; small work may
-  stay inline. Shapes and the full brief template: references/delegation.md.
+  (children plan and gate only). Inline only if it is one coherent step
+  you can finish in ~15 minutes, or glue/verification. Anything with
+  separable parts (API / UI / infra / tests / research) or longer than ~15
+  minutes goes to `flow auto` children; you keep the decisions and verify
+  their output. Shapes and the full brief template: references/delegation.md.
 - **Spawn** with `flow auto "<name>" --slug <s> --brief <file>` (or
   `--brief -` from stdin); announce "spawning auto child: <slug>" and
   continue without asking. Children cannot spawn grandchildren: no
