@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     parent_slug           TEXT REFERENCES tasks(slug),
     model                 TEXT,
     effort                TEXT,
+    permission_mode       TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
     archived_at           TEXT,
@@ -174,7 +175,7 @@ type Task struct {
 	Harness sql.NullString
 	// Autonomous-run bookkeeping (set by `flow do --auto`). AutoRunStatus
 	// is NULL for tasks that were never run in --auto mode; otherwise one
-	// of 'running' | 'completed' | 'dead'. AutoRunPID is the detached
+	// of 'running' | 'completed' | 'dead' | 'blocked'. AutoRunPID is the detached
 	// supervisor process's PID (used for read-time liveness reconciliation
 	// while status='running'); cleared on finalize.
 	AutoRunStatus   sql.NullString
@@ -276,6 +277,10 @@ func OpenDB(path string) (*sql.DB, error) {
 	if err := applyWakeSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply wake schema: %w", err)
+	}
+	if _, err := db.Exec(reviveDDL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply revive schema: %w", err)
 	}
 	if _, err := db.Exec(sessionVersionDDL); err != nil {
 		db.Close()
@@ -460,6 +465,11 @@ func runMigrations(db *sql.DB) error {
 		// `flow do --model/--effort`. NULL = harness default.
 		{"model", "ALTER TABLE tasks ADD COLUMN model TEXT"},
 		{"effort", "ALTER TABLE tasks ADD COLUMN effort TEXT"},
+		// permission_mode: how the task's own session was last launched by
+		// flow do ("bypass" = --dangerously-skip-permissions, "default"
+		// otherwise). NULL = unknown (e.g. bound with --here). A driver
+		// revive resumes with it instead of always skipping permissions.
+		{"permission_mode", "ALTER TABLE tasks ADD COLUMN permission_mode TEXT"},
 	} {
 		has, err := columnExists(db, "tasks", col.name)
 		if err != nil {

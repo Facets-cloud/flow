@@ -5,6 +5,8 @@ import (
 	"flow/internal/flowdb"
 	"flow/internal/harness"
 	"flow/internal/harness/claude"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -134,7 +136,7 @@ func TestAutoExecAppendsInjection(t *testing.T) {
 		return nil
 	})
 
-	if rc := cmdAutoExec([]string{"auto-task", "--with", "extra instruction here"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "auto-task", "--with", "extra instruction here")); rc != 0 {
 		t.Fatalf("cmdAutoExec rc=%d, want 0", rc)
 	}
 	// The instruction is threaded via opts.Inject; the harness's
@@ -183,20 +185,50 @@ func stubAutoRunner(t *testing.T, fn func(h harness.Harness, sessionID, prompt s
 // state, as if a supervisor had just launched it.
 func seedRunningAuto(t *testing.T, slug string, pid int) {
 	t.Helper()
-	// The test process plays the supervisor that owns this run.
-	oldPID := supervisorPID
-	supervisorPID = func() int { return pid }
-	t.Cleanup(func() { supervisorPID = oldPID })
 	db := openFlowDB(t)
 	now := flowdb.NowISO()
 	if _, err := db.Exec(
 		`UPDATE tasks SET status='in-progress', session_id=?, session_started=?,
-		 auto_run_status='running', auto_run_pid=?, auto_run_started=?, updated_at=?
+		 auto_run_status='running', auto_run_pid=?, auto_run_started=?, auto_run_log=?, updated_at=?
 		 WHERE slug=?`,
-		fakeSessionID(slug), now, pid, now, now, slug,
+		fakeSessionID(slug), now, pid, now, autoTestLog(t, slug), now, slug,
 	); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// autoTestLog is the launch log a test row is seeded with: the log identity
+// the supervisor finalizes against.
+func autoTestLog(t *testing.T, slug string) string {
+	t.Helper()
+	root, err := flowRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root, "tasks", slug, "auto-runs", "launch.log")
+}
+
+// autoExecArgv is the __auto-exec argv for the launch the row records. A row
+// with no recorded launch gets one assigned, as a real launch would have
+// recorded it: the supervisor is only ever handed a log the row names.
+func autoExecArgv(t *testing.T, slug string, extra ...string) []string {
+	t.Helper()
+	db := openFlowDB(t)
+	task, err := flowdb.GetTask(db, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := task.AutoRunLog.String
+	if logPath == "" {
+		logPath = autoTestLog(t, slug)
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE tasks SET auto_run_log=? WHERE slug=?`, logPath, slug); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return append([]string{slug, "--log", logPath}, extra...)
 }
 
 // TestAutoExecFinalizesCompleted: when the headless session self-completes
@@ -216,7 +248,7 @@ func TestAutoExecFinalizesCompleted(t *testing.T) {
 		return nil
 	})
 
-	if rc := cmdAutoExec([]string{"auto-task"}); rc != 0 {
+	if rc := cmdAutoExec(autoExecArgv(t, "auto-task")); rc != 0 {
 		t.Fatalf("cmdAutoExec rc=%d, want 0", rc)
 	}
 	db := openFlowDB(t)
@@ -246,7 +278,7 @@ func TestAutoExecFinalizesDead(t *testing.T) {
 		return errors.New("harness exploded")
 	})
 
-	if rc := cmdAutoExec([]string{"auto-task"}); rc != 1 {
+	if rc := cmdAutoExec(autoExecArgv(t, "auto-task")); rc != 1 {
 		t.Fatalf("cmdAutoExec rc=%d, want 1 on runner error", rc)
 	}
 	db := openFlowDB(t)
@@ -342,18 +374,19 @@ func TestBuildAutoBootstrapPrompt(t *testing.T) {
 // so the headless run's final message lands next to the log.
 func TestAutoExecArgsCarryLastMessagePath(t *testing.T) {
 	got := autoExecArgs("s", "/runs/2026-01-01-000000.log", "")
-	want := []string{"__auto-exec", "s", "--last-message", "/runs/2026-01-01-000000.last.txt"}
+	want := []string{"__auto-exec", "s", "--log", "/runs/2026-01-01-000000.log"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("autoExecArgs=%q, want %q", got, want)
 	}
 	got = autoExecArgs("s", "/runs/a.log", "do x")
-	want = []string{"__auto-exec", "s", "--last-message", "/runs/a.last.txt", "--with", "do x"}
+	want = []string{"__auto-exec", "s", "--log", "/runs/a.log", "--with", "do x"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("autoExecArgs=%q, want %q", got, want)
 	}
 }
 
-// __auto-exec threads --last-message into LaunchOpts.LastMessagePath.
+// __auto-exec derives the last-message path from its launch log and threads
+// it into LaunchOpts.LastMessagePath.
 func TestAutoExecPassesLastMessagePath(t *testing.T) {
 	setupFlowRoot(t)
 	seedTask(t, "auto-task")
@@ -363,10 +396,11 @@ func TestAutoExecPassesLastMessagePath(t *testing.T) {
 		gotOpts = opts
 		return nil
 	})
-	if rc := cmdAutoExec([]string{"auto-task", "--last-message", "/runs/a.last.txt"}); rc != 0 {
+	argv := autoExecArgv(t, "auto-task")
+	if rc := cmdAutoExec(argv); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
-	if gotOpts.LastMessagePath != "/runs/a.last.txt" {
-		t.Errorf("LastMessagePath=%q", gotOpts.LastMessagePath)
+	if want := autoRunLastMessagePath(argv[2]); gotOpts.LastMessagePath != want {
+		t.Errorf("LastMessagePath=%q, want %q", gotOpts.LastMessagePath, want)
 	}
 }

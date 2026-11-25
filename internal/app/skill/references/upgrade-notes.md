@@ -11,6 +11,23 @@
 
 ## Unreleased
 
+- **Drivers are revived when a child writes and the session has exited.**
+  If you are a driver resumed with a `[flow-bus wake]` prompt that says no
+  human is watching, pop the inbox in the foreground, act on each message,
+  send the human at most one `flow message user` for a decision, and end
+  the turn. You may dispatch auto children from a revive. Opt out with
+  `FLOW_NO_REVIVE=1`. Details: references/messaging.md, "Driver revive".
+  The human gets one FYI naming the driver when a revive is refused (rate
+  limit or no transcript, one per reason), fails or is killed, ends with
+  child reports unread, or the driver is in backlog; relay it and reopen
+  the driver if its children are waiting. A driver that may still be
+  running gets no FYI (its hooks deliver). A revive that drains the
+  reports marks the driver's earlier revive FYIs read. A revive resumes in
+  the permission mode the driver was last launched with: a driver started
+  without --dangerously-skip-permissions is revived headlessly with only
+  the tools its settings already allow (anything that would prompt is
+  denied).
+
 ## v0.1.0-alpha.40
 
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and
@@ -29,6 +46,11 @@
   (never "no project"), create, bind, announce "Created driver task …".
   Never ask "driver or not?". While flow prints `INTAKE TURN`, end the turn
   at the goal + proposed Done when + "Needs from you:".
+- **A headless child that stops on a blocker is `blocked`, not `dead`.** Its
+  final message has a line that starts with `BLOCKED:`. A `waiting_on`
+  set during the run does not count: it may be a human's note. `flow show
+  task` and `flow list` report `blocked`, and no dead-child alarm is sent. A
+  stuck child should put that line in its final message.
 - **`flow do --here` needs the directory the session STARTED in.** If you
   `cd` into a worktree, `$PWD` is not that directory. When the bind is
   refused, run the `flow update task … --work-dir` command only if it shows

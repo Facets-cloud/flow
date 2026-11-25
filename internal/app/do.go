@@ -347,6 +347,12 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	// Remember how the task's own session is launched: a driver revive
+	// resumes with this mode instead of always skipping permissions.
+	if err := flowdb.SetPermissionMode(tx, task.Slug, permissionModeOf(*dangerSkip)); err != nil {
+		fmt.Fprintf(os.Stderr, "error: record permission mode: %v\n", err)
+		return 1
+	}
 	var curSessionID sql.NullString
 	if err := tx.QueryRow(`SELECT session_id, model, effort FROM tasks WHERE slug=?`, task.Slug).
 		Scan(&curSessionID, &task.Model, &task.Effort); err != nil {
@@ -457,26 +463,34 @@ func cmdDo(args []string) int {
 			fmt.Fprintf(os.Stderr, "error: task %q has no work_dir\n", task.Slug)
 			return 1
 		}
-		pid, logPath, err := launchAutoRun(task, root, injectionText)
+		// Claim the run before launching, in one conditional write that also
+		// names its owner (the reserved log): a revive (or a second --auto)
+		// that starts meanwhile sees the row in flight, and the supervisor's
+		// finalize matches the row even if it exits before its pid lands.
+		logPath, err := reserveRunLog(task, root)
 		if err != nil {
-			// Launch failed before claude could write its jsonl. Mirror the
-			// spawn-failure recovery: undo a fresh bootstrap's pre-allocated
-			// session + status flip so the next attempt retries cleanly.
-			if needsBootstrap {
-				if _, undoErr := db.Exec(
-					`UPDATE tasks SET session_id=NULL, session_started=NULL,
-						status='backlog', status_changed_at=NULL, updated_at=?
-					 WHERE slug=? AND session_id=?`,
-					flowdb.NowISO(), task.Slug, sessionID,
-				); undoErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: rollback after auto-launch failure: %v\n", undoErr)
-				}
-			}
+			undoAutoBootstrap(db, task.Slug, sessionID, needsBootstrap)
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-		if err := recordAutoRunLaunched(db, task.Slug, pid, logPath); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: record auto run: %v\n", err)
+		prev := autoRunRecordOf(task)
+		claimed, cerr := flowdb.ClaimAutoRun(db, task.Slug, flowdb.RunClaim{LogPath: logPath, HolderPID: os.Getpid()}, *force)
+		if cerr != nil {
+			fmt.Fprintf(os.Stderr, "error: claim auto run: %v\n", cerr)
+			return 1
+		}
+		if !claimed {
+			fmt.Fprintf(os.Stderr,
+				"error: task %q already has an autonomous run in progress — wait for it to finish, or pass --force to launch another\n",
+				task.Slug)
+			return 1
+		}
+		pid, err := launchClaimedRun(db, task, autoLaunch{logPath: logPath, injection: injectionText,
+			release: func() error { return flowdb.ReleaseAutoRunClaim(db, task.Slug, logPath, prev) }})
+		if err != nil {
+			undoAutoBootstrap(db, task.Slug, sessionID, needsBootstrap)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
 		if _, err := db.Exec(`UPDATE workdirs SET last_used_at = ? WHERE path = ?`, flowdb.NowISO(), task.WorkDir); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: bump workdir last_used_at: %v\n", err)
@@ -1104,6 +1118,10 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+	if err := flowdb.SetPermissionMode(db, task.Slug, permissionModeOf(in.skipPerms)); err != nil {
+		fmt.Fprintf(os.Stderr, "error: record permission mode: %v\n", err)
+		return 1
+	}
 	applyTaskModel(task, &opts)
 	agent, err := bg.SpawnBackground(task.WorkDir, title, prompt, opts)
 	if err != nil {
@@ -1246,6 +1264,32 @@ func bgPlaybookContext(db *sql.DB, task *flowdb.Task) (string, bool) {
 		fmt.Fprintf(os.Stderr, "warning: count playbook runs: %v\n", err)
 	}
 	return playbookSlug, runCount <= 1
+}
+
+// permissionModeOf maps --dangerously-skip-permissions to the stored mode.
+func permissionModeOf(skip bool) string {
+	if skip {
+		return flowdb.PermissionBypass
+	}
+	return flowdb.PermissionDefault
+}
+
+// undoAutoBootstrap mirrors the spawn-failure recovery when an --auto
+// launch failed before the harness could write its transcript: a fresh
+// bootstrap's pre-allocated session and status flip are undone so the next
+// attempt retries cleanly.
+func undoAutoBootstrap(db *sql.DB, slug, sessionID string, needsBootstrap bool) {
+	if !needsBootstrap {
+		return
+	}
+	if _, err := db.Exec(
+		`UPDATE tasks SET session_id=NULL, session_started=NULL,
+			status='backlog', status_changed_at=NULL, updated_at=?
+		 WHERE slug=? AND session_id=?`,
+		flowdb.NowISO(), slug, sessionID,
+	); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: rollback after auto-launch failure: %v\n", err)
+	}
 }
 
 // bumpWorkdirUsed updates workdirs.last_used_at, best-effort.

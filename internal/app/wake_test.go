@@ -125,7 +125,8 @@ func TestWakeGates(t *testing.T) {
 		{"not live", func(t *testing.T, db *sql.DB, f *fakeWaker) { f.live = false }, "no live push channel"},
 		{"opt-out", func(t *testing.T, db *sql.DB, f *fakeWaker) { t.Setenv(wakeOffEnv, "1") }, "wake off"},
 		{"auto run", func(t *testing.T, db *sql.DB, f *fakeWaker) {
-			_, _ = db.Exec(`UPDATE tasks SET auto_run_status='running' WHERE slug='w'`)
+			// A live supervisor (this test process): a dead one is reconciled.
+			_, _ = db.Exec(`UPDATE tasks SET auto_run_status='running', auto_run_pid=? WHERE slug='w'`, os.Getpid())
 		}, "auto run"},
 		{"done", func(t *testing.T, db *sql.DB, f *fakeWaker) {
 			_, _ = db.Exec(`UPDATE tasks SET status='done' WHERE slug='w'`)
