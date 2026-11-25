@@ -361,34 +361,41 @@ func getTaskRetry(db *sql.DB, slug string) (*flowdb.Task, error) {
 	return t, err
 }
 
-// autoRunBlocked reports whether a run that did not finish says it is stuck
-// rather than crashed. The signal is the run's authoritative final message:
-// the file the harness wrote for --last-message when it exists (codex -o),
-// otherwise the run's own log (claude -p prints only the final message to
-// stdout, and the log is exclusive to this launch). The message is blocked
-// if any of its lines starts with BLOCKED: (leading whitespace ignored), so a
-// closing line after the blocker does not hide it. A BLOCKED: that is not at
-// the start of a line does not count, and neither does a waiting_on field:
-// a human may set that while the run is live.
-func autoRunBlocked(lastMsg, logPath string) bool {
+// autoRunBlockedLine returns the BLOCKED: line that says a run that did not
+// finish is stuck rather than crashed, or "" if there is none. The signal is
+// the run's authoritative final message: the file the harness wrote for
+// --last-message when it exists (codex -o), otherwise the run's own log
+// (claude -p prints only the final message to stdout, and the log is
+// exclusive to this launch). A line counts if it starts with BLOCKED:
+// (leading whitespace ignored), so a closing line after the blocker does not
+// hide it. A BLOCKED: that is not at the start of a line does not count, and
+// neither does a waiting_on field: a human may set that while the run is live.
+func autoRunBlockedLine(lastMsg, logPath string) string {
 	path := lastMsg
 	if path == "" || !statOK(path) {
 		path = logPath
 	}
-	return path != "" && finalMessageHasBlockedLine(path)
+	if path == "" {
+		return ""
+	}
+	return finalMessageBlockedLine(path)
 }
 
-func finalMessageHasBlockedLine(path string) bool {
+// finalMessageBlockedLine returns the last BLOCKED: line in path, trimmed.
+// Last, not first: a prx log holds the whole stream, so an earlier quoted
+// line can precede the final declaration.
+func finalMessageBlockedLine(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return ""
 	}
+	blocked := ""
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "BLOCKED:") {
-			return true
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "BLOCKED:") {
+			blocked = t
 		}
 	}
-	return false
+	return blocked
 }
 
 // reconcileAutoRun settles a stale 'running' row whose supervisor pid is
@@ -526,8 +533,12 @@ func cmdAutoExec(args []string) int {
 	// finalize is a no-op and we re-read and take the done path below), or
 	// the finalize came first (done then sees a finalized row and sweeps
 	// inline). No window where a done is neither swept nor counted.
+	blockedLine := ""
+	if !isDone {
+		blockedLine = autoRunBlockedLine(lastMsg, *logPath)
+	}
 	status := "dead"
-	if !isDone && autoRunBlocked(lastMsg, *logPath) {
+	if blockedLine != "" {
 		status = "blocked"
 	}
 	var owned bool
@@ -585,6 +596,9 @@ func cmdAutoExec(args []string) int {
 	if status == "dead" && owned {
 		notifyParentOfDeadChild(db, task)
 		notifyHumanOfDeadOrphan(db, task)
+	}
+	if status == "blocked" && owned {
+		notifyOfBlockedRun(db, task, blockedLine)
 	}
 
 	if runErr != nil && status != "blocked" {

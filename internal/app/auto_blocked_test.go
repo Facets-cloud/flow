@@ -51,10 +51,16 @@ func TestAutoExecFinalizesBlockedFromLogLine(t *testing.T) {
 		t.Errorf("blocked must set auto_run_finished and clear the pid: finished=%v pid=%v",
 			task.AutoRunFinished, task.AutoRunPID)
 	}
-	// A blocked child reports itself; flow must not send the dead-child
-	// notice as if it crashed.
-	if rows := deadPingRows(t); len(rows) != 0 {
-		t.Errorf("blocked run sent %d notices, want none: %+v", len(rows), rows)
+	// One notice to the human, worded as a block, not a crash.
+	rows := deadPingRows(t)
+	if len(rows) != 1 || rows[0].toA != "user" || !rows[0].ping {
+		t.Fatalf("blocked run notices = %+v, want one pinging human notice", rows)
+	}
+	if want := "stuck is blocked: need the staging API token; it's waiting on you"; rows[0].body != want {
+		t.Errorf("body = %q, want %q", rows[0].body, want)
+	}
+	if strings.Contains(rows[0].body, "died") {
+		t.Errorf("blocked notice reads like a crash: %q", rows[0].body)
 	}
 }
 
@@ -146,8 +152,8 @@ func TestFinalMessageHasBlockedLine(t *testing.T) {
 			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if got := finalMessageHasBlockedLine(p); got != c.want {
-				t.Errorf("finalMessageHasBlockedLine = %v, want %v", got, c.want)
+			if got := finalMessageBlockedLine(p) != ""; got != c.want {
+				t.Errorf("finalMessageBlockedLine set = %v, want %v", got, c.want)
 			}
 		})
 	}
