@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -25,6 +26,16 @@ import (
 // autoStallDefault is the silence that counts as a stall when
 // FLOW_AUTO_STALL_MINUTES is unset or not a positive integer.
 const autoStallDefault = 10 * time.Minute
+
+// autoToolCeiling is the silence tolerated while a tool call is in flight. A
+// call writes nothing until it returns, so this is the longest one call may run
+// before it counts as hung. FLOW_AUTO_STALL_MINUTES does not change it.
+const autoToolCeiling = 60 * time.Minute
+
+// autoLogTail bounds how much of a run log is scanned for tool calls in flight.
+// An in-flight call's start line is the last write before it returns, so the
+// tail always holds it.
+const autoLogTail = 1 << 20
 
 // autoStallEnvVar overrides the stall threshold, in whole minutes.
 const autoStallEnvVar = "FLOW_AUTO_STALL_MINUTES"
@@ -51,18 +62,24 @@ func autoStallThreshold() time.Duration {
 // activity moves past the last one seen.
 type stallWatch struct {
 	threshold time.Duration
-	seen      time.Time // newest activity observed; starts at the run's start
+	ceiling   time.Duration // silence tolerated while a tool call is in flight
+	seen      time.Time     // newest activity observed; starts at the run's start
 	notified  bool
 }
 
 // observe folds in the newest activity seen at now and reports whether a
-// stall notice is due. A zero or older activity time is no news.
-func (w *stallWatch) observe(activity, now time.Time) bool {
+// stall notice is due. A zero or older activity time is no news. A tool call in
+// flight is judged against the ceiling, not the threshold.
+func (w *stallWatch) observe(activity time.Time, inFlight bool, now time.Time) bool {
 	if activity.After(w.seen) {
 		w.seen, w.notified = activity, false
 		return false
 	}
-	if w.notified || now.Sub(w.seen) < w.threshold {
+	limit := w.threshold
+	if inFlight {
+		limit = w.ceiling
+	}
+	if w.notified || now.Sub(w.seen) < limit {
 		return false
 	}
 	w.notified = true
@@ -77,16 +94,16 @@ func (w *stallWatch) observe(activity, now time.Time) bool {
 // Silence counts from the newest activity already on record (the same reading
 // `flow list` uses), so a run that was silent before the sampler started is
 // reported on the first stall check, not a full threshold later.
-func startStallWatchdog(threshold, interval time.Duration, activity func() time.Time, onStall func(idle time.Duration) bool) (stop func()) {
+func startStallWatchdog(threshold, ceiling, interval time.Duration, activity func() (time.Time, bool), onStall func(idle time.Duration) bool) (stop func()) {
 	quit := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		seen := activity()
+		seen, _ := activity()
 		if seen.IsZero() {
 			seen = time.Now()
 		}
-		w := stallWatch{threshold: threshold, seen: seen}
+		w := stallWatch{threshold: threshold, ceiling: ceiling, seen: seen}
 		tick := time.NewTicker(interval)
 		defer tick.Stop()
 		for {
@@ -99,7 +116,8 @@ func startStallWatchdog(threshold, interval time.Duration, activity func() time.
 					return
 				default:
 				}
-				if w.observe(activity(), now) && !onStall(now.Sub(w.seen)) {
+				at, inFlight := activity()
+				if w.observe(at, inFlight, now) && !onStall(now.Sub(w.seen)) {
 					w.notified = false
 				}
 			}
@@ -111,12 +129,12 @@ func startStallWatchdog(threshold, interval time.Duration, activity func() time.
 	}
 }
 
-// autoRunLastActivity is the newest sign of life of a run: its start, its log
+// autoRunActivity is the newest sign of life of a run: its start, its log
 // file, or its session transcript, whichever moved last. The transcript is
 // what moves for a headless claude or prx run, whose stdout stays silent until
-// the final message. A file that cannot be stat'ed contributes nothing.
-func autoRunLastActivity(t *flowdb.Task) time.Time {
-	var last time.Time
+// the final message. A file that cannot be stat'ed contributes nothing. inFlight
+// reports that the run log ends inside a tool call that has not returned.
+func autoRunActivity(t *flowdb.Task) (last time.Time, inFlight bool) {
 	consider := func(ts time.Time) {
 		if ts.After(last) {
 			last = ts
@@ -135,7 +153,68 @@ func autoRunLastActivity(t *flowdb.Task) time.Time {
 			}
 		}
 	}
-	return last
+	return last, autoRunToolInFlight(t.AutoRunLog.String)
+}
+
+// autoRunToolInFlight reports whether the newest tool call in the run log has
+// started and not returned. The prx host writes `[tool] <name>(<args>` when a
+// call starts and `[tool] <name> -> <result>` when it returns. The start can
+// follow assistant text on the same line, so every marker is matched. Claude and
+// Codex auto-run logs carry no such lines and never report in flight.
+func autoRunToolInFlight(path string) bool {
+	buf, err := readLogTail(path, autoLogTail)
+	if err != nil {
+		return false
+	}
+	const marker = "[tool] "
+	pending := 0
+	for {
+		i := bytes.Index(buf, []byte(marker))
+		if i < 0 {
+			return pending > 0
+		}
+		buf = buf[i+len(marker):]
+		n := 0
+		for n < len(buf) && isToolNameByte(buf[n]) {
+			n++
+		}
+		switch {
+		case n == 0:
+		case n < len(buf) && buf[n] == '(':
+			pending++
+		case bytes.HasPrefix(buf[n:], []byte(" -> ")):
+			if pending > 0 {
+				pending--
+			}
+		}
+	}
+}
+
+func isToolNameByte(c byte) bool {
+	return c == '_' || c == '-' || c == '.' || ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+}
+
+// readLogTail returns up to the last n bytes of path, starting after a line
+// break when it cut one.
+func readLogTail(path string, n int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	off := max(fi.Size()-n, 0)
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return nil, err
+	}
+	buf, err := io.ReadAll(f)
+	if i := bytes.IndexByte(buf, '\n'); off > 0 && i >= 0 {
+		buf = buf[i+1:]
+	}
+	return buf, err
 }
 
 // fileMTime is the mtime of path, or the zero time when path is empty or
@@ -158,13 +237,17 @@ func autoRunStalledFor(t *flowdb.Task, now time.Time) (time.Duration, bool) {
 	if !t.AutoRunStatus.Valid || t.AutoRunStatus.String != "running" {
 		return 0, false
 	}
-	last := autoRunLastActivity(t)
+	last, inFlight := autoRunActivity(t)
 	if last.IsZero() {
 		// No start time and no file to read: nothing says the run is silent.
 		return 0, false
 	}
 	idle := now.Sub(last)
-	return idle, idle >= autoStallThreshold()
+	limit := autoStallThreshold()
+	if inFlight {
+		limit = autoToolCeiling
+	}
+	return idle, idle >= limit
 }
 
 // lastLogLine returns the last non-empty line of the run log, trimmed to a

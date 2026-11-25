@@ -16,10 +16,10 @@ import (
 func TestStallWatchFiresAfterThreshold(t *testing.T) {
 	start := time.Unix(1000, 0)
 	w := stallWatch{threshold: 10 * time.Minute, seen: start}
-	if w.observe(time.Time{}, start.Add(9*time.Minute)) {
+	if w.observe(time.Time{}, false, start.Add(9*time.Minute)) {
 		t.Fatal("fired before threshold")
 	}
-	if !w.observe(time.Time{}, start.Add(10*time.Minute)) {
+	if !w.observe(time.Time{}, false, start.Add(10*time.Minute)) {
 		t.Fatal("did not fire at threshold")
 	}
 }
@@ -30,7 +30,7 @@ func TestStallWatchOncePerEpisode(t *testing.T) {
 	w := stallWatch{threshold: time.Minute, seen: start}
 	fired := 0
 	for i := 1; i <= 10; i++ {
-		if w.observe(time.Time{}, start.Add(time.Duration(i)*time.Minute)) {
+		if w.observe(time.Time{}, false, start.Add(time.Duration(i)*time.Minute)) {
 			fired++
 		}
 	}
@@ -43,14 +43,14 @@ func TestStallWatchOncePerEpisode(t *testing.T) {
 func TestStallWatchResetsOnActivity(t *testing.T) {
 	start := time.Unix(1000, 0)
 	w := stallWatch{threshold: time.Minute, seen: start}
-	if !w.observe(time.Time{}, start.Add(time.Minute)) {
+	if !w.observe(time.Time{}, false, start.Add(time.Minute)) {
 		t.Fatal("first stall did not fire")
 	}
 	resumed := start.Add(90 * time.Second)
-	if w.observe(resumed, resumed) {
+	if w.observe(resumed, false, resumed) {
 		t.Fatal("fired on the sample that carried activity")
 	}
-	if !w.observe(resumed, resumed.Add(time.Minute)) {
+	if !w.observe(resumed, false, resumed.Add(time.Minute)) {
 		t.Fatal("second stall after activity did not fire")
 	}
 }
@@ -59,10 +59,10 @@ func TestStallWatchResetsOnActivity(t *testing.T) {
 func TestStallWatchOldActivityIsNoNews(t *testing.T) {
 	start := time.Unix(1000, 0)
 	w := stallWatch{threshold: time.Minute, seen: start}
-	if !w.observe(time.Time{}, start.Add(time.Minute)) {
+	if !w.observe(time.Time{}, false, start.Add(time.Minute)) {
 		t.Fatal("stall did not fire")
 	}
-	if w.observe(start, start.Add(2*time.Minute)) {
+	if w.observe(start, false, start.Add(2*time.Minute)) {
 		t.Fatal("stale activity re-armed the episode")
 	}
 }
@@ -70,8 +70,8 @@ func TestStallWatchOldActivityIsNoNews(t *testing.T) {
 // After stop returns, the sampler is gone: no stall fires for a finished run.
 func TestStallWatchdogStopSilencesSampler(t *testing.T) {
 	var fired atomic.Int32
-	stop := startStallWatchdog(time.Nanosecond, time.Millisecond,
-		func() time.Time { return time.Time{} },
+	stop := startStallWatchdog(time.Nanosecond, time.Minute, time.Millisecond,
+		func() (time.Time, bool) { return time.Time{}, false },
 		func(time.Duration) bool { fired.Add(1); return true })
 	time.Sleep(20 * time.Millisecond)
 	stop()
@@ -177,8 +177,8 @@ func TestAutoStallThresholdClampsHugeOverride(t *testing.T) {
 func TestStallWatchdogSeedsFromRecordedActivity(t *testing.T) {
 	fired := make(chan struct{}, 8)
 	old := time.Now().Add(-time.Hour)
-	stop := startStallWatchdog(time.Minute, time.Millisecond,
-		func() time.Time { return old },
+	stop := startStallWatchdog(time.Minute, time.Hour, time.Millisecond,
+		func() (time.Time, bool) { return old, false },
 		func(time.Duration) bool { fired <- struct{}{}; return true })
 	select {
 	case <-fired:
@@ -188,5 +188,60 @@ func TestStallWatchdogSeedsFromRecordedActivity(t *testing.T) {
 	stop()
 	if n := len(fired); n != 0 {
 		t.Fatalf("fired again after the first episode: %d extra", n)
+	}
+}
+
+// A tool call in flight is silence only up to the ceiling: the threshold does
+// not apply while the call runs, and the ceiling still fires once passed.
+func TestStallWatchToolInFlightUsesCeiling(t *testing.T) {
+	start := time.Unix(1000, 0)
+	w := stallWatch{threshold: 10 * time.Minute, ceiling: time.Hour, seen: start}
+	if w.observe(start, true, start.Add(30*time.Minute)) {
+		t.Fatal("in-flight call fired at the threshold, before the ceiling")
+	}
+	if !w.observe(start, true, start.Add(time.Hour)) {
+		t.Fatal("in-flight call past the ceiling did not fire")
+	}
+}
+
+// Stall policy on a real run log, exercised through autoRunStalledFor:
+// in flight within the ceiling is not stalled; in flight past it is; a run
+// with no tool call in flight is stalled at the threshold, as before.
+func TestAutoRunStalledForToolCallPolicy(t *testing.T) {
+	t.Setenv(autoStallEnvVar, "5")
+	cases := []struct {
+		name string
+		log  string
+		age  time.Duration
+		want bool
+	}{
+		{"in flight within ceiling", "[tool] bash({\"command\":\"go test -race ./...\"})\n", 30 * time.Minute, false},
+		{"in flight past ceiling", "[tool] bash({\"command\":\"go test -race ./...\"})\n", 61 * time.Minute, true},
+		{"in flight after assistant text", "running the suite now.[tool] bash({\"command\":\"go test\"})", 30 * time.Minute, false},
+		{"call returned, silent", "[tool] bash({\"command\":\"ls\"})\n[tool] bash -> {\"content\":[]} (ok)\n", 30 * time.Minute, true},
+		{"in flight, earlier call returned", "[tool] read({\"path\":\"a\"})\n[tool] read -> ok\n[tool] bash({\"command\":\"go test\"})\n", 30 * time.Minute, false},
+		{"result without start is not in flight", "[tool] bash -> {\"ok\":true}\n", 30 * time.Minute, true},
+		{"no tool lines, silent", "assistant text only\n", 30 * time.Minute, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "run.log")
+			if err := os.WriteFile(logPath, []byte(c.log), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().Add(-c.age)
+			if err := os.Chtimes(logPath, old, old); err != nil {
+				t.Fatal(err)
+			}
+			task := &flowdb.Task{
+				Slug:           "kid",
+				AutoRunStatus:  nullStr("running"),
+				AutoRunLog:     nullStr(logPath),
+				AutoRunStarted: nullStr(time.Now().Add(-2 * time.Hour).Format(time.RFC3339)),
+			}
+			if _, stalled := autoRunStalledFor(task, time.Now()); stalled != c.want {
+				t.Fatalf("stalled = %v, want %v", stalled, c.want)
+			}
+		})
 	}
 }

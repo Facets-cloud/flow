@@ -376,13 +376,13 @@ func cmdAutoExec(args []string) int {
 
 	// Stall watchdog: reports (never kills) a run that goes silent. It is
 	// stopped before the run is finalized, so no notice follows the run's end.
-	stopWatch := startStallWatchdog(autoStallThreshold(), autoStallInterval,
-		func() time.Time {
+	stopWatch := startStallWatchdog(autoStallThreshold(), autoToolCeiling, autoStallInterval,
+		func() (time.Time, bool) {
 			fresh, err := flowdb.GetTask(db, slug)
 			if err != nil {
-				return time.Time{}
+				return time.Time{}, false
 			}
-			return autoRunLastActivity(fresh)
+			return autoRunActivity(fresh)
 		},
 		func(idle time.Duration) bool {
 			fresh, err := flowdb.GetTask(db, slug)
