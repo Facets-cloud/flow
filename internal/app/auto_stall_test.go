@@ -98,9 +98,9 @@ func TestAutoRunStalledForUsesLogActivity(t *testing.T) {
 	}
 	task := &flowdb.Task{
 		Slug:           "kid",
-		AutoRunStatus:  nullStr("running"),
-		AutoRunLog:     nullStr(logPath),
-		AutoRunStarted: nullStr(time.Now().Add(-time.Hour).Format(time.RFC3339)),
+		AutoRunStatus:  validNullStr("running"),
+		AutoRunLog:     validNullStr(logPath),
+		AutoRunStarted: validNullStr(time.Now().Add(-time.Hour).Format(time.RFC3339)),
 	}
 	if _, stalled := autoRunStalledFor(task, time.Now()); !stalled {
 		t.Fatal("silent running run not reported stalled")
@@ -111,7 +111,7 @@ func TestAutoRunStalledForUsesLogActivity(t *testing.T) {
 	if _, stalled := autoRunStalledFor(task, time.Now()); stalled {
 		t.Fatal("run with fresh activity reported stalled")
 	}
-	task.AutoRunStatus = nullStr("completed")
+	task.AutoRunStatus = validNullStr("completed")
 	if _, stalled := autoRunStalledFor(task, time.Now().Add(time.Hour)); stalled {
 		t.Fatal("completed run reported stalled")
 	}
@@ -157,7 +157,7 @@ func TestNotifyParentOfStalledChild(t *testing.T) {
 	}
 }
 
-func nullStr(v string) sql.NullString { return sql.NullString{String: v, Valid: true} }
+func validNullStr(v string) sql.NullString { return sql.NullString{String: v, Valid: true} }
 
 // An override too large for a Duration is clamped, never wrapped negative:
 // a negative threshold would report every run as stalled on its first sample.
@@ -235,9 +235,9 @@ func TestAutoRunStalledForToolCallPolicy(t *testing.T) {
 			}
 			task := &flowdb.Task{
 				Slug:           "kid",
-				AutoRunStatus:  nullStr("running"),
-				AutoRunLog:     nullStr(logPath),
-				AutoRunStarted: nullStr(time.Now().Add(-2 * time.Hour).Format(time.RFC3339)),
+				AutoRunStatus:  validNullStr("running"),
+				AutoRunLog:     validNullStr(logPath),
+				AutoRunStarted: validNullStr(time.Now().Add(-2 * time.Hour).Format(time.RFC3339)),
 			}
 			if _, stalled := autoRunStalledFor(task, time.Now()); stalled != c.want {
 				t.Fatalf("stalled = %v, want %v", stalled, c.want)
