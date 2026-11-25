@@ -7,6 +7,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- **The driver line now orders the read and inlines the core rules.** The
+  SessionStart / `flow do --here` line for a driver session still points at
+  `references/driver.md`, and now tells the session to read it now and
+  again after every compaction or resume, plus the three rules that drift
+  first: hand self-contained work to a `flow auto` child (never the
+  harness's built-in subagent tool), keep design, decisions, verification
+  and live applies yourself, and take outward actions only after the user
+  approves the exact text or action. Session transcripts showed drivers
+  read driver.md once at bootstrap and never again after compaction. Auto
+  runs and playbook runs still get no driver line.
+
 ## [0.1.0-alpha.41] — 2026-11-25
 
 ### Added

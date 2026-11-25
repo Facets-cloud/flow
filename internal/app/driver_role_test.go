@@ -246,3 +246,45 @@ func TestNoBlockWordingIsConsistent(t *testing.T) {
 		t.Error("delegation.md template should say the child arms no listener and pops in the foreground")
 	}
 }
+
+// The driver line orders the driver.md re-read and inlines the core rules
+// on the same line as the pointer (sessions skip driver.md after
+// compaction/resume); auto runs and playbook runs still get nothing.
+func TestDriverBlockOrdersReadAndInlinesCoreRules(t *testing.T) {
+	setupFlowRoot(t)
+	clearSessionEnv(t)
+	t.Setenv(autoRunEnvVar, "")
+	seedTask(t, "core")
+	writeTaskBriefDM(t, "core", agreedBrief)
+	db := openFlowDB(t)
+	tk, _ := flowdb.GetTask(db, "core")
+	db.Close()
+	blk := roleBlockFor(tk, false)
+	if strings.Contains(strings.TrimSpace(blk), "\n") {
+		t.Errorf("driver block must stay one line: %q", blk)
+	}
+	for _, want := range []string{
+		driverRoleMarker,
+		"Read it now, before replying, and again after every compaction or resume.",
+		"to a `flow auto` child, never the harness's built-in Agent/subagent tool",
+		"keep the conversation, design, decisions, verifying child results and live/prod applies yourself",
+		"outward actions (push, merge, deploy, messages to people) only after the user approves the exact text or action",
+	} {
+		if !strings.Contains(blk, want) {
+			t.Errorf("driver block missing %q:\n%s", want, blk)
+		}
+	}
+	if n := len(driverCoreRules); n > 600 {
+		t.Errorf("inlined core rules are %d chars; keep them under 600 (printed every start/resume)", n)
+	}
+
+	pb := *tk
+	pb.Kind = "playbook_run"
+	if got := roleBlockFor(&pb, false); got != "" {
+		t.Errorf("playbook run must get no driver block, got %q", got)
+	}
+	t.Setenv(autoRunEnvVar, "core")
+	if got := roleBlockFor(tk, true); got != "" {
+		t.Errorf("auto run must get no driver block, got %q", got)
+	}
+}

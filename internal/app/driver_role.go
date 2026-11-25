@@ -83,7 +83,8 @@ func childHarnessesLine() string {
 
 // roleBlockFor is what a bound session gets: every human-driven session
 // is a driver (no tag needed) and gets ONE line pointing at the skill's
-// references/driver.md (the rules live there, not in Go); auto runs (so
+// references/driver.md, ordering its re-read and inlining the core rules
+// (driverCoreRules; the full rules live in driver.md); auto runs (so
 // delegation never recurses) and playbook runs (frozen brief) get
 // nothing. The INTAKE TURN line follows on the first bind/start (first)
 // or while the brief still holds the Done-when placeholder.
@@ -97,12 +98,26 @@ func roleBlockFor(t *flowdb.Task, first bool) string {
 			path = filepath.Join(filepath.Dir(skillMD), "references", "driver.md") // the session's own install
 		}
 	}
-	blk := " You are the DRIVER for this task: follow references/driver.md (" + path + ")." + childHarnessesLine()
+	blk := " You are the DRIVER for this task: follow references/driver.md (" + path + ")." +
+		driverCoreRules + childHarnessesLine()
 	if first {
 		return blk + "\n" + intakeTurnLine
 	}
 	return blk + intakeTurnBlock(t.Slug)
 }
+
+// driverCoreRules follows the driver.md pointer on the same line. Sessions
+// read driver.md once at bootstrap and not again after compaction or
+// resume, so the line orders the re-read and inlines the rules that drift
+// first; driver.md stays the source for everything else. It is printed on
+// every start/resume/compaction: keep it short.
+const driverCoreRules = " Read it now, before replying, and again after every compaction or resume." +
+	" Core rules: (1) hand self-contained work (implementation, research, debugging," +
+	" fix + PR + test, scans) to a `flow auto` child, never the harness's built-in" +
+	" Agent/subagent tool; (2) keep the conversation, design, decisions, verifying" +
+	" child results and live/prod applies yourself; (3) outward actions (push, merge," +
+	" deploy, messages to people) only after the user approves the exact text or action." +
+	" The rest is in driver.md."
 
 // doneWhenPlaceholder is the driver brief's "Done when" body until the
 // user agrees the criteria (skill references/templates.md).

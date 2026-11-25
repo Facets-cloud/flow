@@ -11,6 +11,13 @@
 
 ## Unreleased
 
+- **Re-read driver.md after every compaction or resume.** The driver line
+  now says so and inlines the core rules: self-contained work goes to a
+  `flow auto` child, never the built-in Agent/subagent tool; keep design,
+  decisions, verifying child results and live applies yourself; outward
+  actions (push, merge, deploy, messages to people) only after the user
+  approves the exact text or action.
+
 ## v0.1.0-alpha.41
 
 - **Re-pin a task to another harness with the CLI.** `flow do <slug>

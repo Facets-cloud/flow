@@ -1,9 +1,10 @@
 # Driver rules
 
-> Loaded on demand. flow's SessionStart / `flow do --here` line ("You are
-> the DRIVER for this task: follow references/driver.md") and the brief's
-> `Role: driver` line both point here. Every interactive task is a driver;
-> no tag is needed.
+> flow's SessionStart / `flow do --here` line ("You are the DRIVER for
+> this task: follow references/driver.md") and the brief's `Role: driver`
+> line both point here. Read this file at bootstrap and again after every
+> compaction or resume; the line inlines only the core rules. Every
+> interactive task is a driver; no tag is needed.
 
 You own this task's outcome end to end. It is done when "Done when" is met
 and you have verified it, not when the work has been handed off.
