@@ -429,7 +429,8 @@ func TestF5RecordsConsumerIdentity(t *testing.T) {
 }
 
 // F6: `user`/`self` are reserved bus names, never task slugs; a bare
-// address token is always an assignee; `self` is an alias for `user`.
+// address token is a known person first, else a task slug (see
+// TestBareAddressResolution); `self` is an alias for `user`.
 func TestF6ReservedSlugsAndBareAddresses(t *testing.T) {
 	setupFlowRoot(t)
 	t.Setenv("FLOW_AUTO_RUN", "")
@@ -455,7 +456,7 @@ func TestF6ReservedSlugsAndBareAddresses(t *testing.T) {
 		t.Error("auto slug produced a task named user")
 	}
 
-	// A bare token that happens to be a task slug is still an ASSIGNEE.
+	// A bare token that is a task slug and not a person is that task's session.
 	mkBusTask(t, db, "anshul", "sid-anshul")
 	mkBusTask(t, db, "sender", "sid-sender")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-sender")
@@ -466,8 +467,8 @@ func TestF6ReservedSlugsAndBareAddresses(t *testing.T) {
 	})
 	var toA, toS string
 	_ = db.QueryRow(`SELECT to_assignee, COALESCE(to_task_slug,'') FROM bus_messages WHERE body='hi person'`).Scan(&toA, &toS)
-	if toA != "anshul" || toS != "" {
-		t.Errorf("bare token routed to %q/%q, want assignee anshul", toA, toS)
+	if toA != "user" || toS != "anshul" {
+		t.Errorf("bare token routed to %q/%q, want user/anshul", toA, toS)
 	}
 
 	// `self` aliases to `user` when addressing and consuming.
@@ -503,6 +504,78 @@ func TestF6ReservedSlugsAndBareAddresses(t *testing.T) {
 	}
 }
 
+// A bare address: a known person keeps person delivery (with a hint when it
+// is also a task), a task slug alone resolves to user/<slug>, and a name
+// that is neither is refused instead of parked in a queue nobody reads.
+// --as resolves the same way.
+func TestBareAddressResolution(t *testing.T) {
+	setupFlowRoot(t)
+	t.Setenv("FLOW_AUTO_RUN", "")
+	db := openFlowDB(t)
+	mkBusTask(t, db, "sender", "sid-sender")
+	mkBusTask(t, db, "juno", "sid-juno")
+	mkBusTask(t, db, "anshul", "sid-anshul")
+	mkPerson(t, "anshul") // anshul is both a person and a task slug
+	mkPerson(t, "ravi")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-sender")
+
+	route := func(body string) (a, s string) {
+		t.Helper()
+		_ = db.QueryRow(`SELECT to_assignee, COALESCE(to_task_slug,'') FROM bus_messages WHERE body=?`, body).Scan(&a, &s)
+		return
+	}
+	var rc int
+	// 1. task slug, not a person → the task's session.
+	out := captureStdout(t, func() { rc = cmdMessage([]string{"juno", "to juno"}) })
+	if a, s := route("to juno"); rc != 0 || a != "user" || s != "juno" {
+		t.Errorf("bare task slug: rc=%d routed %q/%q, want user/juno", rc, a, s)
+	}
+	if !strings.Contains(out, "messaged session user/juno") || !strings.Contains(out, `(resolved bare task slug "juno")`) {
+		t.Errorf("bare task slug output: %s", out)
+	}
+	// 2. neither → refused, nothing stored.
+	errOut := captureStdout(t, func() { rc = cmdMessage([]string{"nobody-xyz", "lost"}) })
+	if rc != 2 || !strings.Contains(errOut, `no assignee or task named "nobody-xyz"`) || !strings.Contains(errOut, "user/<slug>") {
+		t.Errorf("unknown bare: rc=%d stderr=%s", rc, errOut)
+	}
+	if a, _ := route("lost"); a != "" {
+		t.Errorf("refused message was stored for %q", a)
+	}
+	// Plain person delivery is unchanged.
+	out = captureStdout(t, func() { rc = cmdMessage([]string{"ravi", "to ravi"}) })
+	if a, s := route("to ravi"); rc != 0 || a != "ravi" || s != "" || strings.Contains(out, "hint:") {
+		t.Errorf("person: rc=%d routed %q/%q out=%s", rc, a, s, out)
+	}
+	// 3. both → person, with a hint naming the task's session.
+	out = captureStdout(t, func() { rc = cmdMessage([]string{"anshul", "to anshul"}) })
+	if a, s := route("to anshul"); rc != 0 || a != "anshul" || s != "" {
+		t.Errorf("person+task: rc=%d routed %q/%q, want person anshul", rc, a, s)
+	}
+	if !strings.Contains(out, "user/anshul") {
+		t.Errorf("person+task should hint user/anshul: %s", out)
+	}
+	// Messaging your own bare slug is still your own inbox.
+	errOut = captureStdout(t, func() { rc = cmdMessage([]string{"sender", "me"}) })
+	if rc != 2 || !strings.Contains(errOut, "own inbox") {
+		t.Errorf("own bare slug: rc=%d %s", rc, errOut)
+	}
+	// 4. --as resolves the same way: a bare task slug reads that session.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	out = captureStdout(t, func() { rc = cmdInbox([]string{"pop", "--as", "juno"}) })
+	if rc != 0 || !strings.Contains(out, "to juno") {
+		t.Errorf("pop --as juno: rc=%d %s", rc, out)
+	}
+	captureStdout(t, func() { _ = cmdMessage([]string{"user/juno", "second"}) })
+	out = captureStdout(t, func() { rc = cmdInbox([]string{"pop", "--as", "user/juno"}) })
+	if rc != 0 || !strings.Contains(out, "second") {
+		t.Errorf("pop --as user/juno: rc=%d %s", rc, out)
+	}
+	errOut = captureStdout(t, func() { rc = cmdInbox([]string{"--as", "nobody-xyz"}) })
+	if rc != 2 || !strings.Contains(errOut, "no assignee or task") {
+		t.Errorf("--as unknown: rc=%d %s", rc, errOut)
+	}
+}
+
 func readRepoFile(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(name)
@@ -527,6 +600,7 @@ func TestF7ReadByIDOnlyRecipientChangesState(t *testing.T) {
 	db := openFlowDB(t)
 	mkBusTask(t, db, "a", "sid-a")
 	mkBusTask(t, db, "b", "sid-b")
+	mkPerson(t, "shashwat")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
 	captureStdout(t, func() {
 		if rc := cmdMessage([]string{"user/b", "for b only"}); rc != 0 {
@@ -730,6 +804,7 @@ func TestF10PopJSONShowsRealStatus(t *testing.T) {
 	db := openFlowDB(t)
 	mkBusTask(t, db, "a", "sid-a")
 	mkBusTask(t, db, "b", "sid-b")
+	mkPerson(t, "shashwat")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-a")
 	captureStdout(t, func() {
 		_ = cmdMessage([]string{"shashwat", "to a person"})

@@ -105,6 +105,7 @@ func TestB2PingDecisionAtSend(t *testing.T) {
 	db := openFlowDB(t)
 	mkBusTask(t, db, "asker", "sid-asker")
 	mkBusTask(t, db, "peer", "sid-peer")
+	mkPerson(t, "alice")
 
 	send := func(sid string, args ...string) *flowdb.BusMessage {
 		t.Helper()

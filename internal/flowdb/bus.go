@@ -360,6 +360,18 @@ func AnswerHumanMessage(db *sql.DB, id string, c Consumer, reply *BusMessage) (n
 	return true, nil
 }
 
+// IsKnownPerson reports whether name is a person on this hub: some task's
+// assignee, or the sender of person (non-session) mail. Mail RECEIVED does
+// not count — a typo'd bare address must not become a person by being
+// misdelivered to.
+func IsKnownPerson(db *sql.DB, name string) (bool, error) {
+	var ok bool
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM tasks WHERE assignee=?)
+        OR EXISTS(SELECT 1 FROM bus_messages WHERE from_assignee=? AND from_task_slug IS NULL)`,
+		name, name).Scan(&ok)
+	return ok, err
+}
+
 // PendingForHuman returns pending rows addressed to the human
 // `assignee` — directed messages and fanned-out broadcasts.
 func PendingForHuman(db *sql.DB, assignee string) ([]*BusMessage, error) {

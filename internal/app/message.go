@@ -181,7 +181,7 @@ func cmdMessage(args []string) int {
 		return bodyTooLong(body, busBodyMax)
 	}
 
-	toAssignee, toSlug, err := parseBusAddress(db, addr)
+	toAssignee, toSlug, hint, err := parseBusAddress(db, addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -229,6 +229,11 @@ func cmdMessage(args []string) int {
 		}
 		fmt.Printf("messaged %s [%s] — pending until answered (their reply in this session, or `flow inbox read <id>`)\n",
 			toAssignee, m.ID)
+		if hint != "" {
+			fmt.Println(hint)
+		}
+	} else if hint != "" {
+		fmt.Printf("messaged session %s/%s [%s] — %s (%s)\n", toAssignee, toSlug, m.ID, wakeOutcome(m.ID), hint)
 	} else {
 		fmt.Printf("messaged session %s/%s [%s] — %s\n", toAssignee, toSlug, m.ID, wakeOutcome(m.ID))
 	}
@@ -334,26 +339,51 @@ func (s busSender) identity() string {
 }
 
 // parseBusAddress resolves an address string to (assignee, taskSlug).
-// taskSlug == "" means the human.
-func parseBusAddress(db *sql.DB, addr string) (string, string, error) {
+// taskSlug == "" means the human. hint: see resolveBareAddress.
+func parseBusAddress(db *sql.DB, addr string) (assignee, slug, hint string, err error) {
 	if i := strings.IndexByte(addr, '/'); i >= 0 {
 		assignee, slug := canonicalAssignee(addr[:i]), addr[i+1:]
 		if assignee == "" || slug == "" {
-			return "", "", fmt.Errorf("bad address %q (want <assignee>[/<task-slug>])", addr)
+			return "", "", "", fmt.Errorf("bad address %q (want <assignee>[/<task-slug>])", addr)
 		}
 		t, err := flowdb.GetTask(db, slug)
 		if err != nil || t == nil {
-			return "", "", fmt.Errorf("no task %q for address %q", slug, addr)
+			return "", "", "", fmt.Errorf("no task %q for address %q", slug, addr)
 		}
 		if err := deliverableTask(t); err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
-		return assignee, slug, nil
+		return assignee, slug, "", nil
 	}
-	// A bare token is ALWAYS an assignee (a person's queue); sessions are
-	// addressed only as <assignee>/<task-slug>. Treating a bare token as a
-	// task slug first let a task slugged after a person capture their mail.
-	return canonicalAssignee(addr), "", nil
+	return resolveBareAddress(db, canonicalAssignee(addr))
+}
+
+// resolveBareAddress resolves a bare token. A known person wins (a task
+// slugged after a person must never capture their mail); otherwise a task
+// slug means that task's session, exactly as if user/<slug> was typed;
+// anything else is refused rather than parked in a queue nobody reads.
+// hint is a one-line note for the sender ("" when there is nothing to say).
+func resolveBareAddress(db *sql.DB, a string) (assignee, slug, hint string, err error) {
+	if a == busUser || a == "" {
+		return a, "", "", nil
+	}
+	person, err := flowdb.IsKnownPerson(db, a)
+	if err != nil {
+		return "", "", "", err
+	}
+	t, _ := flowdb.GetTask(db, a)
+	switch {
+	case person && t != nil:
+		return a, "", fmt.Sprintf("hint: %q is also a task — its session is user/%s", a, a), nil
+	case person:
+		return a, "", "", nil
+	case t != nil:
+		if err := deliverableTask(t); err != nil {
+			return "", "", "", err
+		}
+		return busUser, a, fmt.Sprintf("resolved bare task slug %q", a), nil
+	}
+	return "", "", "", fmt.Errorf("no assignee or task named %q. A task's session is user/<slug>; a person is their assignee name (see flow list tasks --assignee)", a)
 }
 
 // deliverableTask rejects addressing a session that can never read the

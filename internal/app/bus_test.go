@@ -24,6 +24,16 @@ func mkBusTask(t *testing.T, db *sql.DB, slug, sid string) {
 	}
 }
 
+// mkPerson makes name a known person on the bus (a task's assignee), so a
+// bare `flow message <name>` reaches their queue instead of being refused.
+func mkPerson(t *testing.T, name string) {
+	t.Helper()
+	if rc := cmdAdd([]string{"task", "owned by " + name, "--slug", "owned-" + name,
+		"--assignee", name, "--work-dir", t.TempDir()}); rc != 0 {
+		t.Fatalf("add task for %s rc=%d", name, rc)
+	}
+}
+
 func busHookContext(t *testing.T, out string) string {
 	t.Helper()
 	if strings.TrimSpace(out) == "" {
@@ -82,6 +92,7 @@ func TestInboxPopConsumesOneAtATime(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-p") // messages come from a bound session
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-p", "sid-p")
+	mkPerson(t, "shashwat")
 
 	// Another assignee's queue (a transport worker drains it with --as);
 	// the local human's own queue is never popped (F2).
@@ -234,6 +245,7 @@ func TestInboxPopKeepUnread(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-ku")
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-ku", "sid-ku")
+	mkPerson(t, "shashwat")
 
 	captureStdout(t, func() {
 		if rc := cmdMessage([]string{"shashwat", "forward me"}); rc != 0 {
@@ -401,6 +413,7 @@ func TestInboxAsAssigneeAndJSON(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	db := openFlowDB(t)
 	mkBusTask(t, db, "task-a", "")
+	mkPerson(t, "shashwat")
 
 	// Queue a message for another assignee (local queue, no transport).
 	captureStdout(t, func() {

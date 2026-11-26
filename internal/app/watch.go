@@ -39,7 +39,12 @@ func cmdWatch(args []string) int {
 	}
 	defer db.Close()
 
-	watcher := resolveConsumer(*as).identity()
+	c, err := resolveConsumer(db, *as)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	watcher := c.identity()
 
 	switch {
 	case *list:

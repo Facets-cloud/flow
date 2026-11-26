@@ -72,14 +72,22 @@ func consumerFlags(fs *flag.FlagSet) (as *string) {
 }
 
 // resolveConsumer applies the identity override to the ambient identity.
-func resolveConsumer(as string) busSender {
-	if as != "" {
-		as = canonicalAssignee(as)
-		// Keep the real session id so a consumption is still traceable
-		// to the session that ran it.
-		return busSender{Assignee: as, SessionID: currentSessionID()}
+// --as takes any message address: a person, <assignee>/<task-slug>, or a
+// bare task slug (resolved like `flow message` does).
+func resolveConsumer(db *sql.DB, as string) (busSender, error) {
+	if as == "" {
+		return currentBusSender(), nil
 	}
-	return currentBusSender()
+	assignee, slug, hint, err := parseBusAddress(db, as)
+	if err != nil {
+		return busSender{}, err
+	}
+	if hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
+	// Keep the real session id so a consumption is still traceable to the
+	// session that ran it.
+	return busSender{Assignee: assignee, TaskSlug: slug, SessionID: currentSessionID()}, nil
 }
 
 // pendingForIdentity returns the pending rows for an identity.
@@ -199,7 +207,11 @@ func inboxList(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	s := resolveConsumer(*as)
+	s, err := resolveConsumer(db, *as)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	rows, err := listForIdentity(db, s, *all)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -439,7 +451,11 @@ func inboxPop(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	s := resolveConsumer(*as)
+	s, err := resolveConsumer(db, *as)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	// closed: exit 3 tells the Monitor loop to stop — the caller's bound
 	// task is done/archived, so its inbox will never get mail again.
 	closed := func() bool {
@@ -557,7 +573,11 @@ func inboxRead(args []string) int {
 		m     *flowdb.BusMessage
 		newly bool
 	)
-	s := resolveConsumer(*as)
+	s, err := resolveConsumer(db, *as)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	m, err = flowdb.GetBusMessageByID(db, rest[0])
 	mayConsume := false
 	if err == nil && m != nil {
@@ -608,7 +628,12 @@ func inboxStats(args []string) int {
 		return 1
 	}
 	defer db.Close()
-	assignee := resolveConsumer(*as).Assignee
+	c, err := resolveConsumer(db, *as)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	assignee := c.Assignee
 	s, err := flowdb.GetBusStats(db, assignee)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
