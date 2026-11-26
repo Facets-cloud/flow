@@ -171,7 +171,7 @@ Edit / mutate:
   flow unarchive <ref>
 
 Message bus (directed + broadcast, CLI-only — see flow skill §4.18):
-  flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--options "A|B"] [--fyi] [--attach <file>]
+  flow message <assignee>|user/<task-slug> "<body>" [--urgent] [--options "A|B"] [--fyi] [--attach <file>]
                                      (message a human — "user" is the local human — or the
                                       session bound to a task; never your own address; alias: msg.
                                       Flags may come in any order; the body is positional or

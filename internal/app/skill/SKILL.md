@@ -716,7 +716,7 @@ consumed, then **read**. Two purposes — pick the verb by intent:
    re-send. Opt-in pings: references/connectors.md. Another flow hub's
    human: `flow message <peer> "…"` (never `<peer>/<task>`) →
    references/peers.md.
-2. **Collaborate with peers.** `flow message <assignee>/<task-slug> "<what
+2. **Collaborate with peers.** `flow message user/<task-slug> "<what
    to DO>"` hands context to that task's session (no interruption). Add
    `--reply-to <id>` so a routed reply carries lineage (the bus doesn't
    thread). `flow broadcast "<one-liner>"` FYIs whoever watches this

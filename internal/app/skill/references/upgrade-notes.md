@@ -19,6 +19,10 @@
   Drivers push status unprompted, make no code edits, and own CI and review
   threads on their children's PRs (references/driver.md, delegation.md).
   `--options` and `--fyi` are for bare `user` only.
+- **Task sessions are `user/<slug>`.** A bare `flow message <slug>` that
+  names no known person now reaches that task's session (it used to queue
+  for a non-existent person nobody read); a bare name that is neither is
+  refused. `--as` accepts `user/<slug>` and bare slugs too.
 
 ## v0.1.0-alpha.40
 

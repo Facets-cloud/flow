@@ -129,12 +129,15 @@ flow broadcast "imports done, 3 drifts left"     # FYI to watchers
 `<assignee>[/<task-slug>]`
 
 - `user` — the local human (tasks with no assignee belong to them).
-- `<name>` (e.g. `shashwat`) — another assignee. No cross-machine
+- `<name>` (e.g. `shashwat`) — another assignee: a known person (some
+  task's assignee, or someone who has sent person mail). No cross-machine
   transport yet: it queues locally with a warning; delivery lands with
   flow-workspace.
-- `<assignee>/<task-slug>` — the SESSION bound to that task. Sessions are
-  addressed ONLY this way: a bare token is always an assignee (a person),
-  never a task slug.
+- `<assignee>/<task-slug>` — the SESSION bound to that task. Write task
+  sessions as `user/<slug>`. A bare token resolves person first: a known
+  person gets person mail (with a hint if it is also a task slug); else a
+  task slug goes to `user/<slug>` (flow prints `resolved bare task slug`);
+  else flow refuses it (exit 2). `--as` on inbox/watch resolves the same way.
 - `self` is a legacy alias for `user`. `user` and `self` are reserved and
   can never be task slugs.
 - You can NEVER message your own address — a session cannot mail its own

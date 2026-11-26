@@ -113,6 +113,42 @@ func TestWakeIdleLiveSessionPushesNotice(t *testing.T) {
 	}
 }
 
+// A bare task slug resolved by `flow message` is the same row as
+// user/<slug>, so every harness gets the same push and the same hook
+// notice (ClaimUnsurfaced backs the Claude/Codex/prx hook announcements).
+func TestWakeBareSlugEveryHarness(t *testing.T) {
+	for _, h := range []harness.Name{harness.NameClaude, harness.NameCodex, harness.NamePrx} {
+		t.Run(string(h), func(t *testing.T) {
+			db := wakeSetup(t)
+			if _, err := db.Exec(`UPDATE tasks SET harness=? WHERE slug='w'`, string(h)); err != nil {
+				t.Fatal(err)
+			}
+			f := &fakeWaker{live: true}
+			var sawHarness string
+			orig := wakeAdapterFor
+			wakeAdapterFor = func(tk *flowdb.Task) harness.Waker { sawHarness = tk.Harness.String; return f }
+			t.Cleanup(func() { wakeAdapterFor = orig })
+			t.Setenv(wakeOffEnv, "")
+			_ = flowdb.SetSessionState(db, "w", flowdb.SessionIdle, time.Now())
+
+			out := captureStdout(t, func() {
+				if rc := cmdMessage([]string{"w", "bare ping"}); rc != 0 {
+					t.Fatalf("message rc=%d", rc)
+				}
+			})
+			if !strings.Contains(out, "messaged session user/w") || !strings.Contains(out, "woke w") {
+				t.Errorf("output: %q", out)
+			}
+			if len(f.pushes) != 1 || f.pushes[0].SessionID != "sid-w" || sawHarness != string(h) {
+				t.Errorf("pushes=%d harness=%q", len(f.pushes), sawHarness)
+			}
+			if got, _ := flowdb.ClaimUnsurfaced(db, "w"); len(got) != 1 || got[0].Body != "bare ping" {
+				t.Errorf("hook record = %d rows, want the bare-slug message", len(got))
+			}
+		})
+	}
+}
+
 func TestWakeGates(t *testing.T) {
 	cases := []struct {
 		name   string

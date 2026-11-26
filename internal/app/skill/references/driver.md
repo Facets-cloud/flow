@@ -27,6 +27,8 @@ and you have verified it, not when the work has been handed off.
   gates; what NOT to do; where questions go; report via `flow message` at
   milestones and when done or blocked; never block waiting for a reply (it
   reaches your inbox; pop it when a flow-bus notice surfaces it).
+  Message a child's session as `user/<child-slug>` (a bare `<child-slug>`
+  that is no person's name resolves there too).
 - **Reuse children:** before spawning, check for a child that already
   knows the area and re-ask it with `flow do --auto <slug> --with
   "<question>"`; keep useful ones as experts.

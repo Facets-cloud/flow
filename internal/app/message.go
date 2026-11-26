@@ -14,7 +14,7 @@ import (
 
 // cmdMessage implements the directed half of the message bus:
 //
-//	flow message <assignee>[/<task-slug>] "<body>" [--urgent]
+//	flow message <assignee>|user/<task-slug> "<body>" [--urgent]
 //	flow message <assignee> --body "<body>" [--urgent]   (equivalent)
 //
 // Flags are order-independent and the body may be given positionally or
@@ -36,7 +36,7 @@ func cmdMessage(args []string) int {
 	// --body constantly). Previously the body was a blind positional, so a
 	// flag written before it became the literal body ("--urgent") and the
 	// real text was silently dropped. Unknown flags now error instead.
-	usage := `usage: flow message <assignee>[/<task-slug>] "<body>" [--urgent] [--reply-to <id>] [--options "A|B"] [--fyi] [--attach <file> ...]   (body also accepts --body "<text>")`
+	usage := `usage: flow message <assignee>|user/<task-slug> "<body>" [--urgent] [--reply-to <id>] [--options "A|B"] [--fyi] [--attach <file> ...]   (body also accepts --body "<text>")`
 	var urgent, haveBody, rest, fyi, haveOptions bool
 	var bodyFlag, replyTo, optionsFlag string
 	var pos, attach []string
