@@ -1,39 +1,39 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 29,
+    "children": 66,
     "dead": 2,
-    "done": 27,
-    "messages_between_tasks": 3,
-    "notes": 203,
-    "refs": 17,
+    "done": 65,
+    "messages_between_tasks": 66,
+    "notes": 264,
+    "refs": 22,
     "running": 1,
-    "tasks": 36
+    "tasks": 73
   },
   "dead_reasons": {
     "exited without closing": 2
   },
-  "generated_at": "2026-11-25T11:30:29+05:30",
+  "generated_at": "2026-11-26T11:30:42+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 36
+      "tasks": 73
     },
     {
-      "items": 223,
+      "items": 284,
       "name": "updates/",
-      "tasks": 36
+      "tasks": 73
     },
     {
-      "items": 148,
+      "items": 178,
       "name": "auto-runs/",
-      "tasks": 30
+      "tasks": 66
     },
     {
-      "items": 14,
+      "items": 11,
       "name": "other files",
-      "tasks": 11
+      "tasks": 9
     },
     {
       "items": 13,
@@ -41,27 +41,7 @@
       "tasks": 7
     },
     {
-      "items": 15,
-      "name": "evidence-187/",
-      "tasks": 1
-    },
-    {
-      "items": 20,
-      "name": "evidence-188/",
-      "tasks": 1
-    },
-    {
-      "items": 24,
-      "name": "evidence-188b/",
-      "tasks": 1
-    },
-    {
-      "items": 19,
-      "name": "evidence-287b20c/",
-      "tasks": 1
-    },
-    {
-      "items": 11,
+      "items": 3,
       "name": "evidence/",
       "tasks": 1
     },
@@ -73,6 +53,11 @@
     {
       "items": 4,
       "name": "shots/",
+      "tasks": 1
+    },
+    {
+      "items": 3,
+      "name": "sim/",
       "tasks": 1
     }
   ],
@@ -90,8 +75,449 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-25-06-00",
+      "slug": "site-daily--2026-11-26-06-00",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-readable-cards",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-parallel-steps",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        18,
+        138
+      ],
+      "shown": true,
+      "slug": "fhw-no-pr-cap",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-working-words",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-image-docs",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-add-driver",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-text-pre",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-multi-ack",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-waits-until",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-silent-waits",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-bare-pr-intent",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-pr-url-wins",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-working-pos",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-reject-tellwatch",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-approve-api",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-draft-speaks",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-mailed-dup",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-screen-claim",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-iop-tell",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        60
+      ],
+      "shown": true,
+      "slug": "fhw-working-step",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-gone-drivers",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-done-rest",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-partial-pill",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-in-ack-text",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-no-old-details",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-autohandle",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-spoken-trail",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        117
+      ],
+      "shown": true,
+      "slug": "fhw-also-answers",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-in-noise-title",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        108
+      ],
+      "shown": true,
+      "slug": "fhw-reopen-cap-prn",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        127
+      ],
+      "shown": true,
+      "slug": "fhw-card-fix",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-planet-collapse",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-mine-also",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-in-acks-last",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-approve-starts",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        211
+      ],
+      "shown": true,
+      "slug": "sim-driver-claude",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        211
+      ],
+      "shown": true,
+      "slug": "sim-driver-codex",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        211
+      ],
+      "shown": true,
+      "slug": "flow-delegation-test",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 0,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-deep-dev",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-telemetry-p1",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        95
+      ],
+      "shown": true,
+      "slug": "iop-telemetry",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": false,
+      "slug": "site-daily--2026-11-25-06-00",
+      "status": "done"
     },
     {
       "auto_run_status": null,
@@ -121,7 +547,7 @@
       "refs": [
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-24-06-00",
       "status": "done"
     },
@@ -139,15 +565,18 @@
       "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 7,
+      "notes": 9,
       "refs": [
         200,
         201,
-        202
+        202,
+        204,
+        205,
+        206
       ],
       "shown": true,
       "slug": "flow-harness-json",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -160,7 +589,7 @@
         50,
         193
       ],
-      "shown": true,
+      "shown": false,
       "slug": "operator-pr-design",
       "status": "done"
     },
@@ -192,7 +621,7 @@
       "refs": [
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-23-06-00",
       "status": "done"
     },
@@ -204,7 +633,7 @@
       "refs": [
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-22-06-14",
       "status": "done"
     },
@@ -216,7 +645,7 @@
       "refs": [
         33
       ],
-      "shown": true,
+      "shown": false,
       "slug": "operator-rules-driver",
       "status": "done"
     },
@@ -228,7 +657,7 @@
       "refs": [
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-21-08-16",
       "status": "done"
     },
@@ -323,7 +752,7 @@
       "refs": [
         185
       ],
-      "shown": true,
+      "shown": false,
       "slug": "site-daily--2026-11-20-06-00",
       "status": "done"
     },
@@ -346,7 +775,7 @@
         12,
         115
       ],
-      "shown": true,
+      "shown": false,
       "slug": "operator-page",
       "status": "done"
     },
@@ -414,76 +843,11 @@
       "auto_run_status": "dead",
       "child": true,
       "dead_reason": "exited without closing",
-      "notes": 67,
+      "notes": 95,
       "refs": [],
       "shown": true,
       "slug": "flow-hud-go",
       "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": false,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        185
-      ],
-      "shown": true,
-      "slug": "site-daily--2026-11-19-06-00",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-plugin-recheck",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 2,
-      "refs": [
-        181,
-        187,
-        188
-      ],
-      "shown": false,
-      "slug": "flow-plugin-build",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 2,
-      "refs": [
-        157,
-        188
-      ],
-      "shown": false,
-      "slug": "flow-plugin",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 6,
-      "refs": [
-        4,
-        136,
-        181,
-        187,
-        188
-      ],
-      "shown": false,
-      "slug": "driver-first-upgrade-test",
-      "status": "done"
     }
   ],
   "window_days": 7
