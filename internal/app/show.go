@@ -37,12 +37,17 @@ func cmdShow(args []string) int {
 // showTaskCmd implements `flow show task [<ref>]`.
 func showTaskCmd(args []string) int {
 	fs := flagSet("show task")
+	asJSON := fs.Bool("json", false, "emit one JSON object (stable schema; see docs) instead of the human view")
+	// Accept the ref before or after flags (`show task <slug> --json`).
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	ref := ""
 	if fs.NArg() > 0 {
 		ref = fs.Arg(0)
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return 2
+		}
 	}
 
 	dbPath, err := flowDBPath()
@@ -86,6 +91,13 @@ func showTaskCmd(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if *asJSON {
+		if err := printTaskJSON(db, t, root); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 	printTaskMetadata(db, t, root)
 	return 0

@@ -11,6 +11,18 @@
 
 ## Unreleased
 
+## v0.1.0-alpha.41
+
+- **Re-pin a task to another harness with the CLI.** `flow do <slug>
+  --harness <h> --fresh` starts a new session on `<h>` for a task that
+  already has one and keeps the old session in history. The harness
+  transfer recipe (references/harness-transfer.md) no longer edits
+  flow.db — never use the old sqlite un-pin. Every `--fresh` now records
+  the replaced session too.
+- **Machine-readable views.** `flow show task --json` and `flow transcript
+  --json` (references/commands-advanced.md) are for tools; keep reading
+  the text views yourself.
+
 ## v0.1.0-alpha.40
 
 - **Pick a model per task.** `flow do`, `flow do --auto`, `flow auto` and

@@ -102,7 +102,7 @@ func cmdDo(args []string) int {
 	}
 	fs := flagSet("do")
 	fresh := fs.Bool("fresh", false, "discard existing session and re-bootstrap")
-	harnessName := fs.String("harness", "", "harness for a new task session (one of: "+registeredHarnessNames()+")")
+	harnessName := fs.String("harness", "", "harness for a new task session (one of: "+registeredHarnessNames()+"); with --fresh, re-pins a started task to this harness")
 	dangerSkip := fs.Bool("dangerously-skip-permissions", false, "skip per-tool approval prompts in the spawned harness")
 	force := fs.Bool("force", false, "open even if the task's harness session is already running elsewhere")
 	here := fs.Bool("here", false, "bind THIS harness session to the task (no new tab); requires a supported harness session")
@@ -194,10 +194,13 @@ func cmdDo(args []string) int {
 	// before, task.harness is set and binding; otherwise detect from
 	// the current process's ambient harness env (so `flow do` from
 	// inside codex picks codex), falling back to claude.
-	h, err := harnessForExplicitSpawn(task, *harnessName)
+	h, repin, err := harnessForExplicitSpawn(task, *harnessName, *fresh)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if repin {
+		warnOldSessionStillLive(task)
 	}
 	// --model/--effort: refuse what h can't honour now, before any guard.
 	// The flag values are stored only once a launch proceeds (inside the
@@ -231,7 +234,7 @@ func cmdDo(args []string) int {
 			return 2
 		}
 		return cmdDoBackground(db, task, h, bgLaunch{
-			fresh: *fresh, skipPerms: *dangerSkip, inject: injectionText,
+			fresh: *fresh, repin: repin, explicitHarness: *harnessName != "", skipPerms: *dangerSkip, inject: injectionText,
 			model: *model, effort: *effort,
 		})
 	}
@@ -306,6 +309,7 @@ func cmdDo(args []string) int {
 	// and other fields for later steps. Per spec §6 this commit is the
 	// durability boundary — even if bootstrap or iTerm spawn fails below,
 	// the task is already in 'in-progress'.
+	doBeforeTxHook(task.Slug)
 	tx, err := db.Begin()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: begin tx: %v\n", err)
@@ -347,9 +351,9 @@ func cmdDo(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	var curSessionID sql.NullString
-	if err := tx.QueryRow(`SELECT session_id, model, effort FROM tasks WHERE slug=?`, task.Slug).
-		Scan(&curSessionID, &task.Model, &task.Effort); err != nil {
+	var curSessionID, curHarness, curSessionStarted sql.NullString
+	if err := tx.QueryRow(`SELECT session_id, harness, session_started, model, effort FROM tasks WHERE slug=?`, task.Slug).
+		Scan(&curSessionID, &curHarness, &curSessionStarted, &task.Model, &task.Effort); err != nil {
 		fmt.Fprintf(os.Stderr, "error: re-read session_id: %v\n", err)
 		return 1
 	}
@@ -359,6 +363,28 @@ func cmdDo(args []string) int {
 		return 2
 	}
 	needsBootstrap := !curSessionID.Valid || *fresh
+	// The adapter (h) was chosen from the snapshot taken before this tx;
+	// another command may have re-pinned the task since. Check it against
+	// the row read here, on every path: a bootstrap commits h's session
+	// under the pin, and a resume hands the row's session to h. An explicit
+	// --harness on a bootstrap overwrites a differing pin (a re-pin);
+	// anything else with a pin that changed under us is refused.
+	{
+		rowPin := curHarness.String
+		if rowPin == "" && curSessionID.Valid {
+			rowPin = string(harness.NameClaude) // NULL pin on a bootstrapped row
+		}
+		repin = false
+		if rowPin != "" && rowPin != string(h.Name()) {
+			if !needsBootstrap || *harnessName == "" {
+				fmt.Fprintf(os.Stderr,
+					"error: task %q's harness changed to %s while flow do was starting; re-run it (pass --harness <h> --fresh to re-pin)\n",
+					task.Slug, rowPin)
+				return 1
+			}
+			repin = true
+		}
+	}
 	var sessionID string
 	if needsBootstrap && preMinted != "" {
 		sessionID = preMinted
@@ -400,11 +426,27 @@ func cmdDo(args []string) int {
 		// work_dir" invariant holds by construction here — no
 		// extra column needed; future resumes spawn at work_dir
 		// and the transcript will be found.
+		// A --fresh that replaces a session keeps the old one in the
+		// task's session history (re-pins included), so its transcript
+		// stays findable via `flow show task --json`.
+		if curSessionID.Valid && curSessionID.String != "" {
+			if err := flowdb.RecordPriorSession(tx, task.Slug, curHarness.String,
+				curSessionID.String, curSessionStarted.String, priorSessionReason(repin)); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+		}
+		// A re-pin (`--harness <other> --fresh`) is the one explicit lane
+		// that overwrites the pinned harness here.
+		harnessSQL := `harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END`
+		if repin {
+			harnessSQL = `harness = ?`
+		}
 		if _, err := tx.Exec(
 			`UPDATE tasks SET status='in-progress',
 			 status_changed_at = CASE WHEN status != 'in-progress' THEN ? ELSE status_changed_at END,
 			 session_id=?, session_started=?,
-			 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
+			 `+harnessSQL+`,
 			 updated_at=?
 			 WHERE slug=? AND `+statusFilter,
 			now, sessionID, now, string(h.Name()), now, task.Slug,
@@ -439,7 +481,7 @@ func cmdDo(args []string) int {
 	committed = true
 
 	if *fresh && curSessionID.Valid {
-		fmt.Printf("--fresh: discarding old session %s\n", curSessionID.String)
+		printFreshReplaced(task.Slug, curHarness.String, curSessionID.String, string(h.Name()), repin)
 	}
 
 	// --auto: instead of spawning an interactive tab, launch a detached
@@ -719,30 +761,83 @@ func printNoTerminalHandoff(slug, cwd, command string, envVars map[string]string
 	fmt.Printf("Tabs open automatically inside tmux, zellij or kitty (or set FLOW_TERM=tmux|zellij|kitty).\n")
 }
 
-// harnessForExplicitSpawn applies `flow do --harness <name>` to an
-// unbootstrapped task. Harness is intentionally a first-session choice: once
-// a task has a session id, its stored harness owns its transcript and resume
-// path. Changing it here would silently transfer an in-flight task, so the
-// explicit `--harness` selector refuses instead of acting like --force.
-func harnessForExplicitSpawn(task *flowdb.Task, requested string) (harness.Harness, error) {
+// doBeforeTxHook runs right before cmdDo opens its write transaction.
+// Tests use it to change the row concurrently; production leaves it a no-op.
+var doBeforeTxHook = func(slug string) {}
+
+// harnessForExplicitSpawn applies `flow do --harness <name>`. On an
+// unbootstrapped task it picks the first session's harness. Once a task has
+// a session id, its stored harness owns its transcript and resume path, so a
+// bare `--harness` refuses instead of silently transferring an in-flight
+// task. `--harness <name> --fresh` is the explicit re-pin: a NEW session on
+// <name> (the old one is kept in the task's session history). repin reports
+// whether the pinned harness changes; `--harness <same> --fresh` is just a
+// fresh session.
+func harnessForExplicitSpawn(task *flowdb.Task, requested string, fresh bool) (h harness.Harness, repin bool, err error) {
 	if requested == "" {
-		return harnessForSpawn(task)
+		h, err = harnessForSpawn(task)
+		return h, false, err
 	}
-	if task != nil && task.SessionID.Valid && task.SessionID.String != "" {
+	started := task != nil && task.SessionID.Valid && task.SessionID.String != ""
+	if started && !fresh {
 		current, err := harnessForTask(task)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return nil, fmt.Errorf(
-			"task %q already has a %s session; --harness only selects the first session for an unbootstrapped task",
-			task.Slug, current.Name(),
+		return nil, false, fmt.Errorf(
+			"task %q already has a %s session; --harness only selects the first session for an unbootstrapped task (add --fresh to re-pin it: a new %s session, the old one kept in history)",
+			task.Slug, current.Name(), requested,
 		)
 	}
-	h, err := harnessByName(requested)
+	h, err = harnessByName(requested)
 	if err != nil {
-		return nil, fmt.Errorf("invalid --harness %q (available: %s)", requested, registeredHarnessNames())
+		return nil, false, fmt.Errorf("invalid --harness %q (available: %s)", requested, registeredHarnessNames())
 	}
-	return h, nil
+	if started {
+		// An unknown stored pin can still be re-pinned away from.
+		current := "claude"
+		if task.Harness.Valid && task.Harness.String != "" {
+			current = task.Harness.String
+		}
+		repin = current != string(h.Name())
+	}
+	return h, repin, nil
+}
+
+// priorSessionReason labels a replaced session in the task's history.
+func priorSessionReason(repin bool) string {
+	if repin {
+		return "repin"
+	}
+	return "fresh"
+}
+
+// printFreshReplaced announces that --fresh replaced a session, naming
+// the harness switch on a re-pin.
+func printFreshReplaced(slug, oldHarness, oldSID, newHarness string, repin bool) {
+	if oldHarness == "" {
+		oldHarness = "claude"
+	}
+	if repin {
+		fmt.Printf("--fresh: re-pinned %s from %s to %s; old %s session %s kept in history\n",
+			slug, oldHarness, newHarness, oldHarness, oldSID)
+		return
+	}
+	fmt.Printf("--fresh: discarding old session %s (kept in history)\n", oldSID)
+}
+
+// warnOldSessionStillLive warns when a re-pin leaves the task's old
+// session running: it keeps running but is no longer bound to the task.
+func warnOldSessionStillLive(task *flowdb.Task) {
+	old, err := harnessForTask(task)
+	if err != nil {
+		return
+	}
+	if live, err := old.LiveSessionIDs(); err == nil && live[strings.ToLower(task.SessionID.String)] > 0 {
+		fmt.Fprintf(os.Stderr,
+			"warning: %s's old %s session %s is still running; after the re-pin it is no longer bound to the task — close it when done\n",
+			task.Slug, old.Name(), task.SessionID.String)
+	}
 }
 
 // backgroundLauncherFor returns the harness's BackgroundLauncher
@@ -813,6 +908,8 @@ func bgStateLabel(a *harness.BackgroundAgent) string {
 // effort are the raw flag values, stored once a spawn or resume proceeds.
 type bgLaunch struct {
 	fresh, skipPerms bool
+	repin            bool // --harness <other> --fresh (from the snapshot; used for messages)
+	explicitHarness  bool // --harness was given: a differing pin may be overwritten
 	inject           string
 	model, effort    string
 }
@@ -1092,7 +1189,7 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 
 	// Fresh spawn (no session, or --fresh discards the old one).
 	if fresh && hasSession {
-		fmt.Printf("--fresh: discarding old session %s\n", task.SessionID.String)
+		printFreshReplaced(task.Slug, task.Harness.String, task.SessionID.String, string(h.Name()), in.repin)
 	}
 	playbookSlug, isFirstRun := bgPlaybookContext(db, task)
 	prompt := buildBootstrapPromptForKindV2(task.Slug, task.Kind, playbookSlug, isFirstRun)
@@ -1112,23 +1209,87 @@ func cmdDoBackground(db *sql.DB, task *flowdb.Task, h harness.Harness, in bgLaun
 		return 1
 	}
 
-	now := flowdb.NowISO()
-	// Record the harness-minted REAL session id alongside status + harness.
-	// COALESCE on harness mirrors the interactive bootstrap: set-once.
-	if _, err := db.Exec(
-		`UPDATE tasks SET `+bgKeepConcurrentDoneSQL+`,
-		 session_id=?, session_started=?,
-		 harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END,
-		 updated_at=? WHERE slug=?`,
-		now, agent.SessionID, now, string(h.Name()), now, task.Slug,
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "error: record session: %v\n", err)
+	// The history row and the new binding commit together: a half-written
+	// pair either loses the displaced session or leaves the new agent
+	// unbound. On any failure the old binding stays and the agent that was
+	// just started is stopped, since nothing would ever reach it.
+	if err := recordBgSpawn(db, task, h, agent.SessionID, in.explicitHarness, fresh); err != nil {
+		fmt.Fprintf(os.Stderr, "error: record background session: %v\n", err)
+		if stopper, ok := bg.(harness.BackgroundStopper); ok {
+			if serr := stopper.StopBackground(agent.ShortID); serr != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not stop the unbound background session %s: %v; stop it by hand (%s)\n",
+					agent.ShortID, serr, bgAttachHint(h, &agent))
+			} else {
+				fmt.Fprintf(os.Stderr, "note: stopped the new background session %s; %s keeps its previous binding\n", agent.ShortID, task.Slug)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: background session %s is running unbound; stop it by hand (%s)\n",
+				agent.ShortID, bgAttachHint(h, &agent))
+		}
 		return 1
 	}
 	bumpWorkdirUsed(db, task.WorkDir)
 	fmt.Printf("Spawned %s in background (session %s) — %s · %s\n  %s\n",
 		task.Slug, agent.SessionID, agent.ShortID, title, bgViewHint(h, agent.SessionID))
 	return 0
+}
+
+// recordBgSpawn binds the task to a freshly spawned background session
+// in one transaction. It re-reads the task's pin and session inside the
+// tx (the caller's snapshot predates the spawn, and another command may
+// have bound or re-pinned the task meanwhile): the session the tx actually
+// replaces goes to the task's history, then the binding is written. A pin
+// that differs from h is overwritten only for an explicit --harness, and
+// on a row that already has a session only with --fresh (a re-pin);
+// otherwise the binding is refused, so a session never lands under
+// another harness's pin.
+func recordBgSpawn(db *sql.DB, task *flowdb.Task, h harness.Harness, sessionID string, explicitHarness, fresh bool) error {
+	doBeforeTxHook(task.Slug)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var curSID, curPin, curStarted sql.NullString
+	if err := tx.QueryRow(`SELECT session_id, harness, session_started FROM tasks WHERE slug=?`, task.Slug).
+		Scan(&curSID, &curPin, &curStarted); err != nil {
+		return err
+	}
+	rowPin := curPin.String
+	if rowPin == "" && curSID.Valid && curSID.String != "" {
+		rowPin = string(harness.NameClaude) // NULL pin on a bootstrapped row
+	}
+	repin := false
+	started := curSID.Valid && curSID.String != ""
+	if rowPin != "" && rowPin != string(h.Name()) {
+		// An explicit --harness re-pins a started task only with --fresh;
+		// without it, --harness just picks an unstarted task's first session.
+		if !explicitHarness || (started && !fresh) {
+			return fmt.Errorf("task %q's harness changed to %s while the background session was starting; re-run (pass --harness <h> --fresh to re-pin)", task.Slug, rowPin)
+		}
+		repin = true
+	}
+	if curSID.Valid && curSID.String != "" && !strings.EqualFold(curSID.String, sessionID) {
+		if err := flowdb.RecordPriorSession(tx, task.Slug, rowPin, curSID.String,
+			curStarted.String, priorSessionReason(repin)); err != nil {
+			return err
+		}
+	}
+	harnessSQL := `harness = CASE WHEN harness IS NULL OR harness = '' THEN ? ELSE harness END`
+	if repin {
+		harnessSQL = `harness = ?`
+	}
+	now := flowdb.NowISO()
+	if _, err := tx.Exec(
+		`UPDATE tasks SET `+bgKeepConcurrentDoneSQL+`,
+		 session_id=?, session_started=?,
+		 `+harnessSQL+`,
+		 updated_at=? WHERE slug=?`,
+		now, sessionID, now, string(h.Name()), now, task.Slug,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // bgKeepConcurrentDoneSQL is the status half of a background spawn/resume
