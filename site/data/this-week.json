@@ -1,39 +1,36 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 66,
-    "dead": 2,
-    "done": 65,
-    "messages_between_tasks": 66,
-    "notes": 264,
-    "refs": 22,
+    "children": 83,
+    "dead": 4,
+    "done": 80,
+    "messages_between_tasks": 153,
+    "notes": 217,
+    "refs": 34,
     "running": 1,
-    "tasks": 73
+    "tasks": 90
   },
   "dead_reasons": {
-    "exited without closing": 2
+    "exited without closing": 1,
+    "unclassified": 2,
+    "waited on a login": 1
   },
-  "generated_at": "2026-11-26T11:30:42+05:30",
+  "generated_at": "2026-11-27T11:30:30+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 73
+      "tasks": 90
     },
     {
-      "items": 284,
+      "items": 225,
       "name": "updates/",
-      "tasks": 73
+      "tasks": 90
     },
     {
-      "items": 178,
+      "items": 194,
       "name": "auto-runs/",
-      "tasks": 66
-    },
-    {
-      "items": 11,
-      "name": "other files",
-      "tasks": 9
+      "tasks": 82
     },
     {
       "items": 13,
@@ -41,18 +38,23 @@
       "tasks": 7
     },
     {
-      "items": 3,
+      "items": 7,
+      "name": "other files",
+      "tasks": 6
+    },
+    {
+      "items": 17,
+      "name": "artifacts/",
+      "tasks": 3
+    },
+    {
+      "items": 9,
       "name": "evidence/",
-      "tasks": 1
+      "tasks": 2
     },
     {
       "items": 2,
       "name": "review-payloads/",
-      "tasks": 1
-    },
-    {
-      "items": 4,
-      "name": "shots/",
       "tasks": 1
     },
     {
@@ -75,8 +77,302 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-26-06-00",
+      "slug": "site-daily--2026-11-27-06-00",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-live-release-reconcile",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-dock-mockups",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 5,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-card-header",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-reminder-wake",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        73,
+        146
+      ],
+      "shown": true,
+      "slug": "iop-reminder-integrate",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-watch-belt",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-schedule-core",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 3,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-watch-mockups",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 27,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-longrun",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "unclassified",
+      "notes": 2,
+      "refs": [],
+      "shown": true,
+      "slug": "fhw-render-codex",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 6,
+      "refs": [
+        12
+      ],
+      "shown": true,
+      "slug": "iop-release-upgrade-plan",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 8,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-release-build",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "unclassified",
+      "notes": 1,
+      "refs": [],
+      "shown": true,
+      "slug": "fhw-askimg-codex",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 21,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-release-prep",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "dead",
+      "child": true,
+      "dead_reason": "waited on a login",
+      "notes": 1,
+      "refs": [],
+      "shown": true,
+      "slug": "fhw-points-codex",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-flicker-codex",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-release-upgrade",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [
+        13,
+        33,
+        43,
+        50,
+        63,
+        65,
+        69,
+        93,
+        121,
+        134,
+        135,
+        138,
+        143,
+        200
+      ],
+      "shown": true,
+      "slug": "iop-release-changelog",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 3,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-release-check",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-globe-codex",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        142
+      ],
+      "shown": true,
+      "slug": "fhw-expand-codex",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 2,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-card-codex",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-card-html",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-one-doc",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-card-doc",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "fhw-readable-warn",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-26-06-00",
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -358,10 +654,8 @@
       "child": true,
       "dead_reason": null,
       "notes": 1,
-      "refs": [
-        117
-      ],
-      "shown": true,
+      "refs": [],
+      "shown": false,
       "slug": "fhw-also-answers",
       "status": "done"
     },
@@ -383,7 +677,7 @@
       "refs": [
         108
       ],
-      "shown": true,
+      "shown": false,
       "slug": "fhw-reopen-cap-prn",
       "status": "done"
     },
@@ -447,7 +741,7 @@
       "refs": [
         211
       ],
-      "shown": true,
+      "shown": false,
       "slug": "sim-driver-claude",
       "status": "done"
     },
@@ -459,7 +753,7 @@
       "refs": [
         211
       ],
-      "shown": true,
+      "shown": false,
       "slug": "sim-driver-codex",
       "status": "done"
     },
@@ -471,7 +765,7 @@
       "refs": [
         211
       ],
-      "shown": true,
+      "shown": false,
       "slug": "flow-delegation-test",
       "status": "done"
     },
@@ -503,7 +797,7 @@
       "refs": [
         95
       ],
-      "shown": true,
+      "shown": false,
       "slug": "iop-telemetry",
       "status": "done"
     },
@@ -574,7 +868,7 @@
         205,
         206
       ],
-      "shown": true,
+      "shown": false,
       "slug": "flow-harness-json",
       "status": "done"
     },
@@ -743,111 +1037,6 @@
       "shown": false,
       "slug": "operator-gap-list",
       "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": false,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [
-        185
-      ],
-      "shown": false,
-      "slug": "site-daily--2026-11-20-06-00",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 3,
-      "refs": [],
-      "shown": false,
-      "slug": "flow-multi-device",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 12,
-      "refs": [
-        12,
-        115
-      ],
-      "shown": false,
-      "slug": "operator-page",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "agent-ui-levers-research",
-      "status": "done"
-    },
-    {
-      "auto_run_status": null,
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "help-20",
-      "status": "backlog"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "iop-dogfood",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "pm-tracking-research",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 35,
-      "refs": [],
-      "shown": false,
-      "slug": "iop-cli-build",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 0,
-      "refs": [],
-      "shown": false,
-      "slug": "hud-intent-slice1",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "exited without closing",
-      "notes": 95,
-      "refs": [],
-      "shown": true,
-      "slug": "flow-hud-go",
-      "status": "in-progress"
     }
   ],
   "window_days": 7
