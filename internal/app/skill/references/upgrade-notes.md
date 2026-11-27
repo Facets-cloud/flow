@@ -11,6 +11,13 @@
 
 ## Unreleased
 
+## v0.1.0-alpha.42
+
+- **Delegate by default.** driver.md no longer says "small work may stay
+  inline". Keep work inline only if it is one coherent step of about 15
+  minutes, or glue/verification; anything with separable parts or longer
+  goes to `flow auto` children. Re-read references/driver.md.
+
 ## v0.1.0-alpha.41
 
 - **Re-pin a task to another harness with the CLI.** `flow do <slug>
