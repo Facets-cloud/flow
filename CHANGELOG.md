@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0-alpha.42] — 2026-11-27
+
+### Changed
+
+- **Drivers delegate by default.** `references/driver.md` replaces "How to
+  split is your call; small work may stay inline" with a concrete test:
+  inline only for one coherent step you can finish in about 15 minutes, or
+  glue/verification. Anything with separable parts (API / UI / infra /
+  tests / research) or longer than that goes to `flow auto` children; the
+  driver keeps the decisions and verifies their output (#211).
+
 ## [0.1.0-alpha.41] — 2026-11-25
 
 ### Added
