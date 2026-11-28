@@ -1,54 +1,53 @@
 {
   "counts": {
     "asks_to_human": 0,
-    "children": 83,
-    "dead": 4,
-    "done": 80,
-    "messages_between_tasks": 153,
-    "notes": 217,
-    "refs": 34,
+    "children": 88,
+    "dead": 3,
+    "done": 86,
+    "messages_between_tasks": 125,
+    "notes": 323,
+    "refs": 40,
     "running": 1,
-    "tasks": 90
+    "tasks": 96
   },
   "dead_reasons": {
-    "exited without closing": 1,
     "unclassified": 2,
     "waited on a login": 1
   },
-  "generated_at": "2026-11-27T11:30:30+05:30",
+  "generated_at": "2026-11-28T11:30:21+05:30",
   "leaves_behind": [
     {
       "items": 0,
       "name": "brief.md",
-      "tasks": 90
+      "tasks": 96
     },
     {
-      "items": 225,
+      "items": 353,
       "name": "updates/",
-      "tasks": 90
+      "tasks": 96
     },
     {
-      "items": 194,
+      "items": 330,
       "name": "auto-runs/",
-      "tasks": 82
+      "tasks": 87
     },
     {
-      "items": 13,
+      "items": 47,
+      "name": "artifacts/",
+      "tasks": 10
+    },
+    {
+      "items": 12,
       "name": "workspace/",
-      "tasks": 7
-    },
-    {
-      "items": 7,
-      "name": "other files",
       "tasks": 6
     },
     {
-      "items": 17,
-      "name": "artifacts/",
-      "tasks": 3
+      "items": 5,
+      "name": "other files",
+      "tasks": 4
     },
     {
-      "items": 9,
+      "items": 11,
       "name": "evidence/",
       "tasks": 2
     },
@@ -60,6 +59,11 @@
     {
       "items": 3,
       "name": "sim/",
+      "tasks": 1
+    },
+    {
+      "items": 1,
+      "name": "snapshots/",
       "tasks": 1
     }
   ],
@@ -77,8 +81,158 @@
       "notes": 0,
       "refs": [],
       "shown": false,
-      "slug": "site-daily--2026-11-27-06-00",
+      "slug": "site-daily--2026-11-28-06-00",
       "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 9,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-surface-review",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 5,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-followups-review",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 11,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-daemon-surface",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 3,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-ask-card-close",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 7,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-daemon-followups",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 4,
+      "refs": [
+        157
+      ],
+      "shown": true,
+      "slug": "iop-paused-mock",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 9,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-doc-drawer-mockup",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 3,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-page-density",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 10,
+      "refs": [
+        164,
+        169,
+        175
+      ],
+      "shown": true,
+      "slug": "iop-approval-approach",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 3,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-paste-build",
+      "status": "done"
+    },
+    {
+      "auto_run_status": null,
+      "child": true,
+      "dead_reason": null,
+      "notes": 20,
+      "refs": [
+        172
+      ],
+      "shown": true,
+      "slug": "iop-paste",
+      "status": "in-progress"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 14,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-page-history",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": true,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [],
+      "shown": false,
+      "slug": "iop-remove-now",
+      "status": "done"
+    },
+    {
+      "auto_run_status": "completed",
+      "child": false,
+      "dead_reason": null,
+      "notes": 1,
+      "refs": [
+        185
+      ],
+      "shown": true,
+      "slug": "site-daily--2026-11-27-06-00",
+      "status": "done"
     },
     {
       "auto_run_status": "completed",
@@ -94,7 +248,7 @@
       "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 2,
+      "notes": 3,
       "refs": [],
       "shown": false,
       "slug": "iop-dock-mockups",
@@ -125,11 +279,8 @@
       "child": true,
       "dead_reason": null,
       "notes": 2,
-      "refs": [
-        73,
-        146
-      ],
-      "shown": true,
+      "refs": [],
+      "shown": false,
       "slug": "iop-reminder-integrate",
       "status": "done"
     },
@@ -167,9 +318,17 @@
       "auto_run_status": null,
       "child": true,
       "dead_reason": null,
-      "notes": 27,
-      "refs": [],
-      "shown": false,
+      "notes": 45,
+      "refs": [
+        12,
+        104,
+        146,
+        152,
+        156,
+        157,
+        164
+      ],
+      "shown": true,
       "slug": "iop-longrun",
       "status": "in-progress"
     },
@@ -199,7 +358,7 @@
       "auto_run_status": "completed",
       "child": true,
       "dead_reason": null,
-      "notes": 8,
+      "notes": 13,
       "refs": [],
       "shown": false,
       "slug": "iop-release-build",
@@ -219,7 +378,7 @@
       "auto_run_status": null,
       "child": true,
       "dead_reason": null,
-      "notes": 21,
+      "notes": 47,
       "refs": [],
       "shown": false,
       "slug": "iop-release-prep",
@@ -403,7 +562,7 @@
         18,
         138
       ],
-      "shown": true,
+      "shown": false,
       "slug": "fhw-no-pr-cap",
       "status": "done"
     },
@@ -575,7 +734,7 @@
       "refs": [
         60
       ],
-      "shown": true,
+      "shown": false,
       "slug": "fhw-working-step",
       "status": "done"
     },
@@ -689,7 +848,7 @@
       "refs": [
         127
       ],
-      "shown": true,
+      "shown": false,
       "slug": "fhw-card-fix",
       "status": "done"
     },
@@ -953,89 +1112,6 @@
       ],
       "shown": false,
       "slug": "site-daily--2026-11-21-08-16",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 30,
-      "refs": [],
-      "shown": false,
-      "slug": "operator-alpha-driver",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 2,
-      "refs": [],
-      "shown": false,
-      "slug": "iop-queue-driver",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "operator-releases-repo",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "dead",
-      "child": true,
-      "dead_reason": "exited without closing",
-      "notes": 3,
-      "refs": [
-        12,
-        115
-      ],
-      "shown": true,
-      "slug": "operator-page-b",
-      "status": "in-progress"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "operator-plugin-setup-research",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 5,
-      "refs": [],
-      "shown": false,
-      "slug": "operator-alpha-pack",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "operator-alpha-readiness",
-      "status": "done"
-    },
-    {
-      "auto_run_status": "completed",
-      "child": true,
-      "dead_reason": null,
-      "notes": 1,
-      "refs": [],
-      "shown": false,
-      "slug": "operator-gap-list",
       "status": "done"
     }
   ],
